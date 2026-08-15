@@ -261,7 +261,7 @@
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> buttons <span class="section-where">— PR 페이지</span></h2>
     <p class="help">PR 페이지 브랜치 옆에 붙는 버튼입니다 (최대 3개). <b>표시</b>가 버튼의 얼굴이 됩니다 — 이모지 하나든 여러 개든(🌳🤖), 짧은 이름(리뷰, WT)이든 됩니다. <b>툴팁</b>은 마우스를 올렸을 때 나오고, 프리셋을 고르면 카드가 해당 템플릿으로 채워집니다. 확장 아이콘 클릭은 첫 번째 버튼을 실행합니다.</p>
-    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR 번호, 숫자만)</span> <code>{branch}</code> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch의 /를 _로 치환)</span></p>
+    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR 번호, 숫자만)</span> <code>{branch}</code> <span class="faint">(head — 머지될 브랜치)</span> <code>{base}</code> <span class="faint">(base — 머지받을 브랜치)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch의 /를 _로 치환)</span></p>
     <div id="pr-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="pr-add">+ 버튼 추가</button>
@@ -272,7 +272,7 @@
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> issueButtons <span class="section-where">— 이슈 페이지</span></h2>
     <p class="help">이슈 페이지 상태 배지(Open/Closed) 옆에 붙는 버튼입니다 (최대 3개). PR 버튼과 별도로 설정되며, 이슈 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.</p>
-    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(이슈 번호, 숫자만)</span> <code>{main}</code> — 이슈에는 head 브랜치가 없어 <code>{branch}</code> 계열은 쓸 수 없습니다.</p>
+    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(이슈 번호, 숫자만)</span> <code>{main}</code> — 이슈에는 PR의 브랜치가 없어 <code>{branch}</code> 계열과 <code>{base}</code>는 쓸 수 없습니다.</p>
     <p class="help">claude 입력에서 <code>!</code>로 시작하면 claude가 그 줄을 셸에서 실행합니다 — 기본 프리셋은 <code>gh</code>로 이슈 본문·코멘트·관련 이슈/PR 번호를 claude에게 읽힙니다.</p>
     <div id="issue-buttons"></div>
     <div style="margin-top:10px">
@@ -283,7 +283,7 @@
 
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> main branch</h2>
-    <p class="help"><code>{main}</code> 결정 순서: 리포별 오버라이드 → PR 페이지 base branch 감지 → 아래 기본값.</p>
+    <p class="help"><code>{main}</code> 결정 순서: 리포별 오버라이드 → PR 페이지 base branch 감지 → 아래 기본값. 이 PR이 실제로 머지될 브랜치를 그대로 쓰려면 오버라이드·기본값을 거치지 않는 <code>{base}</code>를 쓰세요.</p>
     <label for="default-main">기본값</label>
     <input type="text" id="default-main" placeholder="main" style="width:200px; margin-bottom:18px">
     <table class="override-table">

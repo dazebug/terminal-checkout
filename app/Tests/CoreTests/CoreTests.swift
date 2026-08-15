@@ -14,13 +14,23 @@ final class RenderTests: XCTestCase {
 
     func testRenderAllVariables() throws {
         let cmd = try renderCommand(
-            template: "{repo} {branch} {main} {branch_underbar} {number} {owner}",
+            template: "{repo} {branch} {base} {main} {branch_underbar} {number} {owner}",
             variables: [
-                "repo": "r", "branch": "a/b", "main": "develop", "branch_underbar": "a_b",
-                "number": "1402", "owner": "frograms",
+                "repo": "r", "branch": "a/b", "base": "release/2", "main": "develop",
+                "branch_underbar": "a_b", "number": "1402", "owner": "frograms",
             ]
         )
-        XCTAssertEqual(cmd, "r a/b develop a_b 1402 frograms")
+        XCTAssertEqual(cmd, "r a/b release/2 develop a_b 1402 frograms")
+    }
+
+    // {base}는 이 PR이 실제로 머지될 브랜치다 — 리포 오버라이드·글로벌 기본값을 거치는
+    // {main}과 달라질 수 있으므로 서로 다른 값으로 치환돼야 한다
+    func testRenderBaseIsIndependentOfMain() throws {
+        let cmd = try renderCommand(
+            template: "git merge --ff-only origin/{base} && echo {main}",
+            variables: ["base": "release/2", "main": "main"]
+        )
+        XCTAssertEqual(cmd, "git merge --ff-only origin/release/2 && echo main")
     }
 
     // 이슈/PR 프리셋의 gh 명령은 {owner}/{repo}/{number}를 그대로 URL 경로에 넣는다

@@ -17,7 +17,7 @@ public enum CommandError: Error, CustomStringConvertible {
 }
 
 private let allowedVariables: Set<String> = [
-    "repo", "branch", "main", "branch_underbar", "number", "owner",
+    "repo", "branch", "base", "main", "branch_underbar", "number", "owner",
 ]
 
 // 허용 문자 화이트리스트 (command injection 방지).

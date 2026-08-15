@@ -143,14 +143,19 @@ async function executeCommand(tab, buttonIndex) {
 
     // 어느 터미널에서 실행할지는 Terminal Checkout 앱 설정이 결정한다
     console.log(`Executing command: repo=${target.repo}, branch=${domResult.branch}, main=${main}`);
-    await runButton(button, {
+    const variables = {
       repo: target.repo,
       owner: target.owner,
       number: target.number,
       branch: domResult.branch,
       main,
       branch_underbar: domResult.branch.replace(/\//g, '_'),
-    });
+    };
+    // {base}: 이 PR이 머지될 브랜치. 오버라이드·글로벌 기본값을 거치는 {main}과 달리 페이지에서 읽은
+    // 값만 쓴다 — 못 읽었으면 아예 넘기지 않아 앱이 not provided로 거절하게 한다 (다른 브랜치로
+    // 조용히 대체하면 엉뚱한 브랜치에 머지·리베이스하게 되므로)
+    if (domResult.detectedMain) variables.base = domResult.detectedMain;
+    await runButton(button, variables);
   } catch (error) {
     console.error('Error executing command:', error);
   }

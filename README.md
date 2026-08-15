@@ -127,10 +127,13 @@ Command에서 쓸 수 있는 변수:
 | `{owner}` | 저장소 소유자 (`gh api repos/{owner}/{repo}/…`에 사용) | ✓ |
 | `{number}` | PR·이슈 번호 (숫자만) | ✓ |
 | `{main}` | main 브랜치 (리포별 오버라이드 → PR 페이지 감지 → 글로벌 기본값 순으로 결정) | ✓ |
-| `{branch}` | PR의 head 브랜치 | — |
+| `{branch}` | PR의 head 브랜치 (머지될 쪽) | — |
+| `{base}` | PR의 base 브랜치 (머지받을 쪽 — PR 페이지에서 읽은 값 그대로) | — |
 | `{branch_underbar}` | `{branch}`의 `/`를 `_`로 치환한 값 (worktree 디렉토리명 등에 사용) | — |
 
-변수는 command와 claude 입력 양쪽에서 동일하게 동작합니다. 이슈에는 head 브랜치가 없으므로 이슈 버튼에서 `{branch}` 계열을 쓰면 실행이 거절됩니다.
+변수는 command와 claude 입력 양쪽에서 동일하게 동작합니다. 이슈에는 PR 브랜치가 없으므로 이슈 버튼에서 `{branch}` 계열이나 `{base}`를 쓰면 실행이 거절됩니다.
+
+`{main}`과 `{base}`는 보통 같은 값이지만, 리포별 오버라이드가 걸려 있거나 PR이 다른 브랜치(예: `release/2`) 위로 열려 있으면 달라집니다. 이 PR이 실제로 머지될 브랜치를 기준으로 삼는 명령(`git merge --ff-only origin/{base}`, `git rebase origin/{base}` 등)에는 `{base}`를 쓰세요. PR 페이지에서 base 브랜치를 읽지 못하면 `{base}`는 전달되지 않아 실행이 거절됩니다 — 다른 브랜치로 조용히 대체하지 않습니다.
 
 ## 개발
 
