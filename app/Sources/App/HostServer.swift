@@ -94,9 +94,16 @@ final class HostServer {
             Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
             let response = execQueue.sync {
-                handleRequest(json: json) { command, _ in
+                handleRequest(json: json) { resolved in
                     // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
-                    try runInTerminal(command: command, terminal: Settings.terminal)
+                    let handle = try runInTerminal(command: resolved.command, terminal: Settings.terminal)
+                    if !resolved.claudeInputs.isEmpty {
+                        // 전달 감시는 최대 2분짜리 블로킹 루프 — 직렬 execQueue와 Chrome 응답을
+                        // 막지 않도록 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
+                        DispatchQueue.global(qos: .utility).async {
+                            deliverClaudeInputs(resolved.claudeInputs, to: handle)
+                        }
+                    }
                 }
             }
             let payload = (try? JSONSerialization.data(withJSONObject: response))

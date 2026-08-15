@@ -97,31 +97,85 @@ final class RequestTests: XCTestCase {
         XCTAssertThrowsError(try resolveRequest([:]))
         XCTAssertThrowsError(try resolveRequest(["unrelated": 1]))
     }
+
+    // claude_inputs: claude 실행 후 세션에 타이핑할 입력들. command와 같은 변수 문법을 쓴다.
+    func testClaudeInputsParsedAndRendered() throws {
+        let req: [String: Any] = [
+            "command_template": "z {repo} && claude",
+            "variables": ["repo": "remy", "branch": "fix/x"],
+            "claude_inputs": ["/review", "PR {branch} 변경사항을 요약해줘"],
+        ]
+        let r = try resolveRequest(req)
+        XCTAssertEqual(r.claudeInputs, ["/review", "PR fix/x 변경사항을 요약해줘"])
+    }
+
+    func testClaudeInputsAbsentDefaultsToEmpty() throws {
+        let r = try resolveRequest([
+            "command_template": "z {repo}", "variables": ["repo": "remy"],
+        ])
+        XCTAssertEqual(r.claudeInputs, [])
+    }
+
+    func testLegacyRequestHasNoClaudeInputs() throws {
+        XCTAssertEqual(try resolveRequest(["repo": "remy"]).claudeInputs, [])
+    }
+
+    func testClaudeInputsTrimmedAndEmptyDropped() throws {
+        let r = try resolveRequest([
+            "command_template": "z {repo}", "variables": ["repo": "remy"],
+            "claude_inputs": ["  /review  ", "", "   "],
+        ])
+        XCTAssertEqual(r.claudeInputs, ["/review"])
+    }
+
+    func testClaudeInputsRejectNonStringElement() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo}", "variables": ["repo": "remy"],
+            "claude_inputs": [1],
+        ]))
+    }
+
+    func testClaudeInputsRejectNonArray() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo}", "variables": ["repo": "remy"],
+            "claude_inputs": "/review",
+        ]))
+    }
+
+    // 입력 속 변수도 command와 같은 검증을 거친다 — 미지의 변수는 에러
+    func testClaudeInputsUnknownVariableThrows() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo}", "variables": ["repo": "remy"],
+            "claude_inputs": ["checkout {nope} please"],
+        ]))
+    }
 }
 
 // MARK: - 요청 핸들러 (성공/실패 JSON 응답 형태)
 
 final class HandlerTests: XCTestCase {
     func testHandleRequestSuccess() {
-        var ran: (cmd: String, terminal: String)?
+        var ran: ResolvedRequest?
         let resp = handleRequest(
             json: [
                 "command_template": "z {repo}",
                 "variables": ["repo": "remy"],
                 "terminal": "wezterm",
+                "claude_inputs": ["/review"],
             ],
-            run: { cmd, terminal in ran = (cmd, terminal) }
+            run: { ran = $0 }
         )
         XCTAssertEqual(resp["success"] as? Bool, true)
-        XCTAssertEqual(ran?.cmd, "z remy")
+        XCTAssertEqual(ran?.command, "z remy")
         XCTAssertEqual(ran?.terminal, "wezterm")
+        XCTAssertEqual(ran?.claudeInputs, ["/review"])
     }
 
     func testHandleRequestRenderError() {
         var didRun = false
         let resp = handleRequest(
             json: ["command_template": "z {repo}", "variables": ["repo": "a;b"]],
-            run: { _, _ in didRun = true }
+            run: { _ in didRun = true }
         )
         XCTAssertEqual(resp["success"] as? Bool, false)
         XCTAssertFalse(didRun)
@@ -132,10 +186,63 @@ final class HandlerTests: XCTestCase {
         struct Boom: Error, CustomStringConvertible { var description: String { "boom" } }
         let resp = handleRequest(
             json: ["command_template": "z {repo}", "variables": ["repo": "remy"]],
-            run: { _, _ in throw Boom() }
+            run: { _ in throw Boom() }
         )
         XCTAssertEqual(resp["success"] as? Bool, false)
         XCTAssertEqual(resp["error"] as? String, "boom")
+    }
+}
+
+// MARK: - Claude 입력 전달 (포그라운드 게이트 판정 — 셸 오입력 방지의 핵심)
+
+final class ClaudeInjectorTests: XCTestCase {
+    // ps -t <tty> -o stat=,comm= 출력 기준. 포그라운드 프로세스 그룹은 stat에 `+`가 붙는다.
+    func testForegroundClaudeDetected() {
+        XCTAssertTrue(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   claude"))
+    }
+
+    func testForegroundNodeWithFullPathDetected() {
+        XCTAssertTrue(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   /opt/homebrew/bin/node"))
+    }
+
+    func testShellAtPromptIsNotClaude() {
+        // 프롬프트 대기 중에는 셸 자신이 포그라운드(+)다 — 이때 타이핑하면 셸이 실행해버린다
+        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  -zsh"))
+        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  zsh"))
+        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  /bin/zsh"))
+    }
+
+    func testOtherForegroundProcessIsNotClaude() {
+        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   git"))
+    }
+
+    func testBackgroundClaudeIsNotEnough() {
+        XCTAssertFalse(hasClaudeForeground(psOutput: "S    claude\nSs+  -zsh"))
+    }
+
+    func testPathWithSpacesUsesExactBasename() {
+        // "Claude Helper (Renderer)" 같은 무관한 프로세스가 claude로 오인되면 안 된다
+        XCTAssertFalse(hasClaudeForeground(
+            psOutput: "S+   /Applications/Claude.app/Contents/MacOS/Claude Helper (Renderer)"))
+    }
+
+    func testEmptyOutputIsNotClaude() {
+        XCTAssertFalse(hasClaudeForeground(psOutput: ""))
+    }
+
+    // wezterm cli list --format json에서 pane의 tty를 찾는다
+    func testWezTermTTYParsing() throws {
+        let json = Data("""
+        [{"window_id":0,"tab_id":0,"pane_id":3,"tty_name":"/dev/ttys011","title":"zsh"},
+         {"window_id":0,"tab_id":1,"pane_id":7,"tty_name":"/dev/ttys012","title":"zsh"}]
+        """.utf8)
+        XCTAssertEqual(wezTermTTYName(listJSON: json, paneID: "7"), "/dev/ttys012")
+    }
+
+    func testWezTermTTYMissingPane() {
+        let json = Data(#"[{"pane_id":3,"tty_name":"/dev/ttys011"}]"#.utf8)
+        XCTAssertNil(wezTermTTYName(listJSON: json, paneID: "99"))
+        XCTAssertNil(wezTermTTYName(listJSON: Data("broken".utf8), paneID: "3"))
     }
 }
 
@@ -157,6 +264,26 @@ final class AppleScriptTests: XCTestCase {
         // 복사본(iTerm Rosetta.app 등)으로 LaunchServices 이름 해석이 꼬여도 동작하도록 (-1728 방지)
         XCTAssertTrue(script.contains(#"tell application id "com.googlecode.iterm2""#))
         XCTAssertFalse(script.contains(#"tell application "iTerm2""#))
+    }
+
+    // claude 입력 전달을 위해 spawn 스크립트가 세션 핸들(id|tty)을 돌려줘야 한다
+    func testITermScriptReturnsSessionHandle() {
+        let script = iTermScript(for: "echo hi")
+        XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
+    }
+
+    func testITermWriteToSessionScript() {
+        let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#)
+        XCTAssertTrue(script.contains(#"tell application id "com.googlecode.iterm2""#))
+        XCTAssertTrue(script.contains(#"if (id of s) is "ABC-123" then"#))
+        XCTAssertTrue(script.contains(#"write text "say \"hi\"""#))
+        // 세션이 사라졌으면(탭 닫힘) "gone"을 돌려줘 호출자가 전달을 중단하게 한다
+        XCTAssertTrue(script.contains(#"return "gone""#))
+    }
+
+    func testITermWriteToSessionScriptEscapesSessionID() {
+        let script = iTermWriteToSessionScript(sessionID: #"x"y"#, text: "t")
+        XCTAssertTrue(script.contains(#"if (id of s) is "x\"y" then"#))
     }
 }
 

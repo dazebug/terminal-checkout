@@ -17,6 +17,7 @@ public func escapeForAppleScript(_ text: String) -> String {
 
 /// iTerm2에서 새 탭을 열고 명령을 실행하는 AppleScript.
 /// 창이 하나도 없을 때(create tab 불가)를 대비해 분기한다.
+/// 마지막에 "세션id|tty"를 돌려준다 — claude 입력 전달이 이 핸들로 세션을 다시 찾는다.
 public func iTermScript(for command: String) -> String {
     let escaped = escapeForAppleScript(command)
     return """
@@ -24,17 +25,34 @@ public func iTermScript(for command: String) -> String {
         activate
         if (count of windows) = 0 then
             create window with default profile
-            tell current session of current window
-                write text "\(escaped)"
-            end tell
         else
-            tell current window
-                create tab with default profile
-                tell current session
-                    write text "\(escaped)"
-                end tell
-            end tell
+            tell current window to create tab with default profile
         end if
+        set s to current session of current window
+        tell s to write text "\(escaped)"
+        return (id of s) & "|" & (tty of s)
+    end tell
+    """
+}
+
+/// 이미 열린 세션에 텍스트 한 줄을 타이핑하는 AppleScript (claude 입력 전달용).
+/// 세션을 못 찾으면(탭 닫힘) "gone"을 돌려줘 호출자가 남은 전달을 중단하게 한다.
+public func iTermWriteToSessionScript(sessionID: String, text: String) -> String {
+    let escapedID = escapeForAppleScript(sessionID)
+    let escapedText = escapeForAppleScript(text)
+    return """
+    tell application id "\(iTermBundleID)"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if (id of s) is "\(escapedID)" then
+                        tell s to write text "\(escapedText)"
+                        return "ok"
+                    end if
+                end repeat
+            end repeat
+        end repeat
+        return "gone"
     end tell
     """
 }

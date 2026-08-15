@@ -2,7 +2,7 @@ const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
 const DEFAULT_BUTTONS = [
   // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
-  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
+  { face: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
 ];
 
 const DEFAULT_MAIN = 'main';
@@ -146,10 +146,14 @@ async function executeCommand(tab, buttonIndex) {
 
     // 어느 터미널에서 실행할지는 Terminal Checkout 앱 설정이 결정한다
     console.log(`Executing command: repo=${repo}, branch=${domResult.branch}, main=${main}`);
-    await sendToNativeHost({
+    const message = {
       command_template: button.command,
       variables: { repo, branch: domResult.branch, main, branch_underbar: domResult.branch.replace(/\//g, '_') }
-    });
+    };
+    // command가 띄운 claude 세션에 순서대로 타이핑할 입력들 (앱이 claude 기동을 확인한 뒤 전달)
+    const claudeInputs = (button.claudeInputs || []).map(s => String(s).trim()).filter(Boolean);
+    if (claudeInputs.length) message.claude_inputs = claudeInputs;
+    await sendToNativeHost(message);
   } catch (error) {
     console.error('Error executing command:', error);
   }

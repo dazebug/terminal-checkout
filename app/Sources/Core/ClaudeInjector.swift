@@ -1,0 +1,132 @@
+import Foundation
+
+/// runInTerminal이 돌려주는 세션 핸들 — claude 입력을 나중에 타이핑할 대상.
+public enum TerminalSessionHandle {
+    case iterm(sessionID: String, tty: String)
+    case wezterm(paneID: String, cliPath: String, socketPath: String?)
+    /// 전달 경로 없음 (WezTerm fallback 기동 등, pane을 특정할 수 없는 경우)
+    case none
+}
+
+/// claude로 판정할 포그라운드 프로세스 이름. npm 배포는 comm=node로, 네이티브 설치는
+/// comm=claude로 뜨는 것을 확인했다. bun은 bun 런타임으로 실행하는 환경 대비 여유분.
+private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
+
+/// `ps -t <tty> -o stat=,comm=` 출력에서 포그라운드 프로세스 그룹(stat에 `+`)에
+/// claude가 있는지 판정한다. 셸이 프롬프트에 있으면 셸 자신이 `+`라서 false가 된다 —
+/// 이 게이트가 "셸에 타이핑되어 Enter까지 즉시 실행"되는 오입력을 막는 유일한 방어선이다.
+public func hasClaudeForeground(psOutput: String) -> Bool {
+    for line in psOutput.split(separator: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let space = trimmed.firstIndex(where: { $0.isWhitespace }) else { continue }
+        guard trimmed[..<space].contains("+") else { continue }
+        // comm은 이름만("claude")일 수도, 공백 포함 풀 경로일 수도 있다 → 나머지 전체가 comm
+        let comm = trimmed[space...].trimmingCharacters(in: .whitespaces)
+        var name = (comm as NSString).lastPathComponent
+        if name.hasPrefix("-") { name.removeFirst() } // 로그인 셸 표기(-zsh)
+        if claudeProcessNames.contains(name) { return true }
+    }
+    return false
+}
+
+/// `wezterm cli list --format json` 출력에서 pane의 tty 경로를 찾는다.
+public func wezTermTTYName(listJSON: Data, paneID: String) -> String? {
+    guard let list = (try? JSONSerialization.jsonObject(with: listJSON)) as? [[String: Any]],
+          let paneNumber = Int(paneID) else { return nil }
+    for pane in list where (pane["pane_id"] as? Int) == paneNumber {
+        return pane["tty_name"] as? String
+    }
+    return nil
+}
+
+/// 스폰된 세션의 포그라운드가 claude가 될 때까지 기다렸다가 입력을 순서대로 타이핑한다.
+/// 첫 입력을 claude가 처리하는 동안 나머지는 claude 자체의 메시지 큐에 쌓인다.
+/// 타임아웃 내에 claude가 안 뜨면 아무것도 보내지 않고 포기한다(로그만).
+/// 최대 2분을 도는 블로킹 루프이므로 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
+public func deliverClaudeInputs(
+    _ inputs: [String], to handle: TerminalSessionHandle,
+    pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120
+) {
+    guard !inputs.isEmpty else { return }
+
+    let ttyPath: String?
+    switch handle {
+    case .iterm(_, let tty):
+        ttyPath = tty
+    case .wezterm(let paneID, let cliPath, let socketPath):
+        ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
+    case .none:
+        NSLog("Terminal Checkout: claude 입력 전달 불가 — 세션 핸들 없음")
+        return
+    }
+    guard let ttyPath, ttyPath.hasPrefix("/dev/") else {
+        NSLog("Terminal Checkout: claude 입력 전달 불가 — 세션 tty를 알 수 없음")
+        return
+    }
+    let ttyName = String(ttyPath.dropFirst("/dev/".count))
+
+    let deadline = Date().addingTimeInterval(timeout)
+    while !claudeIsForeground(ttyName: ttyName) {
+        if Date() >= deadline {
+            NSLog("Terminal Checkout: \(Int(timeout))초 내에 claude가 뜨지 않아 입력 \(inputs.count)개를 보내지 않음")
+            return
+        }
+        Thread.sleep(forTimeInterval: pollInterval)
+    }
+
+    // 감지 직후는 TUI가 입력을 받기 직전일 수 있으므로 잠깐 여유를 둔다
+    Thread.sleep(forTimeInterval: 0.8)
+
+    for (index, input) in inputs.enumerated() {
+        if index > 0 { Thread.sleep(forTimeInterval: 0.4) }
+        // 전송 직전 재확인 — 그 사이 claude가 종료했으면 텍스트가 셸에 들어가므로 중단
+        guard claudeIsForeground(ttyName: ttyName) else {
+            NSLog("Terminal Checkout: claude가 전면에서 사라져 남은 입력 \(inputs.count - index)개를 보내지 않음")
+            return
+        }
+        guard sendText(input, to: handle) else {
+            NSLog("Terminal Checkout: claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
+            return
+        }
+    }
+}
+
+private func claudeIsForeground(ttyName: String) -> Bool {
+    guard let result = try? runProcess("/bin/ps", ["-t", ttyName, "-o", "stat=,comm="], timeout: 5) else {
+        return false
+    }
+    return hasClaudeForeground(psOutput: result.stdout)
+}
+
+private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: String) -> String? {
+    var env = ProcessInfo.processInfo.environment
+    if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
+    guard let result = try? runProcess(cliPath, ["cli", "list", "--format", "json"], env: env, timeout: 5),
+          result.status == 0 else { return nil }
+    return wezTermTTYName(listJSON: Data(result.stdout.utf8), paneID: paneID)
+}
+
+private func sendText(_ text: String, to handle: TerminalSessionHandle) -> Bool {
+    switch handle {
+    case .iterm(let sessionID, _):
+        guard let result = try? runProcess(
+            "/usr/bin/osascript", ["-e", iTermWriteToSessionScript(sessionID: sessionID, text: text)],
+            timeout: 10
+        ), result.status == 0 else { return false }
+        if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" {
+            NSLog("Terminal Checkout: 세션이 닫혀 claude 입력 전달 중단")
+            return false
+        }
+        return true
+    case .wezterm(let paneID, let cliPath, let socketPath):
+        var env = ProcessInfo.processInfo.environment
+        if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
+        let result = try? runProcess(
+            cliPath, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
+            input: text + "\n", env: env, timeout: 5
+        )
+        return result?.status == 0
+    case .none:
+        return false
+    }
+}

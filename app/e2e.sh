@@ -56,4 +56,13 @@ run_case "unprovided template variable" \
   '{"command_template":"git checkout {main}","variables":{"repo":"r"}}' \
   'Variable {main} not provided'
 
+# claude_inputs가 relay를 거쳐 앱의 해석까지 닿는지 확인 (입력 속 변수도 command와 같은 검증)
+run_case "claude_inputs unprovided variable" \
+  '{"command_template":"z {repo} && claude","variables":{"repo":"r"},"claude_inputs":["fix {nope}"]}' \
+  'Variable {nope} not provided'
+
+run_case "claude_inputs must be array" \
+  '{"command_template":"z {repo}","variables":{"repo":"r"},"claude_inputs":"x"}' \
+  'claude_inputs must be an array'
+
 echo "e2e 전체 통과"

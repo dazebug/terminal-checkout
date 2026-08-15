@@ -70,22 +70,29 @@ public func runProcess(
     )
 }
 
-public func runInTerminal(command: String, terminal: String) throws {
+@discardableResult
+public func runInTerminal(command: String, terminal: String) throws -> TerminalSessionHandle {
     if terminal == "wezterm" {
-        try runInWezTerm(command)
+        return try runInWezTerm(command)
     } else {
-        try runInITerm(command)
+        return try runInITerm(command)
     }
 }
 
 /// iTerm2에서 새 탭 열고 명령 실행.
 /// osascript는 이 앱의 자식 프로세스이므로 TCC 자동화 권한이 이 앱에 귀속된다.
-public func runInITerm(_ command: String) throws {
+@discardableResult
+public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
     // 타임아웃 여유: 최초 실행 시 자동화 권한 프롬프트가 뜨면 사용자가 응답할 때까지 블록된다
     let result = try runProcess("/usr/bin/osascript", ["-e", iTermScript(for: command)], timeout: 180)
     guard result.status == 0 else {
         throw TerminalError.appleScriptFailed(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
+    // 스크립트가 돌려준 "세션id|tty" — 형태가 어긋나면 실행은 성공으로 두고 핸들만 포기한다
+    let parts = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(separator: "|", maxSplits: 1)
+    guard parts.count == 2, !parts[0].isEmpty, parts[1].hasPrefix("/dev/") else { return .none }
+    return .iterm(sessionID: String(parts[0]), tty: String(parts[1]))
 }
 
 /// WezTerm CLI 경로 탐색: PATH → Homebrew/앱 번들 fallback
@@ -133,7 +140,8 @@ public func findWezTermSocket() -> String? {
 }
 
 /// WezTerm에서 새 탭 열고 명령 실행 (spawn 실패 시 새 프로세스 fallback)
-public func runInWezTerm(_ command: String) throws {
+@discardableResult
+public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
 
     if let sock = findWezTermSocket() {
@@ -146,11 +154,11 @@ public func runInWezTerm(_ command: String) throws {
                 input: command + "\n", env: env, timeout: 5
             )
             _ = try? runProcess("/usr/bin/open", ["-a", "WezTerm"], timeout: 5)
-            return
+            return .wezterm(paneID: paneID, cliPath: cli, socketPath: sock)
         }
     }
 
-    // fallback: 새 WezTerm 프로세스 (종료를 기다리지 않는다)
+    // fallback: 새 WezTerm 프로세스 (종료를 기다리지 않는다) — pane을 특정할 수 없어 핸들 없음
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = ["start", "--", "/bin/bash", "-ic", "\(command); exec bash"]
@@ -158,4 +166,5 @@ public func runInWezTerm(_ command: String) throws {
     process.standardError = FileHandle.nullDevice
     process.standardInput = FileHandle.nullDevice
     try process.run()
+    return .none
 }

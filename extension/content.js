@@ -16,8 +16,19 @@ const BUTTON_STYLE = `
 
 const DEFAULT_BUTTONS = [
   // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
-  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
+  { face: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
 ];
+
+// 버튼 표시 텍스트. face가 새 키이고 emoji는 구버전 저장값 호환용이다.
+function buttonFace(config) {
+  return (config.face ?? config.emoji ?? '').trim() || '⏏️';
+}
+
+// 글자·숫자가 섞이면 텍스트 필(pill)로, 이모지만이면 아이콘으로 그린다.
+// 이 스타일은 옵션 페이지의 미리보기(options.js)와 짝을 이룬다 — 바꾸면 같이 바꿀 것.
+function isTextFace(face) {
+  return /[\p{L}\p{N}]/u.test(face);
+}
 
 // 페이지 타입 감지
 function getPageType() {
@@ -70,12 +81,28 @@ function createButton(text, action) {
   return button;
 }
 
-// PR 브랜치 옆 커스텀 명령 아이콘 버튼 생성
+// PR 브랜치 옆 커스텀 명령 버튼 생성 (이모지 아이콘 또는 텍스트 필)
 function createCommandIconButton(buttonConfig, index) {
+  const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
   button.className = 'terminal-cmd-btn';
   button.title = buttonConfig.label;
-  button.style.cssText = `
+  button.style.cssText = isTextFace(face) ? `
+    background: transparent;
+    border: 1px solid rgba(87, 171, 90, 0.45);
+    cursor: pointer;
+    padding: 2px 8px;
+    margin-left: 4px;
+    display: inline-block;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+    border-radius: 2em;
+    color: #57ab5a;
+    font: 600 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  ` : `
     background: transparent;
     border: none;
     cursor: pointer;
@@ -87,7 +114,7 @@ function createCommandIconButton(buttonConfig, index) {
     color: #57ab5a;
     font-size: 14px;
   `;
-  button.textContent = buttonConfig.emoji;
+  button.textContent = face;
   button.dataset.btnIndex = index;
 
   button.addEventListener('mouseenter', () => {
@@ -131,6 +158,21 @@ async function createOpenButton() {
   return createButton('Open in Terminal', 'open');
 }
 
+// 새 GitHub 헤더의 breadcrumb 항목(li, display:block) 안에서 인라인 흐름에 맡기면 버튼이
+// baseline을 따라 12px쯤 아래로 처진다. 항목을 flex로 바꿔 저장소 이름·드롭다운과 같은
+// 선상(교차축 중앙)에 붙인다. 항목 밖(ol의 형제)으로 빼면 breadcrumb 구분자 "/"가 버튼
+// 앞에 새로 나타나므로 안에 두는 쪽이 맞다.
+function attachToRepoCrumb(anchor, button) {
+  const crumb = anchor.closest('li');
+  if (crumb) {
+    crumb.style.display = 'flex';
+    crumb.style.alignItems = 'center';
+    crumb.appendChild(button);
+  } else {
+    anchor.insertAdjacentElement('afterend', button); // 구 UI: breadcrumb가 아닌 헤더
+  }
+}
+
 // PR 헤더에 커스텀 명령 버튼들 추가 (성공 시 true 반환)
 async function tryInsertPRButtons() {
   // 이미 버튼이 있으면 스킵
@@ -165,6 +207,12 @@ async function tryInsertPRButtons() {
     buttons = DEFAULT_BUTTONS;
   }
 
+  // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
+  // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
+  if (document.querySelector('.terminal-cmd-btn')) {
+    return true;
+  }
+
   // head-ref span 바깥에 삽입 (브랜치 뱃지 안에 들어가지 않도록)
   const headRefSpan = headBranchLink.closest('.head-ref');
   // clipboard-copy를 감싼 wrapper span (head-ref의 다음 형제)
@@ -191,11 +239,13 @@ async function tryInsertRepoButton() {
   const lockIcon = header?.querySelector('svg.octicon-lock');
 
   if (lockIcon) {
-    // Private 저장소: 자물쇠 아이콘 뒤에 추가
+    // Private 저장소: 자물쇠 아이콘이 있는 breadcrumb 항목에 추가
     const button = await createOpenButton();
+    // await 사이에 다른 트리거가 먼저 삽입했으면 중복을 만들지 않는다
+    if (document.querySelector('.terminal-open-btn')) return true;
     button.style.padding = '3px 8px';
     button.style.fontSize = '11px';
-    lockIcon.parentElement.insertAdjacentElement('afterend', button);
+    attachToRepoCrumb(lockIcon, button);
     return true;
   }
 
@@ -207,9 +257,10 @@ async function tryInsertRepoButton() {
   const repoLink = header?.querySelector(`a[href="${repoPath}"]`);
   if (repoLink) {
     const button = await createOpenButton();
+    if (document.querySelector('.terminal-open-btn')) return true;
     button.style.padding = '3px 8px';
     button.style.fontSize = '11px';
-    repoLink.insertAdjacentElement('afterend', button);
+    attachToRepoCrumb(repoLink, button);
     return true;
   }
 
