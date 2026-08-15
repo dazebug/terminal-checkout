@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__
+*.pyc
+.idea
+*.iml
+.vscode
+.ruby-lsp
+
+# install.sh가 생성하는 python3 절대경로 래퍼
+native-host/run.sh

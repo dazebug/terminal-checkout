@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Terminal Checkout Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 24px;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 20px; margin-bottom: 24px; color: #f0f6fc; }
+    h2 { font-size: 16px; margin-bottom: 12px; color: #f0f6fc; }
+    .section { margin-bottom: 32px; }
+    .help {
+      font-size: 12px;
+      color: #8b949e;
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #8b949e;
+      margin-bottom: 4px;
+    }
+    input, select, textarea {
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: #58a6ff; }
+
+    /* 버튼 카드 */
+    .btn-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .btn-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .btn-card-header .btn-number {
+      font-size: 12px;
+      color: #8b949e;
+      background: #21262d;
+      border-radius: 12px;
+      padding: 2px 8px;
+    }
+    .btn-card .remove-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: transparent;
+      border: 1px solid #f8514966;
+      color: #f85149;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn-card .remove-btn:hover { background: #f8514922; }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .field { display: flex; flex-direction: column; }
+    .field > label { font-size: 11px; margin-bottom: 3px; }
+    .field-preset, .field-command { flex: 1; }
+    .field-emoji .emoji-input { width: 50px; text-align: center; font-size: 16px; }
+    .field-label .label-input { width: 180px; }
+    .command-input {
+      width: 100%;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      resize: vertical;
+      min-height: 3.2em;
+    }
+
+    /* 리포 오버라이드 테이블 */
+    .override-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .override-table th {
+      text-align: left;
+      font-size: 12px;
+      color: #8b949e;
+      padding: 6px 8px;
+      border-bottom: 1px solid #30363d;
+    }
+    .override-table td {
+      padding: 4px 8px;
+    }
+    .override-table input { width: 100%; }
+    .override-table .remove-row {
+      background: transparent;
+      border: none;
+      color: #f85149;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px;
+    }
+    .override-empty {
+      font-size: 13px;
+      color: #8b949e;
+      padding: 8px 0;
+    }
+
+    /* 액션 버튼 */
+    .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; }
+    #dirty-indicator { color: #d29922; font-size: 13px; margin-left: 4px; }
+    .add-hint { font-size: 12px; color: #8b949e; margin-left: 8px; }
+    .btn-primary {
+      background: #238636;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-secondary {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #30363d; }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status {
+      font-size: 13px;
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      display: none;
+    }
+    .status.success { display: block; background: #23863622; color: #3fb950; border: 1px solid #23863644; }
+    .status.error { display: block; background: #f8514922; color: #f85149; border: 1px solid #f8514944; }
+    .status.info { display: block; background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb44; }
+  </style>
+</head>
+<body>
+  <h1>Terminal Checkout Settings</h1>
+
+  <div class="section">
+    <h2>Terminal</h2>
+    <p class="help">명령을 실행할 터미널 앱을 선택합니다.</p>
+    <div style="display: flex; gap: 12px;">
+      <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+        <input type="radio" name="terminal" value="iterm" id="terminal-iterm"> iTerm2
+      </label>
+      <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+        <input type="radio" name="terminal" value="wezterm" id="terminal-wezterm"> WezTerm
+      </label>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Command Buttons</h2>
+    <p class="help">PR 페이지 브랜치 옆에 표시할 버튼 (최대 3개). Emoji가 버튼 모양이 되고, Label은 그 버튼에 마우스를 올렸을 때 나오는 툴팁입니다. Preset을 고르면 아래 세 칸이 해당 템플릿으로 채워집니다.</p>
+    <p class="help">Command에서 쓸 수 있는 변수: <code>{repo}</code>, <code>{branch}</code>, <code>{main}</code>, <code>{branch_underbar}</code> (branch의 <code>/</code>를 <code>_</code>로 치환)</p>
+    <div id="buttons-container"></div>
+    <div style="margin-top:8px">
+      <button class="btn-secondary" id="add-btn">+ Add Button</button>
+      <span class="add-hint" id="add-btn-hint" hidden>버튼은 최대 3개까지 추가할 수 있습니다.</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Default Main Branch</h2>
+    <p class="help">글로벌 기본 main 브랜치. PR 페이지에서 base branch 감지가 안 될 때 사용됩니다.</p>
+    <input type="text" id="default-main" placeholder="main" style="width:200px">
+  </div>
+
+  <div class="section">
+    <h2>Per-Repo Main Branch Override</h2>
+    <p class="help">특정 리포의 main 브랜치를 오버라이드합니다. 이 설정은 PR 페이지 base branch 감지보다 우선합니다.</p>
+    <table class="override-table">
+      <thead>
+        <tr>
+          <th style="width:45%">Repository</th>
+          <th style="width:45%">Main Branch</th>
+          <th style="width:10%"></th>
+        </tr>
+      </thead>
+      <tbody id="overrides-body"></tbody>
+    </table>
+    <div class="override-empty" id="overrides-empty" hidden>등록된 오버라이드가 없습니다.</div>
+    <button class="btn-secondary" id="add-override" style="margin-top:8px">+ Add Override</button>
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="save-btn">Save</button>
+    <button class="btn-secondary" id="reset-btn">Reset to Defaults</button>
+    <span id="dirty-indicator" hidden>● 저장되지 않은 변경사항</span>
+  </div>
+  <div id="status" class="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

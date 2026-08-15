@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Terminal Checkout",
+  "version": "1.0",
+  "description": "GitHub PR 페이지에서 터미널(iTerm2/WezTerm)로 브랜치 checkout",
+  "permissions": ["nativeMessaging", "activeTab", "scripting", "storage"],
+  "host_permissions": ["*://github.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://github.com/*/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {},
+  "options_page": "options.html"
+}
