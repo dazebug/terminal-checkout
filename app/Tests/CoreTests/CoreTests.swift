@@ -401,6 +401,18 @@ final class ExtensionIDTests: XCTestCase {
     func testIDIsStable() {
         XCTAssertEqual(extensionID(forPath: "/tmp/e"), extensionID(forPath: "/tmp/e"))
     }
+
+    // manifest "key"(base64 DER 공개키)가 있으면 Chrome은 경로 대신 그 키에서 ID를 만든다 —
+    // 해시 대상만 다르고 매핑 규칙은 경로 방식과 같다
+    func testKeyBasedIDKnownVector() {
+        // base64 "aGVsbG8=" → "hello", 기대값은 파이썬 hashlib로 독립 계산
+        XCTAssertEqual(extensionID(fromManifestKey: "aGVsbG8="), "cmpcenlkfplakdaocgoidlckmfljocjo")
+    }
+
+    func testKeyBasedIDRejectsInvalidBase64() {
+        XCTAssertNil(extensionID(fromManifestKey: "!!!not-base64!!!"))
+        XCTAssertNil(extensionID(fromManifestKey: ""))
+    }
 }
 
 // MARK: - Native Host manifest JSON

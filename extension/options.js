@@ -386,6 +386,132 @@ function resetSettings() {
   showStatus('info', '기본값으로 되돌렸습니다. 저장을 눌러야 반영됩니다.');
 }
 
+// --- 내보내기/가져오기 ---
+// storage.sync는 확장 ID 단위로 묶이는데 개발자 모드 확장의 ID는 로드 폴더 경로에서 나오므로
+// 컴퓨터마다 달라진다 — 계정이 같아도 안 넘어오는 설정을 파일로 옮기기 위한 통로다.
+
+const BACKUP_KEYS = ['buttons', 'issueButtons', 'defaultMain', 'repoMainBranch'];
+const MAX_IMPORT_BYTES = 256 * 1024;
+
+// 파일 텍스트를 저장 스키마 조각으로 검증한다. DOM·chrome API를 쓰지 않아 단독으로 테스트할 수 있다.
+// 쓸 수 없는 파일이면 throw하고, 알아봤지만 버린 키는 skipped로 돌려준다.
+function parseImportedSettings(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error('JSON으로 읽을 수 없는 파일입니다.');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('설정 파일의 최상위가 객체가 아닙니다.');
+  }
+
+  // 파일에서 온 값은 타입을 믿을 수 없다. 문자열이 아닌 필드는 빈 값으로 떨어뜨려 저장 시
+  // 필수 항목 검사에 걸리게 한다 (그대로 두면 저장할 때 .trim()에서 터진다).
+  const text = v => (typeof v === 'string' ? v : '');
+  const settings = {};
+  const skipped = [];
+
+  for (const key of ['buttons', 'issueButtons']) {
+    if (data[key] === undefined) continue;
+    // 빈 배열은 "버튼 없음"이 아니라 "설정 없음"으로 본다 — 배경 로직이 빈 배열에는 기본값
+    // 폴백을 걸지 않아 버튼이 통째로 사라진다.
+    const buttons = (Array.isArray(data[key]) ? data[key] : [])
+      .filter(b => b && typeof b === 'object' && !Array.isArray(b))
+      .slice(0, MAX_BUTTONS)
+      .map(b => {
+        const btn = normalizeButton(b);
+        return {
+          face: text(btn.face),
+          label: text(btn.label),
+          command: text(btn.command),
+          claudeInputs: btn.claudeInputs.slice(0, MAX_CLAUDE_INPUTS),
+        };
+      });
+    if (buttons.length) settings[key] = buttons;
+    else skipped.push(key);
+  }
+
+  if (data.defaultMain !== undefined) {
+    if (typeof data.defaultMain === 'string') settings.defaultMain = data.defaultMain;
+    else skipped.push('defaultMain');
+  }
+
+  if (data.repoMainBranch !== undefined) {
+    const map = data.repoMainBranch;
+    if (map && typeof map === 'object' && !Array.isArray(map)) {
+      // 빈 객체는 "오버라이드 없음"이라는 유효한 설정이라 그대로 받는다
+      settings.repoMainBranch = Object.fromEntries(
+        Object.entries(map).filter(([, branch]) => typeof branch === 'string')
+      );
+    } else {
+      skipped.push('repoMainBranch');
+    }
+  }
+
+  if (Object.keys(settings).length === 0) {
+    throw new Error(`가져올 설정이 없습니다 (${BACKUP_KEYS.join(' · ')} 중 하나가 필요합니다).`);
+  }
+  return { settings, skipped };
+}
+
+async function exportSettings() {
+  const data = await chrome.storage.sync.get(BACKUP_KEYS);
+  // 화면의 미저장 편집이 아니라 저장된 값을 그대로 내보낸다
+  const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
+  if (Object.keys(saved).length === 0) {
+    showStatus('error', '아직 저장된 설정이 없습니다. 저장한 뒤에 내보내세요.');
+    return;
+  }
+
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(saved, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `terminal-checkout-settings-${stamp}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // 즉시 해제하면 다운로드가 취소될 수 있다
+
+  if (state.dirty) showStatus('info', '저장되지 않은 변경은 내보내기에 포함되지 않았습니다.');
+}
+
+// 저장은 저장 버튼 하나로만 일어난다 — 여기서도 화면만 채우고 저장소는 건드리지 않는다.
+function applyImportedSettings(settings) {
+  for (const { kind, storageKey } of SECTIONS) {
+    if (settings[storageKey]) state.buttons[kind] = settings[storageKey].map(normalizeButton);
+  }
+  if (settings.defaultMain !== undefined) {
+    document.getElementById('default-main').value = settings.defaultMain.trim() || 'main';
+  }
+  if (settings.repoMainBranch) {
+    state.overrides = Object.entries(settings.repoMainBranch).map(([repo, branch]) => ({ repo, branch }));
+  }
+
+  SECTIONS.forEach(({ kind }) => renderButtons(kind));
+  renderOverrides();
+  markDirty();
+}
+
+async function importSettings(file) {
+  if (file.size > MAX_IMPORT_BYTES) {
+    showStatus('error', '설정 파일이 너무 큽니다 (최대 256KB).');
+    return;
+  }
+
+  let imported;
+  try {
+    imported = parseImportedSettings(await file.text());
+  } catch (error) {
+    showStatus('error', `가져오지 못했습니다: ${error.message}`);
+    return;
+  }
+
+  applyImportedSettings(imported.settings);
+  const dropped = imported.skipped.length ? ` (건너뛴 항목: ${imported.skipped.join(', ')})` : '';
+  showStatus('info', `설정을 가져왔습니다. 저장을 눌러야 반영됩니다.${dropped}`);
+}
+
 let statusTimer = null;
 
 function showStatus(type, message) {
@@ -522,6 +648,17 @@ document.getElementById('default-main').addEventListener('input', markDirty);
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
 document.getElementById('reset-btn').addEventListener('click', resetSettings);
+
+const importInput = document.getElementById('import-file');
+
+document.getElementById('export-btn').addEventListener('click', exportSettings);
+document.getElementById('import-btn').addEventListener('click', () => importInput.click());
+
+importInput.addEventListener('change', () => {
+  const file = importInput.files[0];
+  importInput.value = ''; // 비워두지 않으면 같은 파일을 다시 골랐을 때 change가 오지 않는다
+  if (file) importSettings(file);
+});
 
 // manifest가 options_page(전체 탭)라서 이탈 경고 다이얼로그가 실제로 뜬다.
 // options_ui(임베드)로 바꾸면 브라우저가 이 경고를 억제한다.

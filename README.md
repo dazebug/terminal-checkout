@@ -26,7 +26,7 @@ relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, �
 - macOS 13+
 - Google Chrome
 - iTerm2 또는 WezTerm
-- Swift 툴체인 (Xcode 또는 Command Line Tools) — 빌드용
+- Swift 툴체인 — 빌드용 (`xcode-select --install`로 Command Line Tools만 설치해도 충분)
 - [zoxide](https://github.com/ajeetdsouza/zoxide) 또는 [z.sh](https://github.com/rupa/z) (디렉토리 점프 도구)
 - 선택: [gh](https://cli.github.com) (이슈 프리셋), claude (claude 입력)
 
@@ -74,6 +74,8 @@ cd terminal-checkout
 
 설정이 모두 끝나면 창에는 터미널 선택·동작 테스트와 [확장 옵션 페이지 열기]·[설치 안내 다시 보기]만 남습니다.
 
+> 다른 컴퓨터에서 이미 쓰고 있었다면: 확장을 로드한 뒤 Chrome이 같은 Google 계정으로 동기화 중이면 버튼·명령 설정이 자동으로 내려옵니다 — 옵션 페이지를 다시 설정할 필요가 없습니다.
+
 > 향후 Chrome Web Store(unlisted) 배포로 전환하면 이 과정은 스토어 링크 클릭 한 번으로 줄어들 예정입니다.
 
 앱은 보이지 않게 백그라운드로 동작합니다 — 메뉴 막대 아이콘이 없고, Dock에는 설정 창이 열려 있는 동안만 나타납니다. 설정 창을 다시 열려면 Spotlight(⌘Space)나 Launchpad에서 **Terminal Checkout**을 실행하세요. 앱이 꺼져 있어도 확장 버튼을 누르면 자동으로 실행되므로 항상 켜둘 필요가 없습니다.
@@ -118,6 +120,8 @@ command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 clau
 
 - **설치·터미널 선택·권한·확장 폴더**: Terminal Checkout.app 설정 창
 - **PR·이슈 버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
+
+옵션 페이지의 설정은 Chrome 계정 동기화 영역(`storage.sync`)에 저장됩니다. 확장 ID가 manifest `key`로 고정되어 있어, **같은 Google 계정**으로 로그인하고 동기화에서 "확장 프로그램" 항목이 켜진 Chrome끼리는 컴퓨터가 달라도 설정이 자동으로 동기화됩니다. 옵션 페이지 **backup** 섹션의 [내보내기 (JSON)]·[가져오기…]는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용입니다 — 가져오기는 화면만 채우므로 확인한 뒤 **저장**을 눌러야 반영됩니다.
 
 Command에서 쓸 수 있는 변수:
 

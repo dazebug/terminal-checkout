@@ -35,15 +35,32 @@ enum Installer {
     }
 
     /// Chrome에 로드할 확장 폴더 — App Support 고정 경로 단일 위치.
-    /// 경로에서 확장 ID가 계산되므로 안정적인 경로여야 한다.
     static var extensionDirectory: String { defaultExtensionInstallPath() }
 
+    /// 번들 확장 manifest의 "key" — 확장 ID를 컴퓨터·경로와 무관하게 고정하는 공개키.
+    /// (같은 ID여야 storage.sync 설정이 같은 Google 계정의 Chrome끼리 동기화된다)
+    static var bundledManifestKey: String? {
+        guard let dir = bundledExtensionPath,
+              let data = FileManager.default.contents(atPath: dir + "/manifest.json"),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        return obj["key"] as? String
+    }
+
     static var currentExtensionID: String {
-        extensionID(forPath: extensionDirectory)
+        bundledManifestKey.flatMap(extensionID(fromManifestKey:))
+            ?? extensionID(forPath: extensionDirectory)
     }
 
     /// Native Host가 허용할 확장 ID 목록. Web Store 전환 시 store ID를 여기에 추가하면 된다.
-    static var allowedExtensionIDs: [String] { [currentExtensionID] }
+    /// 경로 기반 ID는 key 도입 전에 로드된 확장(제거·재설치 전까지 옛 ID로 동작)을 위해 남긴다.
+    static var allowedExtensionIDs: [String] {
+        var ids = [currentExtensionID]
+        let pathID = extensionID(forPath: extensionDirectory)
+        if !ids.contains(pathID) { ids.append(pathID) }
+        return ids
+    }
 
     static var optionsPageURL: String {
         "chrome-extension://\(currentExtensionID)/options.html"
