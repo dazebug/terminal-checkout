@@ -39,8 +39,17 @@ public func wezTermTTYName(listJSON: Data, paneID: String) -> String? {
     return nil
 }
 
-/// 스폰된 세션의 포그라운드가 claude가 될 때까지 기다렸다가 입력을 순서대로 타이핑한다.
-/// 첫 입력을 claude가 처리하는 동안 나머지는 claude 자체의 메시지 큐에 쌓인다.
+/// 화면 반영 확인용 프로브. 긴 입력은 터미널 폭에서 줄바꿈돼 통짜 매칭이 깨지므로
+/// 앞 24자만 쓴다 (프롬프트 뒤 첫 줄에는 항상 앞부분이 있다).
+public func claudeInputProbe(_ input: String) -> String {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    return String(trimmed.prefix(24))
+}
+
+/// 스폰된 세션의 포그라운드가 claude가 될 때까지 기다렸다가 입력을 순서대로 전달한다.
+/// 각 입력은 [개행 없이 타이핑 → 화면 반영 확인 → CR로 제출] 순서로 보낸다:
+/// claude TUI는 초기화 중 도착한 입력을 버리고, LF(\n)는 제출로 인식하지 않기 때문
+/// (둘 다 WezTerm 실측). 첫 입력을 처리하는 동안 나머지는 claude 입력창에 큐잉된다.
 /// 타임아웃 내에 claude가 안 뜨면 아무것도 보내지 않고 포기한다(로그만).
 /// 최대 2분을 도는 블로킹 루프이므로 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
 public func deliverClaudeInputs(
@@ -74,9 +83,6 @@ public func deliverClaudeInputs(
         Thread.sleep(forTimeInterval: pollInterval)
     }
 
-    // 감지 직후는 TUI가 입력을 받기 직전일 수 있으므로 잠깐 여유를 둔다
-    Thread.sleep(forTimeInterval: 0.8)
-
     for (index, input) in inputs.enumerated() {
         if index > 0 { Thread.sleep(forTimeInterval: 0.4) }
         // 전송 직전 재확인 — 그 사이 claude가 종료했으면 텍스트가 셸에 들어가므로 중단
@@ -84,11 +90,37 @@ public func deliverClaudeInputs(
             NSLog("Terminal Checkout: claude가 전면에서 사라져 남은 입력 \(inputs.count - index)개를 보내지 않음")
             return
         }
-        guard sendText(input, to: handle) else {
+        guard typeAndSubmit(input, to: handle) else {
             NSLog("Terminal Checkout: claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
             return
         }
     }
+}
+
+/// 타이핑 → 화면 반영 확인 → 제출. 반영이 안 보이면(TUI가 아직 입력을 버리는 중)
+/// 입력창을 비우고 재타이핑한다. 반영 확인 없이 제출하면 빈 줄만 제출되거나
+/// 잘린 텍스트가 제출될 수 있으므로 확인 전에는 절대 CR을 보내지 않는다.
+private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> Bool {
+    let probe = claudeInputProbe(text)
+    let maxAttempts = 5
+    for attempt in 1...maxAttempts {
+        if attempt > 1 {
+            // Ctrl+U: 입력창 클리어 — 부분적으로 들어간 텍스트가 재타이핑과 섞이지 않게 한다
+            guard sendKeys("\u{15}", to: handle) else { return false }
+            Thread.sleep(forTimeInterval: 1.0)
+        }
+        guard sendKeys(text, to: handle) else { return false }
+
+        for _ in 0..<5 {
+            Thread.sleep(forTimeInterval: 0.4)
+            guard let screen = screenText(of: handle) else { return false }
+            if screen.contains(probe) {
+                return sendKeys("\r", to: handle)
+            }
+        }
+        NSLog("Terminal Checkout: 입력이 화면에 반영되지 않아 재시도 (\(attempt)/\(maxAttempts))")
+    }
+    return false
 }
 
 private func claudeIsForeground(ttyName: String) -> Bool {
@@ -106,13 +138,19 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
     return wezTermTTYName(listJSON: Data(result.stdout.utf8), paneID: paneID)
 }
 
-private func sendText(_ text: String, to handle: TerminalSessionHandle) -> Bool {
+/// 키 입력을 개행 추가 없이 그대로 보낸다. "\r"는 제출, "\u{15}"(Ctrl+U)는 입력창 클리어.
+private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool {
     switch handle {
     case .iterm(let sessionID, _):
-        guard let result = try? runProcess(
-            "/usr/bin/osascript", ["-e", iTermWriteToSessionScript(sessionID: sessionID, text: text)],
-            timeout: 10
-        ), result.status == 0 else { return false }
+        // 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 전용 스크립트로 분기한다
+        let script: String
+        switch text {
+        case "\r": script = iTermWriteToSessionScript(sessionID: sessionID, text: "", submit: true)
+        case "\u{15}": script = iTermClearInputScript(sessionID: sessionID)
+        default: script = iTermWriteToSessionScript(sessionID: sessionID, text: text, submit: false)
+        }
+        guard let result = try? runProcess("/usr/bin/osascript", ["-e", script], timeout: 10),
+              result.status == 0 else { return false }
         if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" {
             NSLog("Terminal Checkout: 세션이 닫혀 claude 입력 전달 중단")
             return false
@@ -123,10 +161,32 @@ private func sendText(_ text: String, to handle: TerminalSessionHandle) -> Bool 
         if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
         let result = try? runProcess(
             cliPath, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
-            input: text + "\n", env: env, timeout: 5
+            input: text, env: env, timeout: 5
         )
         return result?.status == 0
     case .none:
         return false
+    }
+}
+
+/// 세션의 현재 화면 텍스트 — 타이핑 반영 확인용. 조회 실패나 세션 소멸이면 nil.
+private func screenText(of handle: TerminalSessionHandle) -> String? {
+    switch handle {
+    case .iterm(let sessionID, _):
+        guard let result = try? runProcess(
+            "/usr/bin/osascript", ["-e", iTermSessionContentsScript(sessionID: sessionID)],
+            timeout: 10
+        ), result.status == 0 else { return nil }
+        let text = result.stdout
+        return text.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" ? nil : text
+    case .wezterm(let paneID, let cliPath, let socketPath):
+        var env = ProcessInfo.processInfo.environment
+        if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
+        guard let result = try? runProcess(
+            cliPath, ["cli", "get-text", "--pane-id", paneID], env: env, timeout: 5
+        ), result.status == 0 else { return nil }
+        return result.stdout
+    case .none:
+        return nil
     }
 }

@@ -244,6 +244,23 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(wezTermTTYName(listJSON: json, paneID: "99"))
         XCTAssertNil(wezTermTTYName(listJSON: Data("broken".utf8), paneID: "3"))
     }
+
+    // 화면 반영 확인용 프로브: 긴 입력은 화면 폭에서 줄바꿈돼 통짜 매칭이 깨지므로
+    // 앞부분만 잘라 쓴다
+    func testClaudeInputProbeShortInputUsedWhole() {
+        XCTAssertEqual(claudeInputProbe("/help"), "/help")
+    }
+
+    func testClaudeInputProbeLongInputTruncated() {
+        let long = String(repeating: "a", count: 60)
+        let probe = claudeInputProbe(long)
+        XCTAssertEqual(probe.count, 24)
+        XCTAssertTrue(long.hasPrefix(probe))
+    }
+
+    func testClaudeInputProbeTrimsWhitespace() {
+        XCTAssertEqual(claudeInputProbe("  /help  "), "/help")
+    }
 }
 
 // MARK: - AppleScript 이스케이프
@@ -272,18 +289,34 @@ final class AppleScriptTests: XCTestCase {
         XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
     }
 
-    func testITermWriteToSessionScript() {
-        let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#)
+    // 타이핑 모드: 개행 없이 텍스트만 넣는다 — 제출은 화면 반영 확인 후 별도로 보낸다
+    func testITermWriteToSessionScriptTypingSuppressesNewline() {
+        let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#, submit: false)
         XCTAssertTrue(script.contains(#"tell application id "com.googlecode.iterm2""#))
         XCTAssertTrue(script.contains(#"if (id of s) is "ABC-123" then"#))
-        XCTAssertTrue(script.contains(#"write text "say \"hi\"""#))
+        XCTAssertTrue(script.contains(#"write text "say \"hi\"" newline NO"#))
         // 세션이 사라졌으면(탭 닫힘) "gone"을 돌려줘 호출자가 전달을 중단하게 한다
         XCTAssertTrue(script.contains(#"return "gone""#))
     }
 
+    // 제출 모드: 개행만 보낸다 (빈 write text = Enter)
+    func testITermWriteToSessionScriptSubmitSendsNewlineOnly() {
+        let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: "", submit: true)
+        XCTAssertTrue(script.contains(#"write text """#))
+        XCTAssertFalse(script.contains("newline NO"))
+    }
+
     func testITermWriteToSessionScriptEscapesSessionID() {
-        let script = iTermWriteToSessionScript(sessionID: #"x"y"#, text: "t")
+        let script = iTermWriteToSessionScript(sessionID: #"x"y"#, text: "t", submit: false)
         XCTAssertTrue(script.contains(#"if (id of s) is "x\"y" then"#))
+    }
+
+    // 화면 반영 확인용 스크립트: 세션의 현재 화면 텍스트를 돌려준다
+    func testITermSessionContentsScript() {
+        let script = iTermSessionContentsScript(sessionID: "ABC-123")
+        XCTAssertTrue(script.contains(#"if (id of s) is "ABC-123" then"#))
+        XCTAssertTrue(script.contains("return contents of s"))
+        XCTAssertTrue(script.contains(#"return "gone""#))
     }
 }
 

@@ -35,19 +35,64 @@ public func iTermScript(for command: String) -> String {
     """
 }
 
-/// 이미 열린 세션에 텍스트 한 줄을 타이핑하는 AppleScript (claude 입력 전달용).
+/// 이미 열린 세션에 텍스트를 타이핑하는 AppleScript (claude 입력 전달용).
+/// submit=false면 개행 없이 타이핑만 한다 — claude TUI는 LF를 제출로 인식하지 않고,
+/// 초기화 중 도착한 입력은 버리므로, 화면 반영을 확인한 뒤 제출(개행)을 따로 보내야 한다.
 /// 세션을 못 찾으면(탭 닫힘) "gone"을 돌려줘 호출자가 남은 전달을 중단하게 한다.
-public func iTermWriteToSessionScript(sessionID: String, text: String) -> String {
+public func iTermWriteToSessionScript(sessionID: String, text: String, submit: Bool) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     let escapedText = escapeForAppleScript(text)
+    let write = submit
+        ? "tell s to write text \"\(escapedText)\""
+        : "tell s to write text \"\(escapedText)\" newline NO"
     return """
     tell application id "\(iTermBundleID)"
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if (id of s) is "\(escapedID)" then
-                        tell s to write text "\(escapedText)"
+                        \(write)
                         return "ok"
+                    end if
+                end repeat
+            end repeat
+        end repeat
+        return "gone"
+    end tell
+    """
+}
+
+/// Ctrl+U(0x15)를 세션에 보내 입력창을 비우는 AppleScript — 재타이핑 전 잔여 제거용.
+/// 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 character id로 만든다.
+public func iTermClearInputScript(sessionID: String) -> String {
+    let escapedID = escapeForAppleScript(sessionID)
+    return """
+    tell application id "\(iTermBundleID)"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if (id of s) is "\(escapedID)" then
+                        tell s to write text (character id 21) newline NO
+                        return "ok"
+                    end if
+                end repeat
+            end repeat
+        end repeat
+        return "gone"
+    end tell
+    """
+}
+
+/// 세션의 현재 화면 텍스트를 돌려주는 AppleScript — 타이핑이 실제로 반영됐는지 확인용.
+public func iTermSessionContentsScript(sessionID: String) -> String {
+    let escapedID = escapeForAppleScript(sessionID)
+    return """
+    tell application id "\(iTermBundleID)"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if (id of s) is "\(escapedID)" then
+                        return contents of s
                     end if
                 end repeat
             end repeat
