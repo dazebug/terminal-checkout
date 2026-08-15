@@ -1,7 +1,0 @@
-{
-  "name": "com.dazebug.terminal_checkout",
-  "description": "Terminal Checkout Native Host - GitHub PR에서 터미널로 checkout",
-  "path": "/path/to/terminal-checkout/native-host/run.sh",
-  "type": "stdio",
-  "allowed_origins": ["chrome-extension://EXTENSION_ID/"]
-}

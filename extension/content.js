@@ -15,7 +15,8 @@ const BUTTON_STYLE = `
 `;
 
 const DEFAULT_BUTTONS = [
-  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && git checkout {branch}' }
+  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
+  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
 ];
 
 // 페이지 타입 감지
@@ -125,14 +126,9 @@ function createCommandIconButton(buttonConfig, index) {
   return button;
 }
 
-// 저장소 페이지용 open 버튼 생성
+// 저장소 페이지용 open 버튼 생성 (터미널 선택은 앱이 관리하므로 라벨은 중립적으로)
 async function createOpenButton() {
-  let label = 'Open in iTerm';
-  try {
-    const data = await chrome.storage.sync.get(['terminal']);
-    if (data.terminal === 'wezterm') label = 'Open in WezTerm';
-  } catch { /* ignore */ }
-  return createButton(label, 'open');
+  return createButton('Open in Terminal', 'open');
 }
 
 // PR 헤더에 커스텀 명령 버튼들 추가 (성공 시 true 반환)

@@ -1,13 +1,32 @@
 # Terminal Checkout
 
-GitHub PR·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm)에서 해당 브랜치를 checkout하는 Chrome 확장 프로그램입니다.
+GitHub PR·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm)에서 해당 브랜치를 checkout하는 Chrome 확장 프로그램 + 맥 앱입니다.
+
+## 왜 앱인가?
+
+macOS는 자동화(Apple Events) 권한을 "responsible process"에 귀속시킵니다. Chrome이 native host를 직접 띄워 터미널을 제어하면 권한 주체가 **Chrome**이 되어, Chrome 전체에 넓은 권한을 허용해야 했습니다.
+
+Terminal Checkout.app 구조에서는:
+
+- Chrome이 띄우는 relay는 아무 것도 실행하지 않고 앱에 전달만 합니다
+- 실제 터미널 제어는 LaunchServices로 실행된 **Terminal Checkout.app**이 수행합니다
+- 따라서 **"Terminal Checkout → iTerm2 제어" 권한 하나만** 허용하면 됩니다. Chrome이나 python3에는 아무 권한도 필요 없습니다.
+
+```
+┌──────────────┐   stdio    ┌──────────────┐  unix socket  ┌──────────────────────┐   AppleScript /   ┌──────────────────┐
+│  Chrome 확장  │──────────▶│ relay (중계만) │──────────────▶│ Terminal Checkout.app │──────────────────▶│  iTerm2/WezTerm  │
+│ (JavaScript) │            │  (앱 번들 내)  │               │  ← TCC 권한은 여기에만  │   wezterm cli     │                  │
+└──────────────┘            └──────────────┘               └──────────────────────┘                   └──────────────────┘
+```
+
+relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, 앱을 항상 켜둘 필요는 없습니다.
 
 ## 요구 사항
 
-- macOS
-- Chrome 브라우저
+- macOS 13+
+- Google Chrome
 - iTerm2 또는 WezTerm
-- Python 3
+- Swift 툴체인 (Xcode 또는 Command Line Tools) — 빌드용
 - [zoxide](https://github.com/ajeetdsouza/zoxide) 또는 [z.sh](https://github.com/rupa/z) (디렉토리 점프 도구)
 
 ## 설치
@@ -18,20 +37,15 @@ GitHub PR·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / Wez
 brew install zoxide
 ```
 
-`~/.zshrc`에 다음 줄 추가:
+`~/.zshrc`에 다음 줄 추가 후 `source ~/.zshrc`:
 ```bash
 eval "$(zoxide init zsh)"
-```
-
-적용:
-```bash
-source ~/.zshrc
 ```
 
 > zoxide는 자주 방문하는 디렉토리를 학습해서 `z 폴더명`으로 빠르게 이동할 수 있게 해주는 도구입니다.
 > 사용하기 전에 해당 디렉토리를 한 번 이상 `cd`로 방문해야 합니다.
 
-### 1. Native Host 설치
+### 1. 앱 설치
 
 ```bash
 git clone https://github.com/dazebug/terminal-checkout.git
@@ -39,18 +53,24 @@ cd terminal-checkout
 ./install.sh
 ```
 
-`install.sh`는 비대화식이며 sudo가 필요 없습니다. 확장 프로그램 ID는 `extension/` 폴더의 절대 경로로부터 자동 계산되므로 별도 입력이 필요 없습니다.
+`install.sh`는 앱을 빌드해 `~/Applications/Terminal Checkout.app`으로 설치하고 실행합니다. sudo 불필요, 비대화식, 멱등입니다.
 
-> 확장 프로그램에 고정 ID(manifest `key`)를 쓰는 경우에는 `./install.sh --id EXTENSION_ID`로 직접 지정합니다.
+### 2. 앱 설정 창에서 마무리
 
-### 2. Chrome 확장 프로그램 로드
+앱이 열리면 설정 창에서 순서대로 진행합니다. Native Host 등록과 확장 폴더 준비는 앱 실행 시 자동으로 끝나 있습니다.
 
-1. Chrome에서 `chrome://extensions` 열기 (첫 설치 시 `install.sh`가 자동으로 열어줍니다)
-2. 우측 상단 **개발자 모드** 켜기
-3. **압축해제된 확장 프로그램을 로드합니다** 클릭
-4. `terminal-checkout/extension` 폴더 선택
+1. **확장 프로그램** — [Chrome에 설치하기] 클릭 (폴더 경로가 클립보드에 복사되고 chrome://extensions가 열립니다). 이어서:
+   - 우측 상단 **개발자 모드** 켜기
+   - 좌측 상단 **압축해제된 확장 프로그램을 로드합니다** 클릭
+   - 파일 선택 창에서 **⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]**
+   - **개발자 모드는 켜둔 채로 유지하세요** — Chrome 133+부터 끄면 unpacked 확장이 비활성화됩니다
+2. **터미널** — 명령을 실행할 터미널(iTerm2 / WezTerm)을 선택합니다
+3. **iTerm2 제어 권한** (iTerm2 선택 시에만 표시) — [iTerm2 권한 요청] 클릭 → 프롬프트에서 허용 (권한은 이 앱에만 부여됩니다. WezTerm은 권한이 필요 없습니다)
+4. **동작 테스트** — [터미널에서 테스트] 클릭, 터미널 새 탭에서 echo가 실행되면 완료
 
-저장소를 다른 경로로 옮겼다면 `./install.sh`를 다시 실행하세요 (멱등하게 동작합니다).
+> 향후 Chrome Web Store(unlisted) 배포로 전환하면 이 과정은 스토어 링크 클릭 한 번으로 줄어들 예정입니다.
+
+앱은 메뉴 막대(>_ 아이콘)에 상주하며, 설정 창은 아이콘 메뉴 → 설정 열기로 다시 열 수 있습니다.
 
 ## 사용법
 
@@ -58,23 +78,19 @@ cd terminal-checkout
 
 PR 헤더의 브랜치 이름 옆에 나타나는 아이콘 버튼을 클릭하면 설정된 명령이 터미널 새 탭에서 실행됩니다. 확장 아이콘을 클릭하면 첫 번째 버튼이 실행됩니다.
 
-기본 명령:
+기본 명령 (checkout 실패 시 — 예: 브랜치가 워크트리에 체크아웃된 경우 — 관례 경로 `../{repo}-{branch_underbar}`의 워크트리로 이동):
 ```bash
-z {repo} && git fetch origin && git checkout {branch}
+z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
 ```
 
 ### 저장소 페이지
 
-헤더의 **Open in iTerm / Open in WezTerm** 버튼을 클릭하면 해당 저장소 디렉토리로 이동한 새 탭이 열립니다.
+헤더의 **Open in Terminal** 버튼을 클릭하면 해당 저장소 디렉토리로 이동한 새 탭이 열립니다.
 
 ## 설정
 
-확장 프로그램 옵션 페이지(`chrome://extensions` → Terminal Checkout → 세부정보 → 확장 프로그램 옵션)에서 설정합니다.
-
-- **Terminal**: 명령을 실행할 터미널 앱 (iTerm2 / WezTerm)
-- **Command Buttons**: PR 페이지에 표시할 버튼 (최대 3개). Emoji가 버튼 모양, Label이 툴팁입니다.
-- **Default Main Branch**: PR 페이지에서 base branch 감지가 안 될 때 쓸 기본값
-- **Per-Repo Main Branch Override**: 특정 리포의 main 브랜치 지정 (base branch 감지보다 우선)
+- **설치·터미널 선택·권한·확장 폴더**: Terminal Checkout.app 설정 창
+- **버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
 
 Command에서 쓸 수 있는 변수:
 
@@ -85,6 +101,14 @@ Command에서 쓸 수 있는 변수:
 | `{main}` | main 브랜치 (리포별 오버라이드 → PR 페이지 감지 → 글로벌 기본값 순으로 결정) |
 | `{branch_underbar}` | `{branch}`의 `/`를 `_`로 치환한 값 (worktree 디렉토리명 등에 사용) |
 
+## 개발
+
+```bash
+cd app && swift test   # Core 단위 테스트
+app/build.sh           # 앱 번들 빌드 (app/build/Terminal Checkout.app)
+app/e2e.sh             # relay ↔ 소켓 ↔ 서버 왕복 회귀 테스트 (빌드 후)
+```
+
 ## 삭제
 
 ```bash
@@ -93,43 +117,31 @@ Command에서 쓸 수 있는 변수:
 
 Chrome 확장 프로그램은 `chrome://extensions`에서 직접 삭제하세요.
 
-## 동작 원리
-
-```
-┌──────────────────┐     ┌───────────────────┐     ┌──────────────────┐
-│  Chrome 확장     │────▶│   Native Host     │────▶│  iTerm2/WezTerm  │
-│  (JavaScript)    │     │   (Python)        │     │                  │
-└──────────────────┘     └───────────────────┘     └──────────────────┘
-```
-
-1. **Chrome 확장**: PR 페이지에서 repo명·브랜치명·base 브랜치 추출
-2. **Native Messaging**: Chrome이 로컬 Python 스크립트에 command template과 변수 전달
-3. **Native Host**: 변수를 치환해 최종 명령 생성 후 터미널에 전달 (iTerm2는 AppleScript, WezTerm은 `wezterm cli`)
-4. **터미널**: 새 탭에서 명령 실행
-
 ## 보안
 
-- Native Host는 특정 확장 프로그램 ID에서만 호출 가능 (화이트리스트)
-- 변수 값은 `^[a-zA-Z0-9\-_./]+$` 검증을 거쳐 command injection 방지
+- Native Host relay는 특정 확장 프로그램 ID에서만 호출 가능 (`allowed_origins` 화이트리스트)
+- 변수 값은 영숫자·`-_./` 화이트리스트 검증을 거쳐 command injection 방지
+- 앱 소켓은 같은 사용자(uid)의 프로세스만 접근 가능 (모드 0600 + peer 검증)
 - GitHub 도메인에서만 동작
 
 ## 트러블슈팅
 
-### "Native host has exited" 오류
+### "Native host has exited" 또는 확장에서 반응이 없음
 
-`./install.sh`를 다시 실행하세요. 설치 스크립트가 python3 절대경로로 래퍼를 다시 만들고 셀프 테스트까지 수행합니다.
+앱 설정 창(메뉴 막대 >_ 아이콘 → 설정 열기)에서 ① Chrome 연결 상태를 확인하고 [등록/업데이트]를 누르세요. 저장소를 옮겼거나 앱을 재설치한 경우 `./install.sh`를 다시 실행하면 됩니다.
 
-수동 확인:
-```bash
-printf '\x02\x00\x00\x00{}' | ./native-host/run.sh
-```
+### 권한을 거부해버렸을 때
+
+앱 설정 창의 [시스템 설정 열기]로 이동해 **개인정보 보호 및 보안 → 자동화 → Terminal Checkout → iTerm2**를 켜세요.
+
+### 재빌드 후 권한을 다시 물어봄
+
+ad-hoc 서명을 사용하므로 앱을 다시 빌드하면 서명 정체성이 바뀌어 자동화 권한을 다시 요청할 수 있습니다. 한 번 허용하면 됩니다.
 
 ### z 명령이 동작하지 않음
 
-터미널 설정에서 로그인 쉘을 사용하도록 되어 있는지 확인하세요.
-zoxide/z가 쉘 설정 파일(`.zshrc`, `.bashrc`)에 제대로 설정되어 있어야 합니다.
+터미널 설정에서 로그인 쉘을 사용하도록 되어 있는지, zoxide/z가 쉘 설정 파일(`.zshrc`, `.bashrc`)에 제대로 설정되어 있는지 확인하세요.
 
 ### 버튼이 보이지 않음
 
-GitHub UI 업데이트로 버튼 위치가 변경될 수 있습니다.
-확장 아이콘 클릭은 항상 동작합니다.
+GitHub UI 업데이트로 버튼 위치가 변경될 수 있습니다. 확장 아이콘 클릭은 항상 동작합니다.

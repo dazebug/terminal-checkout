@@ -1,14 +1,14 @@
 const PRESETS = [
-  { name: 'Checkout Branch', emoji: '⏏️', command: 'z {repo} && git fetch origin && git checkout {branch}' },
-  { name: 'Checkout Main', emoji: '🏠', command: 'z {repo} && git fetch origin && git checkout {main}' },
-  { name: 'Checkout + Claude', emoji: '🤖', command: 'z {repo} && git fetch origin && git checkout {branch} && claude' },
-  { name: 'Open Repo', emoji: '📂', command: 'z {repo}' },
+  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동.
+  // { }는 서브셸이 아니라 그룹핑 — cd가 현재 셸에 남아야 하므로 ( )를 쓰면 안 된다
+  { name: 'Checkout Branch', emoji: '⏏️', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' },
+  { name: 'Checkout + Claude', emoji: '🤖', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude' },
   { name: 'Worktree + Claude', emoji: '🌳', command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude' },
   { name: 'Worktree', emoji: '🪵', command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}' },
 ];
 
 const DEFAULT_BUTTONS = [
-  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && git checkout {branch}' }
+  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
 ];
 
 const MAX_BUTTONS = 3;
@@ -223,13 +223,13 @@ function serializeOverrides() {
 
 // --- 로드/저장 ---
 
+// 터미널 선택은 Terminal Checkout 앱(설정 창)이 단일 소스로 관리한다
 async function loadSettings() {
-  const data = await chrome.storage.sync.get(['buttons', 'defaultMain', 'repoMainBranch', 'terminal']);
+  const data = await chrome.storage.sync.get(['buttons', 'defaultMain', 'repoMainBranch']);
 
   state.buttons = (data.buttons?.length ? data.buttons : DEFAULT_BUTTONS).map(normalizeButton);
   state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   document.getElementById('default-main').value = data.defaultMain || 'main';
-  document.getElementById(data.terminal === 'wezterm' ? 'terminal-wezterm' : 'terminal-iterm').checked = true;
 
   renderButtons();
   renderOverrides();
@@ -243,7 +243,6 @@ async function saveSettings() {
   if (overrides.error) return showError(overrides.error);
 
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
-  const terminal = document.querySelector('input[name="terminal"]:checked')?.value || 'iterm';
   const savedRevision = state.revision;
 
   try {
@@ -251,7 +250,6 @@ async function saveSettings() {
       buttons: state.buttons,
       defaultMain,
       repoMainBranch: overrides.value,
-      terminal,
     });
   } catch (error) {
     showStatus('error', `저장에 실패했습니다: ${error.message}`);
@@ -279,7 +277,6 @@ function resetSettings() {
   state.buttons = DEFAULT_BUTTONS.map(normalizeButton);
   state.overrides = [];
   document.getElementById('default-main').value = 'main';
-  document.getElementById('terminal-iterm').checked = true;
 
   renderButtons();
   renderOverrides();
@@ -365,7 +362,6 @@ document.getElementById('add-override').addEventListener('click', () => {
 });
 
 document.getElementById('default-main').addEventListener('input', markDirty);
-document.querySelectorAll('input[name="terminal"]').forEach(el => el.addEventListener('change', markDirty));
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
 document.getElementById('reset-btn').addEventListener('click', resetSettings);

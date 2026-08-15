@@ -6,5 +6,6 @@ __pycache__
 .vscode
 .ruby-lsp
 
-# install.sh가 생성하는 python3 절대경로 래퍼
-native-host/run.sh
+# Swift 빌드 산출물
+app/.build/
+app/build/

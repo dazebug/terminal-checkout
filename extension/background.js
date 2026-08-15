@@ -1,7 +1,8 @@
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
 const DEFAULT_BUTTONS = [
-  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && git checkout {branch}' }
+  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
+  { emoji: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
 ];
 
 const DEFAULT_MAIN = 'main';
@@ -142,14 +143,12 @@ async function executeCommand(tab, buttonIndex) {
     }
 
     const main = await resolveMainBranch(repo, domResult.detectedMain);
-    const terminalData = await chrome.storage.sync.get(['terminal']);
-    const terminal = terminalData.terminal || 'iterm';
 
-    console.log(`Executing command: repo=${repo}, branch=${domResult.branch}, main=${main}, terminal=${terminal}`);
+    // 어느 터미널에서 실행할지는 Terminal Checkout 앱 설정이 결정한다
+    console.log(`Executing command: repo=${repo}, branch=${domResult.branch}, main=${main}`);
     await sendToNativeHost({
       command_template: button.command,
-      variables: { repo, branch: domResult.branch, main, branch_underbar: domResult.branch.replace(/\//g, '_') },
-      terminal
+      variables: { repo, branch: domResult.branch, main, branch_underbar: domResult.branch.replace(/\//g, '_') }
     });
   } catch (error) {
     console.error('Error executing command:', error);
@@ -208,11 +207,8 @@ async function executeOpen(tab) {
     return;
   }
 
-  const terminalData = await chrome.storage.sync.get(['terminal']);
-  const terminal = terminalData.terminal || 'iterm';
-
-  console.log(`Opening ${repo}, terminal=${terminal}`);
-  await sendToNativeHost({ command_template: 'z {repo}', variables: { repo }, terminal });
+  console.log(`Opening ${repo}`);
+  await sendToNativeHost({ command_template: 'z {repo}', variables: { repo } });
 }
 
 // 확장 아이콘 클릭 핸들러 → 첫 번째 버튼 실행
