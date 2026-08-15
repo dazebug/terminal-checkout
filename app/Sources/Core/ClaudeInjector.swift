@@ -39,11 +39,21 @@ public func wezTermTTYName(listJSON: Data, paneID: String) -> String? {
     return nil
 }
 
-/// 화면 반영 확인용 프로브. 긴 입력은 터미널 폭에서 줄바꿈돼 통짜 매칭이 깨지므로
-/// 앞 24자만 쓴다 (프롬프트 뒤 첫 줄에는 항상 앞부분이 있다).
+/// 화면 반영 확인용 프로브. 긴 입력은 화면에서 어딘가 잘리거나 접히므로 앞부분만 쓴다.
 public func claudeInputProbe(_ input: String) -> String {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     return String(trimmed.prefix(24))
+}
+
+/// 타이핑한 입력이 화면에 떴는지 판정한다. 공백을 모두 지우고 비교하는 이유는 claude TUI가
+/// 입력을 글자 그대로 그리지 않기 때문이다: shell mode(`!`)는 "! gh …"처럼 `!` 뒤에 공백을
+/// 끼우고, 긴 입력은 터미널 폭에서 줄바꿈된다 (둘 다 실측). 통짜로 비교하면 이런 입력은
+/// 영영 반영 확인에 실패해 제출되지 못하고 입력창에 매달린다.
+public func screenShowsInput(_ screen: String, input: String) -> Bool {
+    let probe = claudeInputProbe(input).filter { !$0.isWhitespace }
+    // 빈 프로브는 어떤 화면에나 매칭돼 엉뚱한 제출을 승인하게 된다
+    guard !probe.isEmpty else { return false }
+    return screen.filter { !$0.isWhitespace }.contains(probe)
 }
 
 /// 스폰된 세션의 포그라운드가 claude가 될 때까지 기다렸다가 입력을 순서대로 전달한다.
@@ -101,7 +111,6 @@ public func deliverClaudeInputs(
 /// 입력창을 비우고 재타이핑한다. 반영 확인 없이 제출하면 빈 줄만 제출되거나
 /// 잘린 텍스트가 제출될 수 있으므로 확인 전에는 절대 CR을 보내지 않는다.
 private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> Bool {
-    let probe = claudeInputProbe(text)
     let maxAttempts = 5
     for attempt in 1...maxAttempts {
         if attempt > 1 {
@@ -114,7 +123,7 @@ private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> 
         for _ in 0..<5 {
             Thread.sleep(forTimeInterval: 0.4)
             guard let screen = screenText(of: handle) else { return false }
-            if screen.contains(probe) {
+            if screenShowsInput(screen, input: text) {
                 return sendKeys("\r", to: handle)
             }
         }

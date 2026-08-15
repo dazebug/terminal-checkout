@@ -20,11 +20,32 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private var chromeCard: NSView!
     private var extensionCard: NSView!
+    private var toolsCard: NSView!
+    private let toolsList = NSStackView()
     private var guideBlock: NSView!
     private var utilityRow: NSView!
     /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
     private var forceShowInstall = false
     private var requestObserver: (any NSObjectProtocol)?
+    private var toolsObserver: (any NSObjectProtocol)?
+
+    /// 없을 때 무엇이 깨지는지 — 사용자가 설치 여부를 판단할 근거가 되는 문장.
+    /// z는 기본 명령의 첫 단어라 없으면 모든 버튼이 실패하므로 오류로 다룬다.
+    private let toolAdvice: [(name: String, critical: Bool, advice: String)] = [
+        (
+            "z", true,
+            "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. "
+                + "brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하세요."
+        ),
+        (
+            "gh", false,
+            "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋이 실패합니다. brew install gh 후 gh auth login."
+        ),
+        (
+            "claude", false,
+            "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다."
+        ),
+    ]
 
     private let contentWidth: CGFloat = 560
     private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
@@ -55,11 +76,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
+        // 도구 확인은 로그인 셸을 띄우느라 창보다 늦게 끝난다
+        toolsObserver = NotificationCenter.default.addObserver(
+            forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
+        ) { [weak self] _ in self?.refresh() }
     }
 
     deinit {
-        if let requestObserver {
-            NotificationCenter.default.removeObserver(requestObserver)
+        for observer in [requestObserver, toolsObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -90,6 +115,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         chromeCard = buildChromeCard()
         extensionCard = buildExtensionCard()
+        toolsCard = buildToolsCard()
         utilityRow = buildUtilityRow()
 
         stack.addArrangedSubview(header())
@@ -99,6 +125,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(chromeCard)
         stack.addArrangedSubview(extensionCard)
         stack.addArrangedSubview(terminalCard())
+        stack.addArrangedSubview(toolsCard)
         stack.addArrangedSubview(testCard())
         stack.addArrangedSubview(utilityRow)
 
@@ -168,6 +195,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             buttonRow([installButton]),
             guideBlock,
             installFeedbackLabel,
+        ])
+    }
+
+    /// 명령이 부르는 도구 확인. 앱의 PATH가 아니라 로그인 셸에 물어야 한다 —
+    /// z는 zoxide가 rc에서 정의하는 셸 함수라 실행 파일 탐색으로는 찾을 수 없다.
+    private func buildToolsCard() -> NSView {
+        toolsList.orientation = .vertical
+        toolsList.alignment = .leading
+        toolsList.spacing = 6
+        return card("명령이 부르는 도구", [
+            helpLabel("버튼의 command와 claude 입력이 부르는 도구를 로그인 셸에서 확인했습니다."),
+            toolsList,
         ])
     }
 
@@ -445,6 +484,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         extensionCard.isHidden = evidence != nil && !forceShowInstall
         utilityRow.isHidden = !extensionCard.isHidden
 
+        updateToolsCard()
+
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
@@ -466,6 +507,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             socketAlive: socketAlive, permission: permission
         ))
         resizeToFit()
+    }
+
+    /// 없는 도구만 줄로 남긴다 — 준비된 도구까지 나열하면 정상 상태에서도 카드가 계속 떠 있게 된다.
+    private func updateToolsCard() {
+        guard let availability = Settings.toolAvailability else {
+            toolsCard.isHidden = true // 아직 확인 전 (백그라운드에서 진행 중)
+            return
+        }
+        let missing = toolAdvice.filter { availability[$0.name] == false }
+        toolsCard.isHidden = missing.isEmpty
+        toolsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for tool in missing {
+            let label = NSTextField(wrappingLabelWithString: "● \(tool.name) \(tool.advice)")
+            label.font = Theme.mono(11.5)
+            label.textColor = tool.critical ? Theme.err : Theme.warn
+            label.preferredMaxLayoutWidth = contentWidth - 28
+            toolsList.addArrangedSubview(label)
+        }
     }
 
     private func pipelineNodes(

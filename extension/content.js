@@ -14,36 +14,21 @@ const BUTTON_STYLE = `
   gap: 4px;
 `;
 
-const DEFAULT_BUTTONS = [
-  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
-  { face: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
-];
-
-// 버튼 표시 텍스트. face가 새 키이고 emoji는 구버전 저장값 호환용이다.
-function buttonFace(config) {
-  return (config.face ?? config.emoji ?? '').trim() || '⏏️';
-}
-
-// 글자·숫자가 섞이면 텍스트 필(pill)로, 이모지만이면 아이콘으로 그린다.
-// 이 스타일은 옵션 페이지의 미리보기(options.js)와 짝을 이룬다 — 바꾸면 같이 바꿀 것.
-function isTextFace(face) {
-  return /[\p{L}\p{N}]/u.test(face);
-}
-
-// 페이지 타입 감지
+// 페이지 타입 감지. 이슈 상세는 저장소 경로 패턴에도 걸리므로 먼저 가려낸다
 function getPageType() {
   const path = location.pathname;
+  if (path.match(/\/issues\/\d+/)) return 'issue';
   if (path.match(/\/pull\/\d+/)) return 'pr';
   if (path.match(/^\/[^/]+\/[^/]+\/?$/) || path.match(/^\/[^/]+\/[^/]+\/(tree|blob|issues|actions|settings|releases|tags|wiki|security|pulse|graphs|network|projects|commits|branches|pulls|discussions|compare)/)) return 'repo';
   return null;
 }
 
-// 버튼 생성 (공통 - 저장소 페이지용)
-function createButton(text, action) {
+// 저장소 헤더의 Open in Terminal 버튼
+function createOpenButton() {
   const button = document.createElement('button');
-  button.textContent = text;
+  button.textContent = 'Open in Terminal';
   button.style.cssText = BUTTON_STYLE;
-  button.className = action === 'checkout' ? 'terminal-checkout-btn' : 'terminal-open-btn';
+  button.className = 'terminal-open-btn';
 
   button.addEventListener('mouseenter', () => {
     button.style.backgroundColor = '#2ea043';
@@ -58,18 +43,18 @@ function createButton(text, action) {
     e.stopPropagation();
 
     const originalText = button.textContent;
-    button.textContent = action === 'checkout' ? 'Checking out...' : 'Opening...';
+    button.textContent = 'Opening...';
     button.disabled = true;
 
     try {
-      await chrome.runtime.sendMessage({ action: action });
+      await chrome.runtime.sendMessage({ action: 'open' });
       button.textContent = 'Done!';
       setTimeout(() => {
         button.textContent = originalText;
         button.disabled = false;
       }, 2000);
     } catch (error) {
-      console.error(`${action} error:`, error);
+      console.error('open error:', error);
       button.textContent = 'Error!';
       setTimeout(() => {
         button.textContent = originalText;
@@ -81,11 +66,11 @@ function createButton(text, action) {
   return button;
 }
 
-// PR 브랜치 옆 커스텀 명령 버튼 생성 (이모지 아이콘 또는 텍스트 필)
-function createCommandIconButton(buttonConfig, index) {
+// PR 브랜치·이슈 배지 옆 커스텀 명령 버튼 생성 (이모지 아이콘 또는 텍스트 필)
+function createCommandIconButton(buttonConfig, index, { action, className }) {
   const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
-  button.className = 'terminal-cmd-btn';
+  button.className = className;
   button.title = buttonConfig.label;
   button.style.cssText = isTextFace(face) ? `
     background: transparent;
@@ -134,7 +119,7 @@ function createCommandIconButton(buttonConfig, index) {
     button.disabled = true;
 
     try {
-      await chrome.runtime.sendMessage({ action: 'execute_command', buttonIndex: index });
+      await chrome.runtime.sendMessage({ action, buttonIndex: index });
       button.textContent = '✅';
       setTimeout(() => {
         button.textContent = originalText;
@@ -151,11 +136,6 @@ function createCommandIconButton(buttonConfig, index) {
   });
 
   return button;
-}
-
-// 저장소 페이지용 open 버튼 생성 (터미널 선택은 앱이 관리하므로 라벨은 중립적으로)
-async function createOpenButton() {
-  return createButton('Open in Terminal', 'open');
 }
 
 // 새 GitHub 헤더의 breadcrumb 항목(li, display:block) 안에서 인라인 흐름에 맡기면 버튼이
@@ -222,14 +202,62 @@ async function tryInsertPRButtons() {
 
   // 버튼들을 역순으로 삽입 (insertAdjacentElement afterend는 바로 뒤에 넣으므로)
   for (let i = buttons.length - 1; i >= 0; i--) {
-    const iconButton = createCommandIconButton(buttons[i], i);
+    const iconButton = createCommandIconButton(buttons[i], i, {
+      action: 'execute_command', className: 'terminal-cmd-btn',
+    });
     insertAfter.insertAdjacentElement('afterend', iconButton);
   }
 
   return true;
 }
 
-// 저장소 헤더에 버튼 추가 (성공 시 true 반환)
+// 이슈 헤더의 상태 배지 줄(Open · 연결된 PR · 라벨). 제목(h1) 안에 넣으면 제목 길이에 따라
+// 다음 줄로 밀리지만, 이 줄은 flex라 배지들과 같은 선상에 안정적으로 붙는다.
+function issueBadgeRow() {
+  const state = document.querySelector('[data-testid="header-state"]');
+  if (!state) return null;
+  // 모듈 CSS 클래스명에는 빌드 해시가 붙어 바뀌므로 레이아웃(flex)으로 행을 찾는다
+  let element = state.parentElement;
+  for (let depth = 0; depth < 4 && element; depth++) {
+    if (getComputedStyle(element).display === 'flex') return element;
+    element = element.parentElement;
+  }
+  return state.parentElement;
+}
+
+// 이슈 헤더에 이슈 전용 버튼들 추가 (성공 시 true 반환)
+async function tryInsertIssueButtons() {
+  if (document.querySelector('.terminal-issue-btn')) {
+    return true;
+  }
+
+  const row = issueBadgeRow();
+  if (!row) return false;
+
+  let buttons;
+  try {
+    const data = await chrome.storage.sync.get(['issueButtons']);
+    buttons = data.issueButtons || DEFAULT_ISSUE_BUTTONS;
+  } catch {
+    buttons = DEFAULT_ISSUE_BUTTONS;
+  }
+
+  // await 동안 다른 트리거(폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을 수 있다
+  if (document.querySelector('.terminal-issue-btn')) {
+    return true;
+  }
+
+  buttons.forEach((config, index) => {
+    row.appendChild(createCommandIconButton(config, index, {
+      action: 'execute_issue_command', className: 'terminal-issue-btn',
+    }));
+  });
+
+  return true;
+}
+
+// 저장소 헤더에 버튼 추가 (성공 시 true 반환).
+// storage를 읽지 않아 await가 없으므로 다른 트리거와 겹쳐도 중복 삽입이 생기지 않는다
 async function tryInsertRepoButton() {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
@@ -240,9 +268,7 @@ async function tryInsertRepoButton() {
 
   if (lockIcon) {
     // Private 저장소: 자물쇠 아이콘이 있는 breadcrumb 항목에 추가
-    const button = await createOpenButton();
-    // await 사이에 다른 트리거가 먼저 삽입했으면 중복을 만들지 않는다
-    if (document.querySelector('.terminal-open-btn')) return true;
+    const button = createOpenButton();
     button.style.padding = '3px 8px';
     button.style.fontSize = '11px';
     attachToRepoCrumb(lockIcon, button);
@@ -256,8 +282,7 @@ async function tryInsertRepoButton() {
   const repoPath = '/' + pathMatch[1];
   const repoLink = header?.querySelector(`a[href="${repoPath}"]`);
   if (repoLink) {
-    const button = await createOpenButton();
-    if (document.querySelector('.terminal-open-btn')) return true;
+    const button = createOpenButton();
     button.style.padding = '3px 8px';
     button.style.fontSize = '11px';
     attachToRepoCrumb(repoLink, button);
@@ -274,12 +299,14 @@ async function tryInsertButton() {
 
   let result = false;
 
-  // 저장소/PR 페이지 모두 헤더에 Open 버튼 삽입
+  // 저장소/PR/이슈 페이지 모두 헤더에 Open 버튼 삽입
   result = await tryInsertRepoButton() || result;
 
-  // PR 페이지는 추가로 커스텀 명령 버튼도 삽입
+  // PR·이슈 페이지는 각자의 커스텀 명령 버튼도 삽입 (설정이 서로 다르다)
   if (pageType === 'pr') {
     result = await tryInsertPRButtons() || result;
+  } else if (pageType === 'issue') {
+    result = await tryInsertIssueButtons() || result;
   }
 
   return result;

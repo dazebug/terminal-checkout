@@ -1,19 +1,17 @@
+importScripts('defaults.js'); // 버튼 기본값·프리셋은 defaults.js가 단일 출처
+
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
-const DEFAULT_BUTTONS = [
-  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
-  { face: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
-];
-
-const DEFAULT_MAIN = 'main';
-
-// GitHub PR URL에서 repo 이름 추출
-function extractRepoFromUrl(url) {
-  const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (match) {
-    return match[2]; // repo 이름만 반환
-  }
-  return null;
+// GitHub URL에서 owner·repo와 (PR·이슈면) 번호를 뽑는다
+function parseGitHubUrl(url) {
+  const match = url.match(/github\.com\/([^/]+)\/([^/?#]+)(?:\/(pull|issues)\/(\d+))?/);
+  if (!match) return null;
+  return {
+    owner: match[1],
+    repo: match[2],
+    kind: match[3] === 'pull' ? 'pr' : match[3] === 'issues' ? 'issue' : null,
+    number: match[4] || null,
+  };
 }
 
 // DOM에서 브랜치명과 base 브랜치 추출
@@ -67,12 +65,6 @@ function getBranchAndMainFromDOM() {
   return null;
 }
 
-// DOM에서 브랜치명만 추출 (기존 호환용)
-function getBranchFromDOM() {
-  const result = getBranchAndMainFromDOM();
-  return result ? result.branch : null;
-}
-
 // main 브랜치 결정: storage 오버라이드 → PR 페이지 감지 → 글로벌 기본값
 async function resolveMainBranch(repo, detectedMain) {
   const data = await chrome.storage.sync.get(['repoMainBranch', 'defaultMain']);
@@ -88,8 +80,12 @@ async function resolveMainBranch(repo, detectedMain) {
   return data.defaultMain || DEFAULT_MAIN;
 }
 
-// 버튼 설정 로드
-async function loadButtons() {
+// 버튼 설정 로드 (PR 페이지용 / 이슈 페이지용은 서로 다른 키에 저장된다)
+async function loadButtons(kind) {
+  if (kind === 'issue') {
+    const data = await chrome.storage.sync.get(['issueButtons']);
+    return data.issueButtons || DEFAULT_ISSUE_BUTTONS;
+  }
   const data = await chrome.storage.sync.get(['buttons']);
   return data.buttons || DEFAULT_BUTTONS;
 }
@@ -106,23 +102,24 @@ async function sendToNativeHost(message) {
   }
 }
 
+// 버튼 하나를 실행한다 — 변수 치환과 claude 입력 전달은 앱이 담당하므로 여기서는 재료만 보낸다
+async function runButton(button, variables) {
+  const message = { command_template: button.command, variables };
+  // command가 띄운 claude 세션에 순서대로 타이핑할 입력들 (앱이 claude 기동을 확인한 뒤 전달)
+  const claudeInputs = (button.claudeInputs || []).map(s => String(s).trim()).filter(Boolean);
+  if (claudeInputs.length) message.claude_inputs = claudeInputs;
+  await sendToNativeHost(message);
+}
+
 // 커스텀 명령 실행 (PR 페이지)
 async function executeCommand(tab, buttonIndex) {
-  const url = tab.url;
-
-  // GitHub PR 페이지인지 확인
-  if (!url.match(/github\.com\/[^/]+\/[^/]+\/pull\/\d+/)) {
+  const target = parseGitHubUrl(tab.url);
+  if (target?.kind !== 'pr') {
     console.log('Not a GitHub PR page');
     return;
   }
 
-  const repo = extractRepoFromUrl(url);
-  if (!repo) {
-    console.error('Could not extract repo from URL');
-    return;
-  }
-
-  const buttons = await loadButtons();
+  const buttons = await loadButtons('pr');
   const button = buttons[buttonIndex];
   if (!button) {
     console.error(`Button index ${buttonIndex} not found`);
@@ -142,82 +139,72 @@ async function executeCommand(tab, buttonIndex) {
       return;
     }
 
-    const main = await resolveMainBranch(repo, domResult.detectedMain);
+    const main = await resolveMainBranch(target.repo, domResult.detectedMain);
 
     // 어느 터미널에서 실행할지는 Terminal Checkout 앱 설정이 결정한다
-    console.log(`Executing command: repo=${repo}, branch=${domResult.branch}, main=${main}`);
-    const message = {
-      command_template: button.command,
-      variables: { repo, branch: domResult.branch, main, branch_underbar: domResult.branch.replace(/\//g, '_') }
-    };
-    // command가 띄운 claude 세션에 순서대로 타이핑할 입력들 (앱이 claude 기동을 확인한 뒤 전달)
-    const claudeInputs = (button.claudeInputs || []).map(s => String(s).trim()).filter(Boolean);
-    if (claudeInputs.length) message.claude_inputs = claudeInputs;
-    await sendToNativeHost(message);
+    console.log(`Executing command: repo=${target.repo}, branch=${domResult.branch}, main=${main}`);
+    await runButton(button, {
+      repo: target.repo,
+      owner: target.owner,
+      number: target.number,
+      branch: domResult.branch,
+      main,
+      branch_underbar: domResult.branch.replace(/\//g, '_'),
+    });
   } catch (error) {
     console.error('Error executing command:', error);
   }
 }
 
-// checkout 실행 (PR 페이지) - 하위 호환
-async function executeCheckout(tab) {
-  const url = tab.url;
-
-  // GitHub PR 페이지인지 확인
-  if (!url.match(/github\.com\/[^/]+\/[^/]+\/pull\/\d+/)) {
-    console.log('Not a GitHub PR page');
+// 커스텀 명령 실행 (이슈 페이지). 이슈에는 head 브랜치가 없어 {branch} 계열 변수를 주지 않는다 —
+// 템플릿이 쓰면 앱이 "Variable {branch} not provided"로 거절한다
+async function executeIssueCommand(tab, buttonIndex) {
+  const target = parseGitHubUrl(tab.url);
+  if (target?.kind !== 'issue') {
+    console.log('Not a GitHub issue page');
     return;
   }
 
-  const repo = extractRepoFromUrl(url);
-  if (!repo) {
-    console.error('Could not extract repo from URL');
+  const buttons = await loadButtons('issue');
+  const button = buttons[buttonIndex];
+  if (!button) {
+    console.error(`Issue button index ${buttonIndex} not found`);
     return;
   }
 
-  // content script에서 브랜치명 가져오기
   try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: getBranchFromDOM
+    const main = await resolveMainBranch(target.repo, null);
+    console.log(`Executing issue command: repo=${target.repo}, number=${target.number}`);
+    await runButton(button, {
+      repo: target.repo,
+      owner: target.owner,
+      number: target.number,
+      main,
     });
-
-    const branch = results[0]?.result;
-    if (!branch) {
-      console.error('Could not extract branch name');
-      return;
-    }
-
-    console.log(`Checking out ${repo}:${branch}`);
-    await sendToNativeHost({ repo, branch });
   } catch (error) {
-    console.error('Error executing checkout:', error);
+    console.error('Error executing issue command:', error);
   }
 }
 
 // open 실행 (저장소 페이지)
 async function executeOpen(tab) {
-  const url = tab.url;
-
-  // GitHub 저장소 페이지인지 확인
-  if (!url.match(/github\.com\/[^/]+\/[^/]+/)) {
+  const target = parseGitHubUrl(tab.url);
+  if (!target) {
     console.log('Not a GitHub repo page');
     return;
   }
 
-  const repo = extractRepoFromUrl(url);
-  if (!repo) {
-    console.error('Could not extract repo from URL');
-    return;
-  }
-
-  console.log(`Opening ${repo}`);
-  await sendToNativeHost({ command_template: 'z {repo}', variables: { repo } });
+  console.log(`Opening ${target.repo}`);
+  await sendToNativeHost({ command_template: 'z {repo}', variables: { repo: target.repo } });
 }
 
-// 확장 아이콘 클릭 핸들러 → 첫 번째 버튼 실행
+// 확장 아이콘 클릭 핸들러 → 페이지에 맞는 첫 번째 버튼 실행
 chrome.action.onClicked.addListener(async (tab) => {
-  await executeCommand(tab, 0);
+  if (parseGitHubUrl(tab.url)?.kind === 'issue') {
+    await executeIssueCommand(tab, 0);
+  } else {
+    await executeCommand(tab, 0);
+  }
 });
 
 // content.js에서 메시지 수신
@@ -231,8 +218,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // 비동기 응답을 위해 true 반환
   }
 
-  if (message.action === 'checkout') {
-    executeCheckout(sender.tab).then(() => {
+  if (message.action === 'execute_issue_command') {
+    executeIssueCommand(sender.tab, message.buttonIndex).then(() => {
       sendResponse({ success: true });
     }).catch((error) => {
       sendResponse({ success: false, error: error.message });

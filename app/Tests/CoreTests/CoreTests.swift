@@ -14,10 +14,22 @@ final class RenderTests: XCTestCase {
 
     func testRenderAllVariables() throws {
         let cmd = try renderCommand(
-            template: "{repo} {branch} {main} {branch_underbar}",
-            variables: ["repo": "r", "branch": "a/b", "main": "develop", "branch_underbar": "a_b"]
+            template: "{repo} {branch} {main} {branch_underbar} {number} {owner}",
+            variables: [
+                "repo": "r", "branch": "a/b", "main": "develop", "branch_underbar": "a_b",
+                "number": "1402", "owner": "frograms",
+            ]
         )
-        XCTAssertEqual(cmd, "r a/b develop a_b")
+        XCTAssertEqual(cmd, "r a/b develop a_b 1402 frograms")
+    }
+
+    // 이슈/PR 프리셋의 gh 명령은 {owner}/{repo}/{number}를 그대로 URL 경로에 넣는다
+    func testRenderGitHubAPIPath() throws {
+        let cmd = try renderCommand(
+            template: "gh api repos/{owner}/{repo}/issues/{number}/timeline",
+            variables: ["owner": "frograms", "repo": "remy-worker", "number": "1402"]
+        )
+        XCTAssertEqual(cmd, "gh api repos/frograms/remy-worker/issues/1402/timeline")
     }
 
     func testAcceptsAllowedCharacters() throws {
@@ -56,46 +68,32 @@ final class RenderTests: XCTestCase {
     }
 }
 
-// MARK: - 요청 해석 (신규 command_template 포맷 + 구 {repo, branch} 포맷)
+// MARK: - 요청 해석 (command_template 포맷)
 
 final class RequestTests: XCTestCase {
     func testTemplateRequest() throws {
         let req: [String: Any] = [
             "command_template": "z {repo} && git checkout {branch}",
             "variables": ["repo": "remy", "branch": "fix/x"],
-            "terminal": "wezterm",
         ]
-        let r = try resolveRequest(req)
-        XCTAssertEqual(r.command, "z remy && git checkout fix/x")
-        XCTAssertEqual(r.terminal, "wezterm")
+        XCTAssertEqual(try resolveRequest(req).command, "z remy && git checkout fix/x")
     }
 
-    func testTemplateRequestDefaultsToITerm() throws {
+    // 어느 터미널을 쓸지는 앱 설정이 정한다 — 요청에 섞여 오는 terminal 필드는 해석하지 않는다
+    func testTerminalFieldIsIgnored() throws {
         let req: [String: Any] = [
             "command_template": "z {repo}",
             "variables": ["repo": "remy"],
+            "terminal": "wezterm",
         ]
-        XCTAssertEqual(try resolveRequest(req).terminal, "iterm")
+        XCTAssertEqual(try resolveRequest(req).command, "z remy")
     }
 
-    func testLegacyCheckoutRequest() throws {
-        let r = try resolveRequest(["repo": "remy", "branch": "fix/x"])
-        XCTAssertEqual(r.command, "z remy && git fetch origin && git checkout fix/x")
-        XCTAssertEqual(r.terminal, "iterm")
-    }
-
-    func testLegacyOpenRequest() throws {
-        XCTAssertEqual(try resolveRequest(["repo": "remy"]).command, "z remy")
-    }
-
-    func testLegacySanitizes() {
-        XCTAssertThrowsError(try resolveRequest(["repo": "a;b"]))
-        XCTAssertThrowsError(try resolveRequest(["repo": "remy", "branch": "x;y"]))
-    }
-
-    func testMissingRepoThrows() {
+    func testRequestWithoutTemplateIsRejected() {
         XCTAssertThrowsError(try resolveRequest([:]))
         XCTAssertThrowsError(try resolveRequest(["unrelated": 1]))
+        XCTAssertThrowsError(try resolveRequest(["repo": "remy", "branch": "fix/x"]))
+        XCTAssertThrowsError(try resolveRequest(["command_template": ""]))
     }
 
     // claude_inputs: claude 실행 후 세션에 타이핑할 입력들. command와 같은 변수 문법을 쓴다.
@@ -114,10 +112,6 @@ final class RequestTests: XCTestCase {
             "command_template": "z {repo}", "variables": ["repo": "remy"],
         ])
         XCTAssertEqual(r.claudeInputs, [])
-    }
-
-    func testLegacyRequestHasNoClaudeInputs() throws {
-        XCTAssertEqual(try resolveRequest(["repo": "remy"]).claudeInputs, [])
     }
 
     func testClaudeInputsTrimmedAndEmptyDropped() throws {
@@ -160,14 +154,12 @@ final class HandlerTests: XCTestCase {
             json: [
                 "command_template": "z {repo}",
                 "variables": ["repo": "remy"],
-                "terminal": "wezterm",
                 "claude_inputs": ["/review"],
             ],
             run: { ran = $0 }
         )
         XCTAssertEqual(resp["success"] as? Bool, true)
         XCTAssertEqual(ran?.command, "z remy")
-        XCTAssertEqual(ran?.terminal, "wezterm")
         XCTAssertEqual(ran?.claudeInputs, ["/review"])
     }
 
@@ -260,6 +252,73 @@ final class ClaudeInjectorTests: XCTestCase {
 
     func testClaudeInputProbeTrimsWhitespace() {
         XCTAssertEqual(claudeInputProbe("  /help  "), "/help")
+    }
+
+    // claude는 shell mode 입력을 "! gh ..."처럼 `!` 뒤에 공백을 끼워 그린다.
+    // 이걸 놓치면 반영 확인이 영영 실패해 입력이 제출되지 않고 입력창에 매달린다 (실측)
+    func testScreenMatchesShellModeRendering() {
+        XCTAssertTrue(screenShowsInput(
+            "╭────────╮\n! gh issue view 1404\n╰────────╯\n  ! for shell mode",
+            input: "!gh issue view 1404"
+        ))
+    }
+
+    // 긴 입력은 터미널 폭에서 줄바꿈된다 — 프로브 길이 안에서 끊겨도 매칭돼야 한다
+    func testScreenMatchesWrappedInput() {
+        XCTAssertTrue(screenShowsInput(
+            "> !gh api repos/frograms/remy-\nworker/issues/1404/timeline",
+            input: "!gh api repos/frograms/remy-worker/issues/1404/timeline"
+        ))
+    }
+
+    func testScreenWithoutInputDoesNotMatch() {
+        XCTAssertFalse(screenShowsInput("> \n  ? for shortcuts", input: "!gh issue view 1404"))
+    }
+
+    // 공백뿐인 입력은 프로브가 비어 아무 화면에나 매칭된다 — 제출을 승인해선 안 된다
+    func testEmptyInputNeverMatches() {
+        XCTAssertFalse(screenShowsInput("아무 화면", input: "   "))
+    }
+}
+
+// MARK: - 도구 확인 (z/gh/claude가 사용자 셸에서 실제로 불릴 수 있는지)
+
+final class ToolCheckTests: XCTestCase {
+    func testScriptAsksEachToolAndMarksCompletion() {
+        let script = toolCheckScript(["z", "gh"])
+        XCTAssertTrue(script.contains("command -v z >/dev/null 2>&1 && echo TC_OK:z"))
+        XCTAssertTrue(script.contains("command -v gh >/dev/null 2>&1 && echo TC_OK:gh"))
+        // 완료 마커가 없으면 "도구 없음"과 "셸 자체가 실패"를 구분할 수 없다
+        XCTAssertTrue(script.hasSuffix("echo TC_DONE"))
+    }
+
+    func testParsesFoundAndMissingTools() throws {
+        let output = "TC_OK:z\nTC_OK:claude\nTC_DONE\n"
+        let result = try XCTUnwrap(parseToolCheck(output: output, tools: ["z", "gh", "claude"]))
+        XCTAssertEqual(result, ["z": true, "gh": false, "claude": true])
+    }
+
+    // 셸 통합(iTerm2 등)이 첫 줄 앞에 escape sequence를 붙여도 마커를 찾아내야 한다
+    func testIgnoresShellIntegrationPrefix() throws {
+        let output = "\u{1B}]1337;ShellIntegrationVersion=14;shell=zsh\u{07}TC_OK:z\nTC_DONE"
+        let result = try XCTUnwrap(parseToolCheck(output: output, tools: ["z"]))
+        XCTAssertEqual(result["z"], true)
+    }
+
+    // "TC_OK:zoxide"가 "z"의 매칭으로 새면 z 없이도 있다고 오판한다
+    func testToolNamePrefixDoesNotLeak() throws {
+        let result = try XCTUnwrap(parseToolCheck(output: "TC_OK:zoxide\nTC_DONE", tools: ["z", "zoxide"]))
+        XCTAssertEqual(result, ["z": false, "zoxide": true])
+    }
+
+    // 완료 마커가 없으면 확인 실패(nil) — 전부 "없음"으로 단정하면 안 된다
+    func testMissingDoneMarkerMeansUnknown() {
+        XCTAssertNil(parseToolCheck(output: "TC_OK:z", tools: ["z"]))
+        XCTAssertNil(parseToolCheck(output: "", tools: ["z"]))
+    }
+
+    func testLoginShellIsAbsolutePath() {
+        XCTAssertTrue(loginShellPath().hasPrefix("/"))
     }
 }
 

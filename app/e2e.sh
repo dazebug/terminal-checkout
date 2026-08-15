@@ -44,13 +44,13 @@ run_case "unknown variable" \
   '{"command_template":"z {repo}","variables":{"evil":"x"},"terminal":"iterm"}' \
   'Unknown variable: {evil}'
 
-run_case "invalid characters (legacy)" \
-  '{"repo":"a;rm -rf /"}' \
+run_case "invalid characters" \
+  '{"command_template":"z {repo}","variables":{"repo":"a;rm -rf /"}}' \
   'Invalid characters'
 
-run_case "missing repo" \
+run_case "missing command_template" \
   '{"unrelated":1}' \
-  'Missing repo'
+  'command_template is required'
 
 run_case "unprovided template variable" \
   '{"command_template":"git checkout {main}","variables":{"repo":"r"}}' \
@@ -64,5 +64,14 @@ run_case "claude_inputs unprovided variable" \
 run_case "claude_inputs must be array" \
   '{"command_template":"z {repo}","variables":{"repo":"r"},"claude_inputs":"x"}' \
   'claude_inputs must be an array'
+
+# 이슈/PR 번호와 owner도 셸에 그대로 들어가므로 같은 화이트리스트 검증을 받는다
+run_case "issue number injection" \
+  '{"command_template":"gh issue view {number}","variables":{"number":"1; rm -rf /"}}' \
+  'Invalid characters'
+
+run_case "owner injection" \
+  '{"command_template":"gh api repos/{owner}/{repo}","variables":{"owner":"a`whoami`","repo":"r"}}' \
+  'Invalid characters'
 
 echo "e2e 전체 통과"

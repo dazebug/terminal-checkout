@@ -4,7 +4,6 @@ public enum CommandError: Error, CustomStringConvertible {
     case invalidCharacters(String)
     case unknownVariable(String)
     case variableNotProvided(String)
-    case missingRepo
     case badRequest(String)
 
     public var description: String {
@@ -12,13 +11,14 @@ public enum CommandError: Error, CustomStringConvertible {
         case .invalidCharacters(let value): return "Invalid characters in input: \(value)"
         case .unknownVariable(let name): return "Unknown variable: {\(name)}"
         case .variableNotProvided(let name): return "Variable {\(name)} not provided"
-        case .missingRepo: return "Missing repo"
         case .badRequest(let message): return message
         }
     }
 }
 
-public let allowedVariables: Set<String> = ["repo", "branch", "main", "branch_underbar"]
+private let allowedVariables: Set<String> = [
+    "repo", "branch", "main", "branch_underbar", "number", "owner",
+]
 
 // 허용 문자 화이트리스트 (command injection 방지).
 // 파이썬 시절 정규식 `^[a-zA-Z0-9\-_./]+$`와 동일하되, `$`가 끝의 개행 하나를
@@ -32,7 +32,7 @@ private let allowedValueScalars: Set<Unicode.Scalar> = {
     return set
 }()
 
-public func sanitizeValue(_ value: String) throws -> String {
+private func sanitizeValue(_ value: String) throws -> String {
     guard !value.isEmpty, value.unicodeScalars.allSatisfy({ allowedValueScalars.contains($0) }) else {
         throw CommandError.invalidCharacters(value)
     }

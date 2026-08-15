@@ -1,37 +1,53 @@
-const PRESETS = [
-  // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동.
-  // { }는 서브셸이 아니라 그룹핑 — cd가 현재 셸에 남아야 하므로 ( )를 쓰면 안 된다
-  { name: 'Checkout Branch', face: '⏏️', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' },
-  { name: 'Checkout + Claude', face: '🤖', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude' },
-  { name: 'Worktree + Claude', face: '🌳', command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude' },
-  { name: 'Worktree', face: '🪵', command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}' },
-];
+// 버튼 기본값·프리셋·표시 규칙은 defaults.js가 단일 출처 (options.html이 먼저 로드한다)
 
-const DEFAULT_BUTTONS = [
-  { face: '⏏️', label: 'Checkout Branch', command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }' }
+// PR 버튼과 이슈 버튼은 저장 키도 쓸 수 있는 변수도 다르다. 나머지 편집 동작은 같아서
+// 섹션 정의만 바꿔 같은 렌더러·이벤트 핸들러를 공유한다.
+const SECTIONS = [
+  {
+    kind: 'pr',
+    storageKey: 'buttons',
+    presets: PR_PRESETS,
+    defaults: DEFAULT_BUTTONS,
+    container: 'pr-buttons',
+    addButton: 'pr-add',
+    addHint: 'pr-add-hint',
+  },
+  {
+    kind: 'issue',
+    storageKey: 'issueButtons',
+    presets: ISSUE_PRESETS,
+    defaults: DEFAULT_ISSUE_BUTTONS,
+    container: 'issue-buttons',
+    addButton: 'issue-add',
+    addHint: 'issue-add-hint',
+  },
 ];
-
-const MAX_BUTTONS = 3;
-const MAX_CLAUDE_INPUTS = 5;
 
 // 표시에 자주 쓰는 이모지 — 클릭하면 표시 칸에 덧붙는다 (여러 개 조합 가능)
-const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡'];
+const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
 // 저장 스키마와 달리 overrides는 배열로 들고 있는다. repo를 키로 쓰면 이름을 고칠 때마다
 // 키를 지웠다 다시 넣어야 하고, 그때마다 행을 새로 그리느라 입력 포커스가 날아간다.
 const state = {
-  buttons: [],
+  buttons: { pr: [], issue: [] },
   overrides: [],
   dirty: false,
   // 편집이 일어날 때마다 오른다. 저장이 끝난 뒤 그 사이에 사용자가 더 고쳤는지 판별한다.
   revision: 0,
 };
 
-// 프리셋 목록은 고정이므로 한 번만 만들어 카드마다 복제한다
-const presetSelectTemplate = document.createElement('select');
-presetSelectTemplate.className = 'preset-select';
-presetSelectTemplate.add(new Option('프리셋 적용…', ''));
-PRESETS.forEach(p => presetSelectTemplate.add(new Option(p.name, p.name)));
+function section(kind) {
+  return SECTIONS.find(s => s.kind === kind);
+}
+
+// 프리셋 목록은 섹션마다 고정이므로 한 번만 만들어 카드마다 복제한다
+const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
+  const select = document.createElement('select');
+  select.className = 'preset-select';
+  select.add(new Option('프리셋 적용…', ''));
+  presets.forEach(p => select.add(new Option(p.name, p.name)));
+  return [kind, select];
+}));
 
 function normalizeButton(btn) {
   return {
@@ -46,35 +62,37 @@ function normalizeButton(btn) {
 // 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드/행 개수가
 // 바뀔 때뿐이고 그 트리거는 전부 버튼 클릭이라, 편집 중에 포커스를 잃을 일이 없다.
 
-function renderButtons() {
-  const container = document.getElementById('buttons-container');
+function renderButtons(kind) {
+  const { container: containerId, addButton, addHint } = section(kind);
+  const container = document.getElementById(containerId);
   container.innerHTML = '';
 
-  state.buttons.forEach((btn, i) => {
+  state.buttons[kind].forEach((btn, i) => {
     const card = document.createElement('div');
     card.className = 'btn-card';
     card.dataset.index = i;
+    card.dataset.kind = kind;
     // 값은 HTML에 끼워 넣지 않고 아래에서 프로퍼티로 넣는다 (이스케이프가 필요 없어진다)
     card.innerHTML = `
       <div class="btn-card-header">
-        <span class="btn-number"><span class="prompt">❯</span> buttons[${i}]</span>
-        ${state.buttons.length > 1 ? '<button class="remove-btn">삭제</button>' : ''}
+        <span class="btn-number"><span class="prompt">❯</span> ${kind === 'issue' ? 'issueButtons' : 'buttons'}[${i}]</span>
+        ${state.buttons[kind].length > 1 ? '<button class="remove-btn">삭제</button>' : ''}
       </div>
       <div class="btn-row">
         <div class="field field-face">
-          <label for="btn-${i}-face">표시</label>
-          <input id="btn-${i}-face" class="face-input" data-field="face" maxlength="24">
+          <label for="${kind}-${i}-face">표시</label>
+          <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="24">
         </div>
         <div class="field field-preview">
           <label>미리보기</label>
           <span class="face-preview"></span>
         </div>
         <div class="field field-label">
-          <label for="btn-${i}-label">툴팁</label>
-          <input id="btn-${i}-label" class="label-input" data-field="label" placeholder="버튼 툴팁">
+          <label for="${kind}-${i}-label">툴팁</label>
+          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="버튼 툴팁">
         </div>
         <div class="field field-preset">
-          <label for="btn-${i}-preset">프리셋</label>
+          <label for="${kind}-${i}-preset">프리셋</label>
         </div>
       </div>
       <div class="face-palette">
@@ -82,11 +100,11 @@ function renderButtons() {
         ${FACE_EMOJI.map(e => `<button class="palette-btn" title="표시에 ${e} 추가">${e}</button>`).join('')}
       </div>
       <div class="field field-command">
-        <label for="btn-${i}-command">command</label>
+        <label for="${kind}-${i}-command">command</label>
         <div class="cmd-block">
           <span class="cmd-prompt">$</span>
-          <textarea id="btn-${i}-command" class="command-input" data-field="command" rows="2"
-                    spellcheck="false" placeholder="z {repo} && git checkout {branch}"></textarea>
+          <textarea id="${kind}-${i}-command" class="command-input" data-field="command" rows="2"
+                    spellcheck="false" placeholder="z {repo} && claude"></textarea>
         </div>
       </div>
       <div class="claude-queue">
@@ -99,8 +117,8 @@ function renderButtons() {
       </div>
     `;
 
-    const select = presetSelectTemplate.cloneNode(true);
-    select.id = `btn-${i}-preset`;
+    const select = presetTemplates[kind].cloneNode(true);
+    select.id = `${kind}-${i}-preset`;
     card.querySelector('.field-preset').appendChild(select);
 
     card.querySelector('.face-input').value = btn.face;
@@ -114,7 +132,7 @@ function renderButtons() {
       row.dataset.ci = j;
       row.innerHTML = `
         <span class="ci-marker">⏎${j + 1}</span>
-        <input class="ci-input" placeholder="/review 또는 PR {branch} 변경사항을 요약해줘">
+        <input class="ci-input" placeholder="!gh issue view {number} 또는 이 이슈를 요약해줘">
         <button class="ci-remove" title="삭제">×</button>
       `;
       row.querySelector('.ci-input').value = text;
@@ -128,17 +146,17 @@ function renderButtons() {
     autosize(card.querySelector('.command-input')); // 붙인 뒤라야 scrollHeight가 잡힌다
   });
 
-  const atMax = state.buttons.length >= MAX_BUTTONS;
-  document.getElementById('add-btn').disabled = atMax;
-  document.getElementById('add-btn-hint').hidden = !atMax;
+  const atMax = state.buttons[kind].length >= MAX_BUTTONS;
+  document.getElementById(addButton).disabled = atMax;
+  document.getElementById(addHint).hidden = !atMax;
 }
 
-// content.js의 PR 버튼 렌더 규칙과 짝을 이룬다 — 표시가 실제로 어떻게 보일지 그대로 재현
+// content.js의 버튼 렌더 규칙(defaults.js의 판정 공유)과 짝을 이룬다 — 실제로 어떻게 보일지 그대로 재현
 function updateFacePreview(card, face) {
   const el = card.querySelector('.face-preview');
   const shown = face.trim() || '⏏️';
   el.textContent = shown;
-  el.className = 'face-preview ' + (/[\p{L}\p{N}]/u.test(shown) ? 'gh-btn-text' : 'gh-btn-emoji');
+  el.className = 'face-preview ' + (isTextFace(shown) ? 'gh-btn-text' : 'gh-btn-emoji');
 }
 
 function updateClaudeWarn(card, btn) {
@@ -174,8 +192,14 @@ function autosize(textarea) {
   textarea.style.height = `${textarea.scrollHeight}px`; // cmd-block이 보더를 가지므로 보정 불필요
 }
 
-function cardIndex(el) {
-  return Number(el.closest('.btn-card').dataset.index);
+function cardOf(el) {
+  const card = el.closest('.btn-card');
+  return { card, kind: card.dataset.kind, index: Number(card.dataset.index) };
+}
+
+function buttonOf(el) {
+  const { kind, index } = cardOf(el);
+  return state.buttons[kind][index];
 }
 
 function overrideInput(index, selector) {
@@ -204,19 +228,22 @@ function applyPreset(select) {
   select.value = ''; // 적용하든 취소하든 언제나 placeholder로 되돌아간다
   if (!name) return;
 
-  const preset = PRESETS.find(p => p.name === name);
+  const { kind, index } = cardOf(select);
+  const preset = section(kind).presets.find(p => p.name === name);
   if (!preset) return;
 
-  const index = cardIndex(select);
-  const current = state.buttons[index].command.trim();
-  const isCustom = current !== '' && !PRESETS.some(p => p.command === current);
-  if (isCustom && !confirm(`buttons[${index}]의 내용을 "${preset.name}" 프리셋으로 덮어씁니다. 계속할까요?`)) {
+  const current = state.buttons[kind][index].command.trim();
+  const isCustom = current !== '' && !section(kind).presets.some(p => p.command === current);
+  if (isCustom && !confirm(`${index}번 버튼의 내용을 "${preset.name}" 프리셋으로 덮어씁니다. 계속할까요?`)) {
     return;
   }
 
-  state.buttons[index] = { face: preset.face, label: preset.name, command: preset.command, claudeInputs: [] };
+  state.buttons[kind][index] = normalizeButton({
+    face: preset.face, label: preset.name, command: preset.command,
+    claudeInputs: [...(preset.claudeInputs || [])],
+  });
   markDirty();
-  renderButtons(); // claude 입력 행 개수까지 바뀌므로 카드 전체를 다시 그린다
+  renderButtons(kind); // claude 입력 행 개수까지 바뀌므로 카드 전체를 다시 그린다
 }
 
 // --- 유효성 검사 ---
@@ -228,13 +255,18 @@ const REQUIRED_FIELDS = [
 ];
 
 function validateButtons() {
-  for (let i = 0; i < state.buttons.length; i++) {
-    for (const { field, label } of REQUIRED_FIELDS) {
-      if (state.buttons[i][field].trim()) continue;
-      return {
-        message: `buttons[${i}]: ${label} 입력하세요.`,
-        focus: document.querySelector(`.btn-card[data-index="${i}"] [data-field="${field}"]`),
-      };
+  for (const { kind } of SECTIONS) {
+    const name = kind === 'issue' ? 'issueButtons' : 'buttons';
+    for (let i = 0; i < state.buttons[kind].length; i++) {
+      for (const { field, label } of REQUIRED_FIELDS) {
+        if (state.buttons[kind][i][field].trim()) continue;
+        return {
+          message: `${name}[${i}]: ${label} 입력하세요.`,
+          focus: document.querySelector(
+            `.btn-card[data-kind="${kind}"][data-index="${i}"] [data-field="${field}"]`
+          ),
+        };
+      }
     }
   }
   return null;
@@ -276,13 +308,17 @@ function serializeOverrides() {
 
 // 터미널 선택은 Terminal Checkout 앱(설정 창)이 단일 소스로 관리한다
 async function loadSettings() {
-  const data = await chrome.storage.sync.get(['buttons', 'defaultMain', 'repoMainBranch']);
+  const keys = SECTIONS.map(s => s.storageKey).concat(['defaultMain', 'repoMainBranch']);
+  const data = await chrome.storage.sync.get(keys);
 
-  state.buttons = (data.buttons?.length ? data.buttons : DEFAULT_BUTTONS).map(normalizeButton);
+  for (const { kind, storageKey, defaults } of SECTIONS) {
+    const saved = data[storageKey];
+    state.buttons[kind] = (saved?.length ? saved : defaults).map(normalizeButton);
+  }
   state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   document.getElementById('default-main').value = data.defaultMain || 'main';
 
-  renderButtons();
+  SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderOverrides();
 }
 
@@ -293,18 +329,21 @@ async function saveSettings() {
   const overrides = serializeOverrides();
   if (overrides.error) return showError(overrides.error);
 
-  const buttons = state.buttons.map(b => ({
-    face: b.face.trim(),
-    label: b.label.trim(),
-    command: b.command,
-    claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // 빈 행은 조용히 버린다
-  }));
+  const cleaned = Object.fromEntries(SECTIONS.map(({ kind }) => [
+    kind,
+    state.buttons[kind].map(b => ({
+      face: b.face.trim(),
+      label: b.label.trim(),
+      command: b.command,
+      claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // 빈 행은 조용히 버린다
+    })),
+  ]));
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
   const savedRevision = state.revision;
 
   try {
     await chrome.storage.sync.set({
-      buttons,
+      ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])),
       defaultMain,
       repoMainBranch: overrides.value,
     });
@@ -322,9 +361,11 @@ async function saveSettings() {
 
   // 저장된 결과와 화면을 맞춘다 (빈 행 정리, 공백 제거 반영)
   document.getElementById('default-main').value = defaultMain;
-  state.buttons = buttons.map(normalizeButton);
+  for (const { kind } of SECTIONS) {
+    state.buttons[kind] = cleaned[kind].map(normalizeButton);
+    renderButtons(kind);
+  }
   state.overrides = Object.entries(overrides.value).map(([repo, branch]) => ({ repo, branch }));
-  renderButtons();
   renderOverrides();
 
   clearDirty();
@@ -333,11 +374,13 @@ async function saveSettings() {
 
 // 저장은 저장 버튼 하나로만 일어난다. 여기서는 화면만 되돌리고 저장소는 건드리지 않는다.
 function resetSettings() {
-  state.buttons = DEFAULT_BUTTONS.map(normalizeButton);
+  for (const { kind, defaults } of SECTIONS) {
+    state.buttons[kind] = defaults.map(normalizeButton);
+    renderButtons(kind);
+  }
   state.overrides = [];
   document.getElementById('default-main').value = 'main';
 
-  renderButtons();
   renderOverrides();
   markDirty();
   showStatus('info', '기본값으로 되돌렸습니다. 저장을 눌러야 반영됩니다.');
@@ -359,76 +402,94 @@ function showError({ message, focus }) {
 }
 
 // --- 이벤트 ---
+// 두 섹션이 같은 카드 구조를 쓰므로 핸들러도 공유한다. 어느 섹션인지는 카드의 data-kind가 말해준다.
 
-const buttonsContainer = document.getElementById('buttons-container');
-
-buttonsContainer.addEventListener('input', (e) => {
-  const index = cardIndex(e.target);
-  const card = e.target.closest('.btn-card');
+function onCardInput(e) {
+  const { card, kind, index } = cardOf(e.target);
 
   if (e.target.classList.contains('ci-input')) {
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    state.buttons[index].claudeInputs[row] = e.target.value;
-    updateClaudeWarn(card, state.buttons[index]);
+    state.buttons[kind][index].claudeInputs[row] = e.target.value;
+    updateClaudeWarn(card, state.buttons[kind][index]);
     markDirty();
     return;
   }
 
   const field = e.target.dataset.field;
   if (!field) return;
-  state.buttons[index][field] = e.target.value;
+  state.buttons[kind][index][field] = e.target.value;
   if (field === 'face') updateFacePreview(card, e.target.value);
   if (field === 'command') {
     autosize(e.target);
-    updateClaudeWarn(card, state.buttons[index]);
+    updateClaudeWarn(card, state.buttons[kind][index]);
   }
   markDirty();
-});
+}
 
-buttonsContainer.addEventListener('change', (e) => {
-  if (e.target.classList.contains('preset-select')) applyPreset(e.target);
-});
-
-buttonsContainer.addEventListener('click', (e) => {
+function onCardClick(e) {
   if (e.target.classList.contains('remove-btn')) {
-    state.buttons.splice(cardIndex(e.target), 1);
+    const { kind, index } = cardOf(e.target);
+    state.buttons[kind].splice(index, 1);
     markDirty();
-    renderButtons();
+    renderButtons(kind);
     return;
   }
 
   if (e.target.classList.contains('palette-btn')) {
-    const index = cardIndex(e.target);
-    const card = e.target.closest('.btn-card');
+    const { card, kind, index } = cardOf(e.target);
     const input = card.querySelector('.face-input');
-    state.buttons[index].face += e.target.textContent;
-    input.value = state.buttons[index].face;
+    state.buttons[kind][index].face += e.target.textContent;
+    input.value = state.buttons[kind][index].face;
     updateFacePreview(card, input.value);
     markDirty();
     return;
   }
 
   if (e.target.classList.contains('add-input-btn')) {
-    const index = cardIndex(e.target);
-    const inputs = state.buttons[index].claudeInputs;
+    const { kind, index } = cardOf(e.target);
+    const inputs = state.buttons[kind][index].claudeInputs;
     if (inputs.length >= MAX_CLAUDE_INPUTS) return;
     inputs.push('');
     markDirty();
-    renderButtons();
+    renderButtons(kind);
     document.querySelector(
-      `.btn-card[data-index="${index}"] .claude-row[data-ci="${inputs.length - 1}"] .ci-input`
+      `.btn-card[data-kind="${kind}"][data-index="${index}"] .claude-row[data-ci="${inputs.length - 1}"] .ci-input`
     ).focus();
     return;
   }
 
   if (e.target.classList.contains('ci-remove')) {
-    const index = cardIndex(e.target);
+    const { kind, index } = cardOf(e.target);
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    state.buttons[index].claudeInputs.splice(row, 1);
+    state.buttons[kind][index].claudeInputs.splice(row, 1);
     markDirty();
-    renderButtons();
+    renderButtons(kind);
   }
-});
+}
+
+for (const { kind, container, addButton, defaults } of SECTIONS) {
+  const element = document.getElementById(container);
+  element.addEventListener('input', onCardInput);
+  element.addEventListener('click', onCardClick);
+  element.addEventListener('change', (e) => {
+    if (e.target.classList.contains('preset-select')) applyPreset(e.target);
+  });
+
+  document.getElementById(addButton).addEventListener('click', () => {
+    if (state.buttons[kind].length >= MAX_BUTTONS) return;
+
+    const used = new Set(state.buttons[kind].map(b => b.face));
+    const presets = section(kind).presets;
+    const face = presets.map(p => p.face).find(f => !used.has(f)) || defaults[0].face;
+
+    state.buttons[kind].push(normalizeButton({ face, label: 'New Button', command: '' }));
+    markDirty();
+    renderButtons(kind);
+    document.querySelector(
+      `.btn-card[data-kind="${kind}"][data-index="${state.buttons[kind].length - 1}"] .command-input`
+    ).focus();
+  });
+}
 
 const overridesBody = document.getElementById('overrides-body');
 
@@ -448,18 +509,6 @@ overridesBody.addEventListener('click', (e) => {
   state.overrides.splice(Number(e.target.closest('tr').dataset.index), 1);
   markDirty();
   renderOverrides();
-});
-
-document.getElementById('add-btn').addEventListener('click', () => {
-  if (state.buttons.length >= MAX_BUTTONS) return;
-
-  const used = new Set(state.buttons.map(b => b.face));
-  const face = PRESETS.map(p => p.face).find(f => !used.has(f)) || PRESETS[0].face;
-
-  state.buttons.push({ face, label: 'New Button', command: '', claudeInputs: [] });
-  markDirty();
-  renderButtons();
-  document.querySelector(`.btn-card[data-index="${state.buttons.length - 1}"] .command-input`).focus();
 });
 
 document.getElementById('add-override').addEventListener('click', () => {

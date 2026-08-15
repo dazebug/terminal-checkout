@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         startServer()
         Installer.autoSetup()
+        Settings.refreshToolAvailability()
         setupMainMenu()
         // relay가 백그라운드로 띄운 경우(--background)에는 창을 열지 않는다
         if !CommandLine.arguments.contains("--background") {

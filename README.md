@@ -1,6 +1,6 @@
 # Terminal Checkout
 
-GitHub PR·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm)에서 해당 브랜치를 checkout하는 Chrome 확장 프로그램 + 맥 앱입니다.
+GitHub PR·이슈·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm)에 명령을 실행하는 Chrome 확장 프로그램 + 맥 앱입니다. 브랜치 checkout, 워크트리 생성, 이슈를 읽은 claude 세션 띄우기 등을 버튼으로 만들어 둘 수 있습니다.
 
 ## 왜 앱인가?
 
@@ -28,6 +28,9 @@ relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, �
 - iTerm2 또는 WezTerm
 - Swift 툴체인 (Xcode 또는 Command Line Tools) — 빌드용
 - [zoxide](https://github.com/ajeetdsouza/zoxide) 또는 [z.sh](https://github.com/rupa/z) (디렉토리 점프 도구)
+- 선택: [gh](https://cli.github.com) (이슈 프리셋), claude (claude 입력)
+
+앱은 실행할 때마다 `z`·`gh`·`claude`를 로그인 셸에서 확인해, 없는 것만 설정 창에 알려줍니다.
 
 ## 설치
 
@@ -86,31 +89,48 @@ PR 헤더의 브랜치 이름 옆에 나타나는 버튼을 클릭하면 설정�
 z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
 ```
 
-### claude 입력
+### 이슈 페이지
 
-command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 claude에게 보낼 입력을 최대 5개까지 예약할 수 있습니다 — 예: `/review` 다음 `PR {branch} 변경사항을 요약해줘`. 앱이 새 탭의 포그라운드 프로세스가 claude로 바뀐 것을 확인한 뒤에만 순서대로 타이핑하므로, claude가 뜨기 전 셸에 잘못 입력되는 일은 없습니다. 2분 내에 claude가 뜨지 않으면 조용히 보내지 않습니다.
+이슈 헤더의 상태 배지(Open/Closed) 옆에 나타나는 버튼을 클릭하면 이슈 전용 명령이 실행됩니다. PR 버튼과는 별도로 설정되며, 이슈 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.
 
-알아둘 한계: 입력은 한 줄씩만 가능합니다. WezTerm이 꺼져 있어 새 프로세스로 뜬 경우(fallback)에는 전달되지 않습니다. 각 입력은 화면에 실제로 타이핑된 것을 확인한 뒤에만 제출되므로, 새 폴더에서 claude의 신뢰(trust) 프롬프트가 떠 있는 동안에는 전달이 보류됩니다 — 15초 안에 수락하면 이어서 전달되고, 그보다 오래 걸리면 그 입력부터 전송을 포기합니다.
+기본 버튼(**이슈 읽기**)은 저장소 디렉토리에서 claude를 띄운 뒤, claude에게 아래를 순서대로 입력해 이슈를 읽힙니다. claude 입력이 `!`로 시작하면 claude가 그 줄을 셸에서 실행하므로, `gh` 출력이 그대로 claude의 컨텍스트에 쌓입니다.
+
+```bash
+!gh issue view {number}                       # 본문·메타데이터
+!gh issue view {number} --comments            # 코멘트
+!gh api repos/{owner}/{repo}/issues/{number}/timeline \
+  --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'   # 이 이슈를 언급한 이슈·PR 번호
+```
+
+`gh`가 없으면 이 프리셋은 동작하지 않습니다 (`brew install gh` 후 `gh auth login`). 앱 설정 창이 실행할 때마다 확인해서 없으면 알려줍니다.
 
 ### 저장소 페이지
 
 헤더의 **Open in Terminal** 버튼을 클릭하면 해당 저장소 디렉토리로 이동한 새 탭이 열립니다.
 
+### claude 입력
+
+command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 claude에게 보낼 입력을 최대 5개까지 예약할 수 있습니다 — 예: `/review` 다음 `PR {branch} 변경사항을 요약해줘`. `!`로 시작하면 claude가 그 줄을 셸에서 실행하므로, 명령 출력을 claude에게 읽히는 데 쓸 수 있습니다. 앱이 새 탭의 포그라운드 프로세스가 claude로 바뀐 것을 확인한 뒤에만 순서대로 타이핑하므로, claude가 뜨기 전 셸에 잘못 입력되는 일은 없습니다. 2분 내에 claude가 뜨지 않으면 조용히 보내지 않습니다.
+
+알아둘 한계: 입력은 한 줄씩만 가능합니다. WezTerm이 꺼져 있어 새 프로세스로 뜬 경우(fallback)에는 전달되지 않습니다. 각 입력은 화면에 실제로 타이핑된 것을 확인한 뒤에만 제출되므로, 새 폴더에서 claude의 신뢰(trust) 프롬프트가 떠 있는 동안에는 전달이 보류됩니다 — 15초 안에 수락하면 이어서 전달되고, 그보다 오래 걸리면 그 입력부터 전송을 포기합니다.
+
 ## 설정
 
 - **설치·터미널 선택·권한·확장 폴더**: Terminal Checkout.app 설정 창
-- **버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
+- **PR·이슈 버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
 
 Command에서 쓸 수 있는 변수:
 
-| 변수 | 값 |
-|:---|:---|
-| `{repo}` | 저장소 이름 |
-| `{branch}` | PR의 head 브랜치 |
-| `{main}` | main 브랜치 (리포별 오버라이드 → PR 페이지 감지 → 글로벌 기본값 순으로 결정) |
-| `{branch_underbar}` | `{branch}`의 `/`를 `_`로 치환한 값 (worktree 디렉토리명 등에 사용) |
+| 변수 | 값 | 이슈 페이지 |
+|:---|:---|:---|
+| `{repo}` | 저장소 이름 | ✓ |
+| `{owner}` | 저장소 소유자 (`gh api repos/{owner}/{repo}/…`에 사용) | ✓ |
+| `{number}` | PR·이슈 번호 (숫자만) | ✓ |
+| `{main}` | main 브랜치 (리포별 오버라이드 → PR 페이지 감지 → 글로벌 기본값 순으로 결정) | ✓ |
+| `{branch}` | PR의 head 브랜치 | — |
+| `{branch_underbar}` | `{branch}`의 `/`를 `_`로 치환한 값 (worktree 디렉토리명 등에 사용) | — |
 
-변수는 command와 claude 입력 양쪽에서 동일하게 동작합니다.
+변수는 command와 claude 입력 양쪽에서 동일하게 동작합니다. 이슈에는 head 브랜치가 없으므로 이슈 버튼에서 `{branch}` 계열을 쓰면 실행이 거절됩니다.
 
 ## 개발
 
