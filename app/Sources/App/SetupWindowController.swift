@@ -2,19 +2,32 @@ import AppKit
 import Core
 
 /// 설치·터미널 선택·권한·테스트를 한 화면에서 처리하는 설정 창.
+/// 디자인: 설정 창 자체가 터미널 세션 — 섹션은 프롬프트(❯), 상태는 종료 코드처럼 색으로 읽힌다.
+/// 노출은 상태 기반: 완료된 설정 항목의 카드는 사라지고 파이프라인 스트립의 점으로만 남는다.
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let manifestStatusLabel = NSTextField(labelWithString: "")
     private let extensionStatusLabel = NSTextField(labelWithString: "")
-    private let extensionPathLabel = NSTextField(labelWithString: "")
-    private let extensionIDLabel = NSTextField(labelWithString: "")
     private let installFeedbackLabel = NSTextField(labelWithString: "")
     private let permissionStatusLabel = NSTextField(labelWithString: "")
     private let testResultLabel = NSTextField(labelWithString: "")
     private let requestPermissionButton = NSButton(title: "iTerm2 권한 요청", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
-    /// iTerm2 선택 시에만 표시되는 권한 섹션 (WezTerm은 TCC 권한 불필요)
+    /// iTerm2 선택 + 권한 미허용일 때만 표시 (WezTerm은 TCC 권한 불필요)
     private let permissionSection = NSStackView()
+    private let pipeline = PipelineStripView()
+    private let cursor = BlinkCursorView()
+
+    private var chromeCard: NSView!
+    private var extensionCard: NSView!
+    private var guideBlock: NSView!
+    private var utilityRow: NSView!
+    /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
+    private var forceShowInstall = false
+    private var requestObserver: (any NSObjectProtocol)?
+
+    private let contentWidth: CGFloat = 560
+    private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
 
     /// 창이 닫힐 때 알림 (AppDelegate가 Dock 표시를 되돌리는 데 사용)
     var onClose: (() -> Void)?
@@ -22,23 +35,45 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = "Terminal Checkout 설정"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        // 터미널은 어둡다 — 시스템 모드와 무관하게 다크로 고정 (레이어 색이 정적이므로 필수)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = Theme.bg
+        window.isMovableByWindowBackground = true
         self.init(window: window)
         window.delegate = self
         window.contentView = buildContent()
         updateTerminalControls()
-        window.center()
         refresh()
+        window.center()
+        cursor.start()
+        requestObserver = NotificationCenter.default.addObserver(
+            forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
+        ) { [weak self] _ in self?.refresh() }
+    }
+
+    deinit {
+        if let requestObserver {
+            NotificationCenter.default.removeObserver(requestObserver)
+        }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        cursor.start()
         refresh()
     }
 
     func windowWillClose(_ notification: Notification) {
+        cursor.stop()
+        forceShowInstall = false
+        guideBlock.isHidden = true
+        installFeedbackLabel.isHidden = true
+        testResultLabel.isHidden = true
         onClose?()
     }
 
@@ -48,48 +83,97 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 38, left: 20, bottom: 18, right: 20)
+        stack.wantsLayer = true
+        stack.layer?.backgroundColor = Theme.bg.cgColor
 
-        stack.addArrangedSubview(sectionLabel("Chrome 연결 (Native Host)"))
-        stack.addArrangedSubview(helpLabel("Chrome이 이 앱에 요청을 전달할 수 있도록 Native Messaging host를 등록합니다. 앱 실행 시 자동으로 등록됩니다."))
-        stack.addArrangedSubview(manifestStatusLabel)
-        stack.addArrangedSubview(buttonRow([
-            button("등록/업데이트", #selector(registerManifest)),
-        ]))
+        chromeCard = buildChromeCard()
+        extensionCard = buildExtensionCard()
+        utilityRow = buildUtilityRow()
 
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(sectionLabel("확장 프로그램"))
-        stack.addArrangedSubview(helpLabel("확장 프로그램 폴더를 준비하고 Chrome에 로드합니다. 확장 ID는 폴더 경로에서 계산됩니다."))
-        stack.addArrangedSubview(extensionStatusLabel)
-        extensionPathLabel.lineBreakMode = .byTruncatingMiddle
-        extensionPathLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        extensionPathLabel.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(extensionPathLabel)
-        extensionIDLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        extensionIDLabel.textColor = .secondaryLabelColor
-        extensionIDLabel.isSelectable = true
-        stack.addArrangedSubview(extensionIDLabel)
+        stack.addArrangedSubview(header())
+        stack.addArrangedSubview(pipeline)
+        stack.setCustomSpacing(16, after: pipeline)
 
+        stack.addArrangedSubview(chromeCard)
+        stack.addArrangedSubview(extensionCard)
+        stack.addArrangedSubview(terminalCard())
+        stack.addArrangedSubview(testCard())
+        stack.addArrangedSubview(utilityRow)
+
+        for label in [manifestStatusLabel, extensionStatusLabel, permissionStatusLabel, testResultLabel] {
+            label.font = Theme.mono(11.5)
+            configureWrapping(label)
+        }
+        configureWrapping(installFeedbackLabel)
+        installFeedbackLabel.font = Theme.ui(11.5)
+
+        stack.widthAnchor.constraint(equalToConstant: contentWidth + 40).isActive = true
+        return stack
+    }
+
+    private func header() -> NSView {
+        let glyph = NSTextField(labelWithString: "❯_")
+        glyph.font = Theme.mono(15, .semibold)
+        glyph.textColor = Theme.accent
+
+        let title = NSTextField(labelWithString: "Terminal Checkout")
+        title.font = Theme.mono(16, .semibold)
+        title.textColor = Theme.text
+
+        let version = NSTextField(labelWithString: appVersion)
+        version.font = Theme.mono(11)
+        version.textColor = Theme.textFaint
+
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 7
+        row.addView(glyph, in: .leading)
+        row.addView(title, in: .leading)
+        row.addView(cursor, in: .leading)
+        row.addView(version, in: .trailing)
+        row.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        return row
+    }
+
+    // MARK: 카드 — 설정 단계 (완료되면 숨김)
+
+    private func buildChromeCard() -> NSView {
+        card("Chrome 연결 (Native Host)", [
+            manifestStatusLabel,
+            buttonRow([button("등록/업데이트", #selector(registerManifest))]),
+        ])
+    }
+
+    private func buildExtensionCard() -> NSView {
         let installButton = button("Chrome에 설치하기", #selector(installInChrome))
-        installButton.keyEquivalent = "\r" // 주 버튼 강조
-        stack.addArrangedSubview(buttonRow([
-            installButton,
-            button("확장 옵션 페이지 열기", #selector(openOptionsPage)),
-        ]))
-        stack.addArrangedSubview(helpLabel("""
-        [Chrome에 설치하기]를 누르면 폴더 경로가 클립보드에 복사되고 chrome://extensions가 열립니다. 이어서:
-        ① 우측 상단 「개발자 모드」 켜기
-        ② 좌측 상단 「압축해제된 확장 프로그램을 로드합니다」 클릭
-        ③ 파일 선택 창에서 ⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]
-        ④ 개발자 모드는 켜둔 채로 유지하세요 — 끄면 확장이 비활성화됩니다
-        """))
-        installFeedbackLabel.font = .systemFont(ofSize: 12)
-        stack.addArrangedSubview(installFeedbackLabel)
+        installButton.keyEquivalent = "\r"
+        installButton.bezelColor = Theme.actionGreen
+        installButton.toolTip = Installer.extensionDirectory
 
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(sectionLabel("터미널"))
-        stack.addArrangedSubview(helpLabel("checkout 명령을 실행할 터미널을 선택합니다."))
+        guideBlock = quoteBlock([
+            "① 우측 상단 「개발자 모드」 켜기",
+            "② 좌측 상단 「압축해제된 확장 프로그램을 로드합니다」 클릭",
+            "③ 파일 선택 창에서 ⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]",
+            "④ 개발자 모드는 켜둔 채로 유지하세요 — 끄면 확장이 비활성화됩니다",
+        ])
+        guideBlock.isHidden = true
+        installFeedbackLabel.isHidden = true
+
+        return card("확장 프로그램", [
+            extensionStatusLabel,
+            helpLabel("[Chrome에 설치하기]를 누르면 확장 폴더 경로가 클립보드에 복사되고 chrome://extensions가 열립니다."),
+            buttonRow([installButton]),
+            guideBlock,
+            installFeedbackLabel,
+        ])
+    }
+
+    // MARK: 카드 — 상시 (터미널 선택·테스트)
+
+    private func terminalCard() -> NSView {
         itermRadio = NSButton(radioButtonWithTitle: "iTerm2", target: self, action: #selector(terminalChanged))
         weztermRadio = NSButton(radioButtonWithTitle: "WezTerm", target: self, action: #selector(terminalChanged))
         if !PermissionChecker.isITermInstalled {
@@ -103,13 +187,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let radioRow = NSStackView(views: [itermRadio, weztermRadio])
         radioRow.orientation = .horizontal
         radioRow.spacing = 16
-        stack.addArrangedSubview(radioRow)
+
+        let subTitle = NSTextField(labelWithString: "iTerm2 제어 권한")
+        subTitle.font = Theme.ui(12, .semibold)
+        subTitle.textColor = Theme.text
 
         permissionSection.orientation = .vertical
         permissionSection.alignment = .leading
-        permissionSection.spacing = 14
-        permissionSection.addArrangedSubview(separator())
-        permissionSection.addArrangedSubview(sectionLabel("iTerm2 제어 권한"))
+        permissionSection.spacing = 9
+        permissionSection.addArrangedSubview(hairline())
+        permissionSection.addArrangedSubview(subTitle)
         permissionSection.addArrangedSubview(helpLabel(
             "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다."
         ))
@@ -121,40 +208,96 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             requestPermissionButton,
             button("시스템 설정 열기", #selector(openAutomationSettings)),
         ]))
-        stack.addArrangedSubview(permissionSection)
 
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(sectionLabel("동작 테스트"))
-        stack.addArrangedSubview(helpLabel("선택한 터미널 새 탭에서 echo 명령이 실행되면 정상입니다."))
-        stack.addArrangedSubview(buttonRow([
-            button("터미널에서 테스트", #selector(testTerminal)),
-        ]))
-        testResultLabel.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(testResultLabel)
-
-        for label in [manifestStatusLabel, extensionStatusLabel, permissionStatusLabel] {
-            label.font = .systemFont(ofSize: 13)
-        }
-
-        NSLayoutConstraint.activate([
-            stack.widthAnchor.constraint(equalToConstant: 600),
-            extensionPathLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
-        ])
-        return stack
+        return card("터미널", [radioRow, permissionSection])
     }
 
-    private func sectionLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
-        return label
+    private func testCard() -> NSView {
+        let command = NSMutableAttributedString(
+            string: "$ ", attributes: [.font: Theme.mono(11), .foregroundColor: Theme.textFaint]
+        )
+        command.append(NSAttributedString(
+            string: testCommand, attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
+        ))
+        let commandLabel = NSTextField(labelWithString: "")
+        commandLabel.attributedStringValue = command
+
+        let row = NSStackView(views: [chip(commandLabel), button("터미널에서 실행", #selector(testTerminal))])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+
+        testResultLabel.isHidden = true
+
+        return card("동작 테스트", [row, testResultLabel])
+    }
+
+    /// 설정 완료 후에만 보이는 유틸리티 (설정 중에는 확장이 로드되기 전이라 옵션 페이지가 없다)
+    private func buildUtilityRow() -> NSView {
+        buttonRow([
+            button("확장 옵션 페이지 열기", #selector(openOptionsPage)),
+            button("설치 안내 다시 보기", #selector(reshowInstall)),
+        ])
+    }
+
+    // MARK: 뷰 팩토리
+
+    private func card(_ title: String, _ content: [NSView]) -> NSView {
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.panel.cgColor
+        box.layer?.cornerRadius = 10
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = Theme.border.cgColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+
+        let inner = NSStackView()
+        inner.orientation = .vertical
+        inner.alignment = .leading
+        inner.spacing = 9
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        inner.addArrangedSubview(promptRow(title))
+        content.forEach { inner.addArrangedSubview($0) }
+
+        box.addSubview(inner)
+        NSLayoutConstraint.activate([
+            inner.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
+            inner.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            inner.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+            inner.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+            box.widthAnchor.constraint(equalToConstant: contentWidth),
+        ])
+        return box
+    }
+
+    private func promptRow(_ title: String) -> NSView {
+        let glyph = NSTextField(labelWithString: "❯")
+        glyph.font = Theme.mono(13, .bold)
+        glyph.textColor = Theme.accent
+        let label = NSTextField(labelWithString: title)
+        label.font = Theme.ui(13, .semibold)
+        label.textColor = Theme.text
+        let row = NSStackView(views: [glyph, label])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 7
+        return row
     }
 
     private func helpLabel(_ text: String) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
-        label.preferredMaxLayoutWidth = 560
+        label.font = Theme.ui(11.5)
+        label.textColor = Theme.textDim
+        label.preferredMaxLayoutWidth = contentWidth - 28
         return label
+    }
+
+    private func configureWrapping(_ label: NSTextField) {
+        label.usesSingleLineMode = false
+        label.cell?.wraps = true
+        label.cell?.isScrollable = false
+        label.maximumNumberOfLines = 0
+        label.preferredMaxLayoutWidth = contentWidth - 28
     }
 
     private func button(_ title: String, _ action: Selector) -> NSButton {
@@ -170,12 +313,88 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return row
     }
 
-    private func separator() -> NSBox {
-        let box = NSBox()
-        box.boxType = .separator
+    private func chip(_ label: NSTextField) -> NSView {
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.chipBg.cgColor
+        box.layer?.cornerRadius = 6
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = Theme.border.cgColor
         box.translatesAutoresizingMaskIntoConstraints = false
-        box.widthAnchor.constraint(equalToConstant: 560).isActive = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
+            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 9),
+            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -9),
+            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5),
+        ])
         return box
+    }
+
+    /// 안내 절차용 인용 블록 — 왼쪽에 가는 세로 바를 세운 heredoc 느낌
+    private func quoteBlock(_ lines: [String]) -> NSView {
+        let bar = NSView()
+        bar.wantsLayer = true
+        bar.layer?.backgroundColor = Theme.accent.withAlphaComponent(0.4).cgColor
+        bar.layer?.cornerRadius = 1
+        bar.translatesAutoresizingMaskIntoConstraints = false
+
+        let text = NSStackView()
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 4
+        text.translatesAutoresizingMaskIntoConstraints = false
+        for line in lines {
+            let label = NSTextField(wrappingLabelWithString: line)
+            label.font = Theme.ui(11.5)
+            label.textColor = Theme.textDim
+            label.preferredMaxLayoutWidth = contentWidth - 28 - 14
+            text.addArrangedSubview(label)
+        }
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(bar)
+        container.addSubview(text)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bar.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
+            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -1),
+            bar.widthAnchor.constraint(equalToConstant: 2),
+            text.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
+            text.topAnchor.constraint(equalTo: container.topAnchor),
+            text.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            text.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    private func hairline() -> NSView {
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.border.cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            line.heightAnchor.constraint(equalToConstant: 1),
+            line.widthAnchor.constraint(equalToConstant: contentWidth - 28),
+        ])
+        return line
+    }
+
+    private var appVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "v\($0)" } ?? "dev"
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateTimeStyle = .named
+        return formatter
+    }()
+
+    private func relative(_ date: Date) -> String {
+        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: - 터미널 선택
@@ -186,44 +405,110 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// 라디오 상태를 설정과 동기화하고, iTerm2 선택 시에만 권한 섹션을 표시한다
     private func updateTerminalControls() {
         (Settings.terminal == "wezterm" ? weztermRadio : itermRadio)?.state = .on
-        permissionSection.isHidden = Settings.terminal != "iterm"
-        if let window, let contentView = window.contentView {
-            window.setContentSize(contentView.fittingSize)
+    }
+
+    private func resizeToFit() {
+        guard let window, let contentView = window.contentView else { return }
+        let fitting = contentView.fittingSize
+        if abs(window.contentRect(forFrameRect: window.frame).height - fitting.height) > 1 {
+            window.setContentSize(fitting)
         }
     }
 
     // MARK: - 상태 갱신
 
     private func refresh() {
-        apply(Installer.manifestState(), to: manifestStatusLabel)
-        apply(Installer.extensionState(), to: extensionStatusLabel)
-        extensionPathLabel.stringValue = "폴더: \(Installer.extensionDirectory)"
-        extensionIDLabel.stringValue = "확장 ID: \(Installer.currentExtensionID)"
+        let manifest = Installer.manifestState()
+        let folder = Installer.extensionState()
+        let evidence = Settings.lastRequestAt
 
-        guard Settings.terminal == "iterm" else { return } // 권한 섹션이 숨겨져 있으면 확인 불필요
-        if PermissionChecker.isITermInstalled {
-            let status = PermissionChecker.iTermAutomationStatus()
-            let state: SetupState = status.isGranted ? .ok(status.label) : .warning(status.label)
-            apply(state, to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
+        // Chrome 연결: 정상이면 카드를 숨긴다 (앱 실행 시 자동 등록·자가 치유되므로 버튼도 불필요)
+        if case .ok = manifest {
+            chromeCard.isHidden = true
         } else {
-            apply(.warning("iTerm2가 설치되어 있지 않음"), to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
+            chromeCard.isHidden = false
+            apply(manifest, to: manifestStatusLabel)
         }
+
+        // 확장: 소켓으로 요청이 실제 도착했을 때만 완료로 본다
+        let extensionState: SetupState
+        if case .error = folder {
+            extensionState = folder
+        } else if let evidence {
+            extensionState = .ok("연결 확인됨 — 마지막 요청 \(relative(evidence))")
+        } else {
+            extensionState = .warning("Chrome에서의 첫 요청 대기 중 — 설치 후 GitHub PR 페이지에서 버튼을 누르면 완료됩니다")
+        }
+        apply(extensionState, to: extensionStatusLabel)
+        extensionCard.isHidden = evidence != nil && !forceShowInstall
+        utilityRow.isHidden = !extensionCard.isHidden
+
+        let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
+
+        var permission: SetupState?
+        if Settings.terminal == "iterm" {
+            if PermissionChecker.isITermInstalled {
+                let status = PermissionChecker.iTermAutomationStatus()
+                permission = status.isGranted ? .ok(status.label) : .warning(status.label)
+            } else {
+                permission = .warning("iTerm2가 설치되어 있지 않음")
+            }
+            apply(permission!, to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
+        }
+        var granted = false
+        if let permission, case .ok = permission { granted = true }
+        permissionSection.isHidden = Settings.terminal != "iterm" || granted
+
+        pipeline.update(pipelineNodes(
+            manifest: manifest, extensionState: extensionState,
+            socketAlive: socketAlive, permission: permission
+        ))
+        resizeToFit()
+    }
+
+    private func pipelineNodes(
+        manifest: SetupState, extensionState: SetupState,
+        socketAlive: Bool, permission: SetupState?
+    ) -> [PipelineStripView.Node] {
+        func color(_ state: SetupState) -> NSColor {
+            switch state {
+            case .ok: return Theme.ok
+            case .warning: return Theme.warn
+            case .error: return Theme.err
+            }
+        }
+        let terminalName: String
+        let terminalColor: NSColor
+        let terminalDetail: String
+        if Settings.terminal == "wezterm" {
+            terminalName = "WezTerm"
+            let installed = PermissionChecker.isWezTermInstalled
+            terminalColor = installed ? Theme.ok : Theme.err
+            terminalDetail = installed ? "WezTerm CLI 사용 가능 — TCC 권한 불필요" : "WezTerm이 설치되어 있지 않음"
+        } else {
+            terminalName = "iTerm2"
+            terminalColor = permission.map(color) ?? Theme.warn
+            terminalDetail = "iTerm2 자동화: \(permission?.message ?? "상태 미확인")"
+        }
+        return [
+            .init(label: "Chrome 확장", color: color(extensionState), detail: extensionState.message),
+            .init(label: "relay", color: color(manifest), detail: "Native Host: \(manifest.message)"),
+            .init(
+                label: "앱", color: socketAlive ? Theme.ok : Theme.err,
+                detail: socketAlive ? "소켓 서버 대기 중 (host.sock)" : "소켓 파일 없음 — 앱을 재시작해 보세요"
+            ),
+            .init(label: terminalName, color: terminalColor, detail: terminalDetail),
+        ]
     }
 
     private func apply(_ state: SetupState, to label: NSTextField, prefix: String = "") {
+        label.stringValue = "● \(prefix)\(state.message)"
         switch state {
-        case .ok(let message):
-            label.stringValue = "● \(prefix)\(message)"
-            label.textColor = .systemGreen
-        case .warning(let message):
-            label.stringValue = "● \(prefix)\(message)"
-            label.textColor = .systemOrange
-        case .error(let message):
-            label.stringValue = "● \(prefix)\(message)"
-            label.textColor = .systemRed
+        case .ok: label.textColor = Theme.ok
+        case .warning: label.textColor = Theme.warn
+        case .error: label.textColor = Theme.err
         }
     }
 
@@ -252,8 +537,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         pasteboard.clearContents()
         pasteboard.setString(Installer.extensionDirectory, forType: .string)
         openInChrome("chrome://extensions")
+        guideBlock.isHidden = false
         installFeedbackLabel.stringValue = "경로가 클립보드에 복사되었고 Chrome이 열렸습니다. 위 ①→④ 순서대로 진행하세요."
-        installFeedbackLabel.textColor = .systemBlue
+        installFeedbackLabel.textColor = Theme.accent
+        installFeedbackLabel.isHidden = false
         refresh()
     }
 
@@ -261,10 +548,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         openInChrome(Installer.optionsPageURL)
     }
 
+    @objc private func reshowInstall() {
+        forceShowInstall = true
+        guideBlock.isHidden = false
+        refresh()
+    }
+
     @objc private func requestPermission() {
         requestPermissionButton.isEnabled = false
         permissionStatusLabel.stringValue = "● iTerm2 자동화: 권한 프롬프트 응답 대기 중…"
-        permissionStatusLabel.textColor = .secondaryLabelColor
+        permissionStatusLabel.textColor = Theme.textDim
         PermissionChecker.requestITermAutomation { [weak self] result in
             guard let self else { return }
             self.requestPermissionButton.isEnabled = true
@@ -281,21 +574,25 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func testTerminal() {
         let terminal = Settings.terminal
+        let command = testCommand
         testResultLabel.stringValue = "실행 중…"
+        testResultLabel.textColor = Theme.textDim
+        testResultLabel.isHidden = false
+        resizeToFit()
         DispatchQueue.global().async { [weak self] in
             var failure: Error?
             do {
-                try runInTerminal(command: "echo 'Terminal Checkout: 연결 OK'", terminal: terminal)
+                try runInTerminal(command: command, terminal: terminal)
             } catch {
                 failure = error
             }
             DispatchQueue.main.async {
                 if let failure {
                     self?.testResultLabel.stringValue = "실패: \(errorMessage(failure))"
-                    self?.testResultLabel.textColor = .systemRed
+                    self?.testResultLabel.textColor = Theme.err
                 } else {
                     self?.testResultLabel.stringValue = "터미널에 새 탭이 열렸다면 성공입니다."
-                    self?.testResultLabel.textColor = .secondaryLabelColor
+                    self?.testResultLabel.textColor = Theme.textDim
                 }
                 self?.refresh()
             }

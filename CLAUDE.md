@@ -27,7 +27,8 @@ Chrome → relay(번들 내 terminal-checkout-relay, stdio↔socket 중계만) �
 ## 개발 시 참고사항
 
 - Native Messaging host 이름(`com.dazebug.terminal_checkout`)은 소문자 영숫자·`_`·`.`만 허용된다(하이픈 금지). 앱 번들 ID(`com.dazebug.terminal-checkout`)는 하이픈을 쓴다 — 서로 다른 네임스페이스이며 섞지 않는다
-- 터미널 선택은 앱이 단일 소스로 관리한다(UserDefaults `terminal`: `iterm`/`wezterm`). 확장이 보내는 `terminal` 필드는 서버가 무시한다(Core의 파싱은 하위 호환용으로 유지). `iterm` 값은 확장 이름과 무관하게 iTerm2를 가리키는 식별자이므로 바꾸지 않는다. iTerm2 권한 섹션은 iTerm2 선택 시에만 표시된다
+- 터미널 선택은 앱이 단일 소스로 관리한다(UserDefaults `terminal`: `iterm`/`wezterm`). 확장이 보내는 `terminal` 필드는 서버가 무시한다(Core의 파싱은 하위 호환용으로 유지). `iterm` 값은 확장 이름과 무관하게 iTerm2를 가리키는 식별자이므로 바꾸지 않는다. iTerm2 권한 블록은 iTerm2 선택 + 권한 미허용 시에만 표시된다
+- 설정 창은 상태 기반 노출: 완료된 설정 항목의 카드는 숨고 헤더 파이프라인 스트립의 점으로만 남는다. 확장 설치 완료 판정은 폴더 준비가 아니라 소켓 요청 수신 기록(UserDefaults `lastRequestAt`, `Settings.recordRequestEvidence`)이다 — 폴더 준비만으로는 Chrome 로드 여부를 알 수 없기 때문. 창이 열려 있으면 요청 도착 시 Notification으로 실시간 갱신된다
 - command template 시스템: `{repo}`, `{branch}`, `{main}`, `{branch_underbar}` 변수를 앱(`Core/CommandRenderer.swift`)에서 치환. 값 검증은 영숫자·`-_./` 화이트리스트 문자 검사 (파이썬 시절 정규식 `$`가 끝 개행을 허용하던 구멍까지 막은 것 — 정규식으로 되돌리지 말 것)
 - main 브랜치 결정 순서: 리포별 오버라이드 → PR 페이지 base branch → 글로벌 기본값 (`extension/background.js`)
 - iTerm2는 osascript(앱의 자식 프로세스 → 권한이 앱에 귀속), WezTerm은 `wezterm cli spawn`(실패 시 `wezterm start` fallback). GUI 앱은 PATH가 `/usr/bin:/bin` 수준이라 wezterm CLI는 `/opt/homebrew/bin` 등 명시적 후보를 탐색한다

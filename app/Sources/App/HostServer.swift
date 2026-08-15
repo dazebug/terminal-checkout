@@ -90,6 +90,8 @@ final class HostServer {
     private func serve(fd: Int32) {
         defer { close(fd) }
         while let data = readFramedMessage(fromFD: fd) {
+            // 실행 결과와 무관하게 요청 도착 자체가 Chrome→relay→소켓 경로의 증거다
+            Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
             let response = execQueue.sync {
                 handleRequest(json: json) { command, _ in

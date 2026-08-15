@@ -3,14 +3,12 @@ import Core
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: HostServer?
-    private var statusItem: NSStatusItem?
     private var setupWindow: SetupWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         startServer()
         Installer.autoSetup()
         setupMainMenu()
-        setupStatusItem()
         // relay가 백그라운드로 띄운 경우(--background)에는 창을 열지 않는다
         if !CommandLine.arguments.contains("--background") {
             showSetupWindow()
@@ -67,35 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = main
     }
 
-    private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "terminal", accessibilityDescription: appDisplayName
-        )
-        let menu = NSMenu()
-        let settings = NSMenuItem(title: "설정 열기…", action: #selector(openSettings), keyEquivalent: "")
-        settings.target = self
-        menu.addItem(settings)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "\(appDisplayName) 종료", action: #selector(quitApp), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-        item.menu = menu
-        statusItem = item
-    }
-
-    @objc private func openSettings() {
-        showSetupWindow()
-    }
-
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
-    }
-
+    /// 앱은 어디에도 상시 노출되지 않는다 (메뉴 막대 없음, Dock은 창이 열린 동안만).
+    /// 설정이 필요하면 Spotlight 등으로 앱을 다시 실행 → reopen 이벤트로 이 창이 열린다.
     private func showSetupWindow() {
         if setupWindow == nil {
             let controller = SetupWindowController()
-            // 창이 닫히면 Dock/⌘Tab에서 다시 숨긴다 (메뉴 막대 상주로 복귀)
+            // 창이 닫히면 Dock/⌘Tab에서 다시 숨긴다 (보이지 않는 백그라운드로 복귀)
             controller.onClose = { NSApp.setActivationPolicy(.accessory) }
             setupWindow = controller
         }
