@@ -59,8 +59,9 @@ function normalizeButton(btn) {
 }
 
 // --- UI 렌더링 ---
-// 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드/행 개수가
-// 바뀔 때뿐이고 그 트리거는 전부 버튼 클릭이라, 편집 중에 포커스를 잃을 일이 없다.
+// 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드·행이 늘거나
+// 줄거나 순서가 바뀔 때뿐이고, 그 트리거는 전부 버튼 클릭·드래그·↑↓라 텍스트 편집 중에
+// 포커스를 잃을 일이 없다.
 
 function renderButtons(kind) {
   const { container: containerId, addButton, addHint } = section(kind);
@@ -214,7 +215,8 @@ function overrideInput(index, selector) {
   return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
 }
 
-// 다시 그린 뒤에는 예전 노드가 사라지므로 인덱스로 다시 집는다 (overrideInput과 같은 이유)
+// 카드 안 요소를 kind·index로 집는다 (오버라이드 행의 overrideInput과 짝). 카드를 다시 그리면
+// 예전 노드가 사라지므로 붙잡아 두지 않고 필요할 때마다 다시 찾는다.
 function cardElement(kind, index, selector) {
   return document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"] ${selector}`);
 }
@@ -578,7 +580,7 @@ function onCardClick(e) {
     state.buttons[kind] = duplicateButton(state.buttons[kind], index);
     markDirty();
     renderButtons(kind);
-    // 사본은 표시·툴팁부터 고치게 된다 — 새로 생긴 카드의 표시 칸으로 커서를 옮긴다
+    // 툴팁은 번호가 붙어 구분되지만 표시는 원본과 똑같다 — 사본의 표시 칸으로 커서를 옮긴다
     cardElement(kind, index + 1, '.face-input').focus();
     return;
   }
@@ -616,7 +618,8 @@ function onCardClick(e) {
 // --- 순서 변경 (드래그 · ↑↓) ---
 // 버튼 순서는 GitHub 페이지에 붙는 순서이자 확장 아이콘이 실행할 버튼(첫 번째)을 정한다.
 
-// 드래그가 시작된 카드. dragover에서는 dataTransfer를 읽을 수 없어(보호 모드) 따로 들고 있는다.
+// 드래그 중인 카드. 두 섹션이 같은 핸들러를 공유하므로 어느 섹션에서 시작했는지도 함께 든다
+// (다른 섹션 위에서는 드롭을 받지 않기 위해).
 let drag = null;
 
 function clearDropMarks(container) {
@@ -667,8 +670,10 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     if (e.target.classList.contains('preset-select')) applyPreset(e.target);
   });
 
-  // 카드 전체를 draggable로 두면 안쪽 입력에서 텍스트를 끌어 고를 수 없다 —
-  // 손잡이를 누르고 있는 동안에만 카드를 draggable로 만든다.
+  // 드래그는 손잡이에서만 시작하게 한다 — 누르고 있는 동안에만 카드에 draggable을 건다.
+  // 카드에 상시로 걸면 카드 안 아무 데나 눌러 끄는 동작이 드래그가 되어, 입력에서 텍스트를
+  // 끌어 고르는 것과 부딪힌다 (부딪힘 자체는 아직 확인하지 못했다 — Chrome이 입력 쪽을
+  // 우선할 수도 있다. 어느 쪽이든 손잡이 방식은 실수로 카드를 끄는 일을 막는다).
   element.addEventListener('mousedown', (e) => {
     if (!e.target.classList.contains('drag-handle')) return;
     const card = e.target.closest('.btn-card');
@@ -704,7 +709,8 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     e.preventDefault();
     const { from } = drag;
     const to = dropIndex(element, e.clientY);
-    // 다시 그리면 원래 카드가 사라져 dragend가 오지 않는다 — 뒷정리를 여기서 끝낸다
+    // 뒷정리를 여기서 끝낸다 — 곧바로 다시 그리면 원래 카드가 문서에서 빠지므로 그 노드로
+    // 오는 dragend에 기대지 않는다 (dragend가 와도 같은 정리를 한 번 더 할 뿐이다)
     endDrag(element);
     reorderButtons(kind, from, to);
   });

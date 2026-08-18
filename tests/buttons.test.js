@@ -1,4 +1,4 @@
-// extension/defaults.js의 순수 함수 테스트 — 의존성 없이 `node --test tests/`로 돌린다.
+// extension/defaults.js의 순수 함수 테스트 — 리포 루트에서 의존성 없이 `node --test`로 돌린다.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');

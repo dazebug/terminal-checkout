@@ -96,7 +96,7 @@ function moveButton(buttons, from, insertBefore) {
 // 표시(face)는 건드리지 않는다: 이모지 얼굴에 숫자가 섞이면 isTextFace가 텍스트 필로 판정해
 // GitHub에 붙는 버튼 모양이 통째로 바뀐다.
 function copyLabel(label, existingLabels) {
-  const base = label.replace(/\s*\(\d+\)$/, '').trim(); // 공백만 남은 툴팁이면 번호만 붙는다
+  const base = label.replace(/\s*\(\d+\)$/, '').trim(); // 앞뒤 공백은 떼고 붙인다 (공백만 남은 툴팁이면 번호만)
   const used = new Set(existingLabels);
   const numbered = n => (base ? `${base} (${n})` : `(${n})`);
   let n = 1;
