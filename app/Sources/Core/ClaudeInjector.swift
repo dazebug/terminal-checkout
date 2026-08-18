@@ -162,7 +162,7 @@ private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> 
     return false
 }
 
-private func claudeAcceptsInput(ttyName: String, ttyPath: String) -> Bool {
+private func claudeIsAcceptingInput(ttyName: String, ttyPath: String) -> Bool {
     guard let ps = try? runProcess("/bin/ps", ["-t", ttyName, "-o", "stat=,comm="], timeout: 5) else {
         return false
     }
@@ -177,7 +177,7 @@ private func waitUntilClaudeAcceptsInput(
     ttyName: String, ttyPath: String, pollInterval: TimeInterval, timeout: TimeInterval
 ) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
-    while !claudeAcceptsInput(ttyName: ttyName, ttyPath: ttyPath) {
+    while !claudeIsAcceptingInput(ttyName: ttyName, ttyPath: ttyPath) {
         if Date() >= deadline { return false }
         Thread.sleep(forTimeInterval: pollInterval)
     }
