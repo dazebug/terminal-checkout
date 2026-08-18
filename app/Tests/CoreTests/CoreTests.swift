@@ -198,38 +198,70 @@ final class HandlerTests: XCTestCase {
 // MARK: - Claude 입력 전달 (포그라운드 게이트 판정 — 셸 오입력 방지의 핵심)
 
 final class ClaudeInjectorTests: XCTestCase {
-    // ps -t <tty> -o stat=,comm= 출력 기준. 포그라운드 프로세스 그룹은 stat에 `+`가 붙는다.
+    // ps -t <tty> -o pid=,stat=,comm= 출력 기준. 포그라운드 프로세스 그룹은 stat에 `+`가 붙는다.
+    // 이름만이 아니라 PID 를 돌려주는 이유는 입력 사이 재대기에서 같은 세션인지 확인하기
+    // 위해서다 (testForegroundPIDDistinguishesReplacedSession 참고).
     func testForegroundClaudeDetected() {
-        XCTAssertTrue(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   claude"))
+        XCTAssertEqual(claudeForegroundPID(psOutput: "100 Ss   -zsh\n200 S+   claude"), 200)
     }
 
     func testForegroundNodeWithFullPathDetected() {
-        XCTAssertTrue(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   /opt/homebrew/bin/node"))
+        XCTAssertEqual(
+            claudeForegroundPID(psOutput: "100 Ss   -zsh\n201 S+   /opt/homebrew/bin/node"), 201)
     }
 
     func testShellAtPromptIsNotClaude() {
         // 프롬프트 대기 중에는 셸 자신이 포그라운드(+)다 — 이때 타이핑하면 셸이 실행해버린다
-        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  -zsh"))
-        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  zsh"))
-        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss+  /bin/zsh"))
+        XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  -zsh"))
+        XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  zsh"))
+        XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  /bin/zsh"))
     }
 
     func testOtherForegroundProcessIsNotClaude() {
-        XCTAssertFalse(hasClaudeForeground(psOutput: "Ss   -zsh\nS+   git"))
+        XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss   -zsh\n300 S+   git"))
     }
 
     func testBackgroundClaudeIsNotEnough() {
-        XCTAssertFalse(hasClaudeForeground(psOutput: "S    claude\nSs+  -zsh"))
+        XCTAssertNil(claudeForegroundPID(psOutput: "200 S    claude\n100 Ss+  -zsh"))
     }
 
     func testPathWithSpacesUsesExactBasename() {
         // "Claude Helper (Renderer)" 같은 무관한 프로세스가 claude로 오인되면 안 된다
-        XCTAssertFalse(hasClaudeForeground(
-            psOutput: "S+   /Applications/Claude.app/Contents/MacOS/Claude Helper (Renderer)"))
+        XCTAssertNil(claudeForegroundPID(
+            psOutput: "400 S+   /Applications/Claude.app/Contents/MacOS/Claude Helper (Renderer)"))
     }
 
     func testEmptyOutputIsNotClaude() {
-        XCTAssertFalse(hasClaudeForeground(psOutput: ""))
+        XCTAssertNil(claudeForegroundPID(psOutput: ""))
+    }
+
+    /// `ps -o pid=,stat=,comm=` 의 pid 는 우측 정렬이라 선행 공백이 붙고, comm 앞에도
+    /// 칸 맞춤 공백이 여러 개 온다 (실측: `" 3719 S+   node"`). 이 공백을 떼지 않으면
+    /// 이름 비교가 전부 어긋나 claude 를 영영 못 찾는다.
+    func testRealPSColumnSpacingIsTolerated() {
+        XCTAssertEqual(claudeForegroundPID(psOutput: " 3719 S+   node"), 3719)
+        XCTAssertEqual(
+            claudeForegroundPID(psOutput: "34782 Ss   -zsh\n 3719 S+   claude"), 3719)
+        XCTAssertEqual(
+            claudeForegroundPID(psOutput: "  100 Ss   -zsh\n95539 R+   /opt/homebrew/bin/node"),
+            95539)
+    }
+
+    func testMalformedPIDColumnIsSkipped() {
+        // pid 자리가 숫자가 아니면(헤더 등) 그 줄은 건너뛴다
+        XCTAssertNil(claudeForegroundPID(psOutput: "PID STAT COMM\nxxx S+   claude"))
+    }
+
+    /// 이 PR 의 핵심 회귀 방지: 원래 claude 가 죽고 같은 tty 에 새 claude 가 떠도
+    /// 이름·raw mode 는 똑같이 만족하므로, PID 로만 두 세션을 구별할 수 있다.
+    /// 구별하지 못하면 남은 claude_inputs 가 무관한 새 세션에 제출되고,
+    /// 입력이 `!…` 셸 모드면 의도하지 않은 명령까지 실행된다.
+    func testForegroundPIDDistinguishesReplacedSession() {
+        let first = claudeForegroundPID(psOutput: "100 Ss   -zsh\n95539 R+   claude")
+        let replaced = claudeForegroundPID(psOutput: "100 Ss   -zsh\n95610 R+   claude")
+        XCTAssertEqual(first, 95539)
+        XCTAssertEqual(replaced, 95610)
+        XCTAssertNotEqual(first, replaced)
     }
 
     // MARK: tty raw mode 판정 — 포그라운드가 claude여도 아직 입력을 받을 수 없는 구간을 가른다.
@@ -278,19 +310,19 @@ final class ClaudeInjectorTests: XCTestCase {
     // MARK: 입력 접수 가능 판정 = 포그라운드 claude + raw mode
 
     func testAcceptsInputRequiresBothSignals() {
-        let claudeFg = "Ss   -zsh\nS+   claude"
-        let shellFg = "Ss+  -zsh"
-        XCTAssertTrue(claudeAcceptsInput(psOutput: claudeFg, sttyOutput: Self.sttyRawOutput))
+        let claudeFg = "100 Ss   -zsh\n200 S+   claude"
+        let shellFg = "100 Ss+  -zsh"
+        XCTAssertEqual(acceptingClaudePID(psOutput: claudeFg, sttyOutput: Self.sttyRawOutput), 200)
         // claude는 떴지만 아직 canonical — 지금 보내면 CR이 유실된다
-        XCTAssertFalse(claudeAcceptsInput(psOutput: claudeFg, sttyOutput: Self.sttyCanonicalOutput))
+        XCTAssertNil(acceptingClaudePID(psOutput: claudeFg, sttyOutput: Self.sttyCanonicalOutput))
         // 셸 프롬프트는 zle 때문에 raw지만 포그라운드가 claude가 아니다
-        XCTAssertFalse(claudeAcceptsInput(psOutput: shellFg, sttyOutput: Self.sttyRawOutput))
+        XCTAssertNil(acceptingClaudePID(psOutput: shellFg, sttyOutput: Self.sttyRawOutput))
     }
 
     func testAcceptsInputFallsBackToForegroundWhenSttyUnavailable() {
         // stty를 못 읽는 환경에서 전달이 아예 끊기지 않도록 ps 게이트만으로 통과시킨다
-        XCTAssertTrue(claudeAcceptsInput(psOutput: "S+   claude", sttyOutput: ""))
-        XCTAssertFalse(claudeAcceptsInput(psOutput: "Ss+  -zsh", sttyOutput: ""))
+        XCTAssertEqual(acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: ""), 200)
+        XCTAssertNil(acceptingClaudePID(psOutput: "100 Ss+  -zsh", sttyOutput: ""))
     }
 
     // wezterm cli list --format json에서 pane의 tty를 찾는다
