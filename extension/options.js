@@ -59,13 +59,16 @@ function normalizeButton(btn) {
 }
 
 // --- UI 렌더링 ---
-// 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드/행 개수가
-// 바뀔 때뿐이고 그 트리거는 전부 버튼 클릭이라, 편집 중에 포커스를 잃을 일이 없다.
+// 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드·행이 늘거나
+// 줄거나 순서가 바뀔 때뿐이고, 그 트리거는 전부 버튼 클릭·드래그·↑↓라 텍스트 편집 중에
+// 포커스를 잃을 일이 없다.
 
 function renderButtons(kind) {
   const { container: containerId, addButton, addHint } = section(kind);
   const container = document.getElementById(containerId);
   container.innerHTML = '';
+
+  const count = state.buttons[kind].length;
 
   state.buttons[kind].forEach((btn, i) => {
     const card = document.createElement('div');
@@ -75,8 +78,14 @@ function renderButtons(kind) {
     // 값은 HTML에 끼워 넣지 않고 아래에서 프로퍼티로 넣는다 (이스케이프가 필요 없어진다)
     card.innerHTML = `
       <div class="btn-card-header">
-        <span class="btn-number"><span class="prompt">❯</span> ${kind === 'issue' ? 'issueButtons' : 'buttons'}[${i}]</span>
-        ${state.buttons[kind].length > 1 ? '<button class="remove-btn">삭제</button>' : ''}
+        <span class="btn-number">
+          ${count > 1 ? '<button class="drag-handle" aria-label="순서 변경" title="드래그하거나 ↑↓ 키로 순서 변경">⠿</button>' : ''}
+          <span class="prompt">❯</span> ${kind === 'issue' ? 'issueButtons' : 'buttons'}[${i}]
+        </span>
+        <span class="card-actions">
+          ${count < MAX_BUTTONS ? '<button class="duplicate-btn" title="이 버튼을 복제합니다">복제</button>' : ''}
+          ${count > 1 ? '<button class="remove-btn">삭제</button>' : ''}
+        </span>
       </div>
       <div class="btn-row">
         <div class="field field-face">
@@ -146,7 +155,7 @@ function renderButtons(kind) {
     autosize(card.querySelector('.command-input')); // 붙인 뒤라야 scrollHeight가 잡힌다
   });
 
-  const atMax = state.buttons[kind].length >= MAX_BUTTONS;
+  const atMax = count >= MAX_BUTTONS;
   document.getElementById(addButton).disabled = atMax;
   document.getElementById(addHint).hidden = !atMax;
 }
@@ -206,6 +215,12 @@ function overrideInput(index, selector) {
   return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
 }
 
+// 카드 안 요소를 kind·index로 집는다 (오버라이드 행의 overrideInput과 짝). 카드를 다시 그리면
+// 예전 노드가 사라지므로 붙잡아 두지 않고 필요할 때마다 다시 찾는다.
+function cardElement(kind, index, selector) {
+  return document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"] ${selector}`);
+}
+
 // --- 미저장 변경 표시 ---
 
 function markDirty() {
@@ -262,9 +277,7 @@ function validateButtons() {
         if (state.buttons[kind][i][field].trim()) continue;
         return {
           message: `${name}[${i}]: ${label} 입력하세요.`,
-          focus: document.querySelector(
-            `.btn-card[data-kind="${kind}"][data-index="${i}"] [data-field="${field}"]`
-          ),
+          focus: cardElement(kind, i, `[data-field="${field}"]`),
         };
       }
     }
@@ -561,6 +574,17 @@ function onCardClick(e) {
     return;
   }
 
+  if (e.target.classList.contains('duplicate-btn')) {
+    const { kind, index } = cardOf(e.target);
+    if (state.buttons[kind].length >= MAX_BUTTONS) return;
+    state.buttons[kind] = duplicateButton(state.buttons[kind], index);
+    markDirty();
+    renderButtons(kind);
+    // 툴팁은 번호가 붙어 구분되지만 표시는 원본과 똑같다 — 사본의 표시 칸으로 커서를 옮긴다
+    cardElement(kind, index + 1, '.face-input').focus();
+    return;
+  }
+
   if (e.target.classList.contains('palette-btn')) {
     const { card, kind, index } = cardOf(e.target);
     const input = card.querySelector('.face-input');
@@ -578,9 +602,7 @@ function onCardClick(e) {
     inputs.push('');
     markDirty();
     renderButtons(kind);
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${index}"] .claude-row[data-ci="${inputs.length - 1}"] .ci-input`
-    ).focus();
+    cardElement(kind, index, `.claude-row[data-ci="${inputs.length - 1}"] .ci-input`).focus();
     return;
   }
 
@@ -593,12 +615,119 @@ function onCardClick(e) {
   }
 }
 
+// --- 순서 변경 (드래그 · ↑↓) ---
+// 버튼 순서는 GitHub 페이지에 붙는 순서이자 확장 아이콘이 실행할 버튼(첫 번째)을 정한다.
+
+// 드래그 중인 카드. 두 섹션이 같은 핸들러를 공유하므로 어느 섹션에서 시작했는지도 함께 든다
+// (다른 섹션 위에서는 드롭을 받지 않기 위해).
+let drag = null;
+
+function clearDropMarks(container) {
+  container.querySelectorAll('.drop-before, .drop-after')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+}
+
+// 포인터가 걸친 카드의 위/아래 절반으로 "몇 번 카드 앞에 넣을지"를 정한다 (끝을 지나면 개수).
+function dropIndex(container, y) {
+  const cards = [...container.querySelectorAll('.btn-card')];
+  const hit = cards.findIndex(card => {
+    const rect = card.getBoundingClientRect();
+    return y < rect.top + rect.height / 2;
+  });
+  return hit === -1 ? cards.length : hit;
+}
+
+function markDropTarget(container, index) {
+  clearDropMarks(container);
+  const cards = container.querySelectorAll('.btn-card');
+  if (index < cards.length) cards[index].classList.add('drop-before');
+  else cards[cards.length - 1].classList.add('drop-after');
+}
+
+function endDrag(container) {
+  container.querySelectorAll('.btn-card').forEach(card => {
+    card.draggable = false;
+    card.classList.remove('dragging');
+  });
+  clearDropMarks(container);
+  drag = null;
+}
+
+// 옮긴 뒤의 인덱스를 돌려준다 (키보드로 옮길 때 손잡이 포커스를 따라가기 위해)
+function reorderButtons(kind, from, insertBefore) {
+  if (insertBefore === from || insertBefore === from + 1) return from; // 제자리 드롭
+  state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
+  markDirty();
+  renderButtons(kind);
+  return insertBefore > from ? insertBefore - 1 : insertBefore;
+}
+
 for (const { kind, container, addButton, defaults } of SECTIONS) {
   const element = document.getElementById(container);
   element.addEventListener('input', onCardInput);
   element.addEventListener('click', onCardClick);
   element.addEventListener('change', (e) => {
     if (e.target.classList.contains('preset-select')) applyPreset(e.target);
+  });
+
+  // 드래그는 손잡이에서만 시작하게 한다 — 누르고 있는 동안에만 카드에 draggable을 건다.
+  // 카드에 상시로 걸면 카드 안 아무 데나 눌러 끄는 동작이 드래그가 되어, 입력에서 텍스트를
+  // 끌어 고르는 것과 부딪힌다 (부딪힘 자체는 아직 확인하지 못했다 — Chrome이 입력 쪽을
+  // 우선할 수도 있다. 어느 쪽이든 손잡이 방식은 실수로 카드를 끄는 일을 막는다).
+  element.addEventListener('mousedown', (e) => {
+    if (!e.target.classList.contains('drag-handle')) return;
+    const card = e.target.closest('.btn-card');
+    card.draggable = true;
+    // 끌지 않고 그냥 떼면 dragend가 오지 않으므로 여기서 되돌린다
+    document.addEventListener('mouseup', () => { card.draggable = false; }, { once: true });
+  });
+
+  element.addEventListener('dragstart', (e) => {
+    const card = e.target.closest?.('.btn-card');
+    if (!card?.draggable) return; // 입력 안 텍스트를 끄는 기본 드래그는 그대로 둔다
+    // 옮길 카드는 여기서 기억한다 — dataTransfer에는 아무것도 싣지 않는다. 우리가 읽지 않는
+    // 데이터인데 text/plain으로 실어 두면 바깥(다른 입력·다른 앱)에 붙어 버리고, Chrome은
+    // 빈 데이터 저장소로도 드래그를 그대로 이어간다(실측 — dragover·dropEffect 정상)
+    drag = { kind, from: Number(card.dataset.index) };
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  element.addEventListener('dragover', (e) => {
+    if (drag?.kind !== kind) return; // 다른 섹션에서 온 드래그는 받지 않는다
+    e.preventDefault(); // 기본값이 "드롭 불가"라 막아야 드롭이 열린다
+    e.dataTransfer.dropEffect = 'move';
+    markDropTarget(element, dropIndex(element, e.clientY));
+  });
+
+  element.addEventListener('dragleave', (e) => {
+    if (!element.contains(e.relatedTarget)) clearDropMarks(element);
+  });
+
+  element.addEventListener('drop', (e) => {
+    if (drag?.kind !== kind) return;
+    e.preventDefault();
+    const { from } = drag;
+    const to = dropIndex(element, e.clientY);
+    // 뒷정리를 여기서 끝낸다 — 곧바로 다시 그리면 원래 카드가 문서에서 빠지므로 그 노드로
+    // 오는 dragend에 기대지 않는다 (dragend가 와도 같은 정리를 한 번 더 할 뿐이다)
+    endDrag(element);
+    reorderButtons(kind, from, to);
+  });
+
+  element.addEventListener('dragend', () => endDrag(element)); // 취소·바깥 드롭
+
+  element.addEventListener('keydown', (e) => {
+    if (!e.target.classList.contains('drag-handle')) return;
+    const step = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+    if (!step) return;
+    e.preventDefault(); // 화살표 기본 동작(스크롤)을 막는다
+    const { index } = cardOf(e.target);
+    const to = index + step;
+    if (to < 0 || to >= state.buttons[kind].length) return;
+    // reorderButtons는 "몇 번 카드 앞"을 받는다 — 아래로 갈 때는 목적지 카드의 다음 자리다
+    const moved = reorderButtons(kind, index, step < 0 ? to : to + 1);
+    cardElement(kind, moved, '.drag-handle').focus();
   });
 
   document.getElementById(addButton).addEventListener('click', () => {
@@ -611,9 +740,7 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     state.buttons[kind].push(normalizeButton({ face, label: 'New Button', command: '' }));
     markDirty();
     renderButtons(kind);
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${state.buttons[kind].length - 1}"] .command-input`
-    ).focus();
+    cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
   });
 }
 

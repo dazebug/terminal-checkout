@@ -78,3 +78,41 @@ function buttonFace(config) {
 function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
+
+// --- 버튼 목록 편집 ---
+// 옵션 페이지만 쓰지만 DOM·chrome API를 모르는 순수 함수라 여기 둔다 (tests/buttons.test.js).
+
+// from번 버튼을 원본 기준 insertBefore번 카드 "앞"으로 옮긴 새 배열.
+// 뺀 다음에 끼우므로 뒤로 옮길 때는 목적지가 한 칸 당겨진다 — 이 보정을 빠뜨리면 한 칸씩 어긋난다.
+function moveButton(buttons, from, insertBefore) {
+  const next = buttons.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(insertBefore > from ? insertBefore - 1 : insertBefore, 0, moved);
+  return next;
+}
+
+// 사본 툴팁: "리뷰" → "리뷰 (1)". 이미 붙어 있는 번호는 떼고 비어 있는 가장 작은 번호를
+// 찾는다 — 원본을 두 번 복제하거나 사본을 다시 복제해도 같은 이름이 겹치지 않는다.
+// 표시(face)는 건드리지 않는다: 이모지 얼굴에 숫자가 섞이면 isTextFace가 텍스트 필로 판정해
+// GitHub에 붙는 버튼 모양이 통째로 바뀐다.
+function copyLabel(label, existingLabels) {
+  const base = label.replace(/\s*\(\d+\)$/, '').trim(); // 앞뒤 공백은 떼고 붙인다 (공백만 남은 툴팁이면 번호만)
+  const used = new Set(existingLabels);
+  const numbered = n => (base ? `${base} (${n})` : `(${n})`);
+  let n = 1;
+  while (used.has(numbered(n))) n++;
+  return numbered(n);
+}
+
+// index번 버튼의 사본을 바로 뒤에 끼운 새 배열. claudeInputs를 얕게 복사하면 원본과 같은
+// 배열을 가리켜 한쪽 입력을 고치면 다른 쪽도 바뀐다.
+function duplicateButton(buttons, index) {
+  const source = buttons[index];
+  const next = buttons.slice();
+  next.splice(index + 1, 0, {
+    ...source,
+    label: copyLabel(source.label, buttons.map(b => b.label)),
+    claudeInputs: [...(source.claudeInputs || [])],
+  });
+  return next;
+}
