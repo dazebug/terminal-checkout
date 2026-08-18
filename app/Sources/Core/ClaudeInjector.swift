@@ -17,7 +17,9 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 /// 이 게이트가 "셸에 타이핑되어 Enter까지 즉시 실행"되는 오입력을 막는 유일한 방어선이다.
 /// 있음/없음이 아니라 PID를 돌려주는 이유는 입력 사이 재대기에서 세션의 동일성을 확인해야
 /// 하기 때문이다: 이름과 raw mode만 보면 원래 claude가 죽은 뒤 같은 tty에 새로 뜬 claude를
-/// 같은 세션으로 오인해, 남은 입력을 무관한 세션에 제출한다 (실측 재현).
+/// 같은 세션으로 오인해, 남은 입력을 무관한 세션에 제출한다. 같은 tty에서 claude를 재시작해
+/// 확인한 결과 comm(`claude`)과 raw mode(참)는 두 세션이 동일했고 PID만 달랐다 — 세션 교체를
+/// 가려낼 수 있는 신호는 PID뿐이다.
 public func claudeForegroundPID(psOutput: String) -> Int? {
     for line in psOutput.split(separator: "\n") {
         // "pid stat comm…" — comm은 공백 포함 풀 경로일 수 있으므로 앞 두 칸만 가른다
@@ -52,6 +54,9 @@ public func ttyIsRawMode(sttyOutput: String) -> Bool? {
 /// raw mode에서는 커널 에코가 꺼지므로, 이 게이트를 통과한 뒤 화면에 보이는 텍스트는
 /// claude가 직접 그린 것이다 — 반영 확인이 비로소 claude의 수신을 뜻하게 된다.
 /// 돌려준 PID는 이후 입력들이 같은 세션에 가는지 확인하는 데 쓴다.
+/// 두 신호는 어느 쪽도 혼자 쓸 수 없다: 셸이 프롬프트에서 대기할 때도 zsh의 zle이 tty를
+/// raw mode로 두므로(실측), raw mode만 보면 셸에 그대로 타이핑한다. ps 확인을 중복으로 보고
+/// 걷어내면 이 스킬이 막으려던 셸 오입력이 되살아난다.
 public func acceptingClaudePID(psOutput: String, sttyOutput: String) -> Int? {
     guard let pid = claudeForegroundPID(psOutput: psOutput) else { return nil }
     // 판정 불가면 ps 게이트만으로 진행한다 — stty를 못 읽는다고 전달을 통째로 포기하지 않는다
@@ -145,9 +150,10 @@ public func deliverClaudeInputs(
     }
 }
 
-/// 타이핑 → 화면 반영 확인 → 제출. 반영이 안 보이면(TUI가 아직 입력을 버리는 중)
-/// 입력창을 비우고 재타이핑한다. 반영 확인 없이 제출하면 빈 줄만 제출되거나
-/// 잘린 텍스트가 제출될 수 있으므로 확인 전에는 절대 CR을 보내지 않는다.
+/// 타이핑 → 화면 반영 확인 → 제출. 게이트를 통과했어도 claude TUI가 아직 입력을 그리지
+/// 못하는 순간이 있어, 반영이 안 보이면 입력창을 비우고 재타이핑한다. 반영 확인 없이
+/// 제출하면 빈 줄만 제출되거나 잘린 텍스트가 제출될 수 있으므로 확인 전에는 CR을 보내지 않는다.
+/// raw mode 게이트를 통과한 뒤라 커널 에코는 꺼져 있고, 화면의 텍스트는 claude가 그린 것이다.
 private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> Bool {
     let maxAttempts = 5
     for attempt in 1...maxAttempts {

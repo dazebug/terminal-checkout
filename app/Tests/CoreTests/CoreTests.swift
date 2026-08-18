@@ -252,7 +252,7 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(claudeForegroundPID(psOutput: "PID STAT COMM\nxxx S+   claude"))
     }
 
-    /// 이 PR 의 핵심 회귀 방지: 원래 claude 가 죽고 같은 tty 에 새 claude 가 떠도
+    /// 세션 교체 방어의 회귀 방지: 원래 claude 가 죽고 같은 tty 에 새 claude 가 떠도
     /// 이름·raw mode 는 똑같이 만족하므로, PID 로만 두 세션을 구별할 수 있다.
     /// 구별하지 못하면 남은 claude_inputs 가 무관한 새 세션에 제출되고,
     /// 입력이 `!…` 셸 모드면 의도하지 않은 명령까지 실행된다.
