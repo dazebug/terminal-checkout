@@ -474,3 +474,72 @@ final class PathsTests: XCTestCase {
         XCTAssertTrue(defaultSocketPath().hasSuffix("/Library/Application Support/TerminalCheckout/host.sock"))
     }
 }
+
+// MARK: - WezTerm 탭을 만들 창 고르기
+
+final class WezTermWindowTests: XCTestCase {
+    // wezterm cli list-clients --format json 실측 형태
+    private let clientsJSON = Data("""
+    [{"username":"u","hostname":"h","pid":96467,
+      "connection_elapsed":{"secs":546209,"nanos":0},
+      "idle_time":{"secs":9,"nanos":557978000},
+      "workspace":"default","focused_pane_id":146}]
+    """.utf8)
+
+    // 같은 순간의 wezterm cli list --format json (창 3개, 창마다 탭 1개 이상)
+    private let listJSON = Data("""
+    [{"window_id":4,"tab_id":82,"pane_id":147,"tty_name":"/dev/ttys003"},
+     {"window_id":3,"tab_id":81,"pane_id":146,"tty_name":"/dev/ttys000"},
+     {"window_id":0,"tab_id":4,"pane_id":5,"tty_name":"/dev/ttys001"}]
+    """.utf8)
+
+    func testFocusedWindowIDFromClientsAndList() {
+        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: listJSON), "3")
+    }
+
+    // client가 여럿이면 가장 최근에 활동한(idle_time이 짧은) 쪽이 사용자가 보고 있는 창이다
+    func testMostRecentlyActiveClientWins() {
+        let clients = Data("""
+        [{"pid":1,"idle_time":{"secs":300,"nanos":0},"focused_pane_id":5},
+         {"pid":2,"idle_time":{"secs":2,"nanos":500000000},"focused_pane_id":147}]
+        """.utf8)
+        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "4")
+    }
+
+    // focused_pane_id가 없는 client(창 없이 붙은 mux 연결)는 후보에서 빼야 한다
+    func testClientWithoutFocusedPaneIgnored() {
+        let clients = Data("""
+        [{"pid":1,"idle_time":{"secs":0,"nanos":0}},
+         {"pid":2,"idle_time":{"secs":90,"nanos":0},"focused_pane_id":5}]
+        """.utf8)
+        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "0")
+    }
+
+    // 포커스된 pane이 목록에 없으면(직전에 닫힘) 창을 지정하지 않는다 —
+    // 엉뚱한 창을 골라 탭을 흘리는 대신 wezterm 기본 선택에 맡긴다
+    func testUnknownFocusedPaneYieldsNil() {
+        let clients = Data(#"[{"idle_time":{"secs":0,"nanos":0},"focused_pane_id":999}]"#.utf8)
+        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON))
+    }
+
+    func testBrokenOrEmptyJSONYieldsNil() {
+        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("nope".utf8), listJSON: listJSON))
+        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: Data("nope".utf8)))
+        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("[]".utf8), listJSON: listJSON))
+    }
+
+    // 창을 특정했으면 그 창을 먼저 노리고, 실패하면 창 지정 없이 한 번 더 시도한다 —
+    // 찾은 창이 spawn 직전에 닫히면 wezterm은 "window_id N not found"로 실패하고(실측),
+    // 거기서 포기하면 `wezterm start` fallback이 새 창을 띄워 고치려던 증상이 되살아난다
+    func testSpawnAttemptsRetryWithoutWindowID() {
+        XCTAssertEqual(
+            wezTermSpawnAttempts(windowID: "3"),
+            [["cli", "spawn", "--window-id", "3"], ["cli", "spawn"]]
+        )
+    }
+
+    // 창을 못 찾았으면 시도는 한 번뿐이다 — 같은 명령을 두 번 돌릴 이유가 없다
+    func testSpawnAttemptsSingleWhenWindowUnknown() {
+        XCTAssertEqual(wezTermSpawnAttempts(windowID: nil), [["cli", "spawn"]])
+    }
+}
