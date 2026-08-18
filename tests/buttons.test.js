@@ -43,7 +43,22 @@ test('moveButton: 원본 배열을 건드리지 않는다', () => {
 test('duplicateButton: 사본이 원본 바로 뒤에 들어간다', () => {
   const next = duplicateButton(sample(), 0);
   assert.deepEqual(faces(next), ['a', 'a', 'b', 'c']);
-  assert.deepEqual(next[1], next[0]);
+  assert.deepEqual({ ...next[1], label: next[0].label }, next[0]); // 툴팁 말고는 그대로
+});
+
+test('duplicateButton: 사본 툴팁 뒤에 번호가 붙는다', () => {
+  assert.equal(duplicateButton(sample(), 0)[1].label, 'A (1)');
+});
+
+test('duplicateButton: 이미 쓰는 번호는 건너뛴다', () => {
+  const once = duplicateButton(sample(), 0);       // A, A (1), B, C
+  assert.equal(duplicateButton(once, 0)[1].label, 'A (2)'); // 원본을 다시 복제
+  assert.equal(duplicateButton(once, 1)[2].label, 'A (2)'); // 사본을 복제해도 같은 자리
+});
+
+test('duplicateButton: 툴팁이 비어 있으면 번호만 붙인다', () => {
+  const empty = [{ face: 'a', label: '', command: '', claudeInputs: [] }];
+  assert.equal(duplicateButton(empty, 0)[1].label, '(1)');
 });
 
 test('duplicateButton: claudeInputs는 원본과 분리된 배열이다', () => {
