@@ -232,6 +232,67 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertFalse(hasClaudeForeground(psOutput: ""))
     }
 
+    // MARK: tty raw mode 판정 — 포그라운드가 claude여도 아직 입력을 받을 수 없는 구간을 가른다.
+    // 셸이 claude를 exec한 직후 tty는 canonical(icanon+echo)이라, 이때 타이핑하면
+    // claude가 아니라 커널이 에코한다. 그 에코를 화면 반영으로 오판하면 CR이 유실된다 (실측).
+
+    /// 실제 `stty -f /dev/ttysNNN -a` 출력 (claude 실행 중 = raw mode)
+    private static let sttyRawOutput = """
+    speed 9600 baud; 89 rows; 338 columns;
+    lflags: -icanon -isig -iexten -echo echoe -echok echoke -echonl echoctl
+    \t-echoprt -altwerase -noflsh -tostop -flusho -pendin -nokerninfo
+    \t-extproc
+    iflags: -istrip -icrnl -inlcr -igncr -ixon -ixoff ixany imaxbel -iutf8
+    """
+
+    /// 실제 `stty` 출력 (claude exec 직후 = canonical, 커널이 에코하는 구간)
+    private static let sttyCanonicalOutput = """
+    speed 9600 baud; 89 rows; 338 columns;
+    lflags: icanon isig iexten echo echoe echok echoke -echonl echoctl
+    \t-echoprt -altwerase -noflsh -tostop -flusho pendin -nokerninfo
+    iflags: -istrip icrnl -inlcr -igncr ixon -ixoff ixany imaxbel -iutf8
+    """
+
+    func testRawModeDetected() {
+        XCTAssertEqual(ttyIsRawMode(sttyOutput: Self.sttyRawOutput), true)
+    }
+
+    func testCanonicalModeDetected() {
+        // 여기서 타이핑하면 커널 에코가 화면에 떠 반영 확인을 거짓 통과시킨다
+        XCTAssertEqual(ttyIsRawMode(sttyOutput: Self.sttyCanonicalOutput), false)
+    }
+
+    func testRawFlagIsNotMatchedAsSubstring() {
+        // "-icanon"은 "icanon"을 부분 문자열로 포함한다 — 토큰 단위로 갈라야 raw를
+        // canonical로 오판하지 않는다
+        XCTAssertEqual(ttyIsRawMode(sttyOutput: "lflags: -icanon -echo"), true)
+        XCTAssertEqual(ttyIsRawMode(sttyOutput: "lflags: icanon echo"), false)
+    }
+
+    func testUndecidableSttyOutputIsNil() {
+        // stty 실패·형식 변경으로 판정할 수 없으면 nil — 호출자가 ps 게이트만으로 진행한다
+        XCTAssertNil(ttyIsRawMode(sttyOutput: ""))
+        XCTAssertNil(ttyIsRawMode(sttyOutput: "stty: /dev/ttys999: No such file or directory"))
+    }
+
+    // MARK: 입력 접수 가능 판정 = 포그라운드 claude + raw mode
+
+    func testAcceptsInputRequiresBothSignals() {
+        let claudeFg = "Ss   -zsh\nS+   claude"
+        let shellFg = "Ss+  -zsh"
+        XCTAssertTrue(claudeAcceptsInput(psOutput: claudeFg, sttyOutput: Self.sttyRawOutput))
+        // claude는 떴지만 아직 canonical — 지금 보내면 CR이 유실된다
+        XCTAssertFalse(claudeAcceptsInput(psOutput: claudeFg, sttyOutput: Self.sttyCanonicalOutput))
+        // 셸 프롬프트는 zle 때문에 raw지만 포그라운드가 claude가 아니다
+        XCTAssertFalse(claudeAcceptsInput(psOutput: shellFg, sttyOutput: Self.sttyRawOutput))
+    }
+
+    func testAcceptsInputFallsBackToForegroundWhenSttyUnavailable() {
+        // stty를 못 읽는 환경에서 전달이 아예 끊기지 않도록 ps 게이트만으로 통과시킨다
+        XCTAssertTrue(claudeAcceptsInput(psOutput: "S+   claude", sttyOutput: ""))
+        XCTAssertFalse(claudeAcceptsInput(psOutput: "Ss+  -zsh", sttyOutput: ""))
+    }
+
     // wezterm cli list --format json에서 pane의 tty를 찾는다
     func testWezTermTTYParsing() throws {
         let json = Data("""
