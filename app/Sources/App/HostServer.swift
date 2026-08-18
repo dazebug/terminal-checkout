@@ -98,8 +98,9 @@ final class HostServer {
                     // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
                     let handle = try runInTerminal(command: resolved.command, terminal: Settings.terminal)
                     if !resolved.claudeInputs.isEmpty {
-                        // 전달 감시는 최대 2분짜리 블로킹 루프 — 직렬 execQueue와 Chrome 응답을
-                        // 막지 않도록 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
+                        // 전달 감시는 기동 대기 2분에 입력마다 최대 15초 재대기가 붙는 블로킹
+                        // 루프 — 직렬 execQueue와 Chrome 응답을 막지 않도록 응답은 스폰 즉시
+                        // 돌려주고 감시는 밖에서 돈다
                         DispatchQueue.global(qos: .utility).async {
                             deliverClaudeInputs(resolved.claudeInputs, to: handle)
                         }
