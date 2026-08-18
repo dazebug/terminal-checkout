@@ -528,9 +528,18 @@ final class WezTermWindowTests: XCTestCase {
         XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("[]".utf8), listJSON: listJSON))
     }
 
-    // 창을 특정했으면 그 창에 탭을 만들고, 못 했으면 인자 없이 기본 동작으로 둔다
-    func testSpawnArgsTargetWindowWhenKnown() {
-        XCTAssertEqual(wezTermSpawnArgs(windowID: "3"), ["cli", "spawn", "--window-id", "3"])
-        XCTAssertEqual(wezTermSpawnArgs(windowID: nil), ["cli", "spawn"])
+    // 창을 특정했으면 그 창을 먼저 노리고, 실패하면 창 지정 없이 한 번 더 시도한다 —
+    // 찾은 창이 spawn 직전에 닫히면 wezterm은 "window_id N not found"로 실패하고(실측),
+    // 거기서 포기하면 `wezterm start` fallback이 새 창을 띄워 고치려던 증상이 되살아난다
+    func testSpawnAttemptsRetryWithoutWindowID() {
+        XCTAssertEqual(
+            wezTermSpawnAttempts(windowID: "3"),
+            [["cli", "spawn", "--window-id", "3"], ["cli", "spawn"]]
+        )
+    }
+
+    // 창을 못 찾았으면 시도는 한 번뿐이다 — 같은 명령을 두 번 돌릴 이유가 없다
+    func testSpawnAttemptsSingleWhenWindowUnknown() {
+        XCTAssertEqual(wezTermSpawnAttempts(windowID: nil), [["cli", "spawn"]])
     }
 }

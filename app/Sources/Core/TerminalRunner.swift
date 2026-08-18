@@ -139,11 +139,14 @@ public func findWezTermSocket() -> String? {
     return sockets.first
 }
 
-/// `wezterm cli spawn`이 탭을 만들 창을 정하는 인자.
-/// 창을 특정하지 못했으면 인자를 주지 않아 wezterm 기본 선택에 맡긴다.
-public func wezTermSpawnArgs(windowID: String?) -> [String] {
-    guard let windowID else { return ["cli", "spawn"] }
-    return ["cli", "spawn", "--window-id", windowID]
+/// `wezterm cli spawn` 시도 순서. 창을 특정했으면 그 창을 먼저 노리고, 실패하면 창 지정 없이
+/// 한 번 더 시도한다 — 찾은 창이 spawn 직전에 닫히면 wezterm은 "window_id N not found"로
+/// 실패하는데(실측), 거기서 포기하면 `wezterm start` fallback이 새 창을 띄워 고치려던 증상이
+/// 그대로 되살아난다. 창을 못 찾았으면 시도는 한 번뿐이다.
+public func wezTermSpawnAttempts(windowID: String?) -> [[String]] {
+    let base = ["cli", "spawn"]
+    guard let windowID else { return [base] }
+    return [base + ["--window-id", windowID], base]
 }
 
 /// 지금 포커스된 pane이 속한 창 id를 mux 응답(list-clients + list)에서 찾는다.
@@ -195,8 +198,12 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     if let sock = findWezTermSocket() {
         var env = ProcessInfo.processInfo.environment
         env["WEZTERM_UNIX_SOCKET"] = sock
-        let args = wezTermSpawnArgs(windowID: findWezTermFocusedWindow(cli: cli, env: env))
-        if let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 {
+        let windowID = findWezTermFocusedWindow(cli: cli, env: env)
+        for args in wezTermSpawnAttempts(windowID: windowID) {
+            guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {
+                NSLog("Terminal Checkout: wezterm \(args.joined(separator: " ")) 실패")
+                continue
+            }
             let paneID = spawn.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = try? runProcess(
                 cli, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
