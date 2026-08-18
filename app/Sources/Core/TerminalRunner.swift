@@ -158,13 +158,16 @@ public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String?
           let list = (try? JSONSerialization.jsonObject(with: listJSON)) as? [[String: Any]]
     else { return nil }
 
-    // client가 여럿이면 가장 최근에 활동한 쪽이 사용자가 보고 있는 창이다
+    // idle_time이 없는 client는 최하위로 밀어 아래 선택에서 마지막 후보가 되게 한다
     func idleSeconds(_ client: [String: Any]) -> Double {
         guard let idle = client["idle_time"] as? [String: Any] else { return .greatestFiniteMagnitude }
         let secs = (idle["secs"] as? Double) ?? 0
         let nanos = (idle["nanos"] as? Double) ?? 0
         return secs + nanos / 1_000_000_000
     }
+    // client가 여럿이면 가장 최근에 활동한 쪽을 사용자가 보고 있는 창으로 본다 — 실측한 것은
+    // gui 하나만 붙은 경우뿐이라 이 선택 규칙은 아직 확인하지 못한 전제다. 어긋나도 결과는
+    // "보고 있지 않은 창에 탭"이고 spawn 자체는 성공한다(이 변경 전과 같은 수준).
     let focused = clients
         .compactMap { client -> (pane: Int, idle: Double)? in
             guard let pane = client["focused_pane_id"] as? Int else { return nil }
@@ -180,7 +183,9 @@ public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String?
     return nil // 포커스된 pane이 이미 닫혔다 — 엉뚱한 창을 고르지 않는다
 }
 
-/// mux에 물어 포커스된 창 id를 얻는다 (조회 실패 시 nil → wezterm 기본 창 선택)
+/// mux에 물어 포커스된 창 id를 얻는다 (조회 실패 시 nil → wezterm 기본 창 선택).
+/// 이 조회는 Chrome 응답을 막는 execQueue 안에서 돈다(`HostServer`) — 지금은 두 번 합쳐
+/// 20∼40ms(실측)라 버튼 반응에 드러나지 않지만, 조회를 늘리면 그만큼 응답이 늦어진다.
 public func findWezTermFocusedWindow(cli: String, env: [String: String]) -> String? {
     guard let clients = try? runProcess(cli, ["cli", "list-clients", "--format", "json"], env: env, timeout: 5),
           clients.status == 0,
