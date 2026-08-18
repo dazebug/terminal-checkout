@@ -78,7 +78,7 @@ function renderButtons(kind) {
     card.innerHTML = `
       <div class="btn-card-header">
         <span class="btn-number">
-          ${count > 1 ? '<button class="drag-handle" type="button" aria-label="순서 변경" title="드래그하거나 ↑↓ 키로 순서 변경">⠿</button>' : ''}
+          ${count > 1 ? '<button class="drag-handle" aria-label="순서 변경" title="드래그하거나 ↑↓ 키로 순서 변경">⠿</button>' : ''}
           <span class="prompt">❯</span> ${kind === 'issue' ? 'issueButtons' : 'buttons'}[${i}]
         </span>
         <span class="card-actions">
@@ -214,6 +214,11 @@ function overrideInput(index, selector) {
   return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
 }
 
+// 다시 그린 뒤에는 예전 노드가 사라지므로 인덱스로 다시 집는다 (overrideInput과 같은 이유)
+function cardElement(kind, index, selector) {
+  return document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"] ${selector}`);
+}
+
 // --- 미저장 변경 표시 ---
 
 function markDirty() {
@@ -270,9 +275,7 @@ function validateButtons() {
         if (state.buttons[kind][i][field].trim()) continue;
         return {
           message: `${name}[${i}]: ${label} 입력하세요.`,
-          focus: document.querySelector(
-            `.btn-card[data-kind="${kind}"][data-index="${i}"] [data-field="${field}"]`
-          ),
+          focus: cardElement(kind, i, `[data-field="${field}"]`),
         };
       }
     }
@@ -576,9 +579,7 @@ function onCardClick(e) {
     markDirty();
     renderButtons(kind);
     // 사본은 표시·툴팁부터 고치게 된다 — 새로 생긴 카드의 표시 칸으로 커서를 옮긴다
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${index + 1}"] .face-input`
-    ).focus();
+    cardElement(kind, index + 1, '.face-input').focus();
     return;
   }
 
@@ -599,9 +600,7 @@ function onCardClick(e) {
     inputs.push('');
     markDirty();
     renderButtons(kind);
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${index}"] .claude-row[data-ci="${inputs.length - 1}"] .ci-input`
-    ).focus();
+    cardElement(kind, index, `.claude-row[data-ci="${inputs.length - 1}"] .ci-input`).focus();
     return;
   }
 
@@ -681,10 +680,12 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
   element.addEventListener('dragstart', (e) => {
     const card = e.target.closest?.('.btn-card');
     if (!card?.draggable) return; // 입력 안 텍스트를 끄는 기본 드래그는 그대로 둔다
+    // 옮길 카드는 여기서 기억한다 — dataTransfer에는 아무것도 싣지 않는다. 우리가 읽지 않는
+    // 데이터인데 text/plain으로 실어 두면 바깥(다른 입력·다른 앱)에 붙어 버리고, Chrome은
+    // 빈 데이터 저장소로도 드래그를 그대로 이어간다(실측 — dragover·dropEffect 정상)
     drag = { kind, from: Number(card.dataset.index) };
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', card.dataset.index); // 데이터가 없으면 드래그가 서지 않는다
   });
 
   element.addEventListener('dragover', (e) => {
@@ -720,9 +721,7 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     if (to < 0 || to >= state.buttons[kind].length) return;
     // reorderButtons는 "몇 번 카드 앞"을 받는다 — 아래로 갈 때는 목적지 카드의 다음 자리다
     const moved = reorderButtons(kind, index, step < 0 ? to : to + 1);
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${moved}"] .drag-handle`
-    ).focus();
+    cardElement(kind, moved, '.drag-handle').focus();
   });
 
   document.getElementById(addButton).addEventListener('click', () => {
@@ -735,9 +734,7 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     state.buttons[kind].push(normalizeButton({ face, label: 'New Button', command: '' }));
     markDirty();
     renderButtons(kind);
-    document.querySelector(
-      `.btn-card[data-kind="${kind}"][data-index="${state.buttons[kind].length - 1}"] .command-input`
-    ).focus();
+    cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
   });
 }
 
