@@ -139,7 +139,55 @@ public func findWezTermSocket() -> String? {
     return sockets.first
 }
 
-/// WezTerm에서 새 탭 열고 명령 실행 (spawn 실패 시 새 프로세스 fallback)
+/// `wezterm cli spawn`이 탭을 만들 창을 정하는 인자.
+/// 창을 특정하지 못했으면 인자를 주지 않아 wezterm 기본 선택에 맡긴다.
+public func wezTermSpawnArgs(windowID: String?) -> [String] {
+    guard let windowID else { return ["cli", "spawn"] }
+    return ["cli", "spawn", "--window-id", windowID]
+}
+
+/// 지금 포커스된 pane이 속한 창 id를 mux 응답(list-clients + list)에서 찾는다.
+/// `wezterm cli spawn`은 --window-id가 없으면 WEZTERM_PANE 환경변수의 pane으로 창을 정하는데,
+/// GUI 앱에는 그 변수가 없어 mux의 첫 창(= 가장 오래된 창)에 탭이 생긴다 — 사용자가 보던 창이
+/// 아닌 딴 창이 앞으로 튀어나온다(실측). 그래서 포커스된 창을 직접 찾아 지정한다.
+public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String? {
+    guard let clients = (try? JSONSerialization.jsonObject(with: clientsJSON)) as? [[String: Any]],
+          let list = (try? JSONSerialization.jsonObject(with: listJSON)) as? [[String: Any]]
+    else { return nil }
+
+    // client가 여럿이면 가장 최근에 활동한 쪽이 사용자가 보고 있는 창이다
+    func idleSeconds(_ client: [String: Any]) -> Double {
+        guard let idle = client["idle_time"] as? [String: Any] else { return .greatestFiniteMagnitude }
+        let secs = (idle["secs"] as? Double) ?? 0
+        let nanos = (idle["nanos"] as? Double) ?? 0
+        return secs + nanos / 1_000_000_000
+    }
+    let focused = clients
+        .compactMap { client -> (pane: Int, idle: Double)? in
+            guard let pane = client["focused_pane_id"] as? Int else { return nil }
+            return (pane, idleSeconds(client))
+        }
+        .min { $0.idle < $1.idle }
+    guard let paneID = focused?.pane else { return nil }
+
+    for pane in list where (pane["pane_id"] as? Int) == paneID {
+        guard let windowID = pane["window_id"] as? Int else { return nil }
+        return String(windowID)
+    }
+    return nil // 포커스된 pane이 이미 닫혔다 — 엉뚱한 창을 고르지 않는다
+}
+
+/// mux에 물어 포커스된 창 id를 얻는다 (조회 실패 시 nil → wezterm 기본 창 선택)
+public func findWezTermFocusedWindow(cli: String, env: [String: String]) -> String? {
+    guard let clients = try? runProcess(cli, ["cli", "list-clients", "--format", "json"], env: env, timeout: 5),
+          clients.status == 0,
+          let list = try? runProcess(cli, ["cli", "list", "--format", "json"], env: env, timeout: 5),
+          list.status == 0
+    else { return nil }
+    return wezTermFocusedWindowID(clientsJSON: Data(clients.stdout.utf8), listJSON: Data(list.stdout.utf8))
+}
+
+/// WezTerm에서 지금 보고 있는 창에 새 탭을 열고 명령 실행 (spawn 실패 시 새 프로세스 fallback)
 @discardableResult
 public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
@@ -147,7 +195,8 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     if let sock = findWezTermSocket() {
         var env = ProcessInfo.processInfo.environment
         env["WEZTERM_UNIX_SOCKET"] = sock
-        if let spawn = try? runProcess(cli, ["cli", "spawn"], env: env, timeout: 5), spawn.status == 0 {
+        let args = wezTermSpawnArgs(windowID: findWezTermFocusedWindow(cli: cli, env: env))
+        if let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 {
             let paneID = spawn.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = try? runProcess(
                 cli, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
@@ -158,7 +207,8 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
         }
     }
 
-    // fallback: 새 WezTerm 프로세스 (종료를 기다리지 않는다) — pane을 특정할 수 없어 핸들 없음
+    // fallback: 새 WezTerm 프로세스 = 새 창 (mux가 없으면 붙을 창도 없다).
+    // 종료를 기다리지 않으며, pane을 특정할 수 없어 핸들도 없다
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = ["start", "--", "/bin/bash", "-ic", "\(command); exec bash"]

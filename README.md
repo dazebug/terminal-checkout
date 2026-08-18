@@ -108,7 +108,7 @@ z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_
 
 ### 저장소 페이지
 
-헤더의 **Open in Terminal** 버튼을 클릭하면 해당 저장소 디렉토리로 이동한 새 탭이 열립니다.
+헤더의 **Open in Terminal** 버튼을 클릭하면 해당 저장소 디렉토리로 이동한 새 탭이 열립니다. 탭은 지금 보고 있는 터미널 창에 생깁니다 (WezTerm이 아직 실행 중이 아닐 때만 새 창).
 
 ### claude 입력
 
