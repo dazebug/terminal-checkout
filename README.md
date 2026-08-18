@@ -121,6 +121,8 @@ command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 clau
 - **설치·터미널 선택·권한·확장 폴더**: Terminal Checkout.app 설정 창
 - **PR·이슈 버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
 
+버튼 카드는 왼쪽 `⠿`을 끌거나 손잡이에 포커스를 준 뒤 `↑` `↓` 키로 순서를 바꿀 수 있고, [복제]로 사본을 바로 뒤에 만들 수 있습니다. 이 순서가 GitHub 페이지에 버튼이 붙는 순서이자 확장 아이콘이 실행할 버튼(첫 번째)을 정합니다.
+
 옵션 페이지의 설정은 Chrome 계정 동기화 영역(`storage.sync`)에 저장됩니다. 확장 ID가 manifest `key`로 고정되어 있어, **같은 Google 계정**으로 로그인하고 동기화에서 "확장 프로그램" 항목이 켜진 Chrome끼리는 컴퓨터가 달라도 설정이 자동으로 동기화됩니다. 옵션 페이지 **backup** 섹션의 [내보내기 (JSON)]·[가져오기…]는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용입니다 — 가져오기는 화면만 채우므로 확인한 뒤 **저장**을 눌러야 반영됩니다.
 
 Command에서 쓸 수 있는 변수:
@@ -143,6 +145,7 @@ Command에서 쓸 수 있는 변수:
 
 ```bash
 cd app && swift test   # Core 단위 테스트
+node --test            # 확장(JS) 순수 함수 단위 테스트 — 리포 루트에서, 의존성 없음
 app/build.sh           # 앱 번들 빌드 (app/build/Terminal Checkout.app)
 app/e2e.sh             # relay ↔ 소켓 ↔ 서버 왕복 회귀 테스트 (빌드 후)
 ```

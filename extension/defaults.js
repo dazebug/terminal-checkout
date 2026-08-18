@@ -78,3 +78,24 @@ function buttonFace(config) {
 function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
+
+// --- 버튼 목록 편집 ---
+// 옵션 페이지만 쓰지만 DOM·chrome API를 모르는 순수 함수라 여기 둔다 (tests/buttons.test.js).
+
+// from번 버튼을 원본 기준 insertBefore번 카드 "앞"으로 옮긴 새 배열.
+// 뺀 다음에 끼우므로 뒤로 옮길 때는 목적지가 한 칸 당겨진다 — 이 보정을 빠뜨리면 한 칸씩 어긋난다.
+function moveButton(buttons, from, insertBefore) {
+  const next = buttons.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(insertBefore > from ? insertBefore - 1 : insertBefore, 0, moved);
+  return next;
+}
+
+// index번 버튼의 사본을 바로 뒤에 끼운 새 배열. claudeInputs를 얕게 복사하면 원본과 같은
+// 배열을 가리켜 한쪽 입력을 고치면 다른 쪽도 바뀐다.
+function duplicateButton(buttons, index) {
+  const source = buttons[index];
+  const next = buttons.slice();
+  next.splice(index + 1, 0, { ...source, claudeInputs: [...(source.claudeInputs || [])] });
+  return next;
+}
