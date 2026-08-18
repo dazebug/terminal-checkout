@@ -400,8 +400,8 @@ function resetSettings() {
 }
 
 // --- 내보내기/가져오기 ---
-// storage.sync는 확장 ID 단위로 묶이는데 개발자 모드 확장의 ID는 로드 폴더 경로에서 나오므로
-// 컴퓨터마다 달라진다 — 계정이 같아도 안 넘어오는 설정을 파일로 옮기기 위한 통로다.
+// 확장 ID가 manifest key로 고정돼 같은 Google 계정의 Chrome끼리는 storage.sync가 자동으로
+// 이어진다 — 이 통로는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용이다.
 
 const BACKUP_KEYS = ['buttons', 'issueButtons', 'defaultMain', 'repoMainBranch'];
 const MAX_IMPORT_BYTES = 256 * 1024;
