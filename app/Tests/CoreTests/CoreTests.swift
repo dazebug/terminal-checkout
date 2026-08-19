@@ -400,15 +400,16 @@ private final class FakeClaudeSession {
     var failScreenAt: Set<Int> = []
     /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
     var presetBox = "" { didSet { box = presetBox } }
+    private(set) var sendCallCount = 0
     private var box = ""
-    private var sendCalls = 0
+
     private var screenCalls = 0
 
     var io: ClaudeSessionIO {
         ClaudeSessionIO(
             sendKeys: { [unowned self] keys in
-                sendCalls += 1
-                if failSendAt.contains(sendCalls) { return false }
+                sendCallCount += 1
+                if failSendAt.contains(sendCallCount) { return false }
                 keystrokes.append(keys)
                 switch keys {
                 case "\r": submitted.append(box); box = ""
@@ -510,6 +511,22 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.failSendAt = [1, 2] // #1 타이핑 실패 → #2 클리어도 실패
         _ = submitClaudeInputs([inputs[0]], io: session.io)
         XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// CR 재전송도 세션 동일성 게이트 안에 있어야 한다 — 첫 CR이 실패한 뒤 원래 claude가
+    /// 끝났다면, 같은 tty의 셸이나 새 claude에 CR이 들어가 사용자가 치던 것을 제출·실행시킨다
+    func testCarriageReturnResendStopsWhenSessionChanged() {
+        let session = FakeClaudeSession()
+        session.failSendAt = [2] // 타이핑은 성공, 첫 CR 실패
+        var confirms = 0
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            confirmSession: { _ in confirms += 1; return confirms == 1 },
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertEqual(session.sendCallCount, 2) // 타이핑 1 + CR 1 — 재전송을 더 시도하면 안 된다
     }
 
     /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도

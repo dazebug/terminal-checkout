@@ -188,7 +188,7 @@ private func typeAndSubmit(
             if screenShowsInput(screen, input: text) { reflected = true; break }
         }
         if reflected {
-            if submitConfirmedInput(io: io) { return true }
+            if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) { return true }
             failure = "제출(CR) 전송 실패"
         }
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
@@ -200,10 +200,16 @@ private func typeAndSubmit(
 /// 보낸다 — 실패로 보고됐어도 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번
 /// 제출된다. 빈 입력창에 들어간 CR은 아무 일도 일으키지 않으므로(실측) 이미 제출된 뒤의
 /// 재전송은 무해하다.
-private func submitConfirmedInput(io: ClaudeSessionIO) -> Bool {
+/// 재전송 전에도 세션 동일성을 확인한다 — 첫 CR이 실패한 사이 원래 claude가 끝났다면 같은
+/// tty의 셸이나 새로 뜬 claude가 그 CR을 받아, 사용자가 치고 있던 것을 제출·실행시킨다.
+/// 첫 CR은 화면 반영 확인 직후라 그 게이트를 다시 통과할 필요가 없다.
+private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval) -> Bool {
     for attempt in 1...3 {
+        if attempt > 1 {
+            io.wait(0.4)
+            guard io.confirmSession(retryConfirmTimeout) else { return false }
+        }
         if io.sendKeys("\r") { return true }
-        if attempt < 3 { io.wait(0.4) }
     }
     return false
 }
