@@ -29,7 +29,7 @@ const PR_PRESETS = [
   },
 ];
 
-// 이슈 페이지: 상태 배지 줄 버튼. 브랜치가 없으므로 {branch}·{main}은 쓸 수 없다
+// 이슈 페이지: 상태 배지 줄 버튼. head 브랜치가 없으므로 {branch} 계열과 {base}는 쓸 수 없다
 const ISSUE_PRESETS = [
   {
     name: '이슈 읽기 (claude)', face: '📋',

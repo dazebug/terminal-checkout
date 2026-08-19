@@ -101,7 +101,7 @@ async function getDefaultBranchFromPage(owner, repo) {
   }
 }
 
-// 못 읽으면 null — 호출부가 오버라이드·글로벌 기본값으로 폴백한다 (종전 동작)
+// 못 읽으면 null — 호출부가 오버라이드·글로벌 기본값으로 폴백한다
 async function detectDefaultBranch(tab, owner, repo) {
   try {
     const results = await chrome.scripting.executeScript({

@@ -308,7 +308,7 @@ async function tryInsertButton() {
 
   let result = false;
 
-  // 저장소/PR/이슈 페이지 모두 헤더에 Open 버튼 삽입
+  // 저장소·PR·이슈 페이지 모두 헤더에 저장소 버튼을 붙인다
   result = await tryInsertRepoButtons() || result;
 
   // PR·이슈 페이지는 각자의 커스텀 명령 버튼도 삽입 (설정이 서로 다르다)
