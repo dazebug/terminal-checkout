@@ -332,7 +332,7 @@
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> repoButtons <span class="section-where">— 저장소 페이지</span></h2>
     <p class="help">저장소 페이지(코드·이슈 목록·Actions 등) 헤더의 저장소 이름 옆에 붙는 버튼입니다 (최대 3개). PR·이슈 버튼과 달리 GitHub의 초록 액션 버튼 모양이라 <b>표시</b>에 <code>Open in Terminal</code>처럼 이름을 넣는 편이 어울립니다. PR·이슈가 아닌 GitHub 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.</p>
-    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 저장소 페이지에는 PR·이슈 번호도 브랜치도 없어 <code>{number}</code> <code>{branch}</code> 계열과 <code>{base}</code>는 쓸 수 없습니다. <code>{main}</code>은 PR base를 감지할 페이지가 아니라서 아래 <b>main branch</b> 설정으로만 정해집니다 — 기본 브랜치가 <code>master</code>인 리포는 오버라이드를 등록해야 합니다.</p>
+    <p class="help">쓸 수 있는 변수: <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 저장소 페이지에는 PR·이슈 번호도 브랜치도 없어 <code>{number}</code> <code>{branch}</code> 계열과 <code>{base}</code>는 쓸 수 없습니다. <code>{main}</code>은 GitHub이 페이지에 심어 둔 리포의 기본 브랜치를 읽어 정합니다 — <code>master</code> 리포도 오버라이드 없이 맞습니다.</p>
     <div id="repo-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="repo-add">+ 버튼 추가</button>
@@ -342,8 +342,7 @@
 
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> main branch</h2>
-    <p class="help"><code>{main}</code> 결정 순서: 리포별 오버라이드 → PR 페이지 base branch 감지 → 아래 기본값. 이 PR이 실제로 머지될 브랜치를 그대로 쓰려면 오버라이드·기본값을 거치지 않는 <code>{base}</code>를 쓰세요.</p>
-    <p class="help">이슈·저장소 페이지에는 감지 단계가 없어 오버라이드나 기본값이 그대로 쓰입니다 — 등록하지 않은 <code>master</code> 리포에서는 <code>git checkout {main}</code>이 <code>pathspec 'main' did not match</code>로 끊깁니다.</p>
+    <p class="help"><code>{main}</code> 결정 순서: 리포별 오버라이드 → 페이지 감지 → 아래 기본값. 감지는 PR 페이지에서 base branch를, 저장소·이슈 페이지에서 리포의 기본 브랜치를 읽습니다 — 아래 설정은 감지가 실패했을 때의 폴백입니다. 이 PR이 실제로 머지될 브랜치를 그대로 쓰려면 오버라이드·기본값을 거치지 않는 <code>{base}</code>를 쓰세요.</p>
     <label for="default-main">기본값</label>
     <input type="text" id="default-main" placeholder="main" style="width:200px; margin-bottom:18px">
     <table class="override-table">

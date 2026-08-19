@@ -2,9 +2,10 @@ importScripts('defaults.js'); // 버튼 기본값·프리셋은 defaults.js가 �
 
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
-// GitHub URL에서 owner·repo와 (PR·이슈면) 번호를 뽑는다
+// GitHub URL에서 owner·repo와 (PR·이슈면) 번호를 뽑는다.
+// 확장 아이콘은 어느 탭에서나 눌리는데 host 권한이 없는 탭은 url을 주지 않는다
 function parseGitHubUrl(url) {
-  const match = url.match(/github\.com\/([^/]+)\/([^/?#]+)(?:\/(pull|issues)\/(\d+))?/);
+  const match = url?.match(/github\.com\/([^/]+)\/([^/?#]+)(?:\/(pull|issues)\/(\d+))?/);
   if (!match) return null;
   return {
     owner: match[1],
@@ -65,7 +66,46 @@ function getBranchAndMainFromDOM() {
   return null;
 }
 
-// main 브랜치 결정: storage 오버라이드 → PR 페이지 감지 → 글로벌 기본값
+// GitHub이 페이지에 심어 두는 리포 정보에서 기본 브랜치를 뽑는다. 보고 있는 브랜치가 아니라
+// 리포의 기본값이라 `/tree/maint`에서도, 다른 기본 브랜치를 가진 upstream의 fork에서도 그
+// 리포 자신의 값이 나온다 (실측)
+const DEFAULT_BRANCH_PATTERN = /"defaultBranch"\s*:\s*"([^"]+)"/;
+
+// chrome.scripting은 이 함수만 떼어 주입하므로 바깥 상수·헬퍼를 참조할 수 없다 — 위 정규식을
+// 여기 한 번 더 쓰는 이유다
+function getDefaultBranchFromDOM() {
+  for (const script of document.querySelectorAll('script[type="application/json"]')) {
+    const match = script.textContent.match(/"defaultBranch"\s*:\s*"([^"]+)"/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+// 코드 뷰·이슈 상세에는 이 정보가 있지만 이슈 목록·Actions 같은 탭에는 없다 (실측). 그래서 보고
+// 있는 페이지에서 먼저 읽고, 없으면 저장소 홈을 받아 읽는다. 둘 다 실패하면 null —
+// 호출부가 오버라이드·글로벌 기본값으로 폴백한다 (종전 동작)
+async function detectDefaultBranch(tab, owner, repo) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: getDefaultBranchFromDOM,
+    });
+    if (results[0]?.result) return results[0].result;
+  } catch (error) {
+    console.error('Could not read default branch from page:', error);
+  }
+
+  try {
+    // 쿠키를 실어야 private 리포에서도 저장소 홈이 열린다
+    const html = await (await fetch(`https://github.com/${owner}/${repo}`, { credentials: 'include' })).text();
+    return html.match(DEFAULT_BRANCH_PATTERN)?.[1] || null;
+  } catch (error) {
+    console.error('Could not fetch default branch:', error);
+    return null;
+  }
+}
+
+// main 브랜치 결정: storage 오버라이드 → 페이지 감지 → 글로벌 기본값
 async function resolveMainBranch(repo, detectedMain) {
   const data = await chrome.storage.sync.get(['repoMainBranch', 'defaultMain']);
 
@@ -73,24 +113,17 @@ async function resolveMainBranch(repo, detectedMain) {
   const repoOverride = data.repoMainBranch?.[repo];
   if (repoOverride) return repoOverride;
 
-  // 2. PR 페이지에서 감지된 base branch
+  // 2. 페이지에서 읽은 값 — PR은 base ref, 저장소·이슈는 리포의 기본 브랜치
   if (detectedMain) return detectedMain;
 
   // 3. 글로벌 기본값
   return data.defaultMain || DEFAULT_MAIN;
 }
 
-// 페이지마다 버튼 설정이 다른 키에 저장된다 (options.js의 SECTIONS와 같은 짝)
-const BUTTON_STORAGE = {
-  pr: { key: 'buttons', defaults: DEFAULT_BUTTONS },
-  issue: { key: 'issueButtons', defaults: DEFAULT_ISSUE_BUTTONS },
-  repo: { key: 'repoButtons', defaults: DEFAULT_REPO_BUTTONS },
-};
-
 async function loadButtons(kind) {
-  const { key, defaults } = BUTTON_STORAGE[kind];
-  const data = await chrome.storage.sync.get([key]);
-  return data[key] || defaults;
+  const { storageKey, defaults } = BUTTON_KINDS[kind];
+  const data = await chrome.storage.sync.get([storageKey]);
+  return data[storageKey] || defaults;
 }
 
 // Native Host에 메시지 전송
@@ -181,8 +214,8 @@ async function executeIssueCommand(tab, buttonIndex) {
   }
 
   try {
-    const main = await resolveMainBranch(target.repo, null);
-    console.log(`Executing issue command: repo=${target.repo}, number=${target.number}`);
+    const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
+    console.log(`Executing issue command: repo=${target.repo}, number=${target.number}, main=${main}`);
     await runButton(button, {
       repo: target.repo,
       owner: target.owner,
@@ -210,8 +243,7 @@ async function executeRepoCommand(tab, buttonIndex) {
   }
 
   try {
-    // 저장소 페이지에는 PR base가 없다 — 리포별 오버라이드 또는 글로벌 기본값으로 정해진다
-    const main = await resolveMainBranch(target.repo, null);
+    const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
     console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
     await runButton(button, { repo: target.repo, owner: target.owner, main });
   } catch (error) {

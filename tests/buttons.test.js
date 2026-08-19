@@ -11,8 +11,7 @@ const vm = require('node:vm');
 // deepStrictEqual이 구조가 같아도 실패한다.
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
-const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS, DEFAULT_BUTTONS, DEFAULT_ISSUE_BUTTONS, DEFAULT_REPO_BUTTONS, PAGE_VARIABLES } =
-  vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS, DEFAULT_BUTTONS, DEFAULT_ISSUE_BUTTONS, DEFAULT_REPO_BUTTONS, PAGE_VARIABLES })');
+const { BUTTON_KINDS } = vm.runInThisContext('({ BUTTON_KINDS })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -79,20 +78,14 @@ test('duplicateButton: 원본 배열을 건드리지 않는다', () => {
 // 확장이 넘기지 않는 변수를 쓰면 앱이 "Variable {x} not provided"로 거절해 버튼이 아무 일도
 // 하지 않는다. 프리셋·기본값은 우리가 배포하는 값이므로 그 자리에서 고정한다.
 
-const PAGE_BUTTONS = {
-  pr: [...PR_PRESETS, ...DEFAULT_BUTTONS],
-  issue: [...ISSUE_PRESETS, ...DEFAULT_ISSUE_BUTTONS],
-  repo: [...REPO_PRESETS, ...DEFAULT_REPO_BUTTONS],
-};
-
 // command와 claude 입력은 같은 변수 표로 치환된다 (앱의 resolveRequest)
 const variablesUsed = btn => [btn.command, ...(btn.claudeInputs || [])]
   .flatMap(text => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]));
 
-for (const [kind, buttons] of Object.entries(PAGE_BUTTONS)) {
+for (const [kind, { presets, defaults, variables }] of Object.entries(BUTTON_KINDS)) {
   test(`${kind} 프리셋·기본값은 그 페이지에서 주는 변수만 쓴다`, () => {
-    const allowed = new Set(PAGE_VARIABLES[kind]);
-    for (const btn of buttons) {
+    const allowed = new Set(variables);
+    for (const btn of [...presets, ...defaults]) {
       for (const name of variablesUsed(btn)) {
         assert.ok(allowed.has(name), `${kind} "${btn.name || btn.label}": {${name}}는 이 페이지에 없다`);
       }
@@ -102,6 +95,12 @@ for (const [kind, buttons] of Object.entries(PAGE_BUTTONS)) {
 
 test('저장소 기본 버튼은 리포로 이동만 한다', () => {
   // 커스터마이즈 이전의 Open in Terminal 동작 — 기본값을 바꾸면 기존 사용자의 버튼이 달라진다
-  assert.equal(DEFAULT_REPO_BUTTONS.length, 1);
-  assert.equal(DEFAULT_REPO_BUTTONS[0].command, 'z {repo}');
+  assert.equal(BUTTON_KINDS.repo.defaults.length, 1);
+  assert.equal(BUTTON_KINDS.repo.defaults[0].command, 'z {repo}');
+});
+
+test('페이지 종류마다 저장 키가 다르다', () => {
+  // 같은 키를 두 페이지가 쓰면 한쪽 설정이 다른 쪽을 덮어쓴다
+  const keys = Object.values(BUTTON_KINDS).map(k => k.storageKey);
+  assert.equal(new Set(keys).size, keys.length);
 });

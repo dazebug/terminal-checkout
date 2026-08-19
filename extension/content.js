@@ -74,6 +74,18 @@ function createRepoButton(buttonConfig, index) {
   return button;
 }
 
+// 페이지 종류별 버튼 설정 (저장 키는 defaults.js의 BUTTON_KINDS가 단일 출처).
+// storage가 비었거나 읽지 못하면 기본값으로 그린다 — 버튼이 아예 사라지지는 않게
+async function loadButtonConfigs(kind) {
+  const { storageKey, defaults } = BUTTON_KINDS[kind];
+  try {
+    const data = await chrome.storage.sync.get([storageKey]);
+    return data[storageKey] || defaults;
+  } catch {
+    return defaults;
+  }
+}
+
 // PR 브랜치·이슈 배지 옆 커스텀 명령 버튼 생성 (이모지 아이콘 또는 텍스트 필)
 function createCommandIconButton(buttonConfig, index, { action, className }) {
   const face = buttonFace(buttonConfig);
@@ -196,14 +208,7 @@ async function tryInsertPRButtons() {
 
   if (!headBranchLink) return false;
 
-  // storage에서 버튼 설정 로드
-  let buttons;
-  try {
-    const data = await chrome.storage.sync.get(['buttons']);
-    buttons = data.buttons || DEFAULT_BUTTONS;
-  } catch {
-    buttons = DEFAULT_BUTTONS;
-  }
+  const buttons = await loadButtonConfigs('pr');
 
   // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
   // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
@@ -254,13 +259,7 @@ async function tryInsertIssueButtons() {
   const row = issueBadgeRow();
   if (!row) return false;
 
-  let buttons;
-  try {
-    const data = await chrome.storage.sync.get(['issueButtons']);
-    buttons = data.issueButtons || DEFAULT_ISSUE_BUTTONS;
-  } catch {
-    buttons = DEFAULT_ISSUE_BUTTONS;
-  }
+  const buttons = await loadButtonConfigs('issue');
 
   // await 동안 다른 트리거(폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을 수 있다
   if (document.querySelector('.terminal-issue-btn')) {
@@ -277,7 +276,7 @@ async function tryInsertIssueButtons() {
 }
 
 // 저장소 헤더에 버튼들 추가 (성공 시 true 반환)
-async function tryInsertRepoButton() {
+async function tryInsertRepoButtons() {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
@@ -292,13 +291,7 @@ async function tryInsertRepoButton() {
   }
   if (!anchor) return false;
 
-  let buttons;
-  try {
-    const data = await chrome.storage.sync.get(['repoButtons']);
-    buttons = data.repoButtons || DEFAULT_REPO_BUTTONS;
-  } catch {
-    buttons = DEFAULT_REPO_BUTTONS;
-  }
+  const buttons = await loadButtonConfigs('repo');
 
   // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
   // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
@@ -318,7 +311,7 @@ async function tryInsertButton() {
   let result = false;
 
   // 저장소/PR/이슈 페이지 모두 헤더에 Open 버튼 삽입
-  result = await tryInsertRepoButton() || result;
+  result = await tryInsertRepoButtons() || result;
 
   // PR·이슈 페이지는 각자의 커스텀 명령 버튼도 삽입 (설정이 서로 다르다)
   if (pageType === 'pr') {

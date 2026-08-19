@@ -1,36 +1,13 @@
 // 버튼 기본값·프리셋·표시 규칙은 defaults.js가 단일 출처 (options.html이 먼저 로드한다)
 
-// PR·이슈·저장소 버튼은 저장 키도 쓸 수 있는 변수도 다르다. 나머지 편집 동작은 같아서
-// 섹션 정의만 바꿔 같은 렌더러·이벤트 핸들러를 공유한다.
+// PR·이슈·저장소 버튼은 저장 키도 쓸 수 있는 변수도 다르다(defaults.js의 BUTTON_KINDS).
+// 나머지 편집 동작은 같아서 여기서는 카드가 들어갈 DOM 자리만 얹어 같은 렌더러·이벤트
+// 핸들러를 공유한다.
 const SECTIONS = [
-  {
-    kind: 'pr',
-    storageKey: 'buttons',
-    presets: PR_PRESETS,
-    defaults: DEFAULT_BUTTONS,
-    container: 'pr-buttons',
-    addButton: 'pr-add',
-    addHint: 'pr-add-hint',
-  },
-  {
-    kind: 'issue',
-    storageKey: 'issueButtons',
-    presets: ISSUE_PRESETS,
-    defaults: DEFAULT_ISSUE_BUTTONS,
-    container: 'issue-buttons',
-    addButton: 'issue-add',
-    addHint: 'issue-add-hint',
-  },
-  {
-    kind: 'repo',
-    storageKey: 'repoButtons',
-    presets: REPO_PRESETS,
-    defaults: DEFAULT_REPO_BUTTONS,
-    container: 'repo-buttons',
-    addButton: 'repo-add',
-    addHint: 'repo-add-hint',
-  },
-];
+  { kind: 'pr', container: 'pr-buttons', addButton: 'pr-add', addHint: 'pr-add-hint' },
+  { kind: 'issue', container: 'issue-buttons', addButton: 'issue-add', addHint: 'issue-add-hint' },
+  { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
+].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
 
 // 표시에 자주 쓰는 이모지 — 클릭하면 표시 칸에 덧붙는다 (여러 개 조합 가능)
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];

@@ -85,13 +85,24 @@ const DEFAULT_REPO_BUTTONS = [
   { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
 ];
 
-// 페이지마다 확장이 실제로 넘기는 변수. 프리셋·기본값이 이 목록을 벗어나지 않는지 테스트로
-// 고정한다 (tests/buttons.test.js) — 없는 변수를 쓰면 앱이 거절해 버튼이 아무 일도 하지 않는다.
-// {base}는 PR 페이지에서 읽어야만 전달되므로 여기 있어도 항상 오는 것은 아니다.
-const PAGE_VARIABLES = {
-  pr: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
-  issue: ['repo', 'owner', 'number', 'main'],
-  repo: ['repo', 'owner', 'main'],
+// 페이지 종류별 정의. 저장 키가 content.js(렌더)·background.js(실행)·options.js(편집)에
+// 흩어지면 한 곳만 어긋나도 저장한 설정이 조용히 무시되므로 세 파일이 모두 여기를 본다.
+// variables는 확장이 그 페이지에서 실제로 넘기는 변수다 — 프리셋·기본값이 이 목록을 벗어나지
+// 않는지 테스트로 고정한다 (tests/buttons.test.js). 없는 변수를 쓰면 앱이 거절해 버튼이
+// 아무 일도 하지 않는다. {base}는 PR 페이지에서 읽어야만 전달되므로 항상 오는 것은 아니다.
+const BUTTON_KINDS = {
+  pr: {
+    storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,
+    variables: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
+  },
+  issue: {
+    storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
+    variables: ['repo', 'owner', 'number', 'main'],
+  },
+  repo: {
+    storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
+    variables: ['repo', 'owner', 'main'],
+  },
 };
 
 const DEFAULT_MAIN = 'main';
