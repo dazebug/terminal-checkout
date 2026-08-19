@@ -137,16 +137,19 @@ async function loadButtons(kind) {
   return data[storageKey] || defaults;
 }
 
-// Native Host에 메시지 전송
+// Native Host에 메시지 전송. 앱은 변수 검증 실패·터미널 실행 실패를 예외가 아니라 정상
+// 응답 {success:false, error}로 돌려주므로, 여기서 던져야 버튼에 실패가 드러난다
 async function sendToNativeHost(message) {
+  let response;
   try {
-    const response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
-    console.log('Native host response:', response);
-    return response;
+    response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
   } catch (error) {
     console.error('Native host error:', error);
     throw error;
   }
+  console.log('Native host response:', response);
+  if (!response?.success) throw new Error(response?.error || 'native host returned no result');
+  return response;
 }
 
 // 버튼 하나를 실행한다 — 변수 치환과 claude 입력 전달은 앱이 담당하므로 여기서는 재료만 보낸다
@@ -227,19 +230,46 @@ async function executeRepoCommand(tab, buttonIndex) {
   await runButton(button, { repo: target.repo, owner: target.owner, main });
 }
 
+// 이 페이지가 정말 저장소로 렌더됐는지 본다. GitHub이 저장소로 그린 페이지에만 헤더에 저장소
+// 이름 링크(private이면 자물쇠)가 있고, 404·비저장소 경로에는 없다 (실측). 경로 패턴과 예약어
+// 목록만으로는 없는 리포와 앞으로 생길 GitHub 경로를 가릴 수 없다.
+// chrome.scripting은 이 함수만 떼어 주입하므로 바깥 상수·헬퍼를 참조할 수 없다.
+function isRepoPageFromDOM(owner, repo) {
+  const header = document.querySelector('header[role="banner"]');
+  if (!header) return false;
+  return !!(header.querySelector(`a[href="/${owner}/${repo}"]`) || header.querySelector('svg.octicon-lock'));
+}
+
+// 버튼 클릭은 이 확인이 필요 없다 — content script가 같은 단서를 찾아야만 버튼을 붙이므로,
+// 눌렸다는 것 자체가 저장소 페이지라는 뜻이다. 확인이 필요한 쪽은 content script를 거치지
+// 않는 확장 아이콘 클릭이다
+async function isRepoPage(tab, owner, repo) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: isRepoPageFromDOM,
+      args: [owner, repo],
+    });
+    return results[0]?.result === true;
+  } catch (error) {
+    console.error('Could not verify repository page:', error);
+    return false;
+  }
+}
+
 // 페이지 종류 → 실행 함수. 확장 아이콘 클릭과 content.js 메시지가 같은 표를 쓴다
 const RUN_BY_KIND = { pr: executeCommand, issue: executeIssueCommand, repo: executeRepoCommand };
 const ACTION_KIND = { execute_command: 'pr', execute_issue_command: 'issue', execute_repo_command: 'repo' };
 
 // 확장 아이콘 클릭 핸들러 → 페이지에 맞는 첫 번째 버튼 실행 (PR·이슈가 아니면 저장소 버튼)
 chrome.action.onClicked.addListener(async (tab) => {
-  const kind = parseGitHubUrl(tab.url)?.kind;
-  if (!kind) {
-    console.log('Not a GitHub repo page');
+  const target = parseGitHubUrl(tab.url);
+  if (!target || !await isRepoPage(tab, target.owner, target.repo)) {
+    console.log('Not a GitHub repository page');
     return;
   }
   try {
-    await RUN_BY_KIND[kind](tab, 0);
+    await RUN_BY_KIND[target.kind](tab, 0);
   } catch (error) {
     console.error('Error executing command:', error); // 아이콘 클릭에는 실패를 보여줄 버튼이 없다
   }
