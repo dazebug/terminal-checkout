@@ -206,11 +206,6 @@ function cardOf(el) {
   return { card, kind: card.dataset.kind, index: Number(card.dataset.index) };
 }
 
-function buttonOf(el) {
-  const { kind, index } = cardOf(el);
-  return state.buttons[kind][index];
-}
-
 function overrideInput(index, selector) {
   return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
 }

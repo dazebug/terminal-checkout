@@ -392,7 +392,6 @@ final class ClaudeInjectorTests: XCTestCase {
 private final class FakeClaudeSession {
     private(set) var keystrokes: [String] = []
     private(set) var submitted: [String] = []
-    private(set) var confirmCalls = 0
     var sessionAlive = true
     /// n번째 sendKeys 호출을 실패시킨다 (1-based) — 터미널 CLI가 한 번 실패하는 상황
     var failSendAt: Set<Int> = []
@@ -423,10 +422,7 @@ private final class FakeClaudeSession {
                 if failScreenAt.contains(screenCalls) { return nil }
                 return "❯ " + box
             },
-            confirmSession: { [unowned self] _ in
-                confirmCalls += 1
-                return sessionAlive
-            },
+            confirmSession: { [unowned self] _ in sessionAlive },
             wait: { _ in }
         )
     }
