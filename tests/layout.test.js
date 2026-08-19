@@ -18,7 +18,7 @@ function chain(...overflows) {
 const overflowXOf = node => node.overflowX;
 const minWidths = nodes => nodes.map(n => n.style.minWidth);
 
-// 실측한 구조: [버튼 칸 hidden] → [브랜치 줄 visible] → [헤더 메타 행 hidden] → [그 위 visible]
+// layout.js 헤더 주석의 실측 구조 — 버튼 칸과 헤더 메타 행이 잘라내고, 그 사이 브랜치 줄은 아니다
 const prHeader = () => chain('hidden', 'visible', 'hidden', 'visible');
 
 test('unclipButtonRow: 버튼 칸 자신이 overflow:hidden이어도 멈추지 않는다', () => {
@@ -35,7 +35,7 @@ test('unclipButtonRow: 잘라내는 조상까지만 심고 그 위는 건드리�
 });
 
 test('unclipButtonRow: 잘라내는 조상이 없으면 상한에서 멈춘다', () => {
-  const nodes = chain(...Array(UNCLIP_MAX_DEPTH * 3).fill('visible')); // 상한보다 훨씬 긴 사슬
+  const nodes = chain(...Array(UNCLIP_MAX_DEPTH * 3).fill('visible'));
   unclipButtonRow(nodes[0], overflowXOf);
   assert.equal(minWidths(nodes).filter(v => v === '0').length, UNCLIP_MAX_DEPTH);
 });

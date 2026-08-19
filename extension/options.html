@@ -127,7 +127,8 @@
     .field-label .label-input { width: 100%; }
     .field-preset .preset-select { width: 170px; }
 
-    /* 표시 미리보기 — content.js의 PR 버튼 렌더 규칙과 짝 (바꾸면 같이 바꿀 것) */
+    /* 표시 미리보기 — content.js의 PR 버튼 표시 규칙(색·모양·크기)과 짝 (바꾸면 같이 바꿀 것).
+       GitHub 행과의 레이아웃 협상(flex-shrink 등)은 짝이 아니다 — .field는 세로 flex라 축이 다르다 */
     .field-preview { justify-content: flex-end; }
     .face-preview { display: inline-flex; align-items: center; height: 29px; }
     .face-preview.gh-btn-emoji { color: #57ab5a; font-size: 14px; padding: 4px; }
