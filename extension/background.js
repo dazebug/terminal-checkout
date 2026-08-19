@@ -80,14 +80,17 @@ async function resolveMainBranch(repo, detectedMain) {
   return data.defaultMain || DEFAULT_MAIN;
 }
 
-// 버튼 설정 로드 (PR 페이지용 / 이슈 페이지용은 서로 다른 키에 저장된다)
+// 페이지마다 버튼 설정이 다른 키에 저장된다 (options.js의 SECTIONS와 같은 짝)
+const BUTTON_STORAGE = {
+  pr: { key: 'buttons', defaults: DEFAULT_BUTTONS },
+  issue: { key: 'issueButtons', defaults: DEFAULT_ISSUE_BUTTONS },
+  repo: { key: 'repoButtons', defaults: DEFAULT_REPO_BUTTONS },
+};
+
 async function loadButtons(kind) {
-  if (kind === 'issue') {
-    const data = await chrome.storage.sync.get(['issueButtons']);
-    return data.issueButtons || DEFAULT_ISSUE_BUTTONS;
-  }
-  const data = await chrome.storage.sync.get(['buttons']);
-  return data.buttons || DEFAULT_BUTTONS;
+  const { key, defaults } = BUTTON_STORAGE[kind];
+  const data = await chrome.storage.sync.get([key]);
+  return data[key] || defaults;
 }
 
 // Native Host에 메시지 전송
@@ -191,53 +194,49 @@ async function executeIssueCommand(tab, buttonIndex) {
   }
 }
 
-// open 실행 (저장소 페이지)
-async function executeOpen(tab) {
+// 커스텀 명령 실행 (저장소 페이지). PR·이슈와 달리 브랜치도 번호도 없어 {repo} {owner} {main}만 준다
+async function executeRepoCommand(tab, buttonIndex) {
   const target = parseGitHubUrl(tab.url);
   if (!target) {
     console.log('Not a GitHub repo page');
     return;
   }
 
-  console.log(`Opening ${target.repo}`);
-  await sendToNativeHost({ command_template: 'z {repo}', variables: { repo: target.repo } });
+  const buttons = await loadButtons('repo');
+  const button = buttons[buttonIndex];
+  if (!button) {
+    console.error(`Repo button index ${buttonIndex} not found`);
+    return;
+  }
+
+  try {
+    // 저장소 페이지에는 PR base가 없다 — 리포별 오버라이드 또는 글로벌 기본값으로 정해진다
+    const main = await resolveMainBranch(target.repo, null);
+    console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
+    await runButton(button, { repo: target.repo, owner: target.owner, main });
+  } catch (error) {
+    console.error('Error executing repo command:', error);
+  }
 }
 
-// 확장 아이콘 클릭 핸들러 → 페이지에 맞는 첫 번째 버튼 실행
+// 페이지 종류 → 실행 함수. 확장 아이콘 클릭과 content.js 메시지가 같은 표를 쓴다
+const RUN_BY_KIND = { pr: executeCommand, issue: executeIssueCommand, repo: executeRepoCommand };
+const ACTION_KIND = { execute_command: 'pr', execute_issue_command: 'issue', execute_repo_command: 'repo' };
+
+// 확장 아이콘 클릭 핸들러 → 페이지에 맞는 첫 번째 버튼 실행 (PR·이슈가 아니면 저장소 버튼)
 chrome.action.onClicked.addListener(async (tab) => {
-  if (parseGitHubUrl(tab.url)?.kind === 'issue') {
-    await executeIssueCommand(tab, 0);
-  } else {
-    await executeCommand(tab, 0);
-  }
+  await RUN_BY_KIND[parseGitHubUrl(tab.url)?.kind || 'repo'](tab, 0);
 });
 
 // content.js에서 메시지 수신
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'execute_command') {
-    executeCommand(sender.tab, message.buttonIndex).then(() => {
-      sendResponse({ success: true });
-    }).catch((error) => {
-      sendResponse({ success: false, error: error.message });
-    });
-    return true; // 비동기 응답을 위해 true 반환
-  }
+  const kind = ACTION_KIND[message.action];
+  if (!kind) return;
 
-  if (message.action === 'execute_issue_command') {
-    executeIssueCommand(sender.tab, message.buttonIndex).then(() => {
-      sendResponse({ success: true });
-    }).catch((error) => {
-      sendResponse({ success: false, error: error.message });
-    });
-    return true;
-  }
-
-  if (message.action === 'open') {
-    executeOpen(sender.tab).then(() => {
-      sendResponse({ success: true });
-    }).catch((error) => {
-      sendResponse({ success: false, error: error.message });
-    });
-    return true;
-  }
+  RUN_BY_KIND[kind](sender.tab, message.buttonIndex).then(() => {
+    sendResponse({ success: true });
+  }).catch((error) => {
+    sendResponse({ success: false, error: error.message });
+  });
+  return true; // 비동기 응답을 위해 true 반환
 });

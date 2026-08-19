@@ -53,6 +53,23 @@ const ISSUE_PRESETS = [
   },
 ];
 
+// 저장소 페이지: 헤더 저장소 이름 옆 버튼. PR·이슈와 달리 GitHub의 초록 액션 버튼 모양이라
+// 표시(face)에 짧은 이모지보다 이름을 넣는 쪽이 자연스럽다
+const REPO_PRESETS = [
+  {
+    name: 'Open in Terminal', face: 'Open in Terminal',
+    command: 'z {repo}',
+  },
+  {
+    name: 'Open + Claude', face: 'Open + Claude',
+    command: 'z {repo} && claude',
+  },
+  {
+    name: 'main 최신화', face: 'main ⤓',
+    command: 'z {repo} && git checkout {main} && git pull --ff-only',
+  },
+];
+
 const DEFAULT_BUTTONS = [
   { face: PR_PRESETS[0].face, label: PR_PRESETS[0].name, command: PR_PRESETS[0].command, claudeInputs: [] },
 ];
@@ -63,6 +80,19 @@ const DEFAULT_ISSUE_BUTTONS = [
     command: ISSUE_PRESETS[0].command, claudeInputs: [...ISSUE_PRESETS[0].claudeInputs],
   },
 ];
+
+const DEFAULT_REPO_BUTTONS = [
+  { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
+];
+
+// 페이지마다 확장이 실제로 넘기는 변수. 프리셋·기본값이 이 목록을 벗어나지 않는지 테스트로
+// 고정한다 (tests/buttons.test.js) — 없는 변수를 쓰면 앱이 거절해 버튼이 아무 일도 하지 않는다.
+// {base}는 PR 페이지에서 읽어야만 전달되므로 여기 있어도 항상 오는 것은 아니다.
+const PAGE_VARIABLES = {
+  pr: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
+  issue: ['repo', 'owner', 'number', 'main'],
+  repo: ['repo', 'owner', 'main'],
+};
 
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;

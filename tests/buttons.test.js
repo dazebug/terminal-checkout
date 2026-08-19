@@ -11,6 +11,8 @@ const vm = require('node:vm');
 // deepStrictEqual이 구조가 같아도 실패한다.
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
+const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS, DEFAULT_BUTTONS, DEFAULT_ISSUE_BUTTONS, DEFAULT_REPO_BUTTONS, PAGE_VARIABLES } =
+  vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS, DEFAULT_BUTTONS, DEFAULT_ISSUE_BUTTONS, DEFAULT_REPO_BUTTONS, PAGE_VARIABLES })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -71,4 +73,35 @@ test('duplicateButton: 원본 배열을 건드리지 않는다', () => {
   const original = sample();
   duplicateButton(original, 2);
   assert.deepEqual(faces(original), ['a', 'b', 'c']);
+});
+
+// --- 페이지별 변수 ---
+// 확장이 넘기지 않는 변수를 쓰면 앱이 "Variable {x} not provided"로 거절해 버튼이 아무 일도
+// 하지 않는다. 프리셋·기본값은 우리가 배포하는 값이므로 그 자리에서 고정한다.
+
+const PAGE_BUTTONS = {
+  pr: [...PR_PRESETS, ...DEFAULT_BUTTONS],
+  issue: [...ISSUE_PRESETS, ...DEFAULT_ISSUE_BUTTONS],
+  repo: [...REPO_PRESETS, ...DEFAULT_REPO_BUTTONS],
+};
+
+// command와 claude 입력은 같은 변수 표로 치환된다 (앱의 resolveRequest)
+const variablesUsed = btn => [btn.command, ...(btn.claudeInputs || [])]
+  .flatMap(text => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]));
+
+for (const [kind, buttons] of Object.entries(PAGE_BUTTONS)) {
+  test(`${kind} 프리셋·기본값은 그 페이지에서 주는 변수만 쓴다`, () => {
+    const allowed = new Set(PAGE_VARIABLES[kind]);
+    for (const btn of buttons) {
+      for (const name of variablesUsed(btn)) {
+        assert.ok(allowed.has(name), `${kind} "${btn.name || btn.label}": {${name}}는 이 페이지에 없다`);
+      }
+    }
+  });
+}
+
+test('저장소 기본 버튼은 리포로 이동만 한다', () => {
+  // 커스터마이즈 이전의 Open in Terminal 동작 — 기본값을 바꾸면 기존 사용자의 버튼이 달라진다
+  assert.equal(DEFAULT_REPO_BUTTONS.length, 1);
+  assert.equal(DEFAULT_REPO_BUTTONS[0].command, 'z {repo}');
 });

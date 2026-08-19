@@ -1,11 +1,11 @@
-// Terminal Checkout 버튼 스타일
-const BUTTON_STYLE = `
+// 저장소 헤더 버튼 스타일 — GitHub의 초록 액션 버튼과 같은 모양
+const REPO_BUTTON_STYLE = `
   background-color: #238636;
   color: white;
   border: none;
   border-radius: 6px;
-  padding: 5px 12px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   margin-left: 8px;
@@ -23,12 +23,21 @@ function getPageType() {
   return null;
 }
 
-// 저장소 헤더의 Open in Terminal 버튼
-function createOpenButton() {
+// 저장소 헤더의 커스텀 명령 버튼. PR·이슈의 아이콘 버튼과 달리 채운 버튼으로 그린다 —
+// breadcrumb 옆에서는 아이콘만으로 눈에 띄지 않는다.
+// 진행 표시도 얼굴을 따라간다: 텍스트 얼굴을 ⏳ 하나로 바꾸면 버튼이 확 좁아져 헤더가 흔들린다.
+function createRepoButton(buttonConfig, index) {
+  const face = buttonFace(buttonConfig);
+  const phases = isTextFace(face)
+    ? { busy: 'Opening...', done: 'Done!', error: 'Error!' }
+    : { busy: '⏳', done: '✅', error: '❌' };
+
   const button = document.createElement('button');
-  button.textContent = 'Open in Terminal';
-  button.style.cssText = BUTTON_STYLE;
+  button.textContent = face;
+  button.title = buttonConfig.label;
+  button.style.cssText = REPO_BUTTON_STYLE;
   button.className = 'terminal-open-btn';
+  button.dataset.btnIndex = index;
 
   button.addEventListener('mouseenter', () => {
     button.style.backgroundColor = '#2ea043';
@@ -42,22 +51,21 @@ function createOpenButton() {
     e.preventDefault();
     e.stopPropagation();
 
-    const originalText = button.textContent;
-    button.textContent = 'Opening...';
+    button.textContent = phases.busy;
     button.disabled = true;
 
     try {
-      await chrome.runtime.sendMessage({ action: 'open' });
-      button.textContent = 'Done!';
+      await chrome.runtime.sendMessage({ action: 'execute_repo_command', buttonIndex: index });
+      button.textContent = phases.done;
       setTimeout(() => {
-        button.textContent = originalText;
+        button.textContent = face;
         button.disabled = false;
       }, 2000);
     } catch (error) {
-      console.error('open error:', error);
-      button.textContent = 'Error!';
+      console.error('repo command error:', error);
+      button.textContent = phases.error;
       setTimeout(() => {
-        button.textContent = originalText;
+        button.textContent = face;
         button.disabled = false;
       }, 2000);
     }
@@ -146,14 +154,20 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
 // baseline을 따라 12px쯤 아래로 처진다. 항목을 flex로 바꿔 저장소 이름·드롭다운과 같은
 // 선상(교차축 중앙)에 붙인다. 항목 밖(ol의 형제)으로 빼면 breadcrumb 구분자 "/"가 버튼
 // 앞에 새로 나타나므로 안에 두는 쪽이 맞다.
-function attachToRepoCrumb(anchor, button) {
+function attachToRepoCrumb(anchor, buttons) {
   const crumb = anchor.closest('li');
   if (crumb) {
     crumb.style.display = 'flex';
     crumb.style.alignItems = 'center';
-    crumb.appendChild(button);
-  } else {
-    anchor.insertAdjacentElement('afterend', button); // 구 UI: breadcrumb가 아닌 헤더
+    buttons.forEach(button => crumb.appendChild(button));
+    return;
+  }
+  // 구 UI: breadcrumb가 아닌 헤더. afterend는 바로 뒤에 넣으므로 방금 넣은 버튼을 다음 기준으로
+  // 삼아야 설정한 순서대로 늘어선다
+  let after = anchor;
+  for (const button of buttons) {
+    after.insertAdjacentElement('afterend', button);
+    after = button;
   }
 }
 
@@ -262,40 +276,38 @@ async function tryInsertIssueButtons() {
   return true;
 }
 
-// 저장소 헤더에 버튼 추가 (성공 시 true 반환).
-// storage를 읽지 않아 await가 없으므로 다른 트리거와 겹쳐도 중복 삽입이 생기지 않는다
+// 저장소 헤더에 버튼들 추가 (성공 시 true 반환)
 async function tryInsertRepoButton() {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
 
   const header = document.querySelector('header[role="banner"]');
-  const lockIcon = header?.querySelector('svg.octicon-lock');
+  // Private 저장소: 자물쇠 아이콘이 있는 breadcrumb 항목 / Public: 저장소 이름 링크 뒤
+  let anchor = header?.querySelector('svg.octicon-lock');
+  if (!anchor) {
+    const pathMatch = location.pathname.match(/^\/([^/]+\/[^/]+)/);
+    if (!pathMatch) return false;
+    anchor = header?.querySelector(`a[href="/${pathMatch[1]}"]`);
+  }
+  if (!anchor) return false;
 
-  if (lockIcon) {
-    // Private 저장소: 자물쇠 아이콘이 있는 breadcrumb 항목에 추가
-    const button = createOpenButton();
-    button.style.padding = '3px 8px';
-    button.style.fontSize = '11px';
-    attachToRepoCrumb(lockIcon, button);
+  let buttons;
+  try {
+    const data = await chrome.storage.sync.get(['repoButtons']);
+    buttons = data.repoButtons || DEFAULT_REPO_BUTTONS;
+  } catch {
+    buttons = DEFAULT_REPO_BUTTONS;
+  }
+
+  // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
+  // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
+  if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
 
-  // Public 저장소: 저장소 이름 링크 뒤에 추가
-  const pathMatch = location.pathname.match(/^\/([^/]+\/[^/]+)/);
-  if (!pathMatch) return false;
-
-  const repoPath = '/' + pathMatch[1];
-  const repoLink = header?.querySelector(`a[href="${repoPath}"]`);
-  if (repoLink) {
-    const button = createOpenButton();
-    button.style.padding = '3px 8px';
-    button.style.fontSize = '11px';
-    attachToRepoCrumb(repoLink, button);
-    return true;
-  }
-
-  return false;
+  attachToRepoCrumb(anchor, buttons.map((config, index) => createRepoButton(config, index)));
+  return true;
 }
 
 // 페이지 타입에 따라 버튼 삽입
