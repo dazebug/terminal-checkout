@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 // layout.js는 브라우저용 클래식 스크립트라 export가 없다 (tests/buttons.test.js와 같은 방식).
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/layout.js'), 'utf8'));
-const { unclipButtonRow } = vm.runInThisContext('({ unclipButtonRow })');
+const { unclipButtonRow, UNCLIP_MAX_DEPTH } = vm.runInThisContext('({ unclipButtonRow, UNCLIP_MAX_DEPTH })');
 
 // 실제 GitHub PR 헤더를 본뜬 가짜 DOM. 자식 → 조상 순으로 넘긴 overflow-x 값으로 사슬을 만든다
 function chain(...overflows) {
@@ -35,10 +35,9 @@ test('unclipButtonRow: 잘라내는 조상까지만 심고 그 위는 건드리�
 });
 
 test('unclipButtonRow: 잘라내는 조상이 없으면 상한에서 멈춘다', () => {
-  const nodes = chain(...Array(20).fill('visible'));
+  const nodes = chain(...Array(UNCLIP_MAX_DEPTH * 3).fill('visible')); // 상한보다 훨씬 긴 사슬
   unclipButtonRow(nodes[0], overflowXOf);
-  const touched = minWidths(nodes).filter(v => v === '0').length;
-  assert.ok(touched > 0 && touched <= 6, `상한 없이 ${touched}단계까지 올라갔다`);
+  assert.equal(minWidths(nodes).filter(v => v === '0').length, UNCLIP_MAX_DEPTH);
 });
 
 test('unclipButtonRow: 그래도 모자라면 버튼이 다음 줄로 접히게 한다', () => {

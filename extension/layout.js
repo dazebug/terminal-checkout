@@ -1,5 +1,6 @@
 // GitHub 헤더에 버튼을 끼워 넣을 때 필요한 레이아웃 보정. DOM 노드만 다루고 chrome API·전역
-// document를 모르므로 순수 함수로 테스트한다 (tests/layout.test.js).
+// document를 모르므로 순수 함수로 테스트한다 (tests/layout.test.js). 유일한 전역 의존인
+// getComputedStyle은 인자로 받는다 — node 테스트에는 그 전역이 없다.
 
 // PR 헤더 구조(실측): [버튼 칸 overflow:hidden] → [브랜치 줄] → [헤더 메타 행 overflow:hidden].
 // flex 항목의 기본값 min-width:auto는 "내용보다 작아지지 않는다"는 뜻이라, 버튼을 끼워 넣은
