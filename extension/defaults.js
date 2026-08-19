@@ -1,4 +1,4 @@
-// 버튼 기본값·프리셋의 단일 출처. content.js(렌더), background.js(실행),
+// 버튼 기본값·프리셋과 페이지 판정의 단일 출처. content.js(렌더), background.js(실행),
 // options.js(편집) 세 곳이 같은 값을 봐야 하므로 여기 한 곳에만 둔다.
 // content script·service worker·options 페이지 모두 이 파일을 먼저 로드한다.
 
@@ -29,7 +29,7 @@ const PR_PRESETS = [
   },
 ];
 
-// 이슈 페이지: 상태 배지 줄 버튼. 브랜치가 없으므로 {branch}·{main}은 쓸 수 없다
+// 이슈 페이지: 상태 배지 줄 버튼. head 브랜치가 없으므로 {branch} 계열과 {base}는 쓸 수 없다
 const ISSUE_PRESETS = [
   {
     name: '이슈 읽기 (claude)', face: '📋',
@@ -53,6 +53,23 @@ const ISSUE_PRESETS = [
   },
 ];
 
+// 저장소 페이지: 헤더 저장소 이름 옆 버튼. PR·이슈와 달리 GitHub의 초록 액션 버튼 모양이라
+// 표시(face)에 짧은 이모지보다 이름을 넣는 쪽이 자연스럽다
+const REPO_PRESETS = [
+  {
+    name: 'Open in Terminal', face: 'Open in Terminal',
+    command: 'z {repo}',
+  },
+  {
+    name: 'Open + Claude', face: 'Open + Claude',
+    command: 'z {repo} && claude',
+  },
+  {
+    name: 'main 최신화', face: 'main ⤓',
+    command: 'z {repo} && git checkout {main} && git pull --ff-only',
+  },
+];
+
 const DEFAULT_BUTTONS = [
   { face: PR_PRESETS[0].face, label: PR_PRESETS[0].name, command: PR_PRESETS[0].command, claudeInputs: [] },
 ];
@@ -63,6 +80,54 @@ const DEFAULT_ISSUE_BUTTONS = [
     command: ISSUE_PRESETS[0].command, claudeInputs: [...ISSUE_PRESETS[0].claudeInputs],
   },
 ];
+
+const DEFAULT_REPO_BUTTONS = [
+  { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
+];
+
+// 페이지 종류별 정의. 저장 키가 content.js(렌더)·background.js(실행)·options.js(편집)에
+// 흩어지면 한 곳만 어긋나도 저장한 설정이 조용히 무시되므로 세 파일이 모두 여기를 본다.
+// variables는 확장이 그 페이지에서 실제로 넘기는 변수다 — 프리셋·기본값이 이 목록을 벗어나지
+// 않는지 테스트로 고정한다 (tests/buttons.test.js). 없는 변수를 쓰면 앱이 거절해 버튼이
+// 아무 일도 하지 않는다. {base}는 PR 페이지에서 읽어야만 전달되므로 항상 오는 것은 아니다.
+const BUTTON_KINDS = {
+  pr: {
+    storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,
+    variables: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
+  },
+  issue: {
+    storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
+    variables: ['repo', 'owner', 'number', 'main'],
+  },
+  repo: {
+    storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
+    variables: ['repo', 'owner', 'main'],
+  },
+};
+
+// GitHub 경로 → 페이지 종류. content.js(버튼 삽입)와 background.js(확장 아이콘 라우팅)가
+// 반드시 같은 판정을 써야 한다 — 아이콘 클릭은 content script를 거치지 않으므로, 판정이 갈리면
+// `/settings/profile` 같은 경로가 저장소로 읽혀 `z profile`이 터미널에서 돈다.
+// owner 자리에 올 수 없는 예약 경로는 걸러낸다. 목록에 없는 예약어가 새로 생겨도 최악은 종전과
+// 같은 오판이라 흔한 것만 담는다.
+const RESERVED_OWNERS = new Set([
+  'settings', 'notifications', 'explore', 'marketplace', 'sponsors', 'topics', 'collections',
+  'events', 'codespaces', 'organizations', 'orgs', 'account', 'apps', 'users', 'dashboard',
+  'new', 'login', 'logout', 'join', 'pricing', 'features', 'about', 'search', 'stars',
+  'issues', 'pulls', 'discussions', 'sitemap', 'security', 'trending', 'enterprises',
+]);
+
+// 저장소 페이지로 볼 하위 탭 — 이슈 상세·PR 상세는 위에서 먼저 가려낸다
+const REPO_TABS = 'tree|blob|issues|actions|settings|releases|tags|wiki|security|pulse|graphs|network|projects|commits|branches|pulls|discussions|compare';
+
+function pageTypeOf(pathname) {
+  const [, owner, repo] = pathname.split('/');
+  if (!owner || !repo || RESERVED_OWNERS.has(owner)) return null;
+  if (/\/issues\/\d+/.test(pathname)) return 'issue';
+  if (/\/pull\/\d+/.test(pathname)) return 'pr';
+  if (/^\/[^/]+\/[^/]+\/?$/.test(pathname)) return 'repo';
+  return new RegExp(`^/[^/]+/[^/]+/(${REPO_TABS})`).test(pathname) ? 'repo' : null;
+}
 
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;

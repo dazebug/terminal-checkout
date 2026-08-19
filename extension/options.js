@@ -1,27 +1,13 @@
 // 버튼 기본값·프리셋·표시 규칙은 defaults.js가 단일 출처 (options.html이 먼저 로드한다)
 
-// PR 버튼과 이슈 버튼은 저장 키도 쓸 수 있는 변수도 다르다. 나머지 편집 동작은 같아서
-// 섹션 정의만 바꿔 같은 렌더러·이벤트 핸들러를 공유한다.
+// PR·이슈·저장소 버튼은 저장 키도 쓸 수 있는 변수도 다르다(defaults.js의 BUTTON_KINDS).
+// 나머지 편집 동작은 같아서 여기서는 카드가 들어갈 DOM 자리만 얹어 같은 렌더러·이벤트
+// 핸들러를 공유한다.
 const SECTIONS = [
-  {
-    kind: 'pr',
-    storageKey: 'buttons',
-    presets: PR_PRESETS,
-    defaults: DEFAULT_BUTTONS,
-    container: 'pr-buttons',
-    addButton: 'pr-add',
-    addHint: 'pr-add-hint',
-  },
-  {
-    kind: 'issue',
-    storageKey: 'issueButtons',
-    presets: ISSUE_PRESETS,
-    defaults: DEFAULT_ISSUE_BUTTONS,
-    container: 'issue-buttons',
-    addButton: 'issue-add',
-    addHint: 'issue-add-hint',
-  },
-];
+  { kind: 'pr', container: 'pr-buttons', addButton: 'pr-add', addHint: 'pr-add-hint' },
+  { kind: 'issue', container: 'issue-buttons', addButton: 'issue-add', addHint: 'issue-add-hint' },
+  { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
+].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
 
 // 표시에 자주 쓰는 이모지 — 클릭하면 표시 칸에 덧붙는다 (여러 개 조합 가능)
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
@@ -29,7 +15,7 @@ const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '�
 // 저장 스키마와 달리 overrides는 배열로 들고 있는다. repo를 키로 쓰면 이름을 고칠 때마다
 // 키를 지웠다 다시 넣어야 하고, 그때마다 행을 새로 그리느라 입력 포커스가 날아간다.
 const state = {
-  buttons: { pr: [], issue: [] },
+  buttons: Object.fromEntries(SECTIONS.map(s => [s.kind, []])),
   overrides: [],
   dirty: false,
   // 편집이 일어날 때마다 오른다. 저장이 끝난 뒤 그 사이에 사용자가 더 고쳤는지 판별한다.
@@ -80,7 +66,7 @@ function renderButtons(kind) {
       <div class="btn-card-header">
         <span class="btn-number">
           ${count > 1 ? '<button class="drag-handle" aria-label="순서 변경" title="드래그하거나 ↑↓ 키로 순서 변경">⠿</button>' : ''}
-          <span class="prompt">❯</span> ${kind === 'issue' ? 'issueButtons' : 'buttons'}[${i}]
+          <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
         </span>
         <span class="card-actions">
           ${count < MAX_BUTTONS ? '<button class="duplicate-btn" title="이 버튼을 복제합니다">복제</button>' : ''}
@@ -160,12 +146,15 @@ function renderButtons(kind) {
   document.getElementById(addHint).hidden = !atMax;
 }
 
-// content.js의 버튼 렌더 규칙(defaults.js의 판정 공유)과 짝을 이룬다 — 실제로 어떻게 보일지 그대로 재현
+// content.js의 버튼 렌더 규칙(defaults.js의 판정 공유)과 짝을 이룬다 — 실제로 어떻게 보일지 그대로 재현.
+// 저장소 버튼만 채운 액션 버튼이라 얼굴이 텍스트든 이모지든 모양이 같다.
 function updateFacePreview(card, face) {
   const el = card.querySelector('.face-preview');
   const shown = face.trim() || '⏏️';
+  const style = card.dataset.kind === 'repo' ? 'gh-btn-header'
+    : isTextFace(shown) ? 'gh-btn-text' : 'gh-btn-emoji';
   el.textContent = shown;
-  el.className = 'face-preview ' + (isTextFace(shown) ? 'gh-btn-text' : 'gh-btn-emoji');
+  el.className = `face-preview ${style}`;
 }
 
 function updateClaudeWarn(card, btn) {
@@ -266,7 +255,7 @@ const REQUIRED_FIELDS = [
 
 function validateButtons() {
   for (const { kind } of SECTIONS) {
-    const name = kind === 'issue' ? 'issueButtons' : 'buttons';
+    const name = section(kind).storageKey;
     for (let i = 0; i < state.buttons[kind].length; i++) {
       for (const { field, label } of REQUIRED_FIELDS) {
         if (state.buttons[kind][i][field].trim()) continue;
@@ -398,7 +387,7 @@ function resetSettings() {
 // 확장 ID가 manifest key로 고정돼 같은 Google 계정의 Chrome끼리는 storage.sync가 자동으로
 // 이어진다 — 이 통로는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용이다.
 
-const BACKUP_KEYS = ['buttons', 'issueButtons', 'defaultMain', 'repoMainBranch'];
+const BACKUP_KEYS = [...SECTIONS.map(s => s.storageKey), 'defaultMain', 'repoMainBranch'];
 const MAX_IMPORT_BYTES = 256 * 1024;
 
 // 파일 텍스트를 저장 스키마 조각으로 검증한다. DOM·chrome API를 쓰지 않아 단독으로 테스트할 수 있다.
@@ -420,7 +409,7 @@ function parseImportedSettings(raw) {
   const settings = {};
   const skipped = [];
 
-  for (const key of ['buttons', 'issueButtons']) {
+  for (const key of SECTIONS.map(s => s.storageKey)) {
     if (data[key] === undefined) continue;
     // 빈 배열은 "버튼 없음"이 아니라 "설정 없음"으로 본다 — 배경 로직이 빈 배열에는 기본값
     // 폴백을 걸지 않아 버튼이 통째로 사라진다.
