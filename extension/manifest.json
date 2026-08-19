@@ -23,6 +23,7 @@
       ],
       "js": [
         "defaults.js",
+        "layout.js",
         "content.js"
       ]
     }
