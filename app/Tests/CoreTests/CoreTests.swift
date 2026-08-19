@@ -400,9 +400,8 @@ private final class FakeClaudeSession {
     /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
     var presetBox = "" { didSet { box = presetBox } }
     private(set) var sendCallCount = 0
-    private var box = ""
-
     private var screenCalls = 0
+    private var box = ""
 
     var io: ClaudeSessionIO {
         ClaudeSessionIO(
