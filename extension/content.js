@@ -14,15 +14,6 @@ const REPO_BUTTON_STYLE = `
   gap: 4px;
 `;
 
-// 페이지 타입 감지. 이슈 상세는 저장소 경로 패턴에도 걸리므로 먼저 가려낸다
-function getPageType() {
-  const path = location.pathname;
-  if (path.match(/\/issues\/\d+/)) return 'issue';
-  if (path.match(/\/pull\/\d+/)) return 'pr';
-  if (path.match(/^\/[^/]+\/[^/]+\/?$/) || path.match(/^\/[^/]+\/[^/]+\/(tree|blob|issues|actions|settings|releases|tags|wiki|security|pulse|graphs|network|projects|commits|branches|pulls|discussions|compare)/)) return 'repo';
-  return null;
-}
-
 // 저장소 헤더의 커스텀 명령 버튼. PR·이슈의 아이콘 버튼과 달리 채운 버튼으로 그린다 —
 // breadcrumb 옆에서는 아이콘만으로 눈에 띄지 않는다.
 // 진행 표시도 얼굴을 따라간다: 텍스트 얼굴을 ⏳ 하나로 바꾸면 버튼이 확 좁아져 헤더가 흔들린다.
@@ -55,7 +46,7 @@ function createRepoButton(buttonConfig, index) {
     button.disabled = true;
 
     try {
-      await chrome.runtime.sendMessage({ action: 'execute_repo_command', buttonIndex: index });
+      await runButtonCommand('execute_repo_command', index);
       button.textContent = phases.done;
       setTimeout(() => {
         button.textContent = face;
@@ -72,6 +63,13 @@ function createRepoButton(buttonConfig, index) {
   });
 
   return button;
+}
+
+// 버튼 하나를 실행한다. sendMessage는 background가 {success:false}를 돌려줘도 reject하지
+// 않으므로, 응답을 보지 않으면 명령이 거절돼도 버튼에 성공으로 표시된다
+async function runButtonCommand(action, index) {
+  const response = await chrome.runtime.sendMessage({ action, buttonIndex: index });
+  if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
 // 페이지 종류별 버튼 설정 (저장 키는 defaults.js의 BUTTON_KINDS가 단일 출처).
@@ -143,7 +141,7 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.disabled = true;
 
     try {
-      await chrome.runtime.sendMessage({ action, buttonIndex: index });
+      await runButtonCommand(action, index);
       button.textContent = '✅';
       setTimeout(() => {
         button.textContent = originalText;
@@ -305,7 +303,7 @@ async function tryInsertRepoButtons() {
 
 // 페이지 타입에 따라 버튼 삽입
 async function tryInsertButton() {
-  const pageType = getPageType();
+  const pageType = pageTypeOf(location.pathname);
   if (!pageType) return false;
 
   let result = false;

@@ -1,4 +1,4 @@
-// 버튼 기본값·프리셋의 단일 출처. content.js(렌더), background.js(실행),
+// 버튼 기본값·프리셋과 페이지 판정의 단일 출처. content.js(렌더), background.js(실행),
 // options.js(편집) 세 곳이 같은 값을 봐야 하므로 여기 한 곳에만 둔다.
 // content script·service worker·options 페이지 모두 이 파일을 먼저 로드한다.
 
@@ -104,6 +104,30 @@ const BUTTON_KINDS = {
     variables: ['repo', 'owner', 'main'],
   },
 };
+
+// GitHub 경로 → 페이지 종류. content.js(버튼 삽입)와 background.js(확장 아이콘 라우팅)가
+// 반드시 같은 판정을 써야 한다 — 아이콘 클릭은 content script를 거치지 않으므로, 판정이 갈리면
+// `/settings/profile` 같은 경로가 저장소로 읽혀 `z profile`이 터미널에서 돈다.
+// owner 자리에 올 수 없는 예약 경로는 걸러낸다. 목록에 없는 예약어가 새로 생겨도 최악은 종전과
+// 같은 오판이라 흔한 것만 담는다.
+const RESERVED_OWNERS = new Set([
+  'settings', 'notifications', 'explore', 'marketplace', 'sponsors', 'topics', 'collections',
+  'events', 'codespaces', 'organizations', 'orgs', 'account', 'apps', 'users', 'dashboard',
+  'new', 'login', 'logout', 'join', 'pricing', 'features', 'about', 'search', 'stars',
+  'issues', 'pulls', 'discussions', 'sitemap', 'security',
+]);
+
+// 저장소 페이지로 볼 하위 탭 — 이슈 상세·PR 상세는 위에서 먼저 가려낸다
+const REPO_TABS = 'tree|blob|issues|actions|settings|releases|tags|wiki|security|pulse|graphs|network|projects|commits|branches|pulls|discussions|compare';
+
+function pageTypeOf(pathname) {
+  const [, owner, repo] = pathname.split('/');
+  if (!owner || !repo || RESERVED_OWNERS.has(owner)) return null;
+  if (/\/issues\/\d+/.test(pathname)) return 'issue';
+  if (/\/pull\/\d+/.test(pathname)) return 'pr';
+  if (/^\/[^/]+\/[^/]+\/?$/.test(pathname)) return 'repo';
+  return new RegExp(`^/[^/]+/[^/]+/(${REPO_TABS})`).test(pathname) ? 'repo' : null;
+}
 
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;

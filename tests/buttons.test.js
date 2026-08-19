@@ -11,7 +11,7 @@ const vm = require('node:vm');
 // deepStrictEqual이 구조가 같아도 실패한다.
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
-const { BUTTON_KINDS } = vm.runInThisContext('({ BUTTON_KINDS })');
+const { BUTTON_KINDS, pageTypeOf } = vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -103,4 +103,30 @@ test('페이지 종류마다 저장 키가 다르다', () => {
   // 같은 키를 두 페이지가 쓰면 한쪽 설정이 다른 쪽을 덮어쓴다
   const keys = Object.values(BUTTON_KINDS).map(k => k.storageKey);
   assert.equal(new Set(keys).size, keys.length);
+});
+
+// --- 페이지 종류 판정 ---
+// content.js(버튼 삽입)와 background.js(확장 아이콘 라우팅)가 같은 판정을 써야 한다.
+// 아이콘 클릭은 content script를 거치지 않아, 판정이 갈리면 저장소가 아닌 경로가 저장소로
+// 읽혀 엉뚱한 이름으로 명령이 돈다.
+
+test('pageTypeOf: PR·이슈·저장소', () => {
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/pull/14'), 'pr');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues/3'), 'issue');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout'), 'repo');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues'), 'repo');   // 목록은 저장소 탭이다
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/tree/feat/x'), 'repo');
+});
+
+test('pageTypeOf: owner 자리의 예약 경로는 저장소가 아니다', () => {
+  // /settings/profile을 저장소로 읽으면 확장 아이콘 클릭이 `z profile`을 실행한다
+  assert.equal(pageTypeOf('/settings/profile'), null);
+  assert.equal(pageTypeOf('/notifications'), null);
+  assert.equal(pageTypeOf('/marketplace/actions/checkout'), null);
+  assert.equal(pageTypeOf('/orgs/watcha/projects'), null);
+});
+
+test('pageTypeOf: 저장소 이름이 없으면 판정하지 않는다', () => {
+  assert.equal(pageTypeOf('/'), null);
+  assert.equal(pageTypeOf('/dazebug'), null);
 });
