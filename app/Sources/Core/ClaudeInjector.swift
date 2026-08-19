@@ -150,11 +150,12 @@ public func submitClaudeInputs(
 /// 제출하면 빈 줄만 제출되거나 잘린 텍스트가 제출될 수 있으므로 확인 전에는 CR을 보내지 않는다.
 /// raw mode 게이트를 통과한 뒤라 커널 에코는 꺼져 있고, 화면의 텍스트는 claude가 그린 것이다.
 ///
-/// 터미널 CLI 호출 실패도 화면 미반영과 같은 재시도로 다룬다: 이 호출들은 부하로 한 번씩
-/// 실패한다 (실측 — 입력 #1 제출 7초 뒤 호출 하나가 5초 타임아웃으로 실패해, 남은 입력
-/// 2개가 재시도 없이 통째로 버려졌다). 다만 재타이핑 전에는 세션 동일성을 다시 확인한다 —
-/// 실패가 "세션이 죽었다"였을 수도 있어, 확인 없이 다시 치면 그 tty에 새로 뜬 claude에
-/// 입력이 흘러든다.
+/// 터미널 CLI 호출 실패도 화면 미반영과 같은 재시도로 다룬다. 이 호출은 실제로 한 번씩
+/// 실패한다 — 입력 3개 중 #1만 전달되고 끝난 사고에서 앱 로그는 #1 제출 7초 뒤의 한 줄이
+/// 전부였고, 한 줄만 남기고 끝나는 경로는 이 호출 실패뿐이었다 (세션 게이트 미통과라면
+/// 15초를 기다린 뒤 찍힌다). 어느 호출이 실패했는지까지는 좁히지 못했다.
+/// 다만 재타이핑 전에는 세션 동일성을 다시 확인한다 — 실패가 "세션이 죽었다"였을 수도 있어,
+/// 확인 없이 다시 치면 그 tty에 새로 뜬 claude에 입력이 흘러든다.
 private func typeAndSubmit(
     _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval
 ) -> Bool {
@@ -219,7 +220,8 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// exec한 직후의 canonical 구간을 통과해 첫 입력을 잃는다(`acceptingClaudePID` 참고).
 /// 처음 준비된 claude의 PID를 고정해, 이후 입력이 같은 세션에만 가도록 한다.
 /// 타임아웃 내에 claude가 준비되지 않으면 아무것도 보내지 않고 포기한다(로그만).
-/// 최대 2분을 도는 블로킹 루프이므로 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
+/// 기동 대기(기본 2분)와 입력별 재시도가 모두 블로킹이라 전체로는 수 분이 걸릴 수 있다 —
+/// 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
