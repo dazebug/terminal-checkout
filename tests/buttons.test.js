@@ -124,6 +124,7 @@ test('pageTypeOf: owner 자리의 예약 경로는 저장소가 아니다', () =
   assert.equal(pageTypeOf('/notifications'), null);
   assert.equal(pageTypeOf('/marketplace/actions/checkout'), null);
   assert.equal(pageTypeOf('/orgs/watcha/projects'), null);
+  assert.equal(pageTypeOf('/trending/javascript'), null);
 });
 
 test('pageTypeOf: 저장소 이름이 없으면 판정하지 않는다', () => {

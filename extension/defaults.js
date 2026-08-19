@@ -114,7 +114,7 @@ const RESERVED_OWNERS = new Set([
   'settings', 'notifications', 'explore', 'marketplace', 'sponsors', 'topics', 'collections',
   'events', 'codespaces', 'organizations', 'orgs', 'account', 'apps', 'users', 'dashboard',
   'new', 'login', 'logout', 'join', 'pricing', 'features', 'about', 'search', 'stars',
-  'issues', 'pulls', 'discussions', 'sitemap', 'security',
+  'issues', 'pulls', 'discussions', 'sitemap', 'security', 'trending', 'enterprises',
 ]);
 
 // 저장소 페이지로 볼 하위 탭 — 이슈 상세·PR 상세는 위에서 먼저 가려낸다
