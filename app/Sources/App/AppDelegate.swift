@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try server.start()
             self.server = server
         } catch {
-            NSLog("Terminal Checkout: 소켓 서버 시작 실패 — \(errorMessage(error))")
+            checkoutLog("소켓 서버 시작 실패 — \(errorMessage(error))")
         }
     }
 

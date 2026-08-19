@@ -206,7 +206,7 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
         let windowID = findWezTermFocusedWindow(cli: cli, env: env)
         for args in wezTermSpawnAttempts(windowID: windowID) {
             guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {
-                NSLog("Terminal Checkout: wezterm \(args.joined(separator: " ")) 실패")
+                checkoutLog("wezterm \(args.joined(separator: " ")) 실패")
                 continue
             }
             let paneID = spawn.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
