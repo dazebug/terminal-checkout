@@ -72,6 +72,8 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
   const button = document.createElement('button');
   button.className = className;
   button.title = buttonConfig.label;
+  // flex-shrink:0 — 자리가 모자랄 때 줄어들 몫은 브랜치 이름(GitHub이 말줄임한다)이지 버튼이
+  // 아니다. 빼면 텍스트 필이 먼저 찌그러져 무슨 버튼인지 읽을 수 없게 된다
   button.style.cssText = isTextFace(face) ? `
     background: transparent;
     border: 1px solid rgba(87, 171, 90, 0.45);
@@ -79,6 +81,7 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     padding: 2px 8px;
     margin-left: 4px;
     display: inline-block;
+    flex-shrink: 0;
     max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -94,6 +97,7 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     padding: 4px;
     margin-left: 4px;
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     border-radius: 4px;
     color: #57ab5a;
@@ -207,6 +211,8 @@ async function tryInsertPRButtons() {
     });
     insertAfter.insertAdjacentElement('afterend', iconButton);
   }
+
+  unclipButtonRow(insertAfter.parentElement, el => getComputedStyle(el).overflowX);
 
   return true;
 }
