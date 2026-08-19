@@ -1,4 +1,15 @@
 import Foundation
+import os
+
+/// 입력 전달 진단용 로그. NSLog는 통합 로그에서 메시지가 <private>으로 가려져 어느 단계가
+/// 실패했는지 사후에 읽을 수 없다 — 실패 원인을 로그가 아니라 재현으로만 좁혀야 했던 적이
+/// 있어(실측) 이 경로만 공개로 남긴다.
+/// 확인: log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 1h
+private let claudeInputLogger = Logger(subsystem: "com.dazebug.terminal-checkout", category: "claude-input")
+
+func claudeInputLog(_ message: String) {
+    claudeInputLogger.log("\(message, privacy: .public)")
+}
 
 /// runInTerminal이 돌려주는 세션 핸들 — claude 입력을 나중에 타이핑할 대상.
 public enum TerminalSessionHandle {
@@ -91,13 +102,109 @@ public func screenShowsInput(_ screen: String, input: String) -> Bool {
     return screen.filter { !$0.isWhitespace }.contains(probe)
 }
 
-/// 스폰된 세션의 claude가 입력을 받을 수 있게 될 때까지 기다렸다가 입력을 순서대로 전달한다.
+/// 세션 입출력 — 실제로는 osascript·wezterm cli 호출이지만, 전달 순서와 실패 복구 판정을
+/// 프로세스 없이 검증할 수 있도록 클로저로 분리한다.
+public struct ClaudeSessionIO {
+    /// 키 입력을 개행 추가 없이 보낸다. false는 "이번 호출이 실패했다"는 뜻일 뿐
+    /// 세션이 끝났다는 뜻이 아니다 — 그 판정은 confirmSession이 한다.
+    public var sendKeys: (String) -> Bool
+    /// 현재 화면 텍스트. 조회 실패면 nil.
+    public var screenText: () -> String?
+    /// 주어진 시간 안에 처음 준비된 그 claude가 입력을 받을 상태가 되면 true.
+    public var confirmSession: (TimeInterval) -> Bool
+    /// 대기 — 테스트에서 없애 루프를 즉시 돌린다.
+    public var wait: (TimeInterval) -> Void
+
+    public init(
+        sendKeys: @escaping (String) -> Bool,
+        screenText: @escaping () -> String?,
+        confirmSession: @escaping (TimeInterval) -> Bool,
+        wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    ) {
+        self.sendKeys = sendKeys
+        self.screenText = screenText
+        self.confirmSession = confirmSession
+        self.wait = wait
+    }
+}
+
+/// 준비된 claude 세션에 입력을 순서대로 제출하고, 제출에 성공한 개수를 돌려준다.
+/// 각 입력은 [개행 없이 타이핑 → 화면 반영 확인 → CR로 제출] 순서로 보낸다:
+/// LF(\n)는 제출로 인식되지 않고, 게이트를 통과한 뒤에도 TUI가 입력을 아직 그리지 못하는
+/// 순간이 있기 때문이다 (둘 다 WezTerm 실측). 첫 입력을 처리하는 동안 나머지는 claude
+/// 입력창에 큐잉된다.
+/// 입력마다 세션 동일성을 먼저 확인한다 — 그 사이 원래 세션이 죽고 같은 tty에 새 claude가
+/// 떴다면 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 셸 명령까지 실행된다.
+@discardableResult
+public func submitClaudeInputs(
+    _ inputs: [String], io: ClaudeSessionIO,
+    betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
+) -> Int {
+    var submitted = 0
+    for (index, input) in inputs.enumerated() {
+        if index > 0 { io.wait(0.4) }
+        guard io.confirmSession(betweenInputTimeout) else {
+            claudeInputLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
+            return submitted
+        }
+        guard typeAndSubmit(input, io: io, retryConfirmTimeout: retryConfirmTimeout) else {
+            claudeInputLog("claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
+            return submitted
+        }
+        submitted += 1
+    }
+    return submitted
+}
+
+/// 타이핑 → 화면 반영 확인 → 제출. 게이트를 통과했어도 claude TUI가 아직 입력을 그리지
+/// 못하는 순간이 있어, 반영이 안 보이면 입력창을 비우고 재타이핑한다. 반영 확인 없이
+/// 제출하면 빈 줄만 제출되거나 잘린 텍스트가 제출될 수 있으므로 확인 전에는 CR을 보내지 않는다.
+/// raw mode 게이트를 통과한 뒤라 커널 에코는 꺼져 있고, 화면의 텍스트는 claude가 그린 것이다.
+///
+/// 터미널 CLI 호출 실패도 화면 미반영과 같은 재시도로 다룬다: 이 호출들은 부하로 한 번씩
+/// 실패한다 (실측 — 입력 #1 제출 7초 뒤 호출 하나가 5초 타임아웃으로 실패해, 남은 입력
+/// 2개가 재시도 없이 통째로 버려졌다). 다만 재타이핑 전에는 세션 동일성을 다시 확인한다 —
+/// 실패가 "세션이 죽었다"였을 수도 있어, 확인 없이 다시 치면 그 tty에 새로 뜬 claude에
+/// 입력이 흘러든다.
+private func typeAndSubmit(
+    _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval
+) -> Bool {
+    let maxAttempts = 5
+    for attempt in 1...maxAttempts {
+        if attempt > 1 {
+            guard io.confirmSession(retryConfirmTimeout) else { return false }
+            // Ctrl+U: 입력창 클리어 — 부분적으로 들어간 텍스트가 재타이핑과 섞이지 않게 한다
+            _ = io.sendKeys("\u{15}")
+            io.wait(1.0)
+        }
+        guard io.sendKeys(text) else {
+            claudeInputLog("입력 전송 호출이 실패해 재시도 (\(attempt)/\(maxAttempts))")
+            continue
+        }
+        var reflected = false
+        for _ in 0..<5 {
+            io.wait(0.4)
+            guard let screen = io.screenText() else {
+                claudeInputLog("화면 조회 호출이 실패해 재시도 (\(attempt)/\(maxAttempts))")
+                break
+            }
+            guard screenShowsInput(screen, input: text) else { continue }
+            reflected = true
+            if io.sendKeys("\r") { return true }
+            claudeInputLog("제출(CR) 전송이 실패해 재시도 (\(attempt)/\(maxAttempts))")
+            break
+        }
+        if !reflected {
+            claudeInputLog("입력이 화면에 반영되지 않아 재시도 (\(attempt)/\(maxAttempts))")
+        }
+    }
+    return false
+}
+
+/// 스폰된 세션의 claude가 입력을 받을 수 있게 될 때까지 기다렸다가 입력을 전달한다.
 /// 대기 조건은 [포그라운드 프로세스 = claude] + [tty가 raw mode]다 — 프로세스만 보면 셸이
 /// exec한 직후의 canonical 구간을 통과해 첫 입력을 잃는다(`acceptingClaudePID` 참고).
 /// 처음 준비된 claude의 PID를 고정해, 이후 입력이 같은 세션에만 가도록 한다.
-/// 각 입력은 [개행 없이 타이핑 → 화면 반영 확인 → CR로 제출] 순서로 보낸다:
-/// claude TUI는 초기화 중 도착한 입력을 온전히 받지 못하고, LF(\n)는 제출로 인식하지 않기 때문
-/// (둘 다 WezTerm 실측). 첫 입력을 처리하는 동안 나머지는 claude 입력창에 큐잉된다.
 /// 타임아웃 내에 claude가 준비되지 않으면 아무것도 보내지 않고 포기한다(로그만).
 /// 최대 2분을 도는 블로킹 루프이므로 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
 public func deliverClaudeInputs(
@@ -114,11 +221,11 @@ public func deliverClaudeInputs(
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
     case .none:
-        NSLog("Terminal Checkout: claude 입력 전달 불가 — 세션 핸들 없음")
+        claudeInputLog("claude 입력 전달 불가 — 세션 핸들 없음")
         return
     }
     guard let ttyPath, ttyPath.hasPrefix("/dev/") else {
-        NSLog("Terminal Checkout: claude 입력 전달 불가 — 세션 tty를 알 수 없음")
+        claudeInputLog("claude 입력 전달 불가 — 세션 tty를 알 수 없음")
         return
     }
     let ttyName = String(ttyPath.dropFirst("/dev/".count))
@@ -126,54 +233,22 @@ public func deliverClaudeInputs(
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
-        NSLog("Terminal Checkout: \(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
+        claudeInputLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
         return
     }
 
-    for (index, input) in inputs.enumerated() {
-        if index > 0 { Thread.sleep(forTimeInterval: 0.4) }
-        // 전송 직전 재확인 — 그 사이 claude가 종료했으면 텍스트가 셸에 들어가므로 중단한다.
-        // claude가 잠시 입력을 받지 못하는 상태일 수도 있어 즉시 포기하지 않고 짧게 기다리되,
-        // 처음 준비된 그 PID만 인정한다 — 그 사이 사용자가 같은 pane에 새 claude를 띄웠다면
-        // 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 의도치 않은 셸 명령까지 실행된다
-        guard waitUntilClaudeAcceptsInput(
-            ttyName: ttyName, ttyPath: ttyPath,
-            pollInterval: pollInterval, timeout: betweenInputTimeout, expecting: claudePID
-        ) != nil else {
-            NSLog("Terminal Checkout: 처음 준비된 claude 세션(pid \(claudePID))이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
-            return
+    let io = ClaudeSessionIO(
+        sendKeys: { sendKeys($0, to: handle) },
+        screenText: { screenText(of: handle) },
+        confirmSession: { limit in
+            waitUntilClaudeAcceptsInput(
+                ttyName: ttyName, ttyPath: ttyPath,
+                pollInterval: pollInterval, timeout: limit, expecting: claudePID
+            ) != nil
         }
-        guard typeAndSubmit(input, to: handle) else {
-            NSLog("Terminal Checkout: claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
-            return
-        }
-    }
-}
-
-/// 타이핑 → 화면 반영 확인 → 제출. 게이트를 통과했어도 claude TUI가 아직 입력을 그리지
-/// 못하는 순간이 있어, 반영이 안 보이면 입력창을 비우고 재타이핑한다. 반영 확인 없이
-/// 제출하면 빈 줄만 제출되거나 잘린 텍스트가 제출될 수 있으므로 확인 전에는 CR을 보내지 않는다.
-/// raw mode 게이트를 통과한 뒤라 커널 에코는 꺼져 있고, 화면의 텍스트는 claude가 그린 것이다.
-private func typeAndSubmit(_ text: String, to handle: TerminalSessionHandle) -> Bool {
-    let maxAttempts = 5
-    for attempt in 1...maxAttempts {
-        if attempt > 1 {
-            // Ctrl+U: 입력창 클리어 — 부분적으로 들어간 텍스트가 재타이핑과 섞이지 않게 한다
-            guard sendKeys("\u{15}", to: handle) else { return false }
-            Thread.sleep(forTimeInterval: 1.0)
-        }
-        guard sendKeys(text, to: handle) else { return false }
-
-        for _ in 0..<5 {
-            Thread.sleep(forTimeInterval: 0.4)
-            guard let screen = screenText(of: handle) else { return false }
-            if screenShowsInput(screen, input: text) {
-                return sendKeys("\r", to: handle)
-            }
-        }
-        NSLog("Terminal Checkout: 입력이 화면에 반영되지 않아 재시도 (\(attempt)/\(maxAttempts))")
-    }
-    return false
+    )
+    let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
+    claudeInputLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
 }
 
 private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
@@ -229,7 +304,7 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool 
         guard let result = try? runProcess("/usr/bin/osascript", ["-e", script], timeout: 10),
               result.status == 0 else { return false }
         if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" {
-            NSLog("Terminal Checkout: 세션이 닫혀 claude 입력 전달 중단")
+            claudeInputLog("iTerm 세션이 닫혀 claude 입력 전달 중단")
             return false
         }
         return true

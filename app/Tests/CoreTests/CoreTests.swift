@@ -383,6 +383,123 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertFalse(screenShowsInput("아무 화면", input: "   "))
     }
 }
+// MARK: - 입력 전달 순서와 실패 복구
+// 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
+// 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
+
+/// claude 세션 흉내. 입력창(box)에 타이핑된 것을 화면에 그대로 비추고, CR을 받으면
+/// 제출로 처리해 입력창을 비운다.
+private final class FakeClaudeSession {
+    private(set) var keystrokes: [String] = []
+    private(set) var submitted: [String] = []
+    private(set) var confirmCalls = 0
+    var sessionAlive = true
+    /// n번째 sendKeys 호출을 실패시킨다 (1-based) — 터미널 CLI가 한 번 실패하는 상황
+    var failSendAt: Set<Int> = []
+    /// n번째 screenText 호출을 실패시킨다 (1-based)
+    var failScreenAt: Set<Int> = []
+    private var box = ""
+    private var sendCalls = 0
+    private var screenCalls = 0
+
+    var io: ClaudeSessionIO {
+        ClaudeSessionIO(
+            sendKeys: { [unowned self] keys in
+                sendCalls += 1
+                if failSendAt.contains(sendCalls) { return false }
+                keystrokes.append(keys)
+                switch keys {
+                case "\r": submitted.append(box); box = ""
+                case "\u{15}": box = ""
+                default: box += keys
+                }
+                return true
+            },
+            screenText: { [unowned self] in
+                screenCalls += 1
+                if failScreenAt.contains(screenCalls) { return nil }
+                return "❯ " + box
+            },
+            confirmSession: { [unowned self] _ in
+                confirmCalls += 1
+                return sessionAlive
+            },
+            wait: { _ in }
+        )
+    }
+}
+
+final class ClaudeInputDeliveryTests: XCTestCase {
+    private let inputs = ["!gh issue view 1415", "!gh issue view 1415 --comments", "/gh-drive-pr-review"]
+
+    func testAllInputsSubmittedInOrder() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
+        XCTAssertEqual(session.submitted, inputs)
+    }
+
+    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다
+    func testSubmitsOnlyAfterScreenShowsTypedText() {
+        let session = FakeClaudeSession()
+        _ = submitClaudeInputs([inputs[0]], io: session.io)
+        XCTAssertEqual(session.keystrokes, [inputs[0], "\r"])
+    }
+
+    /// 회귀 방지(실측): 입력 #1 제출 직후 wezterm cli 호출 한 번이 실패해 남은 입력 2개가
+    /// 통째로 버려졌다. 터미널 CLI 호출 실패는 "세션이 끝났다"가 아니라 그 호출만 실패한
+    /// 것이므로, 재타이핑으로 복구하고 남은 입력을 계속 보내야 한다.
+    func testTransientSendFailureDoesNotDropRemainingInputs() {
+        let session = FakeClaudeSession()
+        session.failSendAt = [3] // #1 타이핑·CR 다음 = #2의 첫 타이핑
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
+        XCTAssertEqual(session.submitted, inputs)
+    }
+
+    /// 화면 조회 실패도 마찬가지다 — 반영을 확인하지 못했을 뿐이라 재타이핑으로 복구한다
+    func testTransientScreenReadFailureDoesNotDropRemainingInputs() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = [2]
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
+        XCTAssertEqual(session.submitted, inputs)
+    }
+
+    /// 재시도는 남은 입력을 무한정 붙들지 않는다 — 계속 실패하면 그 입력에서 멈춘다
+    func testPersistentFailureStopsAtThatInput() {
+        let session = FakeClaudeSession()
+        session.failSendAt = Set(3...100)
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 세션이 바뀌었으면(원래 claude가 죽고 같은 tty에 새 claude가 떴으면) 남은 입력을
+    /// 보내지 않는다 — `!…` 입력이면 무관한 세션에서 셸 명령이 실행된다
+    func testReplacedSessionStopsDelivery() {
+        let session = FakeClaudeSession()
+        _ = submitClaudeInputs([inputs[0]], io: session.io)
+        session.sessionAlive = false
+        let after = session.keystrokes.count
+        XCTAssertEqual(submitClaudeInputs([inputs[1]], io: session.io), 0)
+        XCTAssertEqual(session.keystrokes.count, after)
+    }
+
+    /// 재시도 자체가 세션 확인을 건너뛰면 안 된다 — 첫 타이핑과 재시도 사이에 세션이
+    /// 바뀔 수 있고, 그 사이 두 번째 claude에 타이핑하면 같은 오입력이 된다
+    func testRetryReconfirmsSessionBeforeRetyping() {
+        let session = FakeClaudeSession()
+        session.failSendAt = [1] // 첫 타이핑 실패 → 재시도 진입
+        var confirms = 0
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            // 입력 사이 게이트는 통과했지만 재시도 직전 확인에서 세션이 바뀐 상황
+            confirmSession: { _ in confirms += 1; return confirms == 1 },
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertTrue(session.keystrokes.isEmpty) // 재시도 타이핑이 나가면 안 된다
+    }
+}
 
 // MARK: - 도구 확인 (z/gh/claude가 사용자 셸에서 실제로 불릴 수 있는지)
 
