@@ -398,6 +398,8 @@ private final class FakeClaudeSession {
     var failSendAt: Set<Int> = []
     /// n번째 screenText 호출을 실패시킨다 (1-based)
     var failScreenAt: Set<Int> = []
+    /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
+    var presetBox = "" { didSet { box = presetBox } }
     private var box = ""
     private var sendCalls = 0
     private var screenCalls = 0
@@ -498,6 +500,26 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         XCTAssertTrue(session.keystrokes.isEmpty) // 재시도 타이핑이 나가면 안 된다
+    }
+
+    /// 입력창 클리어(Ctrl+U)가 실패했으면 타이핑하지 않는다 — 남아 있을지 모르는 텍스트
+    /// 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은 입력이 제출된다
+    func testFailedClearDoesNotTypeOverLeftovers() {
+        let session = FakeClaudeSession()
+        session.presetBox = "잔여텍스트"
+        session.failSendAt = [1, 2] // #1 타이핑 실패 → #2 클리어도 실패
+        _ = submitClaudeInputs([inputs[0]], io: session.io)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도
+    /// 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번 제출된다
+    func testFailedSubmitResendsCarriageReturnWithoutRetyping() {
+        let session = FakeClaudeSession()
+        session.failSendAt = [2] // #1 타이핑 성공, #2 = CR 실패
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
     }
 }
 

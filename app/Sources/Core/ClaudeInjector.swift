@@ -1,15 +1,4 @@
 import Foundation
-import os
-
-/// 입력 전달 진단용 로그. NSLog는 통합 로그에서 메시지가 <private>으로 가려져 어느 단계가
-/// 실패했는지 사후에 읽을 수 없다 — 실패 원인을 로그가 아니라 재현으로만 좁혀야 했던 적이
-/// 있어(실측) 이 경로만 공개로 남긴다.
-/// 확인: log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 1h
-private let claudeInputLogger = Logger(subsystem: "com.dazebug.terminal-checkout", category: "claude-input")
-
-func claudeInputLog(_ message: String) {
-    claudeInputLogger.log("\(message, privacy: .public)")
-}
 
 /// runInTerminal이 돌려주는 세션 핸들 — claude 입력을 나중에 타이핑할 대상.
 public enum TerminalSessionHandle {
@@ -144,11 +133,11 @@ public func submitClaudeInputs(
     for (index, input) in inputs.enumerated() {
         if index > 0 { io.wait(0.4) }
         guard io.confirmSession(betweenInputTimeout) else {
-            claudeInputLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
+            checkoutLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
             return submitted
         }
         guard typeAndSubmit(input, io: io, retryConfirmTimeout: retryConfirmTimeout) else {
-            claudeInputLog("claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
+            checkoutLog("claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
             return submitted
         }
         submitted += 1
@@ -173,30 +162,48 @@ private func typeAndSubmit(
     for attempt in 1...maxAttempts {
         if attempt > 1 {
             guard io.confirmSession(retryConfirmTimeout) else { return false }
-            // Ctrl+U: 입력창 클리어 — 부분적으로 들어간 텍스트가 재타이핑과 섞이지 않게 한다
-            _ = io.sendKeys("\u{15}")
+            // Ctrl+U: 입력창 클리어. 클리어가 실패했으면 이번 시도는 타이핑하지 않고 넘긴다 —
+            // 남아 있을지 모르는 텍스트 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은
+            // 입력이 제출된다 (프로브는 화면 어디에 있든 매칭되므로 걸러내지 못한다)
+            guard io.sendKeys("\u{15}") else {
+                checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+                io.wait(1.0)
+                continue
+            }
             io.wait(1.0)
         }
         guard io.sendKeys(text) else {
-            claudeInputLog("입력 전송 호출이 실패해 재시도 (\(attempt)/\(maxAttempts))")
+            checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
         }
+
         var reflected = false
+        var failure = "입력이 화면에 반영되지 않음"
         for _ in 0..<5 {
             io.wait(0.4)
             guard let screen = io.screenText() else {
-                claudeInputLog("화면 조회 호출이 실패해 재시도 (\(attempt)/\(maxAttempts))")
+                failure = "화면 조회 실패"
                 break
             }
-            guard screenShowsInput(screen, input: text) else { continue }
-            reflected = true
-            if io.sendKeys("\r") { return true }
-            claudeInputLog("제출(CR) 전송이 실패해 재시도 (\(attempt)/\(maxAttempts))")
-            break
+            if screenShowsInput(screen, input: text) { reflected = true; break }
         }
-        if !reflected {
-            claudeInputLog("입력이 화면에 반영되지 않아 재시도 (\(attempt)/\(maxAttempts))")
+        if reflected {
+            if submitConfirmedInput(io: io) { return true }
+            failure = "제출(CR) 전송 실패"
         }
+        checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
+    }
+    return false
+}
+
+/// 화면에 뜬 것이 확인된 입력을 CR로 제출한다. 전송이 실패하면 재타이핑이 아니라 CR만 다시
+/// 보낸다 — 실패로 보고됐어도 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번
+/// 제출된다. 빈 입력창에 들어간 CR은 아무 일도 일으키지 않으므로(실측) 이미 제출된 뒤의
+/// 재전송은 무해하다.
+private func submitConfirmedInput(io: ClaudeSessionIO) -> Bool {
+    for attempt in 1...3 {
+        if io.sendKeys("\r") { return true }
+        if attempt < 3 { io.wait(0.4) }
     }
     return false
 }
@@ -221,11 +228,11 @@ public func deliverClaudeInputs(
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
     case .none:
-        claudeInputLog("claude 입력 전달 불가 — 세션 핸들 없음")
+        checkoutLog("claude 입력 전달 불가 — 세션 핸들 없음")
         return
     }
     guard let ttyPath, ttyPath.hasPrefix("/dev/") else {
-        claudeInputLog("claude 입력 전달 불가 — 세션 tty를 알 수 없음")
+        checkoutLog("claude 입력 전달 불가 — 세션 tty를 알 수 없음")
         return
     }
     let ttyName = String(ttyPath.dropFirst("/dev/".count))
@@ -233,7 +240,7 @@ public func deliverClaudeInputs(
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
-        claudeInputLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
+        checkoutLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
         return
     }
 
@@ -248,7 +255,7 @@ public func deliverClaudeInputs(
         }
     )
     let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
-    claudeInputLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
+    checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
 }
 
 private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
@@ -304,7 +311,7 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool 
         guard let result = try? runProcess("/usr/bin/osascript", ["-e", script], timeout: 10),
               result.status == 0 else { return false }
         if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" {
-            claudeInputLog("iTerm 세션이 닫혀 claude 입력 전달 중단")
+            checkoutLog("iTerm 세션이 닫혀 claude 입력 전달 중단")
             return false
         }
         return true

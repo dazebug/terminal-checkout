@@ -40,7 +40,7 @@ enum Settings {
     static func refreshToolAvailability() {
         DispatchQueue.global(qos: .utility).async {
             guard let result = checkTools() else {
-                NSLog("Terminal Checkout: 도구 확인 실패 — 로그인 셸이 응답하지 않음")
+                checkoutLog("도구 확인 실패 — 로그인 셸이 응답하지 않음")
                 return
             }
             toolAvailability = result
