@@ -10,7 +10,7 @@
 ## 1. 코드에서 손댈 지점
 
 터미널 식별자는 앱이 `UserDefaults`의 `terminal` 키에 저장하는 문자열이다(`iterm`, `wezterm`).
-확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 손댈 것이 없다.
+확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 동작상 손댈 것이 없다.
 
 **Core**
 
@@ -37,6 +37,10 @@ CLI를 호출하는 터미널이면 실행 파일 경로를 명시적으로 탐�
 | `PermissionChecker.isXxxInstalled` | 설치 감지. AppleScript 제어면 상태 조회·권한 요청·시스템 설정 열기까지 |
 | `SetupWindowController` | 라디오 버튼 추가, 미설치 시 비활성화, 저장(`terminalChanged`)·복원, 권한 카드 표시 조건, 파이프라인 노드의 이름·색·설명 |
 | `app/Info.plist` | `NSAppleEventsUsageDescription`은 앱 전체에 하나뿐이다 — 문구에 특정 터미널 이름이 박혀 있으면 갱신 |
+| `install.sh` | 프리플라이트의 터미널 감지 목록. 하나도 못 찾으면 `exit 1`로 설치를 막으므로, 빠뜨리면 새 터미널만 깔린 환경에서 설치 자체가 안 된다 (앱의 설치 감지와 판정 기준이 다르다) |
+
+터미널 이름이 박힌 표시 문구는 `install.sh` 안내와 `extension/manifest.json` description에도 있다 —
+확장에서 손댈 것은 이 문구뿐이다.
 
 **테스트**
 
@@ -76,7 +80,8 @@ CLI 응답이나 스크립트 출력을 파싱하는 부분(창 고르기, pane�
 ## 3. 검증 수단
 
 확장을 거치지 않고 앱만 때리려면 relay에 Chrome과 같은 프레이밍(4바이트 리틀엔디안 길이 + JSON)으로
-payload를 넣는다. 설치된 앱 번들의 relay를 써야 실행 중인 앱의 소켓에 붙는다.
+payload를 넣는다. 소켓 경로는 홈 기준으로 고정돼 있어 relay는 어느 사본을 써도 실행 중인 앱에 붙는다 — 다만
+셸에 `TERMINAL_CHECKOUT_SOCKET`이 남아 있으면 그 소켓으로 간다.
 
 ```bash
 python3 -c 'import struct,subprocess,sys
