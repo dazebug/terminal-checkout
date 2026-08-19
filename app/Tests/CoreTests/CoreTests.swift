@@ -392,7 +392,6 @@ final class ClaudeInjectorTests: XCTestCase {
 private final class FakeClaudeSession {
     private(set) var keystrokes: [String] = []
     private(set) var submitted: [String] = []
-    private(set) var confirmCalls = 0
     var sessionAlive = true
     /// n번째 sendKeys 호출을 실패시킨다 (1-based) — 터미널 CLI가 한 번 실패하는 상황
     var failSendAt: Set<Int> = []
@@ -401,9 +400,8 @@ private final class FakeClaudeSession {
     /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
     var presetBox = "" { didSet { box = presetBox } }
     private(set) var sendCallCount = 0
-    private var box = ""
-
     private var screenCalls = 0
+    private var box = ""
 
     var io: ClaudeSessionIO {
         ClaudeSessionIO(
@@ -423,10 +421,7 @@ private final class FakeClaudeSession {
                 if failScreenAt.contains(screenCalls) { return nil }
                 return "❯ " + box
             },
-            confirmSession: { [unowned self] _ in
-                confirmCalls += 1
-                return sessionAlive
-            },
+            confirmSession: { [unowned self] _ in sessionAlive },
             wait: { _ in }
         )
     }
