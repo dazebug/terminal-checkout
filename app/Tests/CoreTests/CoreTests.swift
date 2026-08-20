@@ -397,9 +397,16 @@ private final class FakeClaudeSession {
     var failSendAt: Set<Int> = []
     /// n번째 screenText 호출을 실패시킨다 (1-based)
     var failScreenAt: Set<Int> = []
+    /// n번째 sendKeys가 보낸 텍스트를 claude가 버린다 (1-based) — TUI가 아직 입력창을
+    /// 그리지 못하는 순간. 전송은 성공하고 화면에만 뜨지 않는다
+    var dropTypingAt: Set<Int> = []
     /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
     var presetBox = "" { didSet { box = presetBox } }
+    /// tty 입력 큐가 비었는지 — 화면을 읽을 수 없는 터미널(Warp)의 대체 확인 신호.
+    /// nil은 그 신호가 없는 터미널(iTerm2·WezTerm)
+    var consumed: Bool?
     private(set) var sendCallCount = 0
+    private(set) var consumedCalls = 0
     private var screenCalls = 0
     private var box = ""
 
@@ -412,7 +419,7 @@ private final class FakeClaudeSession {
                 switch keys {
                 case "\r": submitted.append(box); box = ""
                 case "\u{15}": box = ""
-                default: box += keys
+                default: if !dropTypingAt.contains(sendCallCount) { box += keys }
                 }
                 return true
             },
@@ -422,6 +429,10 @@ private final class FakeClaudeSession {
                 return "❯ " + box
             },
             confirmSession: { [unowned self] _ in sessionAlive },
+            inputWasConsumed: { [unowned self] in
+                consumedCalls += 1
+                return consumed
+            },
             wait: { _ in }
         )
     }
@@ -532,6 +543,83 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
+    }
+
+    /// Warp는 화면을 포커스된 pane에서만 읽을 수 있어(접근성 권한 없음·사용자가 다른 탭)
+    /// 반영 확인이 통째로 실패할 수 있다. 그때는 tty 입력 큐가 비었다는 신호로 제출한다 —
+    /// 이 대체 신호가 없으면 그 상황에서 입력이 영영 제출되지 않는다
+    func testConsumedSignalSubstitutesForScreenConfirmation() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = Set(1...100) // 화면을 한 번도 읽지 못함
+        session.consumed = true
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 화면을 아예 읽을 수 없는 터미널이라도 첫 타이핑을 곧장 믿지는 않는다 — claude가 뜬
+    /// 직후 첫 입력은 그려지지 않고 버려질 수 있어(Warp 실측), 한 번은 다시 쳐 본 뒤에
+    /// 큐 신호를 쓴다. 재타이핑은 Ctrl+U로 비우고 다시 치므로 두 번 제출되지 않는다
+    func testConsumedSignalIsNotTrustedOnTheFirstAttempt() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = Set(1...100)
+        session.consumed = true
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 큐에 바이트가 남아 있으면 claude가 아직 읽지 않은 것이다 — 그 상태의 CR은
+    /// 타이핑보다 먼저 처리될 수 없지만, 읽히지 않았다는 것 말고는 아무것도 확인된 게
+    /// 없으므로 제출하지 않고 재타이핑으로 돌아간다
+    func testUnconsumedSignalDoesNotSubmit() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = Set(1...100)
+        session.consumed = false
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+    }
+
+    /// 화면 반영은 "claude가 입력창에 그렸다"까지 확인하지만 큐 소비는 "read()했다"까지만
+    /// 확인한다 — 더 약한 신호이므로 화면으로 확인되면 묻지도 않는다
+    func testScreenConfirmationIsPreferredOverConsumedSignal() {
+        let session = FakeClaudeSession()
+        session.consumed = false
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
+        XCTAssertEqual(session.consumedCalls, 0)
+    }
+
+    /// 회귀 방지(Warp 실측): claude가 뜬 직후 게이트 ①②를 통과하고도 TUI가 첫 입력을
+    /// 아직 그리지 못하는 순간이 있다. 그때 화면은 읽히는데 입력만 안 보이므로 재타이핑으로
+    /// 복구할 수 있는데, 곧장 tty 큐 신호로 제출해 버리면 claude가 버린 입력을 "전달됨"으로
+    /// 보고하고 빈 줄만 제출된다 — 실제로 첫 입력 하나가 그렇게 사라졌다.
+    /// 큐 신호는 화면을 **아예 읽을 수 없을 때**의 대체지, 반영을 기다리는 대신 쓰는 지름길이 아니다
+    func testUnreflectedInputRetypesWhileScreenIsReadable() {
+        let session = FakeClaudeSession()
+        session.dropTypingAt = [1] // 첫 타이핑을 claude가 버린다
+        session.consumed = true // tty 큐는 비어 있다 (claude가 read()는 했다)
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [inputs[0]]) // 빈 줄이 아니라 실제 입력이 제출됐다
+        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2) // 재타이핑으로 복구
+    }
+
+    /// 화면은 읽히는데 우리 pane이 아닌 경우(사용자가 Warp의 다른 탭을 보는 중)까지 포기하면
+    /// 전달이 통째로 멈춘다 — 재타이핑을 다 쓰고 나서는 큐 신호를 마지막 근거로 쓴다
+    func testConsumedSignalIsLastResortAfterRetriesAreExhausted() {
+        let session = FakeClaudeSession()
+        session.dropTypingAt = Set(1...100) // 화면에는 영영 보이지 않는다
+        session.consumed = true
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 5) // 다섯 번을 다 쓴 뒤
+    }
+
+    /// 대체 신호가 없는 터미널(iTerm2·WezTerm)의 동작은 그대로여야 한다 —
+    /// 화면을 못 읽으면 재타이핑으로 복구하고, 계속 못 읽으면 그 입력에서 멈춘다
+    func testTerminalsWithoutConsumedSignalKeepScreenOnlyBehaviour() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = Set(1...100)
+        session.consumed = nil
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
     }
 }
 
@@ -785,5 +873,252 @@ final class WezTermWindowTests: XCTestCase {
     // 창을 못 찾았으면 시도는 한 번뿐이다 — 같은 명령을 두 번 돌릴 이유가 없다
     func testSpawnAttemptsSingleWhenWindowUnknown() {
         XCTAssertEqual(wezTermSpawnAttempts(windowID: nil), [["cli", "spawn"]])
+    }
+}
+
+// MARK: - Warp: Tab Config TOML
+// Warp에 새 탭을 열고 명령을 실행시키는 수단은 Tab Config 파일뿐이다 —
+// AppleScript 미지원, warpctrl은 Stable 기본 비활성, pane에 텍스트를 보내는 CLI도 없다(실측).
+
+final class WarpTabConfigTests: XCTestCase {
+    func testTOMLRunsCommandInSingleTerminalPane() {
+        let toml = warpTabConfigTOML(commands: ["z remy && claude"])
+        XCTAssertTrue(toml.contains(#"name = "Terminal Checkout""#), toml)
+        XCTAssertTrue(toml.contains(#"type = "terminal""#), toml)
+        XCTAssertTrue(toml.contains(#"commands = ["z remy && claude"]"#), toml)
+    }
+
+    /// claude 입력을 예약한 버튼만 헬퍼를 먼저 띄운다. 순서가 뒤집히면 헬퍼는 claude가
+    /// 끝난 뒤에야 뜬다
+    func testTOMLRunsHelperBeforeUserCommand() {
+        let toml = warpTabConfigTOML(commands: ["'/tmp/helper' '/tmp/x.sock'", "z remy && claude"])
+        XCTAssertTrue(
+            toml.contains(##"commands = ["'/tmp/helper' '/tmp/x.sock'", "z remy && claude"]"##), toml
+        )
+    }
+
+    // directory를 두지 않는다 — iTerm2·WezTerm과 같이 기본 cwd에서 시작하고
+    // 명령의 `z {repo}`가 이동한다. 여기서 cwd를 정하면 터미널별로 동작이 갈린다
+    func testTOMLDoesNotPinDirectory() {
+        XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("directory"))
+    }
+
+    // `{{name}}`은 Warp의 파라미터 템플릿 문법이라 [params.*]를 선언하면 열 때 모달이 뜬다 —
+    // 우리는 파라미터를 쓰지 않으므로 선언도 하지 않는다
+    func testTOMLDeclaresNoParameters() {
+        XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("[params"))
+    }
+
+    // 실측: 선언되지 않은 `{{zzz}}`는 치환도 모달도 없이 셸에 그대로 전달된다
+    // (`printf '%s' 'X{{zzz}}Y'` → 파일 내용 `X{{zzz}}Y`). 그래서 따로 방어하지 않는다
+    func testTOMLLeavesWarpTemplateBracesLiteral() {
+        let toml = warpTabConfigTOML(commands: ["awk '{{print}}'"])
+        XCTAssertTrue(toml.contains(##"commands = ["awk '{{print}}'"]"##), toml)
+    }
+
+    func testEscapeQuotesAndBackslashes() {
+        XCTAssertEqual(escapeForTOMLBasicString(#"say "hi" \ now"#), #"say \"hi\" \\ now"#)
+    }
+
+    // TOML basic string은 제어문자를 리터럴로 담을 수 없다 — 이스케이프하지 않으면
+    // Warp가 파일 파싱에 실패해 탭이 아예 열리지 않는다
+    func testEscapeControlCharacters() {
+        XCTAssertEqual(escapeForTOMLBasicString("a\nb\tc\rd"), #"a\nb\tc\rd"#)
+        XCTAssertEqual(escapeForTOMLBasicString("a\u{01}b"), #"a\u0001b"#)
+    }
+
+    func testEscapedCommandStaysOnOneLineInTOML() {
+        let toml = warpTabConfigTOML(commands: ["echo \"a\"\nrm -rf /"])
+        XCTAssertTrue(toml.contains(#"commands = ["echo \"a\"\nrm -rf /"]"#), toml)
+    }
+
+    func testTabConfigPathAndURLShareTheSameStem() {
+        XCTAssertTrue(warpTabConfigPath().hasSuffix("/.warp/tab_configs/\(warpTabConfigStem).toml"))
+        XCTAssertEqual(warpTabConfigURL(), "warp://tab_config/\(warpTabConfigStem)")
+    }
+}
+
+// MARK: - Warp: 헬퍼 기동 명령과 소켓 경로
+// 헬퍼는 pane 안에서 떠야 한다 — TIOCSTI는 호출 프로세스의 제어 터미널에만 허용되므로
+// (BSD `isctty`) 세션 밖의 앱은 pane tty에 바이트를 넣을 수 없다.
+
+final class WarpHelperLaunchTests: XCTestCase {
+    /// 앱 번들 경로에는 공백이 있다(`Terminal Checkout.app`) — 인용하지 않으면 셸이
+    /// 두 단어로 갈라 헬퍼가 뜨지 않는다
+    func testHelperCommandQuotesPathsWithSpaces() {
+        XCTAssertEqual(
+            warpHelperCommand(
+                executable: "/Users/me/Applications/Terminal Checkout.app/Contents/MacOS/tc-warp-helper",
+                socketPath: "/tmp/tcw-ab12.sock"
+            ),
+            "'/Users/me/Applications/Terminal Checkout.app/Contents/MacOS/tc-warp-helper' '/tmp/tcw-ab12.sock'"
+        )
+    }
+
+    func testSingleQuoteInPathIsEscaped() {
+        XCTAssertEqual(shellSingleQuoted("it's"), #"'it'\''s'"#)
+    }
+
+    func testEmptyStringQuotesToEmptyWord() {
+        XCTAssertEqual(shellSingleQuoted(""), "''")
+    }
+
+    /// 소켓 경로는 sun_path 104바이트 제한을 넘으면 bind가 실패한다 —
+    /// 후보 중 들어가는 첫 디렉토리를 고른다
+    func testSocketPathPicksFirstDirectoryThatFits() {
+        let path = warpHelperSocketPath(
+            token: "ab12cd34", directories: [String(repeating: "x", count: 120), "/tmp"]
+        )
+        XCTAssertEqual(path, "/tmp/tcw-ab12cd34.sock")
+    }
+
+    func testSocketPathNilWhenNoCandidateFits() {
+        XCTAssertNil(
+            warpHelperSocketPath(token: "ab12cd34", directories: [String(repeating: "x", count: 120)])
+        )
+    }
+
+    /// 실행마다 다른 토큰을 써야 이전 실행이 남긴 죽은 소켓에 붙지 않는다
+    func testSocketNameCarriesToken() {
+        XCTAssertEqual(
+            warpHelperSocketPath(token: "deadbeef", directories: ["/tmp"]),
+            "/tmp/tcw-deadbeef.sock"
+        )
+    }
+
+    func testTokenIsHexAndVariesBetweenRuns() {
+        let tokens = (0..<50).map { _ in warpHelperToken() }
+        XCTAssertTrue(tokens.allSatisfy { $0.count == 8 && $0.allSatisfy(\.isHexDigit) }, "\(tokens[0])")
+        XCTAssertGreaterThan(Set(tokens).count, 40)
+    }
+}
+
+// MARK: - Warp: 헬퍼 소켓 프로토콜
+// 요청·응답은 줄 단위 ASCII다. 주입할 바이트는 base64로 싣는다 — CR·Ctrl+U 같은
+// 제어문자를 줄 기반 프로토콜에 날것으로 실을 수 없기 때문이다.
+
+final class WarpHelperProtocolTests: XCTestCase {
+    private func roundTrip(_ request: WarpHelperRequest) -> WarpHelperRequest? {
+        parseWarpHelperRequest(encodeWarpHelperRequest(request))
+    }
+
+    func testRequestsRoundTrip() {
+        XCTAssertEqual(roundTrip(.tty), .tty)
+        XCTAssertEqual(roundTrip(.pending), .pending)
+        XCTAssertEqual(roundTrip(.bye), .bye)
+    }
+
+    /// 제출(CR)과 입력창 클리어(Ctrl+U)가 그대로 실려야 한다 — 한 바이트라도 바뀌면
+    /// claude가 입력을 제출하지 않는다
+    func testInjectCarriesControlBytesUnchanged() {
+        for text in ["!gh issue view 1", "\r", "\u{15}", "한글 입력", ""] {
+            XCTAssertEqual(
+                roundTrip(.inject(Data(text.utf8))), .inject(Data(text.utf8)), text.debugDescription
+            )
+        }
+    }
+
+    func testEncodedRequestIsASingleLine() {
+        XCTAssertFalse(encodeWarpHelperRequest(.inject(Data("a\nb".utf8))).contains("\n"))
+    }
+
+    func testUnknownRequestIsRejected() {
+        XCTAssertNil(parseWarpHelperRequest("quit"))
+        XCTAssertNil(parseWarpHelperRequest(""))
+        XCTAssertNil(parseWarpHelperRequest("inject"))
+    }
+
+    func testInjectWithBadBase64IsRejected() {
+        XCTAssertNil(parseWarpHelperRequest("inject !!!not-base64!!!"))
+    }
+
+    func testResponsesRoundTrip() {
+        XCTAssertEqual(
+            parseWarpHelperResponse(encodeWarpHelperResponse(.ok("/dev/ttys026"))), .ok("/dev/ttys026")
+        )
+        XCTAssertEqual(parseWarpHelperResponse(encodeWarpHelperResponse(.ok(""))), .ok(""))
+        XCTAssertEqual(parseWarpHelperResponse(encodeWarpHelperResponse(.err("ENXIO"))), .err("ENXIO"))
+    }
+
+    /// 접두사가 없는 줄을 성공으로 읽으면 실패가 성공으로 보고된다
+    func testResponseWithoutPrefixIsRejected() {
+        XCTAssertNil(parseWarpHelperResponse("/dev/ttys026"))
+        XCTAssertNil(parseWarpHelperResponse(""))
+    }
+}
+
+// MARK: - Warp: 줄 단위 수신 버퍼
+// 소켓 read()는 줄 경계를 지켜 주지 않는다 — 한 번에 두 줄이 오기도, 한 줄이 쪼개져 오기도 한다.
+
+final class LineBufferTests: XCTestCase {
+    func testYieldsCompleteLinesAndKeepsThePartialTail() {
+        var buffer = LineBuffer()
+        buffer.append(Data("tty\npen".utf8))
+        XCTAssertEqual(buffer.nextLine(), "tty")
+        XCTAssertNil(buffer.nextLine())
+        buffer.append(Data("ding\n".utf8))
+        XCTAssertEqual(buffer.nextLine(), "pending")
+        XCTAssertNil(buffer.nextLine())
+    }
+
+    func testYieldsTwoLinesArrivingTogether() {
+        var buffer = LineBuffer()
+        buffer.append(Data("tty\npending\n".utf8))
+        XCTAssertEqual(buffer.nextLine(), "tty")
+        XCTAssertEqual(buffer.nextLine(), "pending")
+        XCTAssertNil(buffer.nextLine())
+    }
+
+    /// 줄바꿈 없이 계속 보내는 상대에게 메모리를 무한정 내주지 않는다
+    func testOverlongLineIsRejected() {
+        var buffer = LineBuffer(limit: 16)
+        buffer.append(Data(String(repeating: "x", count: 17).utf8))
+        XCTAssertTrue(buffer.isOverflowed)
+        XCTAssertNil(buffer.nextLine())
+    }
+}
+
+// MARK: - Warp: 프로세스 트리
+// pane 셸은 Warp `terminal-server`의 직속 자식이고, GUI 프로세스는 그 부모다(실측).
+// GUI pid는 접근성으로 화면을 읽을 때 대상 프로세스를 특정하는 데 쓴다.
+
+final class WarpProcessTests: XCTestCase {
+    private let exePath = "/Applications/Warp.app/Contents/MacOS/stable"
+
+    /// `ps -axo pid=,ppid=,command=` 실측 형태
+    private let psOutput = """
+        1     0 /sbin/launchd
+    17699     1 /Applications/Warp.app/Contents/MacOS/stable
+    17700 17699 /Applications/Warp.app/Contents/MacOS/stable terminal-server --parent-pid=17699
+    17710 17700 -zsh -g --no_rcs
+    96467     1 /Applications/WezTerm.app/Contents/MacOS/wezterm-gui
+    """
+
+    func testGUIPIDIsParentOfTerminalServer() {
+        XCTAssertEqual(warpGUIPIDs(psOutput: psOutput, executablePath: exePath), [17699])
+    }
+
+    /// 인자 없는 GUI 프로세스 자체를 terminal-server로 오인하면 GUI의 부모(launchd)를
+    /// Warp로 지목하게 된다
+    func testGUIProcessItselfIsNotTerminalServer() {
+        XCTAssertFalse(warpGUIPIDs(psOutput: psOutput, executablePath: exePath).contains(1))
+    }
+
+    /// 다른 경로에 설치된 Warp를 보고 있으면 아무것도 잡히지 않는다
+    func testDifferentExecutablePathMatchesNothing() {
+        XCTAssertEqual(
+            warpGUIPIDs(
+                psOutput: psOutput,
+                executablePath: "/Users/me/Applications/Warp.app/Contents/MacOS/stable"
+            ),
+            []
+        )
+    }
+
+    /// Warp를 두 번 띄우면 terminal-server도 둘이다 — 둘 다 후보로 남긴다
+    func testTwoWarpInstancesYieldTwoGUIPIDs() {
+        let ps = psOutput
+            + "\n30000 29999 /Applications/Warp.app/Contents/MacOS/stable terminal-server --parent-pid=29999"
+        XCTAssertEqual(warpGUIPIDs(psOutput: ps, executablePath: exePath), [17699, 29999])
     }
 }

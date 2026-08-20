@@ -4,7 +4,10 @@ import Foundation
 public enum TerminalSessionHandle {
     case iterm(sessionID: String, tty: String)
     case wezterm(paneID: String, cliPath: String, socketPath: String?)
-    /// 전달 경로 없음 (WezTerm fallback 기동 등, pane을 특정할 수 없는 경우)
+    /// Warp는 pane을 지목할 CLI도 AppleScript도 없어, pane 안에서 도는 주입 헬퍼의 소켓이
+    /// 유일한 통로다. tty도 그 헬퍼에게 물어서 안다(`ClaudeInjector.warpHelperTTY`).
+    case warp(helperSocket: String)
+    /// 전달 경로 없음 (WezTerm fallback 기동, Warp 헬퍼를 준비하지 못함 등)
     case none
 }
 
@@ -101,6 +104,9 @@ public struct ClaudeSessionIO {
     public var screenText: () -> String?
     /// 주어진 시간 안에 처음 준비된 그 claude가 입력을 받을 상태가 되면 true.
     public var confirmSession: (TimeInterval) -> Bool
+    /// 화면으로 반영을 확인할 수 없을 때 쓰는 대체 신호: 세션 tty의 입력 큐가 비었는가
+    /// (= 그 tty를 읽는 프로세스가 보낸 바이트를 가져갔는가). 그 신호가 없는 터미널은 nil.
+    public var inputWasConsumed: () -> Bool?
     /// 대기 — 테스트에서 없애 루프를 즉시 돌린다.
     public var wait: (TimeInterval) -> Void
 
@@ -108,11 +114,13 @@ public struct ClaudeSessionIO {
         sendKeys: @escaping (String) -> Bool,
         screenText: @escaping () -> String?,
         confirmSession: @escaping (TimeInterval) -> Bool,
+        inputWasConsumed: @escaping () -> Bool? = { nil },
         wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.sendKeys = sendKeys
         self.screenText = screenText
         self.confirmSession = confirmSession
+        self.inputWasConsumed = inputWasConsumed
         self.wait = wait
     }
 }
@@ -179,6 +187,7 @@ private func typeAndSubmit(
         }
 
         var reflected = false
+        var screenReadable = false
         var failure = "입력이 화면에 반영되지 않음"
         for _ in 0..<5 {
             io.wait(0.4)
@@ -186,7 +195,20 @@ private func typeAndSubmit(
                 failure = "화면 조회 실패"
                 break
             }
+            screenReadable = true
             if screenShowsInput(screen, input: text) { reflected = true; break }
+        }
+        // tty 큐 신호("claude가 read()했다")는 화면 반영("claude가 입력창에 그렸다")보다
+        // 약하다. 그래서 첫 시도에서는 쓰지 않고 두 자리에서만 쓴다:
+        //  ① 화면을 아예 읽을 수 없고 이미 한 번 다시 쳐 본 뒤 — 더 확인할 방법이 없다
+        //  ② 재타이핑을 다 쓰고도 화면으로 확인하지 못했을 때 — 읽히는 화면이 우리 pane이
+        //     아닐 수 있다(Warp에서 사용자가 다른 탭을 보는 중)
+        // 첫 타이핑을 이 신호로 곧장 믿으면, claude가 뜬 직후 아직 그리지 못해 버린 입력이
+        // "전달됨"으로 기록되고 빈 줄만 제출된다 — Warp 실측에서 첫 입력이 그렇게 사라졌다.
+        // 재타이핑은 Ctrl+U로 비우고 다시 치므로, 실제로는 살아 있었더라도 두 번 제출되지 않는다.
+        let screenHopeless = !screenReadable && attempt > 1
+        if !reflected, screenHopeless || attempt == maxAttempts, consumedConfirms(io) {
+            reflected = true
         }
         if reflected {
             if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) { return true }
@@ -195,6 +217,13 @@ private func typeAndSubmit(
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
     }
     return false
+}
+
+/// 화면 대신 쓰는 확인: 세션 tty의 입력 큐가 비었는가. 쓸 수 없는 터미널은 false다.
+private func consumedConfirms(_ io: ClaudeSessionIO) -> Bool {
+    guard io.inputWasConsumed() == true else { return false }
+    checkoutLog("화면 반영은 확인하지 못했지만 tty 입력 큐가 비어 제출로 진행")
+    return true
 }
 
 /// 화면에 뜬 것이 확인된 입력을 CR로 제출한다. 전송이 실패하면 재타이핑이 아니라 CR만 다시
@@ -228,6 +257,10 @@ public func deliverClaudeInputs(
     betweenInputTimeout: TimeInterval = 15
 ) {
     guard !inputs.isEmpty else { return }
+    // Warp 헬퍼는 pane에 남아 떠도는 프로세스가 되면 안 된다 — 어느 경로로 끝나든 종료시킨다
+    defer {
+        if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }
+    }
 
     let ttyPath: String?
     switch handle {
@@ -235,6 +268,8 @@ public func deliverClaudeInputs(
         ttyPath = tty
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
+    case .warp(let socket):
+        ttyPath = warpHelperTTY(socket: socket)
     case .none:
         checkoutLog("claude 입력 전달 불가 — 세션 핸들 없음")
         return
@@ -260,7 +295,8 @@ public func deliverClaudeInputs(
                 ttyName: ttyName, ttyPath: ttyPath,
                 pollInterval: pollInterval, timeout: limit, expecting: claudePID
             ) != nil
-        }
+        },
+        inputWasConsumed: { inputWasConsumed(on: handle) }
     )
     let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
@@ -331,6 +367,13 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool 
             input: text, env: env, timeout: 5
         )
         return result?.status == 0
+    case .warp(let socket):
+        // 헬퍼가 우리 pane의 tty 입력 큐에 바이트를 직접 넣는다(TIOCSTI) — 포커스와 무관하고
+        // 다른 pane·다른 앱으로 샐 수 없다. 합성 키 입력을 쓰지 않는 이유가 이것이다
+        guard case .ok? = warpHelperRequest(.inject(Data(text.utf8)), socket: socket) else {
+            return false
+        }
+        return true
     case .none:
         return false
     }
@@ -353,7 +396,47 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
             cliPath, ["cli", "get-text", "--pane-id", paneID], env: env, timeout: 5
         ), result.status == 0 else { return nil }
         return result.stdout
+    case .warp:
+        // 접근성으로 읽히는 것은 "Warp에서 포커스된 pane"이라 우리 pane이라는 보장이 없다.
+        // 그래도 안전한 이유는 입력이 이 경로로 가지 않기 때문이다(`warpScreenText` 참고) —
+        // 다른 pane을 읽으면 반영 확인이 실패하고, 그때는 tty 큐 신호로 넘어간다
+        return warpScreenText()
     case .none:
         return nil
+    }
+}
+
+/// 세션 tty의 입력 큐가 비었는지 — 화면으로 반영을 확인할 수 없을 때의 대체 신호.
+/// 그 신호를 제공하지 않는 터미널은 nil이다(iTerm2·WezTerm은 화면을 pane 단위로 읽을 수
+/// 있으므로 필요가 없다).
+/// 잠깐 기다리는 이유: 이 호출은 타이핑 직후에 오는데 claude가 read()하기까지 한 박자가
+/// 있고, 여기서 곧장 false를 돌려주면 매번 재타이핑으로 떨어진다.
+private func inputWasConsumed(on handle: TerminalSessionHandle, timeout: TimeInterval = 2) -> Bool? {
+    guard case .warp(let socket) = handle else { return nil }
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+        guard case .ok(let detail)? = warpHelperRequest(.pending, socket: socket),
+              let pending = Int(detail)
+        else { return nil } // 헬퍼가 답하지 않으면 "확인 실패"다 — 소비됐다고 단정하지 않는다
+        if pending == 0 { return true }
+        if Date() >= deadline { return false }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+
+/// 헬퍼가 소켓을 열고 자기 tty를 알려 줄 때까지 기다린다. pane이 열리고 셸이 헬퍼를
+/// 실행하기까지 시간이 걸리므로(실측 0.7초 근방) 폴링한다. 끝내 못 뜨면 nil —
+/// 명령은 이미 돌고 있으니 claude 입력만 포기한다.
+private func warpHelperTTY(socket: String, timeout: TimeInterval = 20) -> String? {
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+        if case .ok(let tty)? = warpHelperRequest(.tty, socket: socket), tty.hasPrefix("/dev/") {
+            return tty
+        }
+        if Date() >= deadline {
+            checkoutLog("Warp 주입 헬퍼가 \(Int(timeout))초 안에 뜨지 않음 — claude 입력 포기")
+            return nil
+        }
+        Thread.sleep(forTimeInterval: 0.2)
     }
 }

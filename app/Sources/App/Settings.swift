@@ -6,9 +6,11 @@ enum Settings {
     static var terminal: String {
         get {
             if let value = UserDefaults.standard.string(forKey: "terminal") { return value }
-            // 기본값: 설치된 터미널 자동 감지 (iTerm2 우선)
+            // 기본값: 설치된 터미널 자동 감지. 순서는 지원이 오래돼 실사용으로 다져진
+            // 순이다 — Warp는 pane을 지목할 정식 API가 없어 헬퍼 프로세스를 끼우므로 마지막
             if PermissionChecker.isITermInstalled { return "iterm" }
             if PermissionChecker.isWezTermInstalled { return "wezterm" }
+            if PermissionChecker.isWarpInstalled { return "warp" }
             return "iterm"
         }
         set { UserDefaults.standard.set(newValue, forKey: "terminal") }

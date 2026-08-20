@@ -9,12 +9,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let extensionStatusLabel = NSTextField(labelWithString: "")
     private let installFeedbackLabel = NSTextField(labelWithString: "")
     private let permissionStatusLabel = NSTextField(labelWithString: "")
+    private let accessibilityStatusLabel = NSTextField(labelWithString: "")
     private let testResultLabel = NSTextField(labelWithString: "")
     private let requestPermissionButton = NSButton(title: "iTerm2 권한 요청", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
+    private var warpRadio: NSButton!
+    private var terminalNoteLabel: NSTextField!
     /// iTerm2 선택 + 권한 미허용일 때만 표시 (WezTerm은 TCC 권한 불필요)
     private let permissionSection = NSStackView()
+    /// Warp 선택 + 손쉬운 사용 미허용일 때만 표시
+    private let accessibilitySection = NSStackView()
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -48,6 +53,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     ]
 
     private let contentWidth: CGFloat = 560
+    private let terminalRadioWidth: CGFloat = 120
     private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
 
     /// 창이 닫힐 때 알림 (AppDelegate가 Dock 표시를 되돌리는 데 사용)
@@ -213,29 +219,43 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: 카드 — 상시 (터미널 선택·테스트)
 
     private func terminalCard() -> NSView {
-        itermRadio = NSButton(radioButtonWithTitle: "iTerm2", target: self, action: #selector(terminalChanged))
-        weztermRadio = NSButton(radioButtonWithTitle: "WezTerm", target: self, action: #selector(terminalChanged))
-        if !PermissionChecker.isITermInstalled {
-            itermRadio.title = "iTerm2 (미설치)"
-            itermRadio.isEnabled = false
-        }
-        if !PermissionChecker.isWezTermInstalled {
-            weztermRadio.title = "WezTerm (미설치)"
-            weztermRadio.isEnabled = false
-        }
-        let radioRow = NSStackView(views: [itermRadio, weztermRadio])
+        itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
+        weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
+        warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
+
+        // 세로 배치 — 셋을 가로로 늘어놓으면 카드 폭에 눌린다
+        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio])
+        radioColumn.orientation = .vertical
+        radioColumn.alignment = .leading
+        radioColumn.spacing = 7
+        radioColumn.widthAnchor.constraint(equalToConstant: terminalRadioWidth).isActive = true
+
+        terminalNoteLabel = helpLabel("", width: contentWidth - 28 - terminalRadioWidth - 18)
+        let radioRow = NSStackView(views: [radioColumn, terminalNoteLabel])
         radioRow.orientation = .horizontal
-        radioRow.spacing = 16
+        radioRow.alignment = .top
+        radioRow.spacing = 18
 
-        let subTitle = NSTextField(labelWithString: "iTerm2 제어 권한")
-        subTitle.font = Theme.ui(12, .semibold)
-        subTitle.textColor = Theme.text
+        buildPermissionSection()
+        buildAccessibilitySection()
+        return card("터미널", [radioRow, permissionSection, accessibilitySection])
+    }
 
+    private func radio(_ title: String, installed: Bool) -> NSButton {
+        let button = NSButton(
+            radioButtonWithTitle: installed ? title : "\(title) (미설치)",
+            target: self, action: #selector(terminalChanged)
+        )
+        button.isEnabled = installed
+        return button
+    }
+
+    private func buildPermissionSection() {
         permissionSection.orientation = .vertical
         permissionSection.alignment = .leading
         permissionSection.spacing = 9
         permissionSection.addArrangedSubview(hairline())
-        permissionSection.addArrangedSubview(subTitle)
+        permissionSection.addArrangedSubview(sectionTitle("iTerm2 제어 권한"))
         permissionSection.addArrangedSubview(helpLabel(
             "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다."
         ))
@@ -247,8 +267,32 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             requestPermissionButton,
             button("시스템 설정 열기", #selector(openAutomationSettings)),
         ]))
+    }
 
-        return card("터미널", [radioRow, permissionSection])
+    /// 입력 전달 자체는 이 권한과 무관하다(pane 안 헬퍼가 tty에 직접 넣는다) — 화면을 읽어
+    /// "claude가 그 입력을 받았는지" 확인하는 데만 쓴다. 없어도 되는 권한임을 문구로 밝힌다.
+    private func buildAccessibilitySection() {
+        accessibilitySection.orientation = .vertical
+        accessibilitySection.alignment = .leading
+        accessibilitySection.spacing = 9
+        accessibilitySection.addArrangedSubview(hairline())
+        accessibilitySection.addArrangedSubview(sectionTitle("Warp 화면 읽기 (손쉬운 사용, 선택)"))
+        accessibilitySection.addArrangedSubview(helpLabel(
+            "claude가 입력을 받은 것을 화면으로 확인하는 데만 씁니다. 허용하지 않아도 명령 실행과 "
+                + "claude 입력 전달은 그대로이고, 확인이 덜 정확해집니다."
+        ))
+        accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
+        accessibilitySection.addArrangedSubview(buttonRow([
+            button("손쉬운 사용 권한 요청", #selector(requestAccessibility)),
+            button("시스템 설정 열기", #selector(openAccessibilitySettings)),
+        ]))
+    }
+
+    private func sectionTitle(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = Theme.ui(12, .semibold)
+        label.textColor = Theme.text
+        return label
     }
 
     private func testCard() -> NSView {
@@ -323,11 +367,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return row
     }
 
-    private func helpLabel(_ text: String) -> NSTextField {
+    private func helpLabel(_ text: String, width: CGFloat? = nil) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = Theme.ui(11.5)
         label.textColor = Theme.textDim
-        label.preferredMaxLayoutWidth = contentWidth - 28
+        label.preferredMaxLayoutWidth = width ?? (contentWidth - 28)
+        if let width {
+            label.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
         return label
     }
 
@@ -439,13 +486,27 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 터미널 선택
 
     @objc private func terminalChanged() {
-        Settings.terminal = weztermRadio.state == .on ? "wezterm" : "iterm"
+        if weztermRadio.state == .on {
+            Settings.terminal = "wezterm"
+        } else if warpRadio.state == .on {
+            Settings.terminal = "warp"
+        } else {
+            Settings.terminal = "iterm"
+        }
         updateTerminalControls()
         refresh()
     }
 
     private func updateTerminalControls() {
-        (Settings.terminal == "wezterm" ? weztermRadio : itermRadio)?.state = .on
+        switch Settings.terminal {
+        case "wezterm": weztermRadio.state = .on
+        case "warp": warpRadio.state = .on
+        default: itermRadio.state = .on
+        }
+        // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
+        // 그 사이 사용자가 끼어들면 입력이 섞인다
+        terminalNoteLabel.stringValue = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
+            + "claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요."
     }
 
     private func resizeToFit() {
@@ -502,9 +563,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != "iterm" || granted
 
+        // 손쉬운 사용은 없어도 실행도 입력 전달도 된다 — 오류가 아니라 경고로 다룬다
+        let accessibilityGranted = PermissionChecker.isAccessibilityGranted
+        if Settings.terminal == "warp" {
+            apply(
+                accessibilityGranted
+                    ? .ok("허용됨")
+                    : .warning("허용 안 됨 — 입력은 전달되지만 반영 확인이 덜 정확합니다"),
+                to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
+            )
+        }
+        accessibilitySection.isHidden = Settings.terminal != "warp" || accessibilityGranted
+
         pipeline.update(pipelineNodes(
             manifest: manifest, extensionState: extensionState,
-            socketAlive: socketAlive, permission: permission
+            socketAlive: socketAlive, permission: permission,
+            accessibilityGranted: accessibilityGranted
         ))
         resizeToFit()
     }
@@ -529,7 +603,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func pipelineNodes(
         manifest: SetupState, extensionState: SetupState,
-        socketAlive: Bool, permission: SetupState?
+        socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool
     ) -> [PipelineStripView.Node] {
         func color(_ state: SetupState) -> NSColor {
             switch state {
@@ -546,6 +620,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let installed = PermissionChecker.isWezTermInstalled
             terminalColor = installed ? Theme.ok : Theme.err
             terminalDetail = installed ? "WezTerm CLI 사용 가능 — TCC 권한 불필요" : "WezTerm이 설치되어 있지 않음"
+        } else if Settings.terminal == "warp" {
+            terminalName = "Warp"
+            if !PermissionChecker.isWarpInstalled {
+                terminalColor = Theme.err
+                terminalDetail = "Warp가 설치되어 있지 않음"
+            } else {
+                // 손쉬운 사용은 반영 확인을 정확하게 할 뿐이라 없어도 초록이다 —
+                // 여기서 노랗게 두면 고칠 것이 없는데 고장으로 읽힌다
+                terminalColor = Theme.ok
+                terminalDetail = accessibilityGranted
+                    ? "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
+                    : "Tab Config로 새 탭 — TCC 권한 불필요 (손쉬운 사용은 선택)"
+            }
         } else {
             terminalName = "iTerm2"
             terminalColor = permission.map(color) ?? Theme.warn
@@ -629,6 +716,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openAutomationSettings() {
         PermissionChecker.openAutomationSettings()
+    }
+
+    /// 손쉬운 사용 프롬프트는 그 자리에서 허용되지 않고 시스템 설정으로 안내만 한다 —
+    /// 완료 콜백이 없어 창이 다시 키가 될 때(windowDidBecomeKey → refresh) 상태를 다시 읽는다
+    @objc private func requestAccessibility() {
+        PermissionChecker.requestAccessibility()
+        refresh()
+    }
+
+    @objc private func openAccessibilitySettings() {
+        PermissionChecker.openAccessibilitySettings()
     }
 
     @objc private func testTerminal() {

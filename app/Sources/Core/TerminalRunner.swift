@@ -3,12 +3,16 @@ import Foundation
 public enum TerminalError: Error, CustomStringConvertible {
     case appleScriptFailed(String)
     case wezTermNotFound
+    case warpNotFound
+    case warpTabConfigFailed(String)
     case timeout(String)
 
     public var description: String {
         switch self {
         case .appleScriptFailed(let message): return "AppleScript error: \(message)"
         case .wezTermNotFound: return "WezTerm not found. Install WezTerm or check your PATH."
+        case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
+        case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
         }
     }
@@ -70,12 +74,17 @@ public func runProcess(
     )
 }
 
+/// `injectsClaudeInput`은 이 실행에 예약된 claude 입력이 있는지다. Warp만 이 값을 본다 —
+/// 입력을 넣으려면 pane 안에 주입 헬퍼를 함께 띄워야 하는데, 입력이 없는 버튼에까지 띄우면
+/// 사용자에게 보이는 명령 블록이 하나 늘고 쓸모없는 프로세스가 남는다.
 @discardableResult
-public func runInTerminal(command: String, terminal: String) throws -> TerminalSessionHandle {
-    if terminal == "wezterm" {
-        return try runInWezTerm(command)
-    } else {
-        return try runInITerm(command)
+public func runInTerminal(
+    command: String, terminal: String, injectsClaudeInput: Bool = false
+) throws -> TerminalSessionHandle {
+    switch terminal {
+    case "wezterm": return try runInWezTerm(command)
+    case "warp": return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
+    default: return try runInITerm(command)
     }
 }
 
@@ -93,6 +102,51 @@ public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
         .split(separator: "|", maxSplits: 1)
     guard parts.count == 2, !parts[0].isEmpty, parts[1].hasPrefix("/dev/") else { return .none }
     return .iterm(sessionID: String(parts[0]), tty: String(parts[1]))
+}
+
+/// Warp에서 새 탭을 열고 명령 실행.
+/// Warp는 AppleScript도 pane 제어 CLI도 없어 Tab Config 파일 + `warp://tab_config/<stem>`
+/// URL이 유일한 수단이다(실측). `open`은 LaunchServices를 거치므로 Warp가 꺼져 있으면
+/// 새로 띄우고, 떠 있으면 활성 창에 탭을 더한다.
+///
+/// claude 입력이 예약돼 있으면 명령 앞에 주입 헬퍼를 한 줄 더 실행시킨다. 헬퍼가 자기 tty를
+/// 알려 주므로 여기서 pane을 찾아 헤맬 필요가 없다 — 이 함수는 Chrome 응답을 막는
+/// execQueue 안에서 도는데, 헬퍼가 뜨기를 기다리는 일은 백그라운드 전달 스레드
+/// (`deliverClaudeInputs`)에서 하면 되기 때문이다.
+@discardableResult
+public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throws -> TerminalSessionHandle {
+    guard findWarpAppBundle() != nil else { throw TerminalError.warpNotFound }
+
+    var socketPath: String?
+    var commands = [command]
+    if injectsClaudeInput {
+        // 헬퍼를 못 갖추면 명령만 실행한다 — 탭이 열리는 것까지 포기할 이유는 없다
+        if let helper = warpHelperExecutablePath(), let path = warpHelperSocketPath(token: warpHelperToken()) {
+            commands.insert(warpHelperCommand(executable: helper, socketPath: path), at: 0)
+            socketPath = path
+        } else {
+            checkoutLog("Warp 주입 헬퍼를 준비하지 못함 — 명령만 실행하고 claude 입력은 포기")
+        }
+    }
+
+    do {
+        try FileManager.default.createDirectory(
+            atPath: warpTabConfigDirectory(), withIntermediateDirectories: true
+        )
+        try warpTabConfigTOML(commands: commands)
+            .write(toFile: warpTabConfigPath(), atomically: true, encoding: .utf8)
+    } catch {
+        throw TerminalError.warpTabConfigFailed(errorMessage(error))
+    }
+
+    let result = try runProcess("/usr/bin/open", [warpTabConfigURL()], timeout: 15)
+    guard result.status == 0 else {
+        throw TerminalError.warpTabConfigFailed(
+            result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+    guard let socketPath else { return .none }
+    return .warp(helperSocket: socketPath)
 }
 
 /// WezTerm CLI 경로 탐색: PATH → Homebrew/앱 번들 fallback

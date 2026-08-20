@@ -1,6 +1,6 @@
 # Terminal Checkout
 
-GitHub PR·이슈·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm)에 명령을 실행하는 Chrome 확장 프로그램 + 맥 앱입니다. 브랜치 checkout, 워크트리 생성, 이슈를 읽은 claude 세션 띄우기 등을 버튼으로 만들어 둘 수 있습니다.
+GitHub PR·이슈·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm / Warp)에 명령을 실행하는 Chrome 확장 프로그램 + 맥 앱입니다. 브랜치 checkout, 워크트리 생성, 이슈를 읽은 claude 세션 띄우기 등을 버튼으로 만들어 둘 수 있습니다.
 
 ## 왜 앱인가?
 
@@ -10,14 +10,16 @@ Terminal Checkout.app 구조에서는:
 
 - Chrome이 띄우는 relay는 아무 것도 실행하지 않고 앱에 전달만 합니다
 - 실제 터미널 제어는 LaunchServices로 실행된 **Terminal Checkout.app**이 수행합니다
-- 따라서 **"Terminal Checkout → iTerm2 제어" 권한 하나만** 허용하면 됩니다. Chrome이나 python3에는 아무 권한도 필요 없습니다.
+- 따라서 **"Terminal Checkout → iTerm2 제어" 권한 하나만** 허용하면 됩니다 (iTerm2를 쓸 때만. WezTerm·Warp는 TCC 권한이 필요 없습니다). Chrome이나 python3에는 아무 권한도 필요 없습니다.
 
 ```
-┌──────────────┐   stdio    ┌──────────────┐  unix socket  ┌──────────────────────┐   AppleScript /   ┌──────────────────┐
-│  Chrome 확장  │──────────▶│ relay (중계만) │──────────────▶│ Terminal Checkout.app │──────────────────▶│  iTerm2/WezTerm  │
-│ (JavaScript) │            │  (앱 번들 내)  │               │  ← TCC 권한은 여기에만  │   wezterm cli     │                  │
-└──────────────┘            └──────────────┘               └──────────────────────┘                   └──────────────────┘
+┌──────────────┐   stdio    ┌──────────────┐  unix socket  ┌──────────────────────┐  AppleScript /   ┌────────────────────┐
+│  Chrome 확장  │──────────▶│ relay (중계만) │──────────────▶│ Terminal Checkout.app │─────────────────▶│ iTerm2/WezTerm/Warp │
+│ (JavaScript) │            │  (앱 번들 내)  │               │  ← TCC 권한은 여기에만  │  wezterm cli /   │                    │
+└──────────────┘            └──────────────┘               └──────────────────────┘  Warp Tab Config └────────────────────┘
 ```
+
+Warp만 예외적으로 한 조각이 더 있습니다: Warp에는 pane에 텍스트를 보내는 API가 없어, claude 입력을 예약한 버튼은 새 탭 안에서 작은 주입 헬퍼(`terminal-checkout-warp-helper`, 앱 번들 안에 함께 설치)를 먼저 띄우고 앱이 그 헬퍼에게 입력을 넘깁니다. 헬퍼는 그 탭의 tty에만 입력을 넣고, 전달이 끝나거나 탭이 닫히면 스스로 종료합니다.
 
 relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, 앱을 항상 켜둘 필요는 없습니다.
 
@@ -25,7 +27,7 @@ relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, �
 
 - macOS 13+
 - Google Chrome
-- iTerm2 또는 WezTerm
+- iTerm2 · WezTerm · Warp 중 하나
 - Swift 툴체인 — 빌드용 (`xcode-select --install`로 Command Line Tools만 설치해도 충분)
 - [zoxide](https://github.com/ajeetdsouza/zoxide) 또는 [z.sh](https://github.com/rupa/z) (디렉토리 점프 도구)
 - 선택: [gh](https://cli.github.com) (이슈 프리셋), claude (claude 입력)
@@ -68,8 +70,9 @@ cd terminal-checkout
    - 파일 선택 창에서 **⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]**
    - **개발자 모드는 켜둔 채로 유지하세요** — Chrome 133+부터 끄면 unpacked 확장이 비활성화됩니다
    - 이 항목은 GitHub PR 페이지에서 버튼을 처음 눌러 요청이 실제로 도착하면 완료 처리됩니다
-2. **터미널** — 명령을 실행할 터미널(iTerm2 / WezTerm)을 선택합니다
-3. **iTerm2 제어 권한** (iTerm2 선택 + 권한 미허용 시에만 표시) — [iTerm2 권한 요청] 클릭 → 프롬프트에서 허용 (권한은 이 앱에만 부여됩니다. WezTerm은 권한이 필요 없습니다)
+2. **터미널** — 명령을 실행할 터미널(iTerm2 / WezTerm / Warp)을 선택합니다
+3. **iTerm2 제어 권한** (iTerm2 선택 + 권한 미허용 시에만 표시) — [iTerm2 권한 요청] 클릭 → 프롬프트에서 허용 (권한은 이 앱에만 부여됩니다. WezTerm·Warp는 권한이 필요 없습니다)
+   - **Warp 화면 읽기** (Warp 선택 시에만 표시, 선택 사항) — 손쉬운 사용 권한을 주면 claude가 입력을 받은 것을 화면으로 확인합니다. 주지 않아도 명령 실행과 claude 입력 전달은 그대로입니다
 4. **동작 테스트** — [터미널에서 실행] 클릭, 터미널 새 탭에서 echo가 실행되면 완료
 
 설정이 모두 끝나면 창에는 터미널 선택·동작 테스트와 [확장 옵션 페이지 열기]·[설치 안내 다시 보기]만 남습니다.
@@ -108,7 +111,7 @@ z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_
 
 ### 저장소 페이지
 
-헤더의 저장소 이름 옆에 나타나는 버튼을 클릭하면 설정된 명령이 터미널 새 탭에서 실행됩니다. 탭은 지금 보고 있는 터미널 창에 생깁니다 (WezTerm이 아직 실행 중이 아닐 때만 새 창). PR·이슈가 아닌 GitHub 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.
+헤더의 저장소 이름 옆에 나타나는 버튼을 클릭하면 설정된 명령이 터미널 새 탭에서 실행됩니다. 탭은 지금 보고 있는 터미널 창에 생깁니다 (WezTerm·Warp가 아직 실행 중이 아닐 때만 새 창). PR·이슈가 아닌 GitHub 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.
 
 기본 버튼(**Open in Terminal**)은 해당 저장소 디렉토리로 이동합니다:
 ```bash
@@ -121,7 +124,7 @@ PR·이슈 버튼처럼 명령·claude 입력을 자유롭게 바꿀 수 있고 
 
 command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 claude에게 보낼 입력을 최대 5개까지 예약할 수 있습니다 — 예: `/review` 다음 `PR {branch} 변경사항을 요약해줘`. `!`로 시작하면 claude가 그 줄을 셸에서 실행하므로, 명령 출력을 claude에게 읽히는 데 쓸 수 있습니다. 앱이 새 탭의 포그라운드 프로세스가 claude로 바뀐 것을 확인한 뒤에만 순서대로 타이핑하므로, claude가 뜨기 전 셸에 잘못 입력되는 일은 없습니다. 2분 내에 claude가 뜨지 않으면 조용히 보내지 않습니다.
 
-알아둘 한계: 입력은 한 줄씩만 가능합니다. WezTerm이 꺼져 있어 새 프로세스로 뜬 경우(fallback)에는 전달되지 않습니다. 각 입력은 화면에 실제로 타이핑된 것을 확인한 뒤에만 제출되므로, 새 폴더에서 claude의 신뢰(trust) 프롬프트가 떠 있는 동안에는 전달이 보류됩니다 — 15초 안에 수락하면 이어서 전달되고, 그보다 오래 걸리면 그 입력부터 전송을 포기합니다.
+알아둘 한계: 입력은 한 줄씩만 가능합니다. WezTerm이 꺼져 있어 새 프로세스로 뜬 경우(fallback)와, Warp에서 주입 헬퍼가 뜨지 못한 경우에는 전달되지 않습니다 (명령 자체는 실행됩니다). 각 입력은 화면에 실제로 타이핑된 것을 확인한 뒤에만 제출되므로, 새 폴더에서 claude의 신뢰(trust) 프롬프트가 떠 있는 동안에는 전달이 보류됩니다 — 15초 안에 수락하면 이어서 전달되고, 그보다 오래 걸리면 그 입력부터 전송을 포기합니다.
 
 ## 설정
 
@@ -182,7 +185,11 @@ Chrome 확장 프로그램은 `chrome://extensions`에서 직접 삭제하세요
 
 ### 권한을 거부해버렸을 때
 
-앱 설정 창의 [시스템 설정 열기]로 이동해 **개인정보 보호 및 보안 → 자동화 → Terminal Checkout → iTerm2**를 켜세요.
+앱 설정 창의 [시스템 설정 열기]로 이동해 **개인정보 보호 및 보안 → 자동화 → Terminal Checkout → iTerm2**를 켜세요. Warp의 화면 읽기(손쉬운 사용)는 같은 화면의 **손쉬운 사용** 항목입니다.
+
+### Warp에서 claude 입력이 전달되지 않음
+
+버튼 명령이 새 탭에서 돌았는데 claude 입력만 오지 않았다면 주입 헬퍼가 뜨지 못한 경우입니다. `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`에 이유가 남습니다. 앱을 재설치(`./install.sh`)하면 번들 안의 헬퍼도 함께 갱신됩니다.
 
 ### 재빌드 후 권한을 다시 물어봄
 

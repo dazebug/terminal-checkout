@@ -34,6 +34,30 @@ enum PermissionChecker {
         findWezTermCLI() != nil
     }
 
+    /// Core의 실행 파일 탐색과 같은 함수를 쓴다 — 설치 감지와 실행이 갈리면
+    /// "설정에는 설치됨, 실행은 못 찾음"이 된다
+    static var isWarpInstalled: Bool {
+        findWarpExecutable() != nil
+    }
+
+    /// 손쉬운 사용(접근성) 권한. Warp 화면을 읽어 claude가 입력을 받은 것을 확인하는 데만 쓴다 —
+    /// 입력 전달 자체는 pane 안 헬퍼가 tty로 하므로 이 권한이 없어도 실행도 전달도 된다.
+    static var isAccessibilityGranted: Bool {
+        accessibilityIsTrusted()
+    }
+
+    /// 프롬프트를 띄운다. 자동화 권한과 달리 여기서 바로 허용되지 않고 시스템 설정으로
+    /// 안내만 되므로, 성공/실패 콜백 없이 상태 재조회로 확인한다.
+    static func requestAccessibility() {
+        requestAccessibilityPrompt()
+    }
+
+    static func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// iTerm2 자동화(Apple Events) 권한 상태 — 프롬프트를 띄우지 않고 조회만 한다.
     static func iTermAutomationStatus() -> AutomationStatus {
         let target = NSAppleEventDescriptor(bundleIdentifier: iTermBundleID)
