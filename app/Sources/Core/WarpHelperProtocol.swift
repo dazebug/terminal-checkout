@@ -21,13 +21,29 @@ public enum WarpHelperRequest: Equatable {
 }
 
 /// tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다. 그래서 한 번에 넣는 양을
-/// 큐에 남은 여유로 제한하고, 넘치는 만큼은 소비를 기다렸다 이어 넣는다 — 상한을 넘는 입력을
-/// 통째로 거절하면 512바이트가 넘는 claude 프롬프트가 항상 실패한다.
+/// 제한하고, 넘치는 만큼은 소비를 기다렸다 이어 넣는다 — 상한을 넘는 입력을 통째로 거절하면
+/// 512바이트가 넘는 claude 프롬프트가 항상 실패한다.
 /// 바이트 단위로 자르는 것은 안전하다: tty 입력 큐는 바이트 스트림이라 멀티바이트 문자가
 /// 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
+///
+/// **큐에 한 바이트라도 남아 있으면 넣지 않는다.** 여유가 있다고 이어 넣으면 앞 조각의 tail이
+/// 큐에 남은 채 다음이 쌓이는데, claude가 앞부분만 읽어 화면에 그리면 앱의 반영 확인은
+/// 통과한다(프로브는 앞 24자만 본다 — `claudeInputProbe`). 그 뒤 claude가 끝나면 큐에 남은
+/// tail을 **셸이 읽어 명령으로 실행한다.** 우리가 만든 바이트가 사용자의 셸에서 실행되는
+/// 갈래가 여기였다. 빈 큐에만 넣으면 조각마다 claude가 읽은 것을 확인하고 다음으로 넘어간다.
 public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int {
-    max(0, min(remaining, limit - pending))
+    guard pending == 0 else { return 0 }
+    return max(0, min(remaining, limit))
 }
+
+/// 헬퍼가 요청 **하나**에 쓰는 시간의 상한 — 큐가 비기를 기다리고, 넣은 바이트가 읽히는지
+/// 지켜보는 전부가 이 안에 들어간다.
+public let warpHelperWorkBudget: TimeInterval = 2
+
+/// 앱이 응답을 기다리는 시간. 헬퍼의 예산보다 **확실히 길어야 한다** — 앱이 먼저 포기하고
+/// 재시도하는 동안 이전 요청의 주입이 계속 돌면, 그 바이트가 재시도분·사용자 입력과 섞인다.
+/// 두 값을 따로 적으면 한쪽만 고쳐져 다시 갈리므로 한 곳에서 유도한다.
+public let warpHelperRequestTimeout: TimeInterval = warpHelperWorkBudget * 3
 
 /// 지금 이 tty의 입력을 읽을 프로세스가 우리가 겨눈 claude인가.
 ///
@@ -98,8 +114,10 @@ public func parseWarpHelperRequest(_ line: String) -> WarpHelperRequest? {
     }
     // 빈 payload(`inject <pid> `)도 유효한 요청이라 빈 조각을 버리면 안 된다
     let parts = text.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+    // pid는 양수만 받는다 — `getpgid(0)`은 "호출자의 그룹"이라, 헬퍼 자신이 포그라운드인
+    // 비정상 상황에서 0이 "기대 독자가 맞다"로 통과해 버린다. fail-closed로 둔다
     guard parts.count == 3, parts[0] == "inject",
-          let pid = Int32(parts[1]),
+          let pid = Int32(parts[1]), pid > 0,
           let bytes = Data(base64Encoded: String(parts[2]))
     else { return nil }
     return .inject(expectedPID: pid, bytes: bytes)

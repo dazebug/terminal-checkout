@@ -24,15 +24,9 @@ private let requestFIONREAD: UInt = 0x4004_667F
 /// 한 번에 큐에 넣어 두는 최대 바이트. tty 입력 큐 상한(TTYHOG, 기본 1024)보다 넉넉히 낮게
 /// 잡아 두고, 넘치는 분량은 소비를 기다렸다 이어 넣는다.
 private let injectQueueLimit = 512
-/// 큐가 빌 때까지 기다리는 상한. claude가 바쁘면 소비가 늦는데, 여기서 무한정 기다리면
-/// 전달 스레드가 통째로 묶인다 — 시간을 넘기면 `err`로 돌려주고 앱의 재시도에 맡긴다.
-private let injectDrainTimeout: TimeInterval = 10
 /// 한 요청으로 받아 주는 최대 바이트. claude 입력은 한 줄이라 이보다 훨씬 짧다 —
 /// 상한이 없으면 보내는 쪽이 수십만 번의 ioctl을 시킬 수 있다.
 private let injectMaxBytes = 8 * 1024
-/// 주입한 바이트가 읽히기를 지켜보는 시간. claude는 `read()`에 걸려 있어 보통 수 밀리초면
-/// 비지만, 그 사이 claude가 죽으면 남은 바이트를 셸이 읽는다 — 그때 큐를 비우려면 지켜봐야 한다.
-private let injectWatchTimeout: TimeInterval = 0.5
 /// 수신 버퍼 상한. base64는 원본의 4/3이라 위 상한의 두 배면 넉넉하다.
 private let requestLineLimit = 16 * 1024
 
@@ -152,9 +146,11 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
     }
     let all = [UInt8](bytes)
     var sent = 0
-    let deadline = Date().addingTimeInterval(injectDrainTimeout)
+    // 이 요청에 쓸 수 있는 시간 전부 — 큐가 비기를 기다리는 것과 읽히는지 지켜보는 것을
+    // 합쳐 앱의 응답 대기보다 확실히 짧아야 한다(`warpHelperWorkBudget` 참고)
+    let deadline = Date().addingTimeInterval(warpHelperWorkBudget)
     while sent < all.count {
-        // 조각마다 다시 본다. 분할 주입은 큐가 빌 때까지 최대 10초를 기다리는데, 그 사이
+        // 조각마다 다시 본다. 분할 주입은 큐가 빌 때까지 예산만큼 기다리는데, 그 사이
         // 우리 pane이 닫히고 같은 tty 번호를 새 세션이 차지하면 남은 조각이 남의 tty로 들어간다
         if let stop = state.stopReason() { return .err(stop.description) }
         // 넣기 직전에 "지금 이 tty를 읽을 프로세스"를 확인한다. 앱의 게이트는 요청을 보내기
@@ -170,7 +166,7 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
         guard chunk > 0 else {
             // claude가 아직 읽어 가지 않았다. 여기서 더 넣으면 커널이 조용히 버린다
             guard Date() < deadline else {
-                return .err("input queue still full after \(Int(injectDrainTimeout))s (\(pending) pending)")
+                return .err("input queue not drained in time (\(pending) pending)")
             }
             usleep(50_000)
             continue
@@ -186,7 +182,7 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
         }
         sent += chunk
     }
-    return watchUntilRead(expectedPID: expectedPID, state: state, injected: sent)
+    return watchUntilRead(expectedPID: expectedPID, state: state, injected: sent, deadline: deadline)
 }
 
 /// 넣은 바이트가 읽힐 때까지 잠깐 지켜본다. 아직 큐에 남아 있는데 포그라운드가 우리가 겨눈
@@ -200,30 +196,40 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
 /// 사용자가 그 순간 친 키가 함께 버려질 수 있지만, 버려지는 상황은 "셸이 아직 아무것도 읽지
 /// 않은" 순간이라 잃는 것은 방금 친 몇 글자다.
 ///
-/// 남는 피해의 크기: 셸이 먼저 읽어 가면 **CR 한 바이트**가 새 프롬프트에 들어간다.
-/// 본문까지 함께 새려면 claude가 본문을 읽지 않았어야 하는데, 그러면 화면 반영 확인이
-/// 실패해 CR을 보내지 않는다 — 즉 [본문 + CR]이 함께 셸로 가는 갈래는 없고, 셸이 받는 것은
-/// 빈 줄에 대한 CR(= 빈 명령)이거나 실행되지 않는 본문뿐이다.
+/// **시간 안에 안 읽혔으면 실패다(fail-closed).** 한때 "포그라운드는 그대로니 claude가 느린
+/// 것"이라며 성공으로 돌려줬는데, 그러면 큐에 남은 tail을 앱이 모른 채 CR을 얹는다 —
+/// 앱의 화면 확인은 앞 24자만 보므로 claude가 앞부분만 읽어도 통과한다. 그 뒤 claude가
+/// 끝나면 셸이 [tail + CR]을 읽어 **명령으로 실행한다.** 성공은 큐가 빈 것을 본 경우뿐이다.
+///
+/// `tcflush`는 **우리 바이트만 남아 있을 때만** 한다. 큐에 우리가 넣은 것보다 많이 들어 있으면
+/// 사용자가 그 사이 친 키가 섞인 것이라, 버리면 우리가 막으려던 피해(사용자 입력 손실)를
+/// 우리가 일으킨다. 그때는 버리지 않고 실패만 알린다.
 ///
 /// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 라운드 1에서 없앤 것은
 /// "읽혔으니 claude가 그렸을 것"이라는 **긍정** 추론이고, 그쪽은 되살리지 않는다 —
-/// 전달 성공 판정은 여전히 화면 반영 확인만 한다.
-private func watchUntilRead(expectedPID: Int32, state: HelperState, injected: Int) -> WarpHelperResponse {
-    let deadline = Date().addingTimeInterval(injectWatchTimeout)
-    while Date() < deadline {
-        guard let pending = ttyPendingBytes(state.ttyFD), pending > 0 else { return .ok(String(injected)) }
+/// 전달 성공 판정은 여전히 화면 반영 확인이 한다. 이것은 그 앞에 얹는 필요조건이다.
+private func watchUntilRead(
+    expectedPID: Int32, state: HelperState, injected: Int, deadline: Date
+) -> WarpHelperResponse {
+    while true {
+        guard let pending = ttyPendingBytes(state.ttyFD) else { return .err(lastErrnoName()) }
+        guard pending > 0 else { return .ok(String(injected)) }
         if !warpForegroundIsExpected(
             foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
         ) {
+            guard pending <= injected else {
+                checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라졌으나 큐(\(pending)바이트)에 사용자 입력이 섞여 버리지 않음")
+                return .err("expected reader gone; queue holds user input")
+            }
             tcflush(state.ttyFD, TCIFLUSH)
-            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라져 읽히지 않은 입력 \(pending)바이트를 버림")
+            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라져 읽히지 않은 우리 입력 \(pending)바이트를 버림")
             return .err("expected reader gone; input queue flushed")
+        }
+        guard Date() < deadline else {
+            return .err("injected bytes not read in time (\(pending) pending)")
         }
         usleep(5_000)
     }
-    // 시간 안에 안 읽혔지만 포그라운드는 그대로다 — claude가 느린 것이므로 성공으로 둔다.
-    // 실제로 그려졌는지는 앱의 화면 반영 확인이 판정한다
-    return .ok(String(injected))
 }
 
 /// 연결 하나를 끝까지 처리한다. `bye`를 받았거나 상한에 걸렸으면 true(헬퍼 종료).

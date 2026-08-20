@@ -676,7 +676,35 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.keystrokes.isEmpty, "확인할 수 없는데 친 것: \(session.keystrokes)")
-        XCTAssertTrue(clearAbandonedInput(io: io), "정리가 막혔다")
+        XCTAssertTrue(clearAbandonedInput(io: io, weSentSomething: true), "정리가 막혔다")
+        XCTAssertEqual(session.keystrokes, ["\u{15}"])
+    }
+
+    /// 회귀 방지(P1-2): 권한은 시도 **시작**에만이 아니라 매 전송 앞에서 확인해야 한다.
+    /// pane 증명이나 1초 대기 중에 회수되면 그 뒤 표식·본문·CR이 계속 나간다
+    func testPermissionLostMidAttemptStopsFurtherSends() {
+        let session = FakeClaudeSession()
+        var sends = 0
+        let io = ClaudeSessionIO(
+            sendKeys: { sends += 1; return session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            confirmSession: { _ in true },
+            sessionIsUnchanged: { true },
+            canConfirmScreen: { sends < 1 }, // 첫 전송 직후 권한이 사라진다
+            screenNeedsPaneProof: true,
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertEqual(session.keystrokes.count, 1, "권한이 사라진 뒤에도 나간 것: \(session.keystrokes)")
+    }
+
+    /// 회귀 방지(P1-3): 우리가 한 바이트도 보내지 않았으면 정리도 하지 않는다 —
+    /// 그 Ctrl+U는 사용자가 치고 있던 초안만 지운다
+    func testCleanupDoesNothingWhenWeNeverSentAnything() {
+        let session = FakeClaudeSession()
+        XCTAssertFalse(clearAbandonedInput(io: session.io, weSentSomething: false))
+        XCTAssertTrue(session.keystrokes.isEmpty)
+        XCTAssertTrue(clearAbandonedInput(io: session.io, weSentSomething: true))
         XCTAssertEqual(session.keystrokes, ["\u{15}"])
     }
 
@@ -691,7 +719,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             sessionIsUnchanged: { false },
             wait: { _ in }
         )
-        XCTAssertFalse(clearAbandonedInput(io: io))
+        XCTAssertFalse(clearAbandonedInput(io: io, weSentSomething: true))
         XCTAssertTrue(session.keystrokes.isEmpty)
     }
 
@@ -1206,6 +1234,10 @@ final class WarpHelperProtocolTests: XCTestCase {
         )
         XCTAssertNil(parseWarpHelperRequest("inject notapid eA=="))
         XCTAssertNil(parseWarpHelperRequest("inject 91"))
+        // 0 이하는 거부한다 — `getpgid(0)`은 호출자 그룹이라, 헬퍼가 포그라운드인 비정상
+        // 상황에서 "기대 독자가 맞다"로 통과해 버린다
+        XCTAssertNil(parseWarpHelperRequest("inject 0 eA=="))
+        XCTAssertNil(parseWarpHelperRequest("inject -1 eA=="))
     }
 
     func testEncodedRequestIsASingleLine() {
@@ -1265,6 +1297,16 @@ final class WarpForegroundTests: XCTestCase {
 // 상한과 tty 동일성을 한 함수로 모은다 — 대기 루프와 요청 처리 경로가 서로 다른 기준을 쓰면
 // 연결을 물고 계속 요청하는 쪽이 상한을 통째로 우회한다.
 
+final class WarpHelperBudgetTests: XCTestCase {
+    /// 헬퍼가 한 요청에 쓰는 시간이 앱의 응답 대기보다 길면, 앱이 먼저 포기하고 재시도하는
+    /// 동안 이전 요청의 주입이 계속 돌아 재시도분·사용자 입력과 섞인다.
+    /// 두 값을 따로 두면 다시 갈리므로 한 곳에서 유도한다
+    func testHelperFinishesWellBeforeTheAppGivesUp() {
+        XCTAssertLessThan(warpHelperWorkBudget, warpHelperRequestTimeout)
+        XCTAssertLessThanOrEqual(warpHelperWorkBudget * 2, warpHelperRequestTimeout)
+    }
+}
+
 final class WarpHelperStopTests: XCTestCase {
     private func reason(
         tty: Bool = true, idle: TimeInterval = 0, alive: TimeInterval = 0
@@ -1297,18 +1339,18 @@ final class WarpHelperStopTests: XCTestCase {
 // claude 입력이 통째로 실패하지 않도록, 큐 여유만큼 나눠 넣고 소비를 기다렸다 이어 넣는다.
 
 final class WarpInjectChunkTests: XCTestCase {
-    func testChunkFitsTheQueueHeadroom() {
-        XCTAssertEqual(warpInjectChunkSize(pending: 100, remaining: 1000, limit: 512), 412)
-    }
-
-    func testChunkNeverExceedsWhatIsLeftToSend() {
-        XCTAssertEqual(warpInjectChunkSize(pending: 0, remaining: 30, limit: 512), 30)
-    }
-
-    /// 큐가 꽉 차 있으면 0 — 호출자는 넣지 않고 소비를 기다린다
-    func testFullQueueYieldsNoChunk() {
+    /// 회귀 방지(P0-1): 큐에 **한 바이트라도** 남아 있으면 넣지 않는다. 여유가 있다고 이어
+    /// 넣으면 앞 조각의 tail이 큐에 남은 채로 다음이 쌓이고, claude가 앞 24자만 읽어 화면에
+    /// 그리면 화면 확인은 통과한다 — 그 뒤 claude가 끝나면 남은 tail을 **셸이 읽어 실행한다**
+    func testChunkOnlyGoesIntoAnEmptyQueue() {
+        XCTAssertEqual(warpInjectChunkSize(pending: 1, remaining: 1000, limit: 512), 0)
+        XCTAssertEqual(warpInjectChunkSize(pending: 100, remaining: 1000, limit: 512), 0)
         XCTAssertEqual(warpInjectChunkSize(pending: 512, remaining: 10, limit: 512), 0)
-        XCTAssertEqual(warpInjectChunkSize(pending: 900, remaining: 10, limit: 512), 0)
+    }
+
+    func testEmptyQueueTakesAFullChunk() {
+        XCTAssertEqual(warpInjectChunkSize(pending: 0, remaining: 1000, limit: 512), 512)
+        XCTAssertEqual(warpInjectChunkSize(pending: 0, remaining: 30, limit: 512), 30)
     }
 }
 

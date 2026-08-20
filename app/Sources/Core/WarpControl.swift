@@ -376,8 +376,12 @@ private func fileModificationDate(_ path: String) -> Date? {
 
 /// 요청 하나를 보내고 응답 한 줄을 받는다. 연결·전송·해석 중 하나라도 실패하면 nil이다 —
 /// 호출자는 이것을 "이번 호출이 실패했다"로만 다뤄야 한다(세션이 끝났다는 뜻이 아니다).
+///
+/// 대기 시간은 헬퍼의 작업 예산에서 유도한다(`warpHelperRequestTimeout`) — 앱이 먼저
+/// 포기하고 재시도하는 동안 헬퍼가 계속 주입하면 그 바이트가 재시도분과 섞인다.
 func warpHelperRequest(
-    _ request: WarpHelperRequest, socket path: String, timeout: TimeInterval = 5
+    _ request: WarpHelperRequest, socket path: String,
+    timeout: TimeInterval = warpHelperRequestTimeout
 ) -> WarpHelperResponse? {
     guard let fd = connectToUnixSocket(path: path) else { return nil }
     defer { close(fd) }

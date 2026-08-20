@@ -176,21 +176,43 @@ public struct ClaudeSessionIO {
     }
 }
 
-/// **바이트가 나가는 유일한 문.** 여기서만 게이트 ③을 확인한다 — 표식·입력창 클리어·본문
+/// 나가는 바이트의 종류. 문은 하나지만 요구 조건이 다르다 — 검사를 문 **밖으로** 빼면
+/// 반드시 빠뜨리는 자리가 생기므로(실제로 그렇게 새어 본문 타이핑이 게이트를 건너뛰었다),
+/// 종류를 문에 달아 안에서 가른다.
+enum SendKind {
+    /// 새로 치는 것(표식·본문·CR·클리어 후 재타이핑). 화면으로 확인할 수단이 있어야 한다
+    case typing
+    /// 이미 친 것을 되돌리는 것(정리용 Ctrl+U). 화면 확인 수단과 무관하게 나가야 한다 —
+    /// 같이 막으면 우리 텍스트가 입력창에 남아 사용자가 누른 Enter로 실행된다
+    case cleanup
+}
+
+/// **바이트가 나가는 유일한 문.** 여기서만 게이트를 확인한다 — 표식·입력창 클리어·본문
 /// 타이핑·CR·정리가 모두 이 함수를 지나므로, 새 전송 경로를 추가해도 게이트 밖으로 샐 수 없다.
+///
+/// 게이트 ③(세션 동일성)은 **모든** 종류에 건다. 화면 확인 수단(`canConfirmScreen`)은
+/// `.typing`에만 건다 — 시도 시작에 한 번만 보면 그 뒤 pane 증명이나 대기 중에 권한이
+/// 회수됐을 때 표식·본문·CR이 계속 나간다(실제로 그랬다).
+///
 /// 확인과 전송 사이의 창(`ps`·`stty` 왕복 ≈ 9ms)은 경로상 없앨 수 없다 — 그 사이 세션이
 /// 바뀌면 바이트 하나가 새 세션에 들어간다. 다만 CR도 같은 게이트를 지나므로 **실행되지는
 /// 않고**, 입력창에 남은 조각은 그 세션의 사용자가 지운다.
-private func send(_ keys: String, io: ClaudeSessionIO) -> Bool {
+private func send(_ keys: String, io: ClaudeSessionIO, kind: SendKind = .typing) -> Bool {
+    if kind == .typing, !io.canConfirmScreen() { return false }
     guard io.sessionIsUnchanged() else { return false }
     return io.sendKeys(keys)
 }
 
 /// 전달이 중간에 끝났을 때 입력창에 남았을 우리 조각을 지운다. 같은 문을 지나므로
 /// 세션이 바뀐 뒤에는 아무것도 나가지 않는다.
+///
+/// `weSentSomething`이 false면 아무것도 하지 않는다 — 우리가 한 바이트도 보내지 못했다면
+/// 입력창에 있는 것은 **사용자가 치던 초안**뿐이고, 그걸 Ctrl+U로 지우는 것은 우리가 고치려던
+/// 피해를 우리가 일으키는 것이다.
 @discardableResult
-func clearAbandonedInput(io: ClaudeSessionIO) -> Bool {
-    send("\u{15}", io: io)
+func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool) -> Bool {
+    guard weSentSomething else { return false }
+    return send("\u{15}", io: io, kind: .cleanup)
 }
 
 /// 준비된 claude 세션에 입력을 순서대로 제출하고, 제출에 성공한 개수를 돌려준다.
@@ -400,8 +422,15 @@ public func deliverClaudeInputs(
         return
     }
 
+    // 우리가 실제로 바이트를 내보냈는지 — 정리(Ctrl+U)를 보낼지 가르는 조건이다.
+    // 한 바이트도 못 보냈다면 입력창에 있는 것은 사용자 초안뿐이라 지우면 안 된다
+    var weSentSomething = false
     let io = ClaudeSessionIO(
-        sendKeys: { sendKeys($0, to: handle, expectedPID: claudePID) },
+        sendKeys: {
+            let sent = sendKeys($0, to: handle, expectedPID: claudePID)
+            if sent { weSentSomething = true }
+            return sent
+        },
         screenText: { screenText(of: handle) },
         confirmSession: { limit in
             waitUntilClaudeAcceptsInput(
@@ -423,9 +452,13 @@ public func deliverClaudeInputs(
     // 전달 도중 권한이 회수되면 화면 확인이 멈춰 CR은 막히지만, 그때까지 친 텍스트는 입력창에
     // 남는다. 우리 tty로만 가는 Ctrl+U를 한 번 보내 그 조각을 지우고 끝낸다
     if case .warp = handle, !accessibilityIsTrusted() {
-        // 정리도 같은 문을 지난다 — 세션이 바뀐 뒤라면 남의 입력창을 지우게 된다
-        clearAbandonedInput(io: io)
-        checkoutLog("전달 도중 손쉬운 사용 권한이 사라짐 — claude 입력창을 비우고 중단")
+        // 정리도 같은 문을 지난다 — 세션이 바뀐 뒤라면 남의 입력창을 지우게 된다.
+        // 우리가 아무것도 못 보냈으면 지울 우리 조각도 없다(사용자 초안만 지우게 된다)
+        if clearAbandonedInput(io: io, weSentSomething: weSentSomething) {
+            checkoutLog("전달 도중 손쉬운 사용 권한이 사라짐 — claude 입력창을 비우고 중단")
+        } else {
+            checkoutLog("손쉬운 사용 권한이 없어 전달하지 못함 — 우리가 보낸 것이 없어 입력창은 건드리지 않음")
+        }
     }
 }
 
