@@ -14,6 +14,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN/TerminalCheckout" "$APP/Contents/MacOS/"
 cp "$BIN/terminal-checkout-relay" "$APP/Contents/MacOS/"
+# Warp pane 안에서 도는 주입 헬퍼 — 앱이 Tab Config에 이 경로를 적어 넣는다
+cp "$BIN/terminal-checkout-warp-helper" "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/Info.plist"
 [ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/"
 
@@ -21,8 +23,9 @@ cp Info.plist "$APP/Contents/Info.plist"
 cp -R ../extension "$APP/Contents/Resources/extension"
 find "$APP/Contents/Resources/extension" -name '.DS_Store' -delete 2>/dev/null || true
 
-# ad-hoc 서명: 번들 안의 개별 실행 파일(relay) 먼저, 그다음 번들 전체
+# ad-hoc 서명: 번들 안의 개별 실행 파일 먼저, 그다음 번들 전체
 codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-relay"
+codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-warp-helper"
 codesign --force --sign - "$APP"
 
 echo "빌드 완료: $(pwd)/$APP"

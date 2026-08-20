@@ -6,22 +6,25 @@
 
 ## 1. 코드에서 손댈 지점
 
-터미널 식별자는 앱이 `UserDefaults`의 `terminal` 키에 저장하는 문자열이다(`iterm`, `wezterm`). 확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 동작상 손댈 것이 없다.
+터미널 식별자는 앱이 `UserDefaults`의 `terminal` 키에 저장하는 문자열이다(`iterm`, `wezterm`, `warp`). 확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 동작상 손댈 것이 없다.
 
 **Core**
 
 | 지점 | 할 일 |
 |:---|:---|
-| `TerminalRunner.runInTerminal(command:terminal:)` | 식별자 분기 추가 |
+| `TerminalRunner.runInTerminal(command:terminal:injectsClaudeInput:)` | 식별자 분기 추가. `injectsClaudeInput`은 입력 전달에 별도 준비가 필요한 터미널만 본다 |
 | `TerminalRunner.runInXxx(_:)` (신규) | 새 탭 생성 → 명령 전송 → `TerminalSessionHandle` 반환 |
 | `TerminalSessionHandle` (`ClaudeInjector.swift`) | 케이스 추가. 핸들을 못 만들면(`.none`) claude 입력은 전달되지 않는다 |
 | `ClaudeInjector.deliverClaudeInputs` | 핸들에서 tty 경로를 얻는 갈래 |
-| `ClaudeInjector.sendKeys` | 텍스트 · CR(`\r`, 제출) · Ctrl+U(`\u{15}`, 입력창 클리어) 세 가지 |
-| `ClaudeInjector.screenText` | 화면 텍스트 조회 — 타이핑 반영 확인에 쓴다 |
+| `ClaudeInjector.sendKeys` | 텍스트 · CR(`\r` = `claudeSubmitKey`, 제출) · Ctrl+U(`\u{15}` = `claudeClearInputKey`, 입력창 클리어) 세 가지 |
+| `ClaudeInjector.screenText` | 화면 텍스트 조회 — 타이핑 **직전과 직후** 두 번 찍어 비교한다(`screenReflectsNewInput`). 읽을 수 없으면 입력을 보내지 않는 것이 정답이다 |
+| `ClaudeSessionIO.screenNeedsPaneProof` | 화면 조회가 그 세션의 것이라고 단정할 수 없는 터미널은 true — 입력마다 난수 표식으로 pane을 먼저 증명한다. pane/세션 id로 정확히 읽는 터미널은 기본값(false) 그대로 둔다 |
 
 `ClaudeInjector`의 세 갈래 중 하나만 빠져도 실행은 되고 claude 입력만 조용히 멈춘다. 특히 `screenText`가 없으면 반영 확인이 실패해 CR을 보내지 못한다.
 
 CLI를 호출하는 터미널이면 실행 파일 경로를 명시적으로 탐색해야 하고, AppleScript로 제어하는 터미널이면 TCC 자동화 대상이 하나 늘어난다(권한 요청·상태 조회 경로도 함께 필요).
+
+pane을 지목할 API가 아예 없는 터미널(Warp)은 pane 안에서 도는 헬퍼 프로세스가 그 자리를 대신한다 — 그러면 `app/Package.swift`의 타깃과 `app/build.sh`의 번들 복사·서명도 함께 늘어난다.
 
 **App**
 
@@ -69,6 +72,20 @@ CLI 응답이나 스크립트 출력을 파싱하는 부분(창 고르기, pane�
 - [ ] 게이트 ③: 원래 claude를 끝내고 같은 tty에 새 claude를 띄운 뒤, 남은 입력이 그쪽으로 흘러가지 않는다
 - [ ] 세션 탭을 도중에 닫으면 전송이 중단된다
 - [ ] 처음 여는 폴더의 trust 프롬프트가 떠 있는 동안 제출이 보류된다
+- [ ] claude 입력을 예약하지 않은 버튼은 입력 전달용 준비(헬퍼 등)를 하지 않는다 — 탭에 군더더기 명령이 생기지 않는다
+
+**pane 안 헬퍼를 쓰는 터미널(Warp)**
+
+- [ ] 헬퍼가 뜨지 못한 경우(번들에서 빠짐·소켓 경로 초과) — 명령은 실행되고 claude 입력만 포기되며 이유가 앱 로그에 남는다
+- [ ] 전달이 끝난 뒤 헬퍼가 사라진다 (`ps -axo command= | grep warp-helper`, 소켓 파일도 삭제)
+- [ ] 전달 도중 탭을 닫으면 헬퍼가 스스로 종료한다 — 떠도는 프로세스가 남지 않는다
+- [ ] 화면 읽기 권한이 없으면 입력을 전달하지 않고, 그 이유가 앱 로그와 설정 창에 남는다 (명령 실행은 되는 것과 구분되어야 한다)
+- [ ] 512바이트가 넘는 입력(한글 포함)이 잘리지 않고 전달된다 — tty 입력 큐 상한을 나눠 넣는 갈래
+- [ ] 연속으로 두 버튼을 빠르게 누르면 두 탭에 각자의 명령이 뜬다 (Tab Config 파일이 서로를 덮어쓰지 않는다)
+- [ ] 사용자가 만든 같은 이름의 Tab Config가 덮어써지지 않는다
+- [ ] 사용자가 다른 탭·다른 앱을 보고 있으면 제출이 보류되고, 돌아오면 이어서 완료된다 (그 사이 표식이 입력창에 남지 않아야 한다)
+- [ ] 전달 도중 손쉬운 사용 권한을 회수하면 더 이상 아무것도 주입되지 않고, 남은 조각이 정리된다
+- [ ] 그 터미널이 세션 내역을 저장하는 방식(Warp는 GUI로 띄운 세션만 저장한다는 사용자 진술)이 우리가 만든 탭에도 적용되는지
 
 ## 3. 검증 수단
 

@@ -21,8 +21,11 @@ command -v swift >/dev/null 2>&1 || MISSING+=("Swift 툴체인 (Xcode 또는 Com
 DETECTED_TERMINALS=()
 [ -d "/Applications/iTerm.app" ] && DETECTED_TERMINALS+=("iTerm2")
 [ -d "/Applications/WezTerm.app" ] && DETECTED_TERMINALS+=("WezTerm")
+# Warp는 앱의 findWarpAppBundle()과 같은 두 위치를 본다 — 감지 기준이 갈리면
+# 설치는 통과하는데 앱이 "미설치"로 표시하거나 그 반대가 된다
+{ [ -d "/Applications/Warp.app" ] || [ -d "$HOME/Applications/Warp.app" ]; } && DETECTED_TERMINALS+=("Warp")
 if [ ${#DETECTED_TERMINALS[@]} -eq 0 ]; then
-    MISSING+=("iTerm2 또는 WezTerm (하나 이상 필요)")
+    MISSING+=("iTerm2 · WezTerm · Warp 중 하나 이상")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then

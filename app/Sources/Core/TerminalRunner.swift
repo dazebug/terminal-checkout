@@ -3,12 +3,16 @@ import Foundation
 public enum TerminalError: Error, CustomStringConvertible {
     case appleScriptFailed(String)
     case wezTermNotFound
+    case warpNotFound
+    case warpTabConfigFailed(String)
     case timeout(String)
 
     public var description: String {
         switch self {
         case .appleScriptFailed(let message): return "AppleScript error: \(message)"
         case .wezTermNotFound: return "WezTerm not found. Install WezTerm or check your PATH."
+        case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
+        case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
         }
     }
@@ -70,12 +74,17 @@ public func runProcess(
     )
 }
 
+/// `injectsClaudeInput`은 이 실행에 예약된 claude 입력이 있는지다. Warp만 이 값을 본다 —
+/// 입력을 넣으려면 pane 안에 주입 헬퍼를 함께 띄워야 하는데, 입력이 없는 버튼에까지 띄우면
+/// 사용자에게 보이는 명령 블록이 하나 늘고 쓸모없는 프로세스가 남는다.
 @discardableResult
-public func runInTerminal(command: String, terminal: String) throws -> TerminalSessionHandle {
-    if terminal == "wezterm" {
-        return try runInWezTerm(command)
-    } else {
-        return try runInITerm(command)
+public func runInTerminal(
+    command: String, terminal: String, injectsClaudeInput: Bool = false
+) throws -> TerminalSessionHandle {
+    switch terminal {
+    case "wezterm": return try runInWezTerm(command)
+    case "warp": return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
+    default: return try runInITerm(command)
     }
 }
 
@@ -95,6 +104,97 @@ public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
     return .iterm(sessionID: String(parts[0]), tty: String(parts[1]))
 }
 
+/// Warp에서 새 탭을 열고 명령 실행.
+/// Warp는 AppleScript도 pane 제어 CLI도 없어 Tab Config 파일 + `warp://tab_config/<stem>`
+/// URL이 유일한 수단이다(실측). `open`은 LaunchServices를 거치므로 Warp가 꺼져 있으면
+/// 새로 띄우고, 떠 있으면 활성 창에 탭을 더한다.
+///
+/// claude 입력이 예약돼 있으면 명령 앞에 주입 헬퍼를 한 줄 더 실행시킨다. 헬퍼가 자기 tty를
+/// 알려 주므로 여기서 pane을 찾아 헤맬 필요가 없다 — 이 함수는 Chrome 응답을 막는
+/// execQueue 안에서 도는데, 헬퍼가 뜨기를 기다리는 일은 백그라운드 전달 스레드
+/// (`deliverClaudeInputs`)에서 하면 되기 때문이다.
+///
+/// Tab Config 파일 이름에는 요청마다 다른 토큰이 붙는다(`warpTabConfigStem`) — 고정 이름은
+/// 사용자 파일을 덮어쓰고, `open`이 돌아온 뒤에도 Warp가 파일을 읽기 전이라 연속 요청이
+/// 서로의 명령을 갈아 끼운다. 그 대신 우리 파일은 탭이 열릴 시간을 준 뒤 지운다.
+@discardableResult
+public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throws -> TerminalSessionHandle {
+    guard findWarpAppBundle() != nil else { throw TerminalError.warpNotFound }
+
+    // 앱이 죽어 남은 이전 실행의 찌꺼기부터 회수한다 (살아 있는 것은 건드리지 않는다)
+    reclaimStaleWarpTabConfigs()
+    reclaimDeadWarpHelperSockets()
+
+    let token = warpHelperToken()
+    var socketPath: String?
+    var commands = [command]
+    if injectsClaudeInput {
+        // 손쉬운 사용 권한이 없으면 claude가 입력을 받았는지 확인할 수 없어 어차피 보내지
+        // 않는다(`deliverClaudeInputs`). 그럴 때 헬퍼를 띄우면 아무도 붙지 않는 프로세스가
+        // 유휴 타임아웃까지 pane에 남고, 사용자에게는 정체 모를 명령 한 줄이 더 보인다
+        if !accessibilityIsTrusted() {
+            checkoutLog("손쉬운 사용 권한이 없어 Warp 주입 헬퍼를 띄우지 않음 — 명령만 실행한다")
+        } else if let helper = warpHelperExecutablePath(), let path = warpHelperSocketPath(token: token) {
+            commands.insert(warpHelperCommand(executable: helper, socketPath: path), at: 0)
+            socketPath = path
+        } else {
+            checkoutLog("Warp 주입 헬퍼를 준비하지 못함 — 명령만 실행하고 claude 입력은 포기")
+        }
+    }
+
+    let stem = warpTabConfigStem(token: token)
+    let path = warpTabConfigPath(stem: stem)
+    do {
+        try FileManager.default.createDirectory(
+            atPath: warpTabConfigDirectory(), withIntermediateDirectories: true
+        )
+        // 토큰이 겹칠 일은 없지만, 겹쳤다면 그것은 사용자 파일일 수도 있다 — 덮어쓰지 않는다.
+        // `O_CREAT|O_EXCL`로 만들어 "있는지 보고 쓴다"의 창을 없앤다: 검사와 생성이 한 syscall이다
+        try writeNewFile(path: path, contents: warpTabConfigTOML(commands: commands))
+    } catch let error as TerminalError {
+        throw error
+    } catch {
+        throw TerminalError.warpTabConfigFailed(errorMessage(error))
+    }
+    // 회수 예약은 파일을 쓰자마자 건다 — `open`이 던지는 갈래에서도 파일이 남지 않아야 한다.
+    // Warp는 `open`이 돌아온 뒤에 파일을 읽으므로(pane 등장까지 실측 0.5∼0.7초) 곧바로
+    // 지우면 안 된다
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + warpTabConfigLifetime) {
+        removeWarpTabConfigIfOurs(path: path)
+    }
+
+    let result = try runProcess("/usr/bin/open", [warpTabConfigURL(stem: stem)], timeout: 15)
+    guard result.status == 0 else {
+        throw TerminalError.warpTabConfigFailed(
+            result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+    guard let socketPath else { return .none }
+    return .warp(helperSocket: socketPath)
+}
+
+/// 새로 만드는 경우에만 쓴다. 이미 있으면 `EEXIST`로 실패한다 — 먼저 존재를 확인하고
+/// 쓰는 방식은 그 사이 사용자 파일이 놓이면 덮어쓴다.
+private func writeNewFile(path: String, contents: String) throws {
+    let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+    guard fd >= 0 else {
+        throw TerminalError.warpTabConfigFailed("파일을 새로 만들지 못했습니다(\(String(cString: strerror(errno)))): \(path)")
+    }
+    defer { close(fd) }
+    guard writeAll(fd: fd, data: Data(contents.utf8)) else {
+        unlink(path)
+        throw TerminalError.warpTabConfigFailed("파일을 쓰지 못했습니다: \(path)")
+    }
+}
+
+/// Warp가 Tab Config를 읽고 pane을 띄우기까지 기다려 주는 시간. 실측 0.5∼0.7초의 여유분이며,
+/// 이보다 짧으면 탭이 열리지 않고 길면 `+` 메뉴에 우리 파일이 오래 남는다.
+/// **이 시간은 "Warp가 읽었다"를 보장하지 않는다** — 그것을 알려 주는 신호가 없어서 시간에
+/// 기대는 것이고, 시스템이 크게 밀리면 탭이 열리지 않을 수 있다. 그때의 결과는 "탭이 안
+/// 열린다"뿐이라(데이터 손실 없음) 여유를 30배로 잡고 남겨 둔다. 이건 신뢰 경계와 무관한
+/// 타이밍 가정이다.
+let warpTabConfigLifetime: TimeInterval = 20
+
 /// WezTerm CLI 경로 탐색: PATH → Homebrew/앱 번들 fallback
 /// (앱은 GUI 프로세스라 PATH가 /usr/bin:/bin 수준으로 제한되므로 명시적 후보가 필수)
 public func findWezTermCLI() -> String? {
@@ -110,6 +210,14 @@ public func findWezTermCLI() -> String? {
         "/Applications/WezTerm.app/Contents/MacOS/wezterm",
     ])
     return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+}
+
+/// wezterm CLI를 부를 환경 — GUI 앱의 환경에 우리가 고른 mux 소켓을 얹는다.
+/// 창 조회·spawn·send-text·get-text가 **같은 소켓**을 봐야 하므로 만드는 자리를 하나로 둔다.
+func wezTermEnvironment(socketPath: String?) -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
+    return env
 }
 
 /// 실행 중인 WezTerm GUI 프로세스의 소켓 찾기 (최신 우선, PID 매칭)
@@ -201,8 +309,7 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
 
     if let sock = findWezTermSocket() {
-        var env = ProcessInfo.processInfo.environment
-        env["WEZTERM_UNIX_SOCKET"] = sock
+        let env = wezTermEnvironment(socketPath: sock)
         let windowID = findWezTermFocusedWindow(cli: cli, env: env)
         for args in wezTermSpawnAttempts(windowID: windowID) {
             guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {
