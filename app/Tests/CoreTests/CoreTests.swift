@@ -385,6 +385,20 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertFalse(screenReflectsNewInput(before: "", after: "아무 화면", input: "   "))
     }
 }
+
+// MARK: - 제어키 바이트
+// 전달 경로도, 아래 테스트들도 `claudeSubmitKey`·`claudeClearInputKey`를 **참조**한다 — 상수 자체가
+// 틀리면(CR이 LF로 바뀌는 등) 그 테스트들은 함께 초록이 되어 오라클이 되지 못한다. 그래서 이
+// 한 자리에서만 리터럴 바이트로 고정한다: claude는 CR(0x0D)만 제출로 인식하고(실측), 입력창
+// 클리어는 Ctrl+U(0x15)다.
+
+final class ClaudeControlKeyTests: XCTestCase {
+    func testControlKeysAreTheExpectedBytes() {
+        XCTAssertEqual(Array(claudeSubmitKey.utf8), [0x0D])
+        XCTAssertEqual(Array(claudeClearInputKey.utf8), [0x15])
+    }
+}
+
 // MARK: - 입력 전달 순서와 실패 복구
 // 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
 // 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
@@ -1656,6 +1670,9 @@ final class WarpReclaimTests: XCTestCase {
 // Tab Config는 우리 접두사 + 우리 헤더). 그 문자열이 스크립트에 복제돼 있어, 한쪽만 바뀌면
 // 삭제 대상이 조용히 어긋난다 — 접두사를 바꾸면 사용자 머신에 우리 파일이 영구히 남고,
 // 헤더를 바꾸면 스크립트가 아무것도 못 지운다. 이 테스트가 그 갈림을 red로 만든다.
+//
+// **한계**: 문자열이 파일에 있는지만 본다. 그래서 uninstall.sh를 고칠 때 문자열을 주석이나 죽은
+// 코드에만 남기면 이 가드는 통과한다 — 셸 구문까지 보지는 않는다.
 
 final class UninstallScriptSyncTests: XCTestCase {
     /// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
