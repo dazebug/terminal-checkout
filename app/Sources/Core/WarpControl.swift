@@ -221,8 +221,8 @@ public func requestAccessibilityPrompt() -> Bool {
 /// 읽히는 것은 "그 창에서 포커스된 pane"이라 우리 pane이라는 보장이 없다 — Warp 창의 AX
 /// 자식은 `AXTextArea` 하나 + 창 버튼 셋뿐이고 탭 바도 pane 식별자도 없으며, 탭을 바꿔도
 /// 같은 AX 요소가 재사용된다(실측). 그래도 안전한 이유는 **입력이 이 경로로 가지 않기**
-/// 때문이다: 타이핑·제출은 헬퍼가 우리 tty에만 넣으므로, 다른 pane을 읽어 생기는 최악은
-/// "반영 확인이 어긋나 재시도" 또는 "확인을 tty 큐 신호로 대신함"이다.
+/// 때문이다: 타이핑·제출은 헬퍼가 우리 tty에만 넣으므로, 남의 pane을 읽어 생기는 최악은
+/// "pane 증명·반영 확인이 실패해 재시도하다 아무것도 제출하지 않는 것"이다.
 public func warpScreenText() -> String? {
     guard accessibilityIsTrusted() else { return nil }
     // 창 하나를 읽을 때마다 ps를 다시 부른다 — 반영 확인은 0.4초 간격 다섯 번이라

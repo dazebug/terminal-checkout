@@ -16,7 +16,7 @@
 | `TerminalRunner.runInXxx(_:)` (신규) | 새 탭 생성 → 명령 전송 → `TerminalSessionHandle` 반환 |
 | `TerminalSessionHandle` (`ClaudeInjector.swift`) | 케이스 추가. 핸들을 못 만들면(`.none`) claude 입력은 전달되지 않는다 |
 | `ClaudeInjector.deliverClaudeInputs` | 핸들에서 tty 경로를 얻는 갈래 |
-| `ClaudeInjector.sendKeys` | 텍스트 · CR(`\r`, 제출) · Ctrl+U(`\u{15}`, 입력창 클리어) 세 가지 |
+| `ClaudeInjector.sendKeys` | 텍스트 · CR(`\r` = `claudeSubmitKey`, 제출) · Ctrl+U(`\u{15}` = `claudeClearInputKey`, 입력창 클리어) 세 가지 |
 | `ClaudeInjector.screenText` | 화면 텍스트 조회 — 타이핑 **직전과 직후** 두 번 찍어 비교한다(`screenReflectsNewInput`). 읽을 수 없으면 입력을 보내지 않는 것이 정답이다 |
 | `ClaudeSessionIO.screenNeedsPaneProof` | 화면 조회가 그 세션의 것이라고 단정할 수 없는 터미널은 true — 입력마다 난수 표식으로 pane을 먼저 증명한다. pane/세션 id로 정확히 읽는 터미널은 기본값(false) 그대로 둔다 |
 

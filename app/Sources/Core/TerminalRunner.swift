@@ -212,6 +212,14 @@ public func findWezTermCLI() -> String? {
     return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
 }
 
+/// wezterm CLI를 부를 환경 — GUI 앱의 환경에 우리가 고른 mux 소켓을 얹는다.
+/// 창 조회·spawn·send-text·get-text가 **같은 소켓**을 봐야 하므로 만드는 자리를 하나로 둔다.
+func wezTermEnvironment(socketPath: String?) -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    if let socketPath { env["WEZTERM_UNIX_SOCKET"] = socketPath }
+    return env
+}
+
 /// 실행 중인 WezTerm GUI 프로세스의 소켓 찾기 (최신 우선, PID 매칭)
 public func findWezTermSocket() -> String? {
     let sockDir = (NSHomeDirectory() as NSString).appendingPathComponent(".local/share/wezterm")
@@ -301,8 +309,7 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
 
     if let sock = findWezTermSocket() {
-        var env = ProcessInfo.processInfo.environment
-        env["WEZTERM_UNIX_SOCKET"] = sock
+        let env = wezTermEnvironment(socketPath: sock)
         let windowID = findWezTermFocusedWindow(cli: cli, env: env)
         for args in wezTermSpawnAttempts(windowID: windowID) {
             guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {

@@ -429,11 +429,11 @@ private final class FakeClaudeSession {
                 if failSendAt.contains(sendCallCount) { return false }
                 keystrokes.append(keys)
                 switch keys {
-                case "\r":
+                case claudeSubmitKey:
                     submitted.append(box)
                     if keepSubmittedOnScreen { history += box + " " }
                     box = ""
-                case "\u{15}": box = ""
+                case claudeClearInputKey: box = ""
                 default:
                     if !dropTypingAt.contains(sendCallCount) { box += keys }
                     if foreignScreenGains.contains(keys) { foreignScreen += " " + keys }
@@ -470,7 +470,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     func testSubmitsOnlyAfterScreenShowsTypedText() {
         let session = FakeClaudeSession()
         _ = submitClaudeInputs([inputs[0]], io: session.io)
-        XCTAssertEqual(session.keystrokes, [inputs[0], "\r"])
+        XCTAssertEqual(session.keystrokes, [inputs[0], claudeSubmitKey])
     }
 
     /// 회귀 방지(실측): 입력 #1 제출 직후 wezterm cli 호출 한 번이 실패해 남은 입력 2개가
@@ -677,7 +677,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.keystrokes.isEmpty, "확인할 수 없는데 친 것: \(session.keystrokes)")
         XCTAssertTrue(clearAbandonedInput(io: io, weSentSomething: true), "정리가 막혔다")
-        XCTAssertEqual(session.keystrokes, ["\u{15}"])
+        XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
     /// 회귀 방지(P1-2): 권한은 시도 **시작**에만이 아니라 매 전송 앞에서 확인해야 한다.
@@ -705,25 +705,28 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertFalse(clearAbandonedInput(io: session.io, weSentSomething: false))
         XCTAssertTrue(session.keystrokes.isEmpty)
         XCTAssertTrue(clearAbandonedInput(io: session.io, weSentSomething: true))
-        XCTAssertEqual(session.keystrokes, ["\u{15}"])
+        XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
     /// 회귀 방지: "우리 조각이 입력창에 남아 있는가"는 **시도**로 세우고 **CR·클리어로 내린다**.
     /// 결과로 세우면 헬퍼가 일부만 넣고 실패했을 때 남은 조각을 못 지우고(미탐),
     /// 한 번 성공한 뒤 계속 참으로 두면 다음 입력을 시작도 못 했을 때 사용자 초안을 지운다(오탐).
     func testInputBoxOwnershipRisesOnAttemptAndFallsOnSubmit() {
-        var mayHoldOurs = false
-        // `deliverClaudeInputs`의 sendKeys 래퍼와 같은 규칙
-        func record(_ keys: String, sent: Bool) {
-            mayHoldOurs = true
-            if sent, keys == "\r" || keys == "\u{15}" { mayHoldOurs = false }
-        }
-        record("!gh pr view", sent: false) // 전송은 실패했지만 바이트는 이미 들어갔을 수 있다
-        XCTAssertTrue(mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
-        record("\r", sent: true)
-        XCTAssertFalse(mayHoldOurs, "제출로 입력창이 비었는데 정리를 보내면 사용자 초안을 지운다")
-        record("\r", sent: false) // 제출 실패 — 본문은 입력창에 그대로 남아 있다
-        XCTAssertTrue(mayHoldOurs)
+        // `deliverClaudeInputs`가 쓰는 그 타입을 검증한다 — 규칙 사본을 여기 두면
+        // 사본만 맞고 실물이 어긋나도 초록이 된다
+        var ownership = InputBoxOwnership()
+        XCTAssertFalse(ownership.mayHoldOurs, "아무것도 보내기 전에는 지울 우리 조각이 없다")
+        ownership.recordSend(keys: "!gh pr view", sent: false) // 전송은 실패했지만 바이트는 이미 들어갔을 수 있다
+        XCTAssertTrue(ownership.mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
+        ownership.recordSend(keys: claudeSubmitKey, sent: true)
+        XCTAssertFalse(ownership.mayHoldOurs, "제출로 입력창이 비었는데 정리를 보내면 사용자 초안을 지운다")
+        ownership.recordSend(keys: claudeSubmitKey, sent: false) // 제출 실패 — 본문은 입력창에 그대로 남아 있다
+        XCTAssertTrue(ownership.mayHoldOurs)
+        // 클리어 갈래도 같다: 성공한 Ctrl+U는 입력창을 비우므로 내려가고, 실패면 남는다
+        ownership.recordSend(keys: claudeClearInputKey, sent: true)
+        XCTAssertFalse(ownership.mayHoldOurs)
+        ownership.recordSend(keys: claudeClearInputKey, sent: false)
+        XCTAssertTrue(ownership.mayHoldOurs)
     }
 
     /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
@@ -1237,7 +1240,7 @@ final class WarpHelperProtocolTests: XCTestCase {
     /// 제출(CR)과 입력창 클리어(Ctrl+U)가 그대로 실려야 한다 — 한 바이트라도 바뀌면
     /// claude가 입력을 제출하지 않는다
     func testInjectCarriesControlBytesUnchanged() {
-        for text in ["!gh issue view 1", "\r", "\u{15}", "한글 입력", ""] {
+        for text in ["!gh issue view 1", claudeSubmitKey, claudeClearInputKey, "한글 입력", ""] {
             let request = WarpHelperRequest.inject(expectedPID: 4242, bytes: Data(text.utf8))
             XCTAssertEqual(roundTrip(request), request, text.debugDescription)
         }
@@ -1645,5 +1648,45 @@ final class WarpReclaimTests: XCTestCase {
         )
         reclaimStaleWarpTabConfigs(in: directory)
         XCTAssertFalse(exists(path))
+    }
+}
+
+// MARK: - uninstall.sh ↔ Swift 상수 동기화
+// 삭제 스크립트는 앱과 **같은 판정**으로 남은 파일을 지운다(소켓은 우리 접두사 + 실제 소켓,
+// Tab Config는 우리 접두사 + 우리 헤더). 그 문자열이 스크립트에 복제돼 있어, 한쪽만 바뀌면
+// 삭제 대상이 조용히 어긋난다 — 접두사를 바꾸면 사용자 머신에 우리 파일이 영구히 남고,
+// 헤더를 바꾸면 스크립트가 아무것도 못 지운다. 이 테스트가 그 갈림을 red로 만든다.
+
+final class UninstallScriptSyncTests: XCTestCase {
+    /// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
+    /// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
+    /// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
+    private func repoFileContents(_ name: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
+            .deletingLastPathComponent() // CoreTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // app
+            .deletingLastPathComponent() // 리포 루트
+        return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+    }
+
+    func testUninstallScriptSweepsWithTheSameConstants() throws {
+        let script = try repoFileContents("uninstall.sh")
+        // 스크립트에 그대로 나타나야 하는 것들. `--serve` 플래그는 일부러 빠져 있다 —
+        // WarpHelper 타깃 private이라 여기서 볼 수 없고, 어긋났을 때 피해는 pkill 미스뿐이며
+        // 헬퍼는 유휴·수명 상한으로 스스로 죽는다
+        let expected = [
+            warpHelperSocketPrefix + "*.sock",
+            warpTabConfigPrefix + "*.toml",
+            warpTabConfigHeader,
+            warpTabConfigLegacyStem + ".toml",
+            warpHelperExecutableName,
+        ]
+        for needle in expected {
+            XCTAssertTrue(
+                script.contains(needle),
+                "uninstall.sh가 \(needle.debugDescription)을 다루지 않는다 — Swift 상수만 바뀌었다"
+            )
+        }
     }
 }
