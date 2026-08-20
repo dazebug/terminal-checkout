@@ -220,7 +220,7 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
 /// 앱의 화면 확인은 앞 24자만 보므로 claude가 앞부분만 읽어도 통과한다. 그 뒤 claude가
 /// 끝나면 셸이 [tail + CR]을 읽어 **명령으로 실행한다.** 성공은 큐가 빈 것을 본 경우뿐이다.
 ///
-/// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 라운드 1에서 없앤 것은
+/// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 폐기한 것은
 /// "읽혔으니 claude가 그렸을 것"이라는 **긍정** 추론이고, 그쪽은 되살리지 않는다 —
 /// 전달 성공 판정은 여전히 화면 반영 확인이 한다. 이것은 그 앞에 얹는 필요조건이다.
 private func watchUntilRead(
