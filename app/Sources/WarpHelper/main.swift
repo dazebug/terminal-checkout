@@ -29,6 +29,10 @@ private let injectQueueLimit = 512
 private let injectMaxBytes = 8 * 1024
 /// 수신 버퍼 상한. base64는 원본의 4/3이라 위 상한의 두 배면 넉넉하다.
 private let requestLineLimit = 16 * 1024
+/// 조각을 밀어 넣는 도중 포그라운드를 다시 보는 간격(바이트). 확인 없이 도는 구간이
+/// "claude가 끝났을 때 셸로 새는 최대 바이트"라 짧을수록 좋지만, `tcgetpgrp`+`getpgid`가
+/// 바이트마다 두 번씩 도는 것도 낭비다 — 한 줄 입력에서 유출이 한눈에 들어오는 크기로 잡는다.
+private let foregroundRecheckStride = 16
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 신뢰 경계 선언 (이 기능 전체에 적용된다)
@@ -172,6 +176,16 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
             continue
         }
         for index in sent..<(sent + chunk) {
+            // 조각 전체를 한 번의 확인으로 밀어 넣으면, 그 사이 claude가 끝났을 때 남은
+            // 바이트가 통째로 셸로 간다. 512바이트 조각이면 확인 없이 도는 구간이 그만큼
+            // 길어지므로 중간에도 다시 본다 — 유출 상한을 이 간격으로 묶는다
+            if index > sent, (index - sent) % foregroundRecheckStride == 0 {
+                guard warpForegroundIsExpected(
+                    foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
+                ) else {
+                    return .err("foreground changed after \(index - sent) bytes")
+                }
+            }
             var value = CChar(bitPattern: all[index])
             let result = withUnsafeMutablePointer(to: &value) {
                 ioctl(ttyFD, requestTIOCSTI, UnsafeMutableRawPointer($0))
@@ -211,13 +225,32 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
 private func watchUntilRead(
     expectedPID: Int32, state: HelperState, injected: Int, deadline: Date
 ) -> WarpHelperResponse {
+    // 넣은 직후부터 큐는 **줄기만 해야 한다**. 한 번이라도 늘면 그 사이 사용자가 친 키가
+    // 섞인 것이다 — `FIONREAD`는 총량만 주므로 출처를 가릴 다른 방법이 없다.
+    // 총량 비교(`pending <= injected`)로는 못 가른다: 우리 42바이트가 모두 소비된 뒤
+    // 사용자가 한 글자를 치면 `1 <= 42`라 사용자 것을 버리게 된다(검증자 재현).
+    var lowWaterMark = Int.max
+    var sawForeignBytes = false
     while true {
         guard let pending = ttyPendingBytes(state.ttyFD) else { return .err(lastErrnoName()) }
-        guard pending > 0 else { return .ok(String(injected)) }
-        if !warpForegroundIsExpected(
+        if pending > lowWaterMark { sawForeignBytes = true }
+        lowWaterMark = min(lowWaterMark, pending)
+
+        let readerIsOurs = warpForegroundIsExpected(
             foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
-        ) {
-            guard pending <= injected else {
+        )
+        if pending == 0 {
+            // 큐는 비었지만 **누가 가져갔는지**를 함께 봐야 한다. 그 사이 claude가 끝나
+            // 포그라운드가 셸이면 우리 tail을 셸이 읽어 간 것이다 — 성공으로 답하면 앱이
+            // 그 위에 CR을 얹고, 사용자의 다음 Enter가 그 줄을 실행한다
+            guard readerIsOurs else {
+                checkoutLog("Warp 주입 헬퍼: 큐는 비었으나 겨눈 claude가 아닌 쪽이 읽어 감")
+                return .err("queue drained by a different reader")
+            }
+            return .ok(String(injected))
+        }
+        if !readerIsOurs {
+            guard !sawForeignBytes else {
                 checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라졌으나 큐(\(pending)바이트)에 사용자 입력이 섞여 버리지 않음")
                 return .err("expected reader gone; queue holds user input")
             }

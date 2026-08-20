@@ -708,6 +708,24 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.keystrokes, ["\u{15}"])
     }
 
+    /// 회귀 방지: "우리 조각이 입력창에 남아 있는가"는 **시도**로 세우고 **CR·클리어로 내린다**.
+    /// 결과로 세우면 헬퍼가 일부만 넣고 실패했을 때 남은 조각을 못 지우고(미탐),
+    /// 한 번 성공한 뒤 계속 참으로 두면 다음 입력을 시작도 못 했을 때 사용자 초안을 지운다(오탐).
+    func testInputBoxOwnershipRisesOnAttemptAndFallsOnSubmit() {
+        var mayHoldOurs = false
+        // `deliverClaudeInputs`의 sendKeys 래퍼와 같은 규칙
+        func record(_ keys: String, sent: Bool) {
+            mayHoldOurs = true
+            if sent, keys == "\r" || keys == "\u{15}" { mayHoldOurs = false }
+        }
+        record("!gh pr view", sent: false) // 전송은 실패했지만 바이트는 이미 들어갔을 수 있다
+        XCTAssertTrue(mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
+        record("\r", sent: true)
+        XCTAssertFalse(mayHoldOurs, "제출로 입력창이 비었는데 정리를 보내면 사용자 초안을 지운다")
+        record("\r", sent: false) // 제출 실패 — 본문은 입력창에 그대로 남아 있다
+        XCTAssertTrue(mayHoldOurs)
+    }
+
     /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
     /// 이 자리가 게이트를 우회하면 정리가 남의 세션 입력창을 지운다
     func testAbandonedInputCleanupIsGatedToo() {

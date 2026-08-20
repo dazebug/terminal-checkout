@@ -422,13 +422,18 @@ public func deliverClaudeInputs(
         return
     }
 
-    // 우리가 실제로 바이트를 내보냈는지 — 정리(Ctrl+U)를 보낼지 가르는 조건이다.
-    // 한 바이트도 못 보냈다면 입력창에 있는 것은 사용자 초안뿐이라 지우면 안 된다
-    var weSentSomething = false
+    // **지금 입력창에 우리 조각이 남아 있을 수 있는가** — 정리(Ctrl+U)를 보낼지 가르는 조건이다.
+    // "과거에 성공한 적 있는가"가 아니다:
+    //  - 전송이 실패로 돌아와도 바이트는 이미 들어갔을 수 있다(헬퍼가 일부만 넣고 err).
+    //    그래서 결과가 아니라 **시도**로 세운다 — 아니면 남은 조각을 못 지운다
+    //  - CR이 나갔으면 입력창은 비었다. 거기서 내리지 않으면, 다음 입력을 시작도 못 한 채
+    //    끝났을 때 정리가 **사용자 초안**을 지운다
+    var inputBoxMayHoldOurs = false
     let io = ClaudeSessionIO(
-        sendKeys: {
-            let sent = sendKeys($0, to: handle, expectedPID: claudePID)
-            if sent { weSentSomething = true }
+        sendKeys: { keys in
+            inputBoxMayHoldOurs = true
+            let sent = sendKeys(keys, to: handle, expectedPID: claudePID)
+            if sent, keys == "\r" || keys == "\u{15}" { inputBoxMayHoldOurs = false }
             return sent
         },
         screenText: { screenText(of: handle) },
@@ -454,7 +459,7 @@ public func deliverClaudeInputs(
     if case .warp = handle, !accessibilityIsTrusted() {
         // 정리도 같은 문을 지난다 — 세션이 바뀐 뒤라면 남의 입력창을 지우게 된다.
         // 우리가 아무것도 못 보냈으면 지울 우리 조각도 없다(사용자 초안만 지우게 된다)
-        if clearAbandonedInput(io: io, weSentSomething: weSentSomething) {
+        if clearAbandonedInput(io: io, weSentSomething: inputBoxMayHoldOurs) {
             checkoutLog("전달 도중 손쉬운 사용 권한이 사라짐 — claude 입력창을 비우고 중단")
         } else {
             checkoutLog("손쉬운 사용 권한이 없어 전달하지 못함 — 우리가 보낸 것이 없어 입력창은 건드리지 않음")
