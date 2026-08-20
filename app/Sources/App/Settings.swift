@@ -3,17 +3,19 @@ import Foundation
 
 /// 앱이 단일 소스로 관리하는 설정. 터미널 선택은 확장이 아니라 여기서 결정된다.
 enum Settings {
-    static var terminal: String {
+    static var terminal: Terminal {
         get {
-            if let value = UserDefaults.standard.string(forKey: "terminal") { return value }
+            if let value = UserDefaults.standard.string(forKey: "terminal") {
+                return Terminal(storedValue: value)
+            }
             // 기본값: 설치된 터미널 자동 감지. 순서는 지원이 오래돼 실사용으로 다져진
             // 순이다 — Warp는 pane을 지목할 정식 API가 없어 헬퍼 프로세스를 끼우므로 마지막
-            if PermissionChecker.isITermInstalled { return "iterm" }
-            if PermissionChecker.isWezTermInstalled { return "wezterm" }
-            if PermissionChecker.isWarpInstalled { return "warp" }
-            return "iterm"
+            if PermissionChecker.isITermInstalled { return .iterm }
+            if PermissionChecker.isWezTermInstalled { return .wezterm }
+            if PermissionChecker.isWarpInstalled { return .warp }
+            return .iterm
         }
-        set { UserDefaults.standard.set(newValue, forKey: "terminal") }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "terminal") }
     }
 
     /// 소켓으로 마지막 요청이 도착한 시각 — "확장이 Chrome에 로드되어 실제로 연결됐다"는 유일한 증거.

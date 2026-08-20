@@ -489,11 +489,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func terminalChanged() {
         if weztermRadio.state == .on {
-            Settings.terminal = "wezterm"
+            Settings.terminal = .wezterm
         } else if warpRadio.state == .on {
-            Settings.terminal = "warp"
+            Settings.terminal = .warp
         } else {
-            Settings.terminal = "iterm"
+            Settings.terminal = .iterm
         }
         updateTerminalControls()
         refresh()
@@ -501,16 +501,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateTerminalControls() {
         switch Settings.terminal {
-        case "wezterm": weztermRadio.state = .on
-        case "warp": warpRadio.state = .on
-        default: itermRadio.state = .on
+        case .iterm: itermRadio.state = .on
+        case .wezterm: weztermRadio.state = .on
+        case .warp: warpRadio.state = .on
         }
         // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
         // 그 사이 사용자가 끼어들면 입력이 섞인다
         var note = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
             + "claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요."
         // Warp는 화면을 "포커스된 탭"만 보여 주므로, 앱이 자기 탭을 확인할 수 있을 때만 제출한다
-        if Settings.terminal == "warp" {
+        if Settings.terminal == .warp {
             note += " Warp는 그 탭을 보고 있는 동안에만 전달됩니다 — 다른 탭으로 옮기면 "
                 + "멈췄다가 돌아오면 이어집니다."
         }
@@ -558,7 +558,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
-        if Settings.terminal == "iterm" {
+        // 손쉬운 사용이 없어도 명령 실행은 된다(claude 입력 전달만 막힌다) — 오류가 아니라 경고로 다룬다
+        let accessibilityGranted = PermissionChecker.isAccessibilityGranted
+        // 터미널별 권한 UI — 케이스를 추가하면 "이 터미널에 권한 섹션이 필요한가"가 여기서
+        // 컴파일 에러로 강제된다
+        switch Settings.terminal {
+        case .iterm:
             if PermissionChecker.isITermInstalled {
                 let status = PermissionChecker.iTermAutomationStatus()
                 permission = status.isGranted ? .ok(status.label) : .warning(status.label)
@@ -566,14 +571,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 permission = .warning("iTerm2가 설치되어 있지 않음")
             }
             apply(permission!, to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
-        }
-        var granted = false
-        if let permission, case .ok = permission { granted = true }
-        permissionSection.isHidden = Settings.terminal != "iterm" || granted
-
-        // 손쉬운 사용은 없어도 실행도 입력 전달도 된다 — 오류가 아니라 경고로 다룬다
-        let accessibilityGranted = PermissionChecker.isAccessibilityGranted
-        if Settings.terminal == "warp" {
+        case .wezterm:
+            break // CLI 실행이라 TCC 권한이 필요 없다
+        case .warp:
             apply(
                 accessibilityGranted
                     ? .ok("허용됨")
@@ -581,7 +581,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
             )
         }
-        accessibilitySection.isHidden = Settings.terminal != "warp" || accessibilityGranted
+        var granted = false
+        if let permission, case .ok = permission { granted = true }
+        permissionSection.isHidden = Settings.terminal != .iterm || granted
+        accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
 
         pipeline.update(pipelineNodes(
             manifest: manifest, extensionState: extensionState,
@@ -623,12 +626,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let terminalName: String
         let terminalColor: NSColor
         let terminalDetail: String
-        if Settings.terminal == "wezterm" {
+        switch Settings.terminal {
+        case .iterm:
+            terminalName = "iTerm2"
+            terminalColor = permission.map(color) ?? Theme.warn
+            terminalDetail = "iTerm2 자동화: \(permission?.message ?? "상태 미확인")"
+        case .wezterm:
             terminalName = "WezTerm"
             let installed = PermissionChecker.isWezTermInstalled
             terminalColor = installed ? Theme.ok : Theme.err
             terminalDetail = installed ? "WezTerm CLI 사용 가능 — TCC 권한 불필요" : "WezTerm이 설치되어 있지 않음"
-        } else if Settings.terminal == "warp" {
+        case .warp:
             terminalName = "Warp"
             if !PermissionChecker.isWarpInstalled {
                 terminalColor = Theme.err
@@ -641,10 +649,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.warn
                 terminalDetail = "손쉬운 사용 권한 없음 — 명령은 실행되고 claude 입력은 전달되지 않음"
             }
-        } else {
-            terminalName = "iTerm2"
-            terminalColor = permission.map(color) ?? Theme.warn
-            terminalDetail = "iTerm2 자동화: \(permission?.message ?? "상태 미확인")"
         }
         return [
             .init(label: "Chrome 확장", color: color(extensionState), detail: extensionState.message),

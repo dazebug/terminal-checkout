@@ -79,12 +79,12 @@ public func runProcess(
 /// 사용자에게 보이는 명령 블록이 하나 늘고 쓸모없는 프로세스가 남는다.
 @discardableResult
 public func runInTerminal(
-    command: String, terminal: String, injectsClaudeInput: Bool = false
+    command: String, terminal: Terminal, injectsClaudeInput: Bool = false
 ) throws -> TerminalSessionHandle {
     switch terminal {
-    case "wezterm": return try runInWezTerm(command)
-    case "warp": return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
-    default: return try runInITerm(command)
+    case .iterm: return try runInITerm(command)
+    case .wezterm: return try runInWezTerm(command)
+    case .warp: return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
     }
 }
 
