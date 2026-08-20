@@ -17,7 +17,8 @@
 | `TerminalSessionHandle` (`ClaudeInjector.swift`) | 케이스 추가. 핸들을 못 만들면(`.none`) claude 입력은 전달되지 않는다 |
 | `ClaudeInjector.deliverClaudeInputs` | 핸들에서 tty 경로를 얻는 갈래 |
 | `ClaudeInjector.sendKeys` | 텍스트 · CR(`\r`, 제출) · Ctrl+U(`\u{15}`, 입력창 클리어) 세 가지 |
-| `ClaudeInjector.screenText` | 화면 텍스트 조회 — 타이핑 **직전과 직후** 두 번 찍어 비교한다(`screenReflectsNewInput`). pane 단위로 정확히 읽지 못하는 터미널은 이 확인이 유일한 안전장치이므로, 읽을 수 없으면 입력을 보내지 않는 것이 정답이다 |
+| `ClaudeInjector.screenText` | 화면 텍스트 조회 — 타이핑 **직전과 직후** 두 번 찍어 비교한다(`screenReflectsNewInput`). 읽을 수 없으면 입력을 보내지 않는 것이 정답이다 |
+| `ClaudeSessionIO.screenNeedsPaneProof` | 화면 조회가 그 세션의 것이라고 단정할 수 없는 터미널은 true — 입력마다 난수 표식으로 pane을 먼저 증명한다. pane/세션 id로 정확히 읽는 터미널은 기본값(false) 그대로 둔다 |
 
 `ClaudeInjector`의 세 갈래 중 하나만 빠져도 실행은 되고 claude 입력만 조용히 멈춘다. 특히 `screenText`가 없으면 반영 확인이 실패해 CR을 보내지 못한다.
 
@@ -82,7 +83,8 @@ CLI 응답이나 스크립트 출력을 파싱하는 부분(창 고르기, pane�
 - [ ] 512바이트가 넘는 입력(한글 포함)이 잘리지 않고 전달된다 — tty 입력 큐 상한을 나눠 넣는 갈래
 - [ ] 연속으로 두 버튼을 빠르게 누르면 두 탭에 각자의 명령이 뜬다 (Tab Config 파일이 서로를 덮어쓰지 않는다)
 - [ ] 사용자가 만든 같은 이름의 Tab Config가 덮어써지지 않는다
-- [ ] 사용자가 다른 탭·다른 앱을 보고 있는 동안에도 입력이 그 탭에만 들어간다
+- [ ] 사용자가 다른 탭·다른 앱을 보고 있으면 제출이 보류되고, 돌아오면 이어서 완료된다 (그 사이 표식이 입력창에 남지 않아야 한다)
+- [ ] 전달 도중 손쉬운 사용 권한을 회수하면 더 이상 아무것도 주입되지 않고, 남은 조각이 정리된다
 - [ ] 그 터미널이 세션 내역을 저장하는 방식(Warp는 GUI로 띄운 세션만 저장한다는 사용자 진술)이 우리가 만든 탭에도 적용되는지
 
 ## 3. 검증 수단

@@ -23,8 +23,19 @@ if pgrep -f 'terminal-checkout-warp-helper --serve' >/dev/null 2>&1; then
     pkill -f 'terminal-checkout-warp-helper --serve' || true
     sleep 1
 fi
-rm -f "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock 2>/dev/null || true
-rm -f "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml 2>/dev/null || true
+# 앱과 같은 판정으로만 지운다: 소켓은 실제로 소켓인 것만(같은 이름의 일반 파일·심볼릭 링크를
+# 누구나 놓을 수 있다), Tab Config는 우리가 만든 헤더가 있는 것만
+# (조건은 if로 쓴다 — set -e에서 AND 리스트가 거짓이면 스크립트가 통째로 끝난다)
+for sock in "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock; do
+    if [ -S "$sock" ] && [ ! -L "$sock" ]; then
+        rm -f "$sock"
+    fi
+done
+for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do
+    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -q '^# Terminal Checkout이 자동 생성합니다'; then
+        rm -f "$toml"
+    fi
+done
 if [ -d "$APP_PATH" ]; then
     rm -rf "$APP_PATH"
     echo "[1/4] 앱 삭제됨: $APP_PATH"

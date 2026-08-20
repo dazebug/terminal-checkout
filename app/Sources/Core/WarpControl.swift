@@ -281,9 +281,16 @@ private func firstTextAreaValue(in element: AXUIElement, depth: Int) -> String? 
 // `runInWarp`은 탭이 열린 뒤 Tab Config를 지운다. 건너뛰는 것은 SIGKILL·전원 차단·앱 크래시다.
 // 그 몫을 다음 실행이 훑어 되찾는다 — **살아 있는 것을 건드리지 않는 것**이 조건이다.
 
-/// 주인이 죽은 헬퍼 소켓 파일을 지운다. 연결되면 살아 있는 헬퍼이므로 그대로 둔다.
+/// 주인이 죽은 헬퍼 소켓 파일을 지운다. 삭제 조건이 셋인 이유는 하나씩으로는 남의 파일을
+/// 지우기 때문이다:
+///  ① 이름이 우리 것 — 그러나 같은 이름의 **일반 파일·심볼릭 링크**를 누구나 놓을 수 있다
+///  ② `lstat`이 소켓 — 링크를 따라가지 않으므로 링크가 가리키는 파일도 안전하다
+///  ③ 연결되지 않음 — 연결되면 살아 있는 헬퍼다
 /// 갓 만들어진 파일을 건너뛰는 이유는 `bind`와 `listen` 사이의 짧은 순간에 연결이 거절되기
 /// 때문이다 — 그 창에서 지우면 살아 있는 헬퍼의 소켓을 없애 전달이 통째로 사라진다.
+/// ③과 `unlink` 사이의 TOCTOU는 없앨 수 없다(경로로 지우는 수밖에 없다). 삭제 직전에
+/// `lstat`을 한 번 더 해 창을 좁히고, 그 사이 새로 태어난 헬퍼는 ①의 난수 토큰이 달라
+/// 같은 경로를 쓰지 않는다는 것으로 막는다.
 func reclaimDeadWarpHelperSockets(
     in directories: [String] = [NSTemporaryDirectory(), "/tmp"], youngerThan grace: TimeInterval = 60
 ) {
@@ -291,15 +298,35 @@ func reclaimDeadWarpHelperSockets(
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
         for name in names where warpHelperSocketFileIsOurs(name: name) {
             let path = (directory as NSString).appendingPathComponent(name)
-            guard let modified = fileModificationDate(path),
-                  Date().timeIntervalSince(modified) > grace else { continue }
+            guard isUnixSocketFile(path),
+                  let modified = fileModificationDate(path),
+                  Date().timeIntervalSince(modified) > grace
+            else { continue }
             if let fd = connectToUnixSocket(path: path) {
                 close(fd)
                 continue
             }
+            guard isUnixSocketFile(path) else { continue }
             unlink(path)
         }
     }
+}
+
+/// 심볼릭 링크를 따라가지 않는 타입 확인 — 따라가면 링크가 가리키는 남의 파일을 지운다.
+private func isUnixSocketFile(_ path: String) -> Bool {
+    var info = stat()
+    guard lstat(path, &info) == 0 else { return false }
+    return (info.st_mode & S_IFMT) == S_IFSOCK
+}
+
+/// 우리가 만든 Tab Config만 지운다. 예약 삭제는 20초 뒤에 도는데 그 사이 사용자가 같은
+/// 경로에 자기 파일을 놓았을 수 있어, 경로가 아니라 내용을 보고 판단한다.
+func removeWarpTabConfigIfOurs(path: String) {
+    guard warpTabConfigFileIsOurs(name: (path as NSString).lastPathComponent),
+          let contents = try? String(contentsOfFile: path, encoding: .utf8),
+          warpTabConfigIsOurs(contents: contents)
+    else { return }
+    try? FileManager.default.removeItem(atPath: path)
 }
 
 /// 앱이 자기 Tab Config를 지우기 전에 죽으면 파일이 남아 Warp `+` 메뉴에 쌓인다.
@@ -312,11 +339,9 @@ func reclaimStaleWarpTabConfigs(
     for name in names where warpTabConfigFileIsOurs(name: name) {
         let path = (directory as NSString).appendingPathComponent(name)
         guard let modified = fileModificationDate(path),
-              Date().timeIntervalSince(modified) > age,
-              let contents = try? String(contentsOfFile: path, encoding: .utf8),
-              warpTabConfigIsOurs(contents: contents)
+              Date().timeIntervalSince(modified) > age
         else { continue }
-        try? FileManager.default.removeItem(atPath: path)
+        removeWarpTabConfigIfOurs(path: path)
     }
 }
 

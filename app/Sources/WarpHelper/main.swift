@@ -27,17 +27,37 @@ private let injectQueueLimit = 512
 /// 큐가 빌 때까지 기다리는 상한. claude가 바쁘면 소비가 늦는데, 여기서 무한정 기다리면
 /// 전달 스레드가 통째로 묶인다 — 시간을 넘기면 `err`로 돌려주고 앱의 재시도에 맡긴다.
 private let injectDrainTimeout: TimeInterval = 10
+/// 한 요청으로 받아 주는 최대 바이트. claude 입력은 한 줄이라 이보다 훨씬 짧다 —
+/// 상한이 없으면 보내는 쪽이 수십만 번의 ioctl을 시킬 수 있다.
+private let injectMaxBytes = 8 * 1024
+/// 수신 버퍼 상한. base64는 원본의 4/3이라 위 상한의 두 배면 넉넉하다.
+private let requestLineLimit = 16 * 1024
 
-/// 앱이 `bye`를 못 보내고 끝나는 경우(claude가 뜨지 않아 포기 등)에 대비한 자동 종료.
-/// claude 기동 대기가 최대 120초라 그보다 넉넉해야 한다.
-private let idleTimeout: TimeInterval = 300
-private let maxLifetime: TimeInterval = 3600
+// 위협 모델: 이 소켓은 같은 uid의 **아무 프로세스나** 그 pane의 claude에 입력을 넣을 수 있게
+// 한다. 같은 uid에게 비밀을 숨길 자리가 없어서(argv·환경변수·0600 파일을 모두 읽고, 소켓
+// 경로는 Tab Config와 pane 화면에 그대로 보인다) 인증으로는 좁힐 수 없다. 그래서 좁히는
+// 축은 **수명**이다 — 전달이 끝나면 `bye`로 즉시 죽고, 그러지 못한 경우에만 아래 상한이 돈다.
+//
+/// `bye`가 오지 못한 경우의 유휴 상한. 정상 전달에서 가장 긴 침묵은 앱이 claude 기동을
+/// 기다리는 구간(`deliverClaudeInputs`의 기본 120초)이라 그보다 여유만 두면 된다.
+private let idleTimeout: TimeInterval = 180
+/// 전체 수명 상한. 최악의 정상 전달(기동 대기 120초 + 입력 5개 × 재시도)이 400초 안쪽이라
+/// 그 두 배 남짓으로 잡는다 — 여기에 걸린다는 것은 이미 비정상이다.
+private let maxLifetime: TimeInterval = 900
 
 private let serveFlag = "--serve"
 
 /// 시그널 핸들러는 async-signal-safe한 것만 부를 수 있다 — Swift 문자열을 만들 수 없으므로
-/// 경로를 C 문자열로 미리 떠 둔다.
+/// 경로를 C 문자열로 미리 떠 둔다. `lstat`·`unlink`는 둘 다 안전 목록에 있다.
 private var socketPathForSignal: UnsafeMutablePointer<CChar>?
+
+/// 우리 소켓일 때만 지운다. 경로만 보고 지우면, 그 사이 누가 같은 경로에 놓은 파일을
+/// 없앤다 — 정상 경로에서는 겹칠 일이 없지만 삭제는 되돌릴 수 없다.
+private func unlinkIfSocket(_ path: UnsafePointer<CChar>) {
+    var info = stat()
+    guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK else { return }
+    unlink(path)
+}
 
 /// SIGTERM(앱 재설치·`pkill`)·SIGINT·SIGHUP에서 소켓 파일을 지우고 나간다.
 /// SIGKILL은 잡을 수 없으므로 그 몫은 앱이 다음 실행에서 회수한다
@@ -46,7 +66,7 @@ private func installSocketCleanupOnSignals(path: String) {
     socketPathForSignal = strdup(path)
     for number in [SIGTERM, SIGINT, SIGHUP] {
         signal(number) { _ in
-            if let path = socketPathForSignal { unlink(path) }
+            if let path = socketPathForSignal { unlinkIfSocket(path) }
             _exit(0)
         }
     }
@@ -74,6 +94,9 @@ private func ttyPendingBytes(_ fd: Int32) -> Int? {
 /// 문자가 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
 private func inject(_ bytes: Data, into ttyFD: Int32) -> WarpHelperResponse {
     guard !bytes.isEmpty else { return .ok("0") }
+    guard bytes.count <= injectMaxBytes else {
+        return .err("payload too large (\(bytes.count) > \(injectMaxBytes))")
+    }
     let all = [UInt8](bytes)
     var sent = 0
     let deadline = Date().addingTimeInterval(injectDrainTimeout)
@@ -108,7 +131,7 @@ private func serve(client: Int32, ttyFD: Int32, ttyPath: String) -> Bool {
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-    var buffer = LineBuffer()
+    var buffer = LineBuffer(limit: requestLineLimit)
     var chunk = [UInt8](repeating: 0, count: 4096)
     while true {
         while let line = buffer.nextLine() {
@@ -204,7 +227,9 @@ guard tcgetsid(ttyFD) == getsid(0) else {
 }
 
 umask(0o077)
-unlink(socketPath)
+// 이미 있는 파일을 지우고 bind한다. 소켓이 아닌 것은 우리가 만든 것이 아니므로 손대지 않는다 —
+// 앱이 난수 토큰으로 경로를 뽑으니 정상 경로에서는 겹치지 않지만, 겹쳤다면 그건 남의 파일이다
+socketPath.withCString { unlinkIfSocket($0) }
 guard var address = makeUnixSockaddr(socketPath) else { fail("소켓 경로가 너무 김: \(socketPath)") }
 let server = socket(AF_UNIX, SOCK_STREAM, 0)
 guard server >= 0 else { fail("socket(): \(lastErrnoName())") }
@@ -245,13 +270,15 @@ while !finished {
         checkoutLog("Warp 주입 헬퍼 poll 실패: \(lastErrnoName())")
         break
     }
-    // pane이 닫히면 pty가 회수돼 이 조회가 실패한다 — 떠도는 프로세스로 남지 않는다
-    if !finished && tcgetpgrp(ttyFD) < 0 { break }
+    // pane이 닫혔는지 확인한다. `tcgetpgrp`이 성공하는지만 보면 부족하다 — tty 번호는
+    // 재사용되므로(실측), 우리 pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면 그대로 살아남아
+    // 남의 세션 tty에 붙은 헬퍼가 된다. 세션 id까지 비교해야 그 갈래가 죽는다
+    if !finished && tcgetsid(ttyFD) != getsid(0) { break }
     if !finished && Date().timeIntervalSince(lastActivity) > idleTimeout { break }
     if !finished && Date().timeIntervalSince(startedAt) > maxLifetime { break }
 }
 
-unlink(socketPath)
+if let path = socketPathForSignal { unlinkIfSocket(path) }
 close(server)
 close(ttyFD)
 exit(0)

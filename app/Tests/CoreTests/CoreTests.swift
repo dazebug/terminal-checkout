@@ -408,10 +408,17 @@ private final class FakeClaudeSession {
     var screenPrefix = ""
     /// 제출한 입력이 화면(대화 기록)에 남게 한다
     var keepSubmittedOnScreen = false
+    /// 화면 읽기가 pane 단위로 정확하지 않은 터미널(Warp)
+    var screenNeedsPaneProof = false
+    /// 읽히는 화면이 우리 pane이 아닌 상황 — 우리 타이핑은 화면에 비치지 않는다
+    var screenIsForeign = false
+    /// 그 남의 pane이 뒤늦게 얻는 텍스트 (Codex 재현: 개수가 증가한다)
+    var foreignScreenGains: [String] = []
     private(set) var sendCallCount = 0
     private var screenCalls = 0
     private var box = ""
     private var history = ""
+    private var foreignScreen = "다른 pane 화면"
 
     var io: ClaudeSessionIO {
         ClaudeSessionIO(
@@ -425,16 +432,20 @@ private final class FakeClaudeSession {
                     if keepSubmittedOnScreen { history += box + " " }
                     box = ""
                 case "\u{15}": box = ""
-                default: if !dropTypingAt.contains(sendCallCount) { box += keys }
+                default:
+                    if !dropTypingAt.contains(sendCallCount) { box += keys }
+                    if foreignScreenGains.contains(keys) { foreignScreen += " " + keys }
                 }
                 return true
             },
             screenText: { [unowned self] in
                 screenCalls += 1
                 if failScreenAt.contains(screenCalls) { return nil }
+                if screenIsForeign { return foreignScreen }
                 return screenPrefix + " " + history + "❯ " + box
             },
             confirmSession: { [unowned self] _ in sessionAlive },
+            screenNeedsPaneProof: screenNeedsPaneProof,
             wait: { _ in }
         )
     }
@@ -530,7 +541,8 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
             screenText: { session.io.screenText() },
-            confirmSession: { _ in confirms += 1; return confirms == 1 },
+            // 입력 사이 게이트와 첫 CR 게이트는 통과하고, 재전송 직전에 세션이 바뀐 상황
+            confirmSession: { _ in confirms += 1; return confirms <= 2 },
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
@@ -586,6 +598,61 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.dropTypingAt = Set(1...100) // 우리 입력은 실제로 뜨지 않는다
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
+    }
+
+    /// 회귀 방지(P0-1): 타이핑 전에는 없던 프로브가 타이핑 후 **다른 pane에** 나타나면 개수도
+    /// 증가한다 — 개수 비교는 과거 텍스트 오탐만 없앨 뿐 화면의 출처를 보증하지 않는다.
+    /// 우리 tty에만 들어가는 난수가 그 화면에 뜨는 것을 먼저 확인해야 화면 확인이 성립한다.
+    /// 두 갈래를 한 테스트에 둔 이유는 이 플래그가 실제로 판정을 가르는지까지 고정하기 위해서다
+    func testPaneProofIsWhatBlocksAForeignScreen() {
+        func run(paneProof: Bool) -> (submitted: Int, lines: [String]) {
+            let session = FakeClaudeSession()
+            session.screenIsForeign = true
+            session.foreignScreenGains = [inputs[0]]
+            session.screenNeedsPaneProof = paneProof
+            let count = submitClaudeInputs([inputs[0]], io: session.io)
+            return (count, session.submitted)
+        }
+        // pane 증명이 없으면 남의 화면이 그대로 제출을 승인한다 (Codex가 재현한 공격)
+        XCTAssertEqual(run(paneProof: false).submitted, 1)
+        // 증명을 요구하면 난수가 그 화면에 뜨지 않으므로 아무것도 제출되지 않는다
+        XCTAssertEqual(run(paneProof: true).submitted, 0)
+        XCTAssertTrue(run(paneProof: true).lines.isEmpty)
+    }
+
+    /// pane 증명을 켜도 정상 경로는 그대로 끝까지 간다 — 강화가 전달을 막으면 안 된다
+    func testPaneProofDoesNotBlockTheNormalPath() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
+        XCTAssertEqual(session.submitted, inputs)
+    }
+
+    /// 증명에 쓴 난수가 입력과 함께 제출되면 claude가 엉뚱한 것을 받는다 —
+    /// 표식은 반드시 지우고 나서 친다
+    func testPaneProofTokenNeverReachesSubmission() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 회귀 방지(P0-2): 첫 CR도 세션 확인을 통과해야 한다. 화면 반영을 확인한 직후라도 그
+    /// 사이 claude가 죽고 셸이나 새 claude가 같은 tty를 차지할 수 있고, 그 CR은 사용자가
+    /// 치고 있던 것을 제출·실행시킨다
+    func testFirstCarriageReturnAlsoRequiresSessionConfirmation() {
+        let session = FakeClaudeSession()
+        var confirms = 0
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            // 입력 사이 게이트만 통과하고, 그 뒤 세션이 바뀐 상황
+            confirmSession: { _ in confirms += 1; return confirms == 1 },
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertEqual(session.keystrokes, [inputs[0]]) // 타이핑만 나가고 CR은 막혔다
     }
 
     /// 같은 입력을 두 번 예약했을 때, 앞의 것이 화면(대화 기록)에 남아 있어도 뒤의 것이
@@ -1135,11 +1202,29 @@ final class LineBufferTests: XCTestCase {
     }
 
     /// 줄바꿈 없이 계속 보내는 상대에게 메모리를 무한정 내주지 않는다
-    func testOverlongLineIsRejected() {
+    func testOverlongTailIsRejected() {
         var buffer = LineBuffer(limit: 16)
         buffer.append(Data(String(repeating: "x", count: 17).utf8))
         XCTAssertTrue(buffer.isOverflowed)
         XCTAssertNil(buffer.nextLine())
+    }
+
+    /// 회귀 방지(P0-4): 상한을 넘긴 줄이 **마지막 줄바꿈과 함께** 들어오면 꼬리 검사만으로는
+    /// 그대로 통과한다 — 완성된 줄에도 같은 상한을 건다
+    func testOverlongCompletedLineIsRejected() {
+        var buffer = LineBuffer(limit: 16)
+        buffer.append(Data((String(repeating: "x", count: 20) + "\n").utf8))
+        XCTAssertTrue(buffer.isOverflowed)
+        XCTAssertNil(buffer.nextLine())
+    }
+
+    func testLinesWithinTheLimitStillPassWhenManyArriveAtOnce() {
+        var buffer = LineBuffer(limit: 16)
+        buffer.append(Data("tty\nbye\ntty\n".utf8))
+        XCTAssertFalse(buffer.isOverflowed)
+        XCTAssertEqual(buffer.nextLine(), "tty")
+        XCTAssertEqual(buffer.nextLine(), "bye")
+        XCTAssertEqual(buffer.nextLine(), "tty")
     }
 }
 
@@ -1188,6 +1273,31 @@ final class WarpProcessTests: XCTestCase {
     }
 }
 
+// MARK: - Warp: pane 증명이 필요한 핸들
+// 화면 조회가 그 세션의 것이라고 단정할 수 있는지는 터미널마다 다르다. 이 판정이 어긋나면
+// iTerm2·WezTerm이 불필요한 증명 비용을 물거나, Warp가 증명 없이 제출한다.
+
+final class PaneProofRoutingTests: XCTestCase {
+    func testOnlyWarpNeedsPaneProof() {
+        XCTAssertTrue(TerminalSessionHandle.warp(helperSocket: "/tmp/x.sock").screenNeedsPaneProof)
+        XCTAssertFalse(TerminalSessionHandle.iterm(sessionID: "s", tty: "/dev/ttys001").screenNeedsPaneProof)
+        XCTAssertFalse(
+            TerminalSessionHandle.wezterm(paneID: "1", cliPath: "/x", socketPath: nil).screenNeedsPaneProof
+        )
+        XCTAssertFalse(TerminalSessionHandle.none.screenNeedsPaneProof)
+    }
+
+    /// 표식은 우리 실행에서만 나올 수 있어야 하고, claude 입력창에서 특별한 뜻을 가지면 안 된다
+    func testPaneProofTokenIsPlainAndUnique() {
+        let tokens = (0..<50).map { _ in paneProofToken() }
+        // 영숫자만 — `/`·`!`·`@`는 claude 입력창에서 모드·자동완성을 건드린다
+        XCTAssertTrue(tokens.allSatisfy { token in token.allSatisfy { $0.isLetter || $0.isNumber } })
+        // 우연히 다른 pane에 같은 것이 뜰 수 없을 만큼 길고, 실행마다 달라야 한다
+        XCTAssertTrue(tokens.allSatisfy { $0.count == 12 })
+        XCTAssertGreaterThan(Set(tokens).count, 45)
+    }
+}
+
 // MARK: - Warp: 회수 (비정상 종료가 남긴 것)
 // 정상 경로는 스스로 치운다(헬퍼는 `bye`·pane 종료·시그널에서, `runInWarp`은 탭이 열린 뒤).
 // SIGKILL·앱 크래시만 그 경로를 건너뛰므로 다음 실행이 훑는데, **살아 있는 것을 건드리지
@@ -1233,8 +1343,13 @@ final class WarpReclaimTests: XCTestCase {
         return fd
     }
 
-    func testDeadHelperSocketIsRemoved() {
-        let path = write("tcw-deadbeef.sock", ageSeconds: 300)
+    /// 주인이 죽은 소켓 = 파일은 남았는데 아무도 듣지 않는 상태 (SIGKILL로 끝난 헬퍼)
+    func testDeadHelperSocketIsRemoved() throws {
+        let path = (directory as NSString).appendingPathComponent("tcw-deadbeef.sock")
+        close(try listeningSocket(at: path))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-300)], ofItemAtPath: path
+        )
         reclaimDeadWarpHelperSockets(in: [directory])
         XCTAssertFalse(exists(path))
     }
@@ -1257,6 +1372,35 @@ final class WarpReclaimTests: XCTestCase {
         let path = write("tcw-facefeed.sock", ageSeconds: 1)
         reclaimDeadWarpHelperSockets(in: [directory])
         XCTAssertTrue(exists(path))
+    }
+
+    /// 회귀 방지(P0-3): 이름만 보고 지우면 같은 이름의 **일반 파일**이 사라진다 (Codex 재현)
+    func testRegularFileWithOurSocketNameIsNotRemoved() {
+        let path = write("tcw-deadbeef.sock", "사용자 파일", ageSeconds: 3000)
+        reclaimDeadWarpHelperSockets(in: [directory])
+        XCTAssertTrue(exists(path))
+    }
+
+    /// 심볼릭 링크를 따라가 지우면 링크가 가리키는 남의 파일이 사라진다
+    func testSymlinkWithOurSocketNameIsNotRemoved() throws {
+        let target = write("남의파일.txt", "소중한 것", ageSeconds: 3000)
+        let link = (directory as NSString).appendingPathComponent("tcw-cafed00d.sock")
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
+        reclaimDeadWarpHelperSockets(in: [directory])
+        XCTAssertTrue(exists(target))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: link))
+    }
+
+    /// 20초 뒤 예약 삭제도 경로만 보고 지우면 안 된다 — 그 사이 사용자가 같은 경로에
+    /// 자기 파일을 놓았을 수 있다
+    func testScheduledTabConfigRemovalRechecksTheHeader() {
+        let ours = write("terminal-checkout-deadbeef.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 0)
+        removeWarpTabConfigIfOurs(path: ours)
+        XCTAssertFalse(exists(ours))
+
+        let theirs = write("terminal-checkout-cafebabe.toml", "name = \"내 것\"\n", ageSeconds: 0)
+        removeWarpTabConfigIfOurs(path: theirs)
+        XCTAssertTrue(exists(theirs))
     }
 
     func testForeignSocketIsNeverTouched() {

@@ -162,7 +162,7 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
     // Warp는 `open`이 돌아온 뒤에 파일을 읽으므로(pane 등장까지 실측 0.5∼0.7초) 곧바로
     // 지우면 안 된다
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + warpTabConfigLifetime) {
-        try? FileManager.default.removeItem(atPath: path)
+        removeWarpTabConfigIfOurs(path: path)
     }
 
     let result = try runProcess("/usr/bin/open", [warpTabConfigURL(stem: stem)], timeout: 15)

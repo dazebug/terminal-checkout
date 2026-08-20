@@ -280,7 +280,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
         accessibilitySection.addArrangedSubview(helpLabel(
             "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 버튼 명령은 "
-                + "새 탭에서 그대로 실행되지만, 예약한 claude 입력은 전달되지 않습니다."
+                + "새 탭에서 그대로 실행되지만, 예약한 claude 입력은 전달되지 않습니다. "
+                + "전달 중에는 그 탭을 보고 있어야 합니다."
         ))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
@@ -506,8 +507,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
         // 그 사이 사용자가 끼어들면 입력이 섞인다
-        terminalNoteLabel.stringValue = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
+        var note = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
             + "claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요."
+        // Warp는 화면을 "포커스된 탭"만 보여 주므로, 앱이 자기 탭을 확인할 수 있을 때만 제출한다
+        if Settings.terminal == "warp" {
+            note += " Warp는 그 탭을 보고 있는 동안에만 전달됩니다 — 다른 탭으로 옮기면 "
+                + "멈췄다가 돌아오면 이어집니다."
+        }
+        terminalNoteLabel.stringValue = note
     }
 
     private func resizeToFit() {

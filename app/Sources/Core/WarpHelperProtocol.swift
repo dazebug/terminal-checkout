@@ -102,11 +102,19 @@ public struct LineBuffer {
     public mutating func append(_ chunk: Data) {
         guard !isOverflowed else { return }
         data.append(chunk)
-        let tailStart = data.lastIndex(of: 0x0A).map { data.index(after: $0) } ?? data.startIndex
-        if data.distance(from: tailStart, to: data.endIndex) > limit {
-            isOverflowed = true
-            data.removeAll()
+        // 완성된 줄과 아직 줄바꿈이 오지 않은 꼬리에 **같은** 상한을 건다. 꼬리만 보면
+        // 상한을 넘긴 줄이 마지막 줄바꿈과 함께 도착할 때 그대로 통과한다
+        var start = data.startIndex
+        while let newline = data[start...].firstIndex(of: 0x0A) {
+            if data.distance(from: start, to: newline) > limit { return overflow() }
+            start = data.index(after: newline)
         }
+        if data.distance(from: start, to: data.endIndex) > limit { return overflow() }
+    }
+
+    private mutating func overflow() {
+        isOverflowed = true
+        data.removeAll()
     }
 
     public mutating func nextLine() -> String? {
