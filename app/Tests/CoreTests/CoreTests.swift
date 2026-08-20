@@ -415,6 +415,8 @@ private final class FakeClaudeSession {
     /// 그 남의 pane이 뒤늦게 얻는 텍스트 (Codex 재현: 개수가 증가한다)
     var foreignScreenGains: [String] = []
     private(set) var sendCallCount = 0
+    /// 바이트를 내보내기 직전 게이트가 몇 번 확인됐는지
+    private(set) var gateChecks = 0
     private var screenCalls = 0
     private var box = ""
     private var history = ""
@@ -445,6 +447,10 @@ private final class FakeClaudeSession {
                 return screenPrefix + " " + history + "❯ " + box
             },
             confirmSession: { [unowned self] _ in sessionAlive },
+            sessionIsUnchanged: { [unowned self] in
+                gateChecks += 1
+                return sessionAlive
+            },
             screenNeedsPaneProof: screenNeedsPaneProof,
             wait: { _ in }
         )
@@ -635,6 +641,49 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.screenNeedsPaneProof = true
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
+    }
+
+    /// 회귀 방지(P0-1): 세션이 바뀐 뒤에는 CR뿐 아니라 **표식·Ctrl+U·본문 타이핑도** 나가면
+    /// 안 된다. 그것이 새 셸이나 새로 뜬 claude의 입력창을 오염시키고, Ctrl+U는 그쪽에서
+    /// 사용자가 치던 초안을 지운다. "실행은 안 되니 괜찮다"가 아니다
+    func testNoBytesLeaveAfterTheSessionChanged() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            confirmSession: { _ in true }, // 입력 사이 게이트는 통과한 상태
+            sessionIsUnchanged: { false }, // 그러나 바이트를 내보내는 순간에는 이미 바뀌었다
+            screenNeedsPaneProof: true,
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertTrue(session.keystrokes.isEmpty, "새어 나간 바이트: \(session.keystrokes)")
+    }
+
+    /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
+    /// 이 자리가 게이트를 우회하면 정리가 남의 세션 입력창을 지운다
+    func testAbandonedInputCleanupIsGatedToo() {
+        let session = FakeClaudeSession()
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            confirmSession: { _ in true },
+            sessionIsUnchanged: { false },
+            wait: { _ in }
+        )
+        XCTAssertFalse(clearAbandonedInput(io: io))
+        XCTAssertTrue(session.keystrokes.isEmpty)
+    }
+
+    /// 바이트를 내보내는 자리는 전부 하나의 게이트를 지난다 — 자리마다 따로 확인하면
+    /// 다음에 또 빠진 자리가 생긴다. 표식·Ctrl+U·본문·CR 네 번 모두 확인돼야 한다
+    func testEverySendPassesTheSameGate() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(session.gateChecks, session.sendCallCount)
+        XCTAssertEqual(session.sendCallCount, 4) // 표식 · Ctrl+U · 본문 · CR
     }
 
     /// 회귀 방지(P0-2): 첫 CR도 세션 확인을 통과해야 한다. 화면 반영을 확인한 직후라도 그
@@ -1159,6 +1208,37 @@ final class WarpHelperProtocolTests: XCTestCase {
     }
 }
 
+// MARK: - Warp: 헬퍼 정지 판정
+// 상한과 tty 동일성을 한 함수로 모은다 — 대기 루프와 요청 처리 경로가 서로 다른 기준을 쓰면
+// 연결을 물고 계속 요청하는 쪽이 상한을 통째로 우회한다.
+
+final class WarpHelperStopTests: XCTestCase {
+    private func reason(
+        tty: Bool = true, idle: TimeInterval = 0, alive: TimeInterval = 0
+    ) -> WarpHelperStop? {
+        warpHelperStopReason(
+            ttySessionMatches: tty, idleSeconds: idle, aliveSeconds: alive,
+            idleLimit: 180, lifetimeLimit: 900
+        )
+    }
+
+    func testKeepsRunningWithinEveryLimit() {
+        XCTAssertNil(reason(idle: 179, alive: 899))
+    }
+
+    /// tty 번호는 재사용된다 — 우리 pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면
+    /// 남은 주입이 남의 tty로 들어간다. 다른 무엇보다 먼저 본다
+    func testTTYSessionChangeStopsEverything() {
+        XCTAssertEqual(reason(tty: false), .ttySessionChanged)
+        XCTAssertEqual(reason(tty: false, idle: 0, alive: 0), .ttySessionChanged)
+    }
+
+    func testIdleAndLifetimeLimits() {
+        XCTAssertEqual(reason(idle: 181), .idle)
+        XCTAssertEqual(reason(alive: 901), .lifetime)
+    }
+}
+
 // MARK: - Warp: 주입 분할
 // tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다. 512바이트를 넘는
 // claude 입력이 통째로 실패하지 않도록, 큐 여유만큼 나눠 넣고 소비를 기다렸다 이어 넣는다.
@@ -1401,6 +1481,18 @@ final class WarpReclaimTests: XCTestCase {
         let theirs = write("terminal-checkout-cafebabe.toml", "name = \"내 것\"\n", ageSeconds: 0)
         removeWarpTabConfigIfOurs(path: theirs)
         XCTAssertTrue(exists(theirs))
+    }
+
+    /// 회귀 방지(P0-3): 우리 이름의 심볼릭 링크가 우리 헤더를 가진 파일을 가리키면
+    /// 경로 기반 판정은 **링크 자체를 지운다**. 소켓 쪽은 `lstat`으로 막았는데 여기가 빠졌었다
+    func testSymlinkWithOurTabConfigNameIsNotRemoved() throws {
+        let target = write("남의파일.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 600)
+        let link = (directory as NSString).appendingPathComponent("terminal-checkout-deadbeef.toml")
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
+        removeWarpTabConfigIfOurs(path: link)
+        reclaimStaleWarpTabConfigs(in: directory)
+        XCTAssertNotNil(try? FileManager.default.attributesOfItem(atPath: link), "링크가 지워졌다")
+        XCTAssertTrue(exists(target))
     }
 
     func testForeignSocketIsNeverTouched() {

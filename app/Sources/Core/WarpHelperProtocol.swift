@@ -27,6 +27,38 @@ public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int
     max(0, min(remaining, limit - pending))
 }
 
+/// 헬퍼가 더 살아 있으면 안 되는 이유. 대기 루프와 **요청 처리 경로**가 같은 판정을 쓴다 —
+/// 상한 검사가 대기 루프에만 있으면, 연결을 물고 계속 요청하는 쪽이 유휴·수명 상한을
+/// 통째로 우회한다.
+public enum WarpHelperStop: Equatable {
+    /// tty가 우리 세션의 제어 터미널이 아니게 됐다 (pane이 닫히고 번호가 재사용됐다)
+    case ttySessionChanged
+    case idle
+    case lifetime
+
+    public var description: String {
+        switch self {
+        case .ttySessionChanged: return "tty session changed"
+        case .idle: return "idle timeout"
+        case .lifetime: return "lifetime limit"
+        }
+    }
+}
+
+/// tty 동일성을 먼저 본다 — 상한에 여유가 있어도 남의 tty에는 한 바이트도 넣으면 안 된다.
+public func warpHelperStopReason(
+    ttySessionMatches: Bool,
+    idleSeconds: TimeInterval,
+    aliveSeconds: TimeInterval,
+    idleLimit: TimeInterval,
+    lifetimeLimit: TimeInterval
+) -> WarpHelperStop? {
+    if !ttySessionMatches { return .ttySessionChanged }
+    if idleSeconds > idleLimit { return .idle }
+    if aliveSeconds > lifetimeLimit { return .lifetime }
+    return nil
+}
+
 public enum WarpHelperResponse: Equatable {
     case ok(String)
     case err(String)

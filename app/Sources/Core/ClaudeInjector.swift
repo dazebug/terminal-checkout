@@ -139,8 +139,12 @@ public struct ClaudeSessionIO {
     public var sendKeys: (String) -> Bool
     /// 현재 화면 텍스트. 조회 실패면 nil.
     public var screenText: () -> String?
-    /// 주어진 시간 안에 처음 준비된 그 claude가 입력을 받을 상태가 되면 true.
+    /// 주어진 시간 안에 처음 준비된 그 claude가 입력을 받을 상태가 되면 true (기다린다).
     public var confirmSession: (TimeInterval) -> Bool
+    /// **바이트를 내보내기 직전** 게이트 ③: 지금도 처음 그 claude인가 (기다리지 않는다).
+    /// `send(_:io:)`만 이것을 부르고, 모든 전송은 `send`를 지난다 — 전송 자리마다 따로
+    /// 확인하면 반드시 빠뜨리는 자리가 생긴다.
+    public var sessionIsUnchanged: () -> Bool
     /// `screenText`가 우리 세션의 화면이라고 단정할 수 없는 터미널은 true.
     /// iTerm2·WezTerm은 pane/세션 id로 그 pane만 읽으므로 false다. Warp는 접근성으로
     /// "포커스된 pane"만 읽히므로 true — 그때는 입력마다 pane 증명을 먼저 태운다.
@@ -152,15 +156,34 @@ public struct ClaudeSessionIO {
         sendKeys: @escaping (String) -> Bool,
         screenText: @escaping () -> String?,
         confirmSession: @escaping (TimeInterval) -> Bool,
+        sessionIsUnchanged: @escaping () -> Bool = { true },
         screenNeedsPaneProof: Bool = false,
         wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.sendKeys = sendKeys
         self.screenText = screenText
         self.confirmSession = confirmSession
+        self.sessionIsUnchanged = sessionIsUnchanged
         self.screenNeedsPaneProof = screenNeedsPaneProof
         self.wait = wait
     }
+}
+
+/// **바이트가 나가는 유일한 문.** 여기서만 게이트 ③을 확인한다 — 표식·입력창 클리어·본문
+/// 타이핑·CR·정리가 모두 이 함수를 지나므로, 새 전송 경로를 추가해도 게이트 밖으로 샐 수 없다.
+/// 확인과 전송 사이의 창(`ps`·`stty` 왕복 ≈ 9ms)은 경로상 없앨 수 없다 — 그 사이 세션이
+/// 바뀌면 바이트 하나가 새 세션에 들어간다. 다만 CR도 같은 게이트를 지나므로 **실행되지는
+/// 않고**, 입력창에 남은 조각은 그 세션의 사용자가 지운다.
+private func send(_ keys: String, io: ClaudeSessionIO) -> Bool {
+    guard io.sessionIsUnchanged() else { return false }
+    return io.sendKeys(keys)
+}
+
+/// 전달이 중간에 끝났을 때 입력창에 남았을 우리 조각을 지운다. 같은 문을 지나므로
+/// 세션이 바뀐 뒤에는 아무것도 나가지 않는다.
+@discardableResult
+func clearAbandonedInput(io: ClaudeSessionIO) -> Bool {
+    send("\u{15}", io: io)
 }
 
 /// 준비된 claude 세션에 입력을 순서대로 제출하고, 제출에 성공한 개수를 돌려준다.
@@ -223,7 +246,7 @@ private func typeAndSubmit(
         // 있다 — 남은 것 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은 입력이 제출된다.
         // 증명이 실패했을 때도 반드시 지운다: 표식을 남기면 사용자가 그것을 제출하게 된다
         if io.screenNeedsPaneProof || attempt > 1 {
-            guard io.sendKeys("\u{15}") else {
+            guard send("\u{15}", io: io) else {
                 checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
                 io.wait(1.0)
                 continue
@@ -234,7 +257,7 @@ private func typeAndSubmit(
         // 타이핑 직전 화면을 찍어 둔다 — "이미 떠 있던 텍스트"와 "우리가 방금 친 것"을
         // 가르는 유일한 수단이다(`screenReflectsNewInput`)
         let before = io.screenText()
-        guard io.sendKeys(text) else {
+        guard send(text, io: io) else {
             checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
         }
@@ -268,10 +291,25 @@ private func typeAndSubmit(
 /// 한 자리에서 Ctrl+U로 지운다.
 /// 폴링이 반영 확인보다 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고,
 /// 그건 기다리면 풀리는 상태이기 때문이다.
+///
+/// **증명은 본문 타이핑 시점까지만 유효하다.** 증명 뒤 [Ctrl+U → 1초 → 타이핑 → 반영 확인]
+/// 사이에 사용자가 탭을 옮기면, 본문 반영 확인은 다시 남의 화면을 읽게 된다. 그 창을 없애려면
+/// CR 직전에 증명을 다시 태워야 하는데, 그때 입력창에는 본문이 들어 있어 표식을 덧붙이면
+/// 제출에 섞인다. 표식을 본문 뒤에 붙였다 지우는 안도 검토했지만, **지웠음을 확인하는 화면
+/// 읽기가 다시 같은 문제를 갖는다** — 남의 화면에서는 표식도 안 보이므로 "지워졌다"가 거짓
+/// 양성이 되고, 그러면 `본문+표식`이 그대로 제출된다. 유실보다 나쁜 결과라 택하지 않았다.
+///
+/// 남는 창의 크기와 피해: 창은 위 구간(대략 1∼3초, 폴링 간격 0.4초). 그 안에서 피해가
+/// 생기려면 ①사용자가 정확히 그때 탭을 옮기고 ②그 pane이 우리 프로브(입력 앞 24자)를
+/// **새로** 얻고 ③claude가 우리 본문을 그리지 못하고 버려야 한다 — 셋이 모두 겹쳐야 한다.
+/// 그때의 결과는 **빈 CR 한 번**이다: 바이트는 CR을 포함해 전부 우리 tty로만 가므로
+/// (`sendKeys`의 `.warp` 갈래 → 헬퍼 TIOCSTI, 합성 키 입력·AX 쓰기 경로는 코드에 없다)
+/// 남의 pane 내용이 제출될 수는 없고, 우리 pane의 입력창이 비어 있어 아무 일도 일어나지
+/// 않는다. 앱 로그에는 전달된 것으로 남으므로 그 한 건이 유실된다.
 private func proveOurPane(io: ClaudeSessionIO) -> Bool {
     guard let before = io.screenText() else { return false }
     let token = paneProofToken()
-    guard io.sendKeys(token) else { return false }
+    guard send(token, io: io) else { return false }
     for _ in 0..<10 {
         io.wait(0.5)
         guard let after = io.screenText() else { continue }
@@ -292,7 +330,7 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
     for attempt in 1...3 {
         if attempt > 1 { io.wait(0.4) }
         guard io.confirmSession(retryConfirmTimeout) else { return false }
-        if io.sendKeys("\r") { return true }
+        if send("\r", io: io) { return true }
     }
     return false
 }
@@ -360,6 +398,10 @@ public func deliverClaudeInputs(
                 pollInterval: pollInterval, timeout: limit, expecting: claudePID
             ) != nil
         },
+        // 전송 직전 확인은 기다리지 않는다 — 한 번 재서 지금도 그 claude인지만 본다
+        sessionIsUnchanged: {
+            probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
+        },
         // Warp만 true — 접근성으로 읽히는 것은 "포커스된 pane"이라 우리 것이라는 보장이 없다
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
@@ -367,8 +409,9 @@ public func deliverClaudeInputs(
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
     // 전달 도중 권한이 회수되면 화면 확인이 멈춰 CR은 막히지만, 그때까지 친 텍스트는 입력창에
     // 남는다. 우리 tty로만 가는 Ctrl+U를 한 번 보내 그 조각을 지우고 끝낸다
-    if case .warp(let socket) = handle, !accessibilityIsTrusted() {
-        _ = warpHelperRequest(.inject(Data("\u{15}".utf8)), socket: socket)
+    if case .warp = handle, !accessibilityIsTrusted() {
+        // 정리도 같은 문을 지난다 — 세션이 바뀐 뒤라면 남의 입력창을 지우게 된다
+        clearAbandonedInput(io: io)
         checkoutLog("전달 도중 손쉬운 사용 권한이 사라짐 — claude 입력창을 비우고 중단")
     }
 }

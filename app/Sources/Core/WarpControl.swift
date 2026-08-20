@@ -320,13 +320,36 @@ private func isUnixSocketFile(_ path: String) -> Bool {
 }
 
 /// 우리가 만든 Tab Config만 지운다. 예약 삭제는 20초 뒤에 도는데 그 사이 사용자가 같은
-/// 경로에 자기 파일을 놓았을 수 있어, 경로가 아니라 내용을 보고 판단한다.
+/// 경로에 자기 파일이나 링크를 놓았을 수 있다.
+///
+/// 판정을 **fd로** 한다: `O_NOFOLLOW`로 열어 링크를 애초에 배제하고, 같은 fd에서 `fstat`과
+/// 내용을 읽어 "검사한 것과 읽은 것"이 같은 파일임을 보장한다. 경로로 두 번 보면 그 사이
+/// 바꿔치기될 수 있다.
+///
+/// 남는 창: macOS에는 `funlinkat`이 없어 마지막 `unlink`만은 경로로 해야 한다. 직전에
+/// `lstat`으로 같은 inode인지 다시 확인해 창을 수십 마이크로초로 줄였지만 완전히 없앨 수는
+/// 없다 — 최악의 결과는 "그 창에 정확히 끼워 넣은 파일 하나가 지워진다"이고, 그렇게 하려면
+/// 우리 난수 이름을 미리 알아야 하므로 같은 uid에서만 가능하다.
 func removeWarpTabConfigIfOurs(path: String) {
-    guard warpTabConfigFileIsOurs(name: (path as NSString).lastPathComponent),
-          let contents = try? String(contentsOfFile: path, encoding: .utf8),
-          warpTabConfigIsOurs(contents: contents)
+    guard warpTabConfigFileIsOurs(name: (path as NSString).lastPathComponent) else { return }
+    let fd = open(path, O_RDONLY | O_NOFOLLOW)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+
+    var opened = stat()
+    guard fstat(fd, &opened) == 0, (opened.st_mode & S_IFMT) == S_IFREG else { return }
+
+    var head = [UInt8](repeating: 0, count: 512)
+    let count = read(fd, &head, head.count)
+    guard count > 0,
+          warpTabConfigIsOurs(contents: String(decoding: head[0..<count], as: UTF8.self))
     else { return }
-    try? FileManager.default.removeItem(atPath: path)
+
+    var current = stat()
+    guard lstat(path, &current) == 0,
+          current.st_ino == opened.st_ino, current.st_dev == opened.st_dev
+    else { return }
+    unlink(path)
 }
 
 /// 앱이 자기 Tab Config를 지우기 전에 죽으면 파일이 남아 Warp `+` 메뉴에 쌓인다.

@@ -88,11 +88,41 @@ private func ttyPendingBytes(_ fd: Int32) -> Int? {
     return result == 0 ? Int(pending) : nil
 }
 
+/// 헬퍼가 사는 동안의 상태. 정지 판정을 여기 하나로 모아 **대기 루프와 요청 처리 경로가
+/// 같은 기준**을 쓰게 한다 — 상한 검사가 대기 루프에만 있으면 연결을 물고 계속 요청하는
+/// 쪽이 유휴·수명 상한을 통째로 우회한다.
+private final class HelperState {
+    let ttyFD: Int32
+    let ttyPath: String
+    private let startedAt = Date()
+    private var lastActivity = Date()
+
+    init(ttyFD: Int32, ttyPath: String) {
+        self.ttyFD = ttyFD
+        self.ttyPath = ttyPath
+    }
+
+    func touch() { lastActivity = Date() }
+
+    func stopReason() -> WarpHelperStop? {
+        warpHelperStopReason(
+            // tty 번호는 재사용된다 — pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면
+            // 세션 id가 달라진다. 이 비교가 "남의 tty에 붙은 헬퍼"를 막는 유일한 신호다
+            ttySessionMatches: tcgetsid(ttyFD) == getsid(0),
+            idleSeconds: Date().timeIntervalSince(lastActivity),
+            aliveSeconds: Date().timeIntervalSince(startedAt),
+            idleLimit: idleTimeout,
+            lifetimeLimit: maxLifetime
+        )
+    }
+}
+
 /// 큐 여유만큼 나눠 넣는다. 통째로 거절하면 512바이트가 넘는 claude 프롬프트가 항상
 /// 실패하는데, 그 길이는 사용자가 직접 쓰는 입력에서 드물지 않다.
 /// 바이트 단위로 잘라도 되는 이유는 tty 입력 큐가 바이트 스트림이기 때문이다 — 멀티바이트
 /// 문자가 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
-private func inject(_ bytes: Data, into ttyFD: Int32) -> WarpHelperResponse {
+private func inject(_ bytes: Data, state: HelperState) -> WarpHelperResponse {
+    let ttyFD = state.ttyFD
     guard !bytes.isEmpty else { return .ok("0") }
     guard bytes.count <= injectMaxBytes else {
         return .err("payload too large (\(bytes.count) > \(injectMaxBytes))")
@@ -101,6 +131,9 @@ private func inject(_ bytes: Data, into ttyFD: Int32) -> WarpHelperResponse {
     var sent = 0
     let deadline = Date().addingTimeInterval(injectDrainTimeout)
     while sent < all.count {
+        // 조각마다 다시 본다. 분할 주입은 큐가 빌 때까지 최대 10초를 기다리는데, 그 사이
+        // 우리 pane이 닫히고 같은 tty 번호를 새 세션이 차지하면 남은 조각이 남의 tty로 들어간다
+        if let stop = state.stopReason() { return .err(stop.description) }
         guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
         let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
         guard chunk > 0 else {
@@ -125,8 +158,8 @@ private func inject(_ bytes: Data, into ttyFD: Int32) -> WarpHelperResponse {
     return .ok(String(sent))
 }
 
-/// 연결 하나를 끝까지 처리한다. `bye`를 받았으면 true(헬퍼 종료).
-private func serve(client: Int32, ttyFD: Int32, ttyPath: String) -> Bool {
+/// 연결 하나를 끝까지 처리한다. `bye`를 받았거나 상한에 걸렸으면 true(헬퍼 종료).
+private func serve(client: Int32, state: HelperState) -> Bool {
     var tv = timeval(tv_sec: 10, tv_usec: 0)
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -137,11 +170,19 @@ private func serve(client: Int32, ttyFD: Int32, ttyPath: String) -> Bool {
         while let line = buffer.nextLine() {
             var finished = false
             let response: WarpHelperResponse
+            // 요청마다 상한과 tty 동일성을 먼저 본다 — 연결을 물고 있는 쪽이 대기 루프의
+            // 검사를 건너뛰게 두면 상한이 없는 것과 같다
+            if let stop = state.stopReason() {
+                _ = writeAll(fd: client, data: Data((encodeWarpHelperResponse(.err(stop.description)) + "\n").utf8))
+                checkoutLog("Warp 주입 헬퍼 종료: \(stop.description)")
+                return true
+            }
+            state.touch()
             switch parseWarpHelperRequest(line) {
             case .tty:
-                response = .ok(ttyPath)
+                response = .ok(state.ttyPath)
             case .inject(let bytes):
-                response = inject(bytes, into: ttyFD)
+                response = inject(bytes, state: state)
             case .bye:
                 response = .ok("")
                 finished = true
@@ -242,8 +283,7 @@ guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoNa
 chmod(socketPath, 0o600)
 installSocketCleanupOnSignals(path: socketPath)
 
-let startedAt = Date()
-var lastActivity = Date()
+private let state = HelperState(ttyFD: ttyFD, ttyPath: ttyPath)
 var finished = false
 
 while !finished {
@@ -261,8 +301,8 @@ while !finished {
             var uid: uid_t = 0
             var gid: gid_t = 0
             if getpeereid(client, &uid, &gid) == 0, uid == getuid() {
-                finished = serve(client: client, ttyFD: ttyFD, ttyPath: ttyPath)
-                lastActivity = Date()
+                finished = serve(client: client, state: state)
+                state.touch()
             }
             close(client)
         }
@@ -270,12 +310,11 @@ while !finished {
         checkoutLog("Warp 주입 헬퍼 poll 실패: \(lastErrnoName())")
         break
     }
-    // pane이 닫혔는지 확인한다. `tcgetpgrp`이 성공하는지만 보면 부족하다 — tty 번호는
-    // 재사용되므로(실측), 우리 pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면 그대로 살아남아
-    // 남의 세션 tty에 붙은 헬퍼가 된다. 세션 id까지 비교해야 그 갈래가 죽는다
-    if !finished && tcgetsid(ttyFD) != getsid(0) { break }
-    if !finished && Date().timeIntervalSince(lastActivity) > idleTimeout { break }
-    if !finished && Date().timeIntervalSince(startedAt) > maxLifetime { break }
+    // 요청이 없는 동안에도 같은 판정으로 본다 (요청 경로는 `serve`가 본다)
+    if !finished, let stop = state.stopReason() {
+        checkoutLog("Warp 주입 헬퍼 종료: \(stop.description)")
+        break
+    }
 }
 
 if let path = socketPathForSignal { unlinkIfSocket(path) }
