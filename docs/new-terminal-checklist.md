@@ -6,13 +6,16 @@
 
 ## 1. 코드에서 손댈 지점
 
-터미널 식별자는 앱이 `UserDefaults`의 `terminal` 키에 저장하는 문자열이다(`iterm`, `wezterm`, `warp`). 확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 동작상 손댈 것이 없다.
+터미널 식별자는 Core의 `enum Terminal`(`Terminal.swift`)이 정의하고, 앱이 그 rawValue를 `UserDefaults`의 `terminal` 키에 저장한다(`iterm`, `wezterm`, `warp`). 확장은 이 값을 모르고 알 수단도 두지 않는다 — 확장 쪽은 동작상 손댈 것이 없다.
+
+케이스를 추가하면 default 없는 switch(실행 분기, 설정 창의 라디오 복원·권한 섹션·파이프라인 노드)가 컴파일 에러로 드러난다. 단 컴파일러는 switch만 잡는다 — `==` 비교로 된 표시 조건·안내 문구, 그리고 코드 밖(스크립트·문서)은 여전히 아래 표로만 잡힌다. 에러만 따라가고 끝내지 말 것.
 
 **Core**
 
 | 지점 | 할 일 |
 |:---|:---|
-| `TerminalRunner.runInTerminal(command:terminal:injectsClaudeInput:)` | 식별자 분기 추가. `injectsClaudeInput`은 입력 전달에 별도 준비가 필요한 터미널만 본다 |
+| `Terminal` (`Terminal.swift`) | 케이스 추가. 저장값 oracle 테스트(`TerminalIdentifierTests`)에 rawValue 리터럴 한 줄도 함께 |
+| `TerminalRunner.runInTerminal(command:terminal:injectsClaudeInput:)` | 실행 갈래 추가(컴파일 에러가 자리를 알려 준다). `injectsClaudeInput`은 입력 전달에 별도 준비가 필요한 터미널만 본다 |
 | `TerminalRunner.runInXxx(_:)` (신규) | 새 탭 생성 → 명령 전송 → `TerminalSessionHandle` 반환 |
 | `TerminalSessionHandle` (`ClaudeInjector.swift`) | 케이스 추가. 핸들을 못 만들면(`.none`) claude 입력은 전달되지 않는다 |
 | `ClaudeInjector.deliverClaudeInputs` | 핸들에서 tty 경로를 얻는 갈래 |
@@ -30,9 +33,9 @@ pane을 지목할 API가 아예 없는 터미널(Warp)은 pane 안에서 도는 
 
 | 지점 | 할 일 |
 |:---|:---|
-| `Settings.terminal` | 저장값이 없을 때의 자동 감지 순서 |
+| `Settings.terminal` | 저장값이 없을 때의 자동 감지 순서 (알 수 없는 저장값의 iTerm2 폴백은 `Terminal(storedValue:)` 한 곳이라 손댈 것 없음) |
 | `PermissionChecker.isXxxInstalled` | 설치 감지. AppleScript 제어면 상태 조회·권한 요청·시스템 설정 열기까지 |
-| `SetupWindowController` | 라디오 버튼 추가, 미설치 시 비활성화, 저장(`terminalChanged`)·복원, 권한 카드 표시 조건, 파이프라인 노드의 이름·색·설명 |
+| `SetupWindowController` | 라디오 버튼 추가, 미설치 시 비활성화, 저장(`terminalChanged` — 라디오→케이스 매핑은 if-체인이라 컴파일러가 못 잡는다)·복원, 권한 카드 표시 조건(`isHidden` 비교), 터미널별 안내 노트, 파이프라인 노드의 이름·색·설명 |
 | `app/Info.plist` | `NSAppleEventsUsageDescription`은 앱 전체에 하나뿐이다 — 문구에 특정 터미널 이름이 박혀 있으면 갱신 |
 | `install.sh` | 프리플라이트의 터미널 감지 목록과 안내 문구. 하나도 못 찾으면 `exit 1`로 설치를 막으므로, 빠뜨리면 새 터미널만 깔린 환경에서 설치 자체가 안 된다 (앱의 설치 감지와 판정 기준이 다르다) |
 | `README.md` | 요구 터미널 목록·아키텍처 그림·설정 단계·권한 안내·fallback 제한·트러블슈팅에 터미널 이름이 박혀 있다. 코드가 지원해도 여기가 낡으면 사용자는 미지원으로 읽는다 |

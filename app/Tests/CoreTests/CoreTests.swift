@@ -399,6 +399,31 @@ final class ClaudeControlKeyTests: XCTestCase {
     }
 }
 
+// MARK: - 터미널 식별자
+// rawValue를 리터럴로 고정하는 oracle — 케이스 이름을 바꾸면 저장값이 함께 바뀌어 기존 사용자의
+// 터미널 선택이 조용히 무시된다. 저장값 "iterm"은 확장 이름과 무관하게 iTerm2를 가리키는
+// 식별자이므로 바꾸지 않는다. 상수 자기참조로는 이 계약을 지킬 수 없어 리터럴로만 검증한다.
+
+final class TerminalIdentifierTests: XCTestCase {
+    func testRawValuesAreTheStoredIdentifiers() {
+        XCTAssertEqual(Terminal.iterm.rawValue, "iterm")
+        XCTAssertEqual(Terminal.wezterm.rawValue, "wezterm")
+        XCTAssertEqual(Terminal.warp.rawValue, "warp")
+        // oracle 완결성: 케이스가 늘면 위 목록에도 리터럴 한 줄이 있어야 한다
+        XCTAssertEqual(Terminal.allCases.count, 3)
+    }
+
+    func testStoredValueParsingFallsBackToITerm() {
+        XCTAssertEqual(Terminal(storedValue: "iterm"), .iterm)
+        XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
+        XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
+        // 알 수 없는 저장값(다른 버전이 남긴 식별자, 손으로 고친 plist)은 iTerm2 폴백 —
+        // 소비 지점마다 switch default가 따로 하던 폴백을 파싱 한 곳으로 모은 계약
+        XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
+        XCTAssertEqual(Terminal(storedValue: ""), .iterm)
+    }
+}
+
 // MARK: - 입력 전달 순서와 실패 복구
 // 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
 // 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
