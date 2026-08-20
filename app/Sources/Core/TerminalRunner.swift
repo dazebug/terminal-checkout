@@ -148,11 +148,9 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
         try FileManager.default.createDirectory(
             atPath: warpTabConfigDirectory(), withIntermediateDirectories: true
         )
-        // 토큰이 겹칠 일은 없지만, 겹쳤다면 그것은 사용자 파일일 수도 있다 — 덮어쓰지 않는다
-        guard !FileManager.default.fileExists(atPath: path) else {
-            throw TerminalError.warpTabConfigFailed("이미 있는 파일을 덮어쓰지 않습니다: \(path)")
-        }
-        try warpTabConfigTOML(commands: commands).write(toFile: path, atomically: true, encoding: .utf8)
+        // 토큰이 겹칠 일은 없지만, 겹쳤다면 그것은 사용자 파일일 수도 있다 — 덮어쓰지 않는다.
+        // `O_CREAT|O_EXCL`로 만들어 "있는지 보고 쓴다"의 창을 없앤다: 검사와 생성이 한 syscall이다
+        try writeNewFile(path: path, contents: warpTabConfigTOML(commands: commands))
     } catch let error as TerminalError {
         throw error
     } catch {
@@ -175,8 +173,26 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
     return .warp(helperSocket: socketPath)
 }
 
+/// 새로 만드는 경우에만 쓴다. 이미 있으면 `EEXIST`로 실패한다 — 먼저 존재를 확인하고
+/// 쓰는 방식은 그 사이 사용자 파일이 놓이면 덮어쓴다.
+private func writeNewFile(path: String, contents: String) throws {
+    let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+    guard fd >= 0 else {
+        throw TerminalError.warpTabConfigFailed("파일을 새로 만들지 못했습니다(\(String(cString: strerror(errno)))): \(path)")
+    }
+    defer { close(fd) }
+    guard writeAll(fd: fd, data: Data(contents.utf8)) else {
+        unlink(path)
+        throw TerminalError.warpTabConfigFailed("파일을 쓰지 못했습니다: \(path)")
+    }
+}
+
 /// Warp가 Tab Config를 읽고 pane을 띄우기까지 기다려 주는 시간. 실측 0.5∼0.7초의 여유분이며,
 /// 이보다 짧으면 탭이 열리지 않고 길면 `+` 메뉴에 우리 파일이 오래 남는다.
+/// **이 시간은 "Warp가 읽었다"를 보장하지 않는다** — 그것을 알려 주는 신호가 없어서 시간에
+/// 기대는 것이고, 시스템이 크게 밀리면 탭이 열리지 않을 수 있다. 그때의 결과는 "탭이 안
+/// 열린다"뿐이라(데이터 손실 없음) 여유를 30배로 잡고 남겨 둔다. 이건 신뢰 경계와 무관한
+/// 타이밍 가정이다.
 let warpTabConfigLifetime: TimeInterval = 20
 
 /// WezTerm CLI 경로 탐색: PATH → Homebrew/앱 번들 fallback

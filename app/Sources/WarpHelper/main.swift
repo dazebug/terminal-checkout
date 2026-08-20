@@ -30,13 +30,36 @@ private let injectDrainTimeout: TimeInterval = 10
 /// 한 요청으로 받아 주는 최대 바이트. claude 입력은 한 줄이라 이보다 훨씬 짧다 —
 /// 상한이 없으면 보내는 쪽이 수십만 번의 ioctl을 시킬 수 있다.
 private let injectMaxBytes = 8 * 1024
+/// 주입한 바이트가 읽히기를 지켜보는 시간. claude는 `read()`에 걸려 있어 보통 수 밀리초면
+/// 비지만, 그 사이 claude가 죽으면 남은 바이트를 셸이 읽는다 — 그때 큐를 비우려면 지켜봐야 한다.
+private let injectWatchTimeout: TimeInterval = 0.5
 /// 수신 버퍼 상한. base64는 원본의 4/3이라 위 상한의 두 배면 넉넉하다.
 private let requestLineLimit = 16 * 1024
 
-// 위협 모델: 이 소켓은 같은 uid의 **아무 프로세스나** 그 pane의 claude에 입력을 넣을 수 있게
-// 한다. 같은 uid에게 비밀을 숨길 자리가 없어서(argv·환경변수·0600 파일을 모두 읽고, 소켓
-// 경로는 Tab Config와 pane 화면에 그대로 보인다) 인증으로는 좁힐 수 없다. 그래서 좁히는
-// 축은 **수명**이다 — 전달이 끝나면 `bye`로 즉시 죽고, 그러지 못한 경우에만 아래 상한이 돈다.
+// ─────────────────────────────────────────────────────────────────────────────
+// 신뢰 경계 선언 (이 기능 전체에 적용된다)
+//
+// **경계는 uid다.** 같은 uid로 도는 프로세스는 신뢰하고, 다른 uid는 막는다. 이유는 두 가지다:
+// macOS 자신이 이 부류(유닉스 소켓·사용자 홈의 파일)에 uid를 경계로 쓰고, 같은 uid 안에서는
+// 숨길 자리가 없다 — argv·환경변수·0600 파일을 모두 읽을 수 있고, 이 소켓 경로는 Tab Config
+// 파일과 pane 화면에 그대로 보인다. 그래서 `getpeereid`의 uid 비교는 **인증이 아니라 경계
+// 확인**이다.
+//
+// 이 경계 안에서 가능한 것(막지 않는다):
+//  1. 살아 있는 헬퍼 소켓에 임의의 `inject` — 같은 uid 프로세스는 그 pane의 claude에 원하는
+//     바이트를 넣을 수 있다. 좁히는 축은 수명뿐이다: 전달이 끝나면 `bye`로 즉시 죽고,
+//     그러지 못하면 유휴 180초·수명 900초에 걸린다
+//  2. 경로 기반 `unlink`의 TOCTOU — 소켓 회수·Tab Config 회수·예약 삭제·`uninstall.sh`.
+//     `lstat`/`fstat`과 inode 재확인으로 창을 마이크로초로 줄였지만, macOS에 `funlinkat`이
+//     없어 마지막 한 걸음은 경로다. 우리 난수 이름을 미리 알아야 끼워 넣을 수 있다
+//  3. 헤더를 확인한 뒤 내용을 바꿔치기 — 판정은 fd로 하지만 삭제는 경로다(2와 같은 창)
+//  4. 헬퍼 소켓 경로에 파일을 미리 놓아 `bind`를 실패시키기(전달만 무산되는 DoS)
+//
+// 경계와 **무관한** 잔여(악의가 없어도 남는 것)는 따로다 — 섞지 않는다:
+//  - pane 증명이 본문 타이핑 시점까지만 유효한 창 (`proveOurPane` 주석)
+//  - 큐에 넣은 CR을 셸이 먼저 읽어 가는 경합 (`watchUntilRead` 주석)
+//  - Tab Config 20초 예약 삭제가 "Warp가 읽었다"를 보장하지 못하는 것 (`runInWarp` 주석)
+// ─────────────────────────────────────────────────────────────────────────────
 //
 /// `bye`가 오지 못한 경우의 유휴 상한. 정상 전달에서 가장 긴 침묵은 앱이 claude 기동을
 /// 기다리는 구간(`deliverClaudeInputs`의 기본 120초)이라 그보다 여유만 두면 된다.
@@ -121,7 +144,7 @@ private final class HelperState {
 /// 실패하는데, 그 길이는 사용자가 직접 쓰는 입력에서 드물지 않다.
 /// 바이트 단위로 잘라도 되는 이유는 tty 입력 큐가 바이트 스트림이기 때문이다 — 멀티바이트
 /// 문자가 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
-private func inject(_ bytes: Data, state: HelperState) -> WarpHelperResponse {
+private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> WarpHelperResponse {
     let ttyFD = state.ttyFD
     guard !bytes.isEmpty else { return .ok("0") }
     guard bytes.count <= injectMaxBytes else {
@@ -134,6 +157,14 @@ private func inject(_ bytes: Data, state: HelperState) -> WarpHelperResponse {
         // 조각마다 다시 본다. 분할 주입은 큐가 빌 때까지 최대 10초를 기다리는데, 그 사이
         // 우리 pane이 닫히고 같은 tty 번호를 새 세션이 차지하면 남은 조각이 남의 tty로 들어간다
         if let stop = state.stopReason() { return .err(stop.description) }
+        // 넣기 직전에 "지금 이 tty를 읽을 프로세스"를 확인한다. 앱의 게이트는 요청을 보내기
+        // 전의 상태만 보므로, 그 사이 claude가 끝났으면 우리 바이트를 셸이 읽는다.
+        // syscall 두 번이라 `ps` 왕복보다 싸고, 주입과 같은 프로세스라 창이 마이크로초다
+        guard warpForegroundIsExpected(
+            foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
+        ) else {
+            return .err("foreground is not the expected reader")
+        }
         guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
         let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
         guard chunk > 0 else {
@@ -155,7 +186,44 @@ private func inject(_ bytes: Data, state: HelperState) -> WarpHelperResponse {
         }
         sent += chunk
     }
-    return .ok(String(sent))
+    return watchUntilRead(expectedPID: expectedPID, state: state, injected: sent)
+}
+
+/// 넣은 바이트가 읽힐 때까지 잠깐 지켜본다. 아직 큐에 남아 있는데 포그라운드가 우리가 겨눈
+/// claude에서 벗어났으면 `tcflush`로 입력 큐를 버린다.
+///
+/// **이것은 창을 닫지 못한다 — 좁힐 뿐이다.** 실측: 포그라운드가 죽는 순간 셸이 이미
+/// `read()`에 걸려 있으면 우리 폴링(5ms)보다 먼저 읽어 간다(프로브에서 `SHELL_READ=b'\r'`).
+/// 그래도 두는 이유는 **셸이 아직 읽지 않은 경우에만 동작**하기 때문이다 — 그 경우가 바로
+/// 아직 막을 수 있는 경우다. 큐에 우리 본문이 남아 있다가 셸의 줄 버퍼에 들어가면 사용자가
+/// 나중에 누른 Enter가 그것을 셸 명령으로 실행한다(`!…`로 시작하는 입력이면 특히 나쁘다).
+/// 사용자가 그 순간 친 키가 함께 버려질 수 있지만, 버려지는 상황은 "셸이 아직 아무것도 읽지
+/// 않은" 순간이라 잃는 것은 방금 친 몇 글자다.
+///
+/// 남는 피해의 크기: 셸이 먼저 읽어 가면 **CR 한 바이트**가 새 프롬프트에 들어간다.
+/// 본문까지 함께 새려면 claude가 본문을 읽지 않았어야 하는데, 그러면 화면 반영 확인이
+/// 실패해 CR을 보내지 않는다 — 즉 [본문 + CR]이 함께 셸로 가는 갈래는 없고, 셸이 받는 것은
+/// 빈 줄에 대한 CR(= 빈 명령)이거나 실행되지 않는 본문뿐이다.
+///
+/// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 라운드 1에서 없앤 것은
+/// "읽혔으니 claude가 그렸을 것"이라는 **긍정** 추론이고, 그쪽은 되살리지 않는다 —
+/// 전달 성공 판정은 여전히 화면 반영 확인만 한다.
+private func watchUntilRead(expectedPID: Int32, state: HelperState, injected: Int) -> WarpHelperResponse {
+    let deadline = Date().addingTimeInterval(injectWatchTimeout)
+    while Date() < deadline {
+        guard let pending = ttyPendingBytes(state.ttyFD), pending > 0 else { return .ok(String(injected)) }
+        if !warpForegroundIsExpected(
+            foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
+        ) {
+            tcflush(state.ttyFD, TCIFLUSH)
+            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라져 읽히지 않은 입력 \(pending)바이트를 버림")
+            return .err("expected reader gone; input queue flushed")
+        }
+        usleep(5_000)
+    }
+    // 시간 안에 안 읽혔지만 포그라운드는 그대로다 — claude가 느린 것이므로 성공으로 둔다.
+    // 실제로 그려졌는지는 앱의 화면 반영 확인이 판정한다
+    return .ok(String(injected))
 }
 
 /// 연결 하나를 끝까지 처리한다. `bye`를 받았거나 상한에 걸렸으면 true(헬퍼 종료).
@@ -181,8 +249,8 @@ private func serve(client: Int32, state: HelperState) -> Bool {
             switch parseWarpHelperRequest(line) {
             case .tty:
                 response = .ok(state.ttyPath)
-            case .inject(let bytes):
-                response = inject(bytes, state: state)
+            case .inject(let expectedPID, let bytes):
+                response = inject(bytes, expectedPID: expectedPID, state: state)
             case .bye:
                 response = .ok("")
                 finished = true

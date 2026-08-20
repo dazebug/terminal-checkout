@@ -12,8 +12,10 @@ import Foundation
 public enum WarpHelperRequest: Equatable {
     /// 헬퍼가 붙어 있는 pane의 tty 경로. 앱은 이 값으로 게이트 ①②③을 태운다
     case tty
-    /// 그 바이트들을 tty 입력 큐에 넣는다
-    case inject(Data)
+    /// 그 바이트들을 tty 입력 큐에 넣는다. `expectedPID`는 **그 바이트를 읽을 것으로 기대하는**
+    /// 프로세스다 — 헬퍼가 주입 직전에 포그라운드와 맞춰 보고 어긋나면 넣지 않는다.
+    /// 요청마다 싣는 이유는 상태로 두면 "설정해 두고 잊는" 갈래가 생기기 때문이다.
+    case inject(expectedPID: Int32, bytes: Data)
     /// 전달이 끝났으니 종료해라 — 헬퍼가 pane에 남아 떠도는 것을 막는 정상 경로다
     case bye
 }
@@ -25,6 +27,20 @@ public enum WarpHelperRequest: Equatable {
 /// 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
 public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int {
     max(0, min(remaining, limit - pending))
+}
+
+/// 지금 이 tty의 입력을 읽을 프로세스가 우리가 겨눈 claude인가.
+///
+/// `TIOCSTI`는 호출자의 controlling session인지만 보고 **큐에 넣은 바이트를 누가 읽을지는
+/// 정하지 않는다**. claude가 죽어 셸이 포그라운드가 되면 남은 CR을 셸이 읽어 사용자가 치던
+/// 초안을 실행한다 — 그래서 "보내기 전"만 보는 앱 쪽 게이트로는 부족하고, 주입과 같은
+/// 프로세스에서 포그라운드를 확인해야 창이 좁아진다.
+///
+/// pid가 아니라 **프로세스 그룹**으로 비교한다: 앱이 고르는 claude pid가 그룹 리더가 아닌
+/// 경우가 있다(사용자의 claude pane 13개 중 3개에서 `pid != pgid` 실측).
+/// 조회가 실패하면 -1이므로 "알 수 없으면 넣지 않는다"가 된다.
+public func warpForegroundIsExpected(foregroundPGID: Int32, expectedPGID: Int32) -> Bool {
+    foregroundPGID > 0 && expectedPGID > 0 && foregroundPGID == expectedPGID
 }
 
 /// 헬퍼가 더 살아 있으면 안 되는 이유. 대기 루프와 **요청 처리 경로**가 같은 판정을 쓴다 —
@@ -68,7 +84,7 @@ public func encodeWarpHelperRequest(_ request: WarpHelperRequest) -> String {
     switch request {
     case .tty: return "tty"
     case .bye: return "bye"
-    case .inject(let bytes): return "inject " + bytes.base64EncodedString()
+    case .inject(let pid, let bytes): return "inject \(pid) " + bytes.base64EncodedString()
     }
 }
 
@@ -80,12 +96,13 @@ public func parseWarpHelperRequest(_ line: String) -> WarpHelperRequest? {
     case "bye": return .bye
     default: break
     }
-    // 빈 payload(`inject `)도 유효한 요청이라 빈 조각을 버리면 안 된다
-    let parts = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
-    guard parts.count == 2, parts[0] == "inject",
-          let bytes = Data(base64Encoded: String(parts[1]))
+    // 빈 payload(`inject <pid> `)도 유효한 요청이라 빈 조각을 버리면 안 된다
+    let parts = text.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+    guard parts.count == 3, parts[0] == "inject",
+          let pid = Int32(parts[1]),
+          let bytes = Data(base64Encoded: String(parts[2]))
     else { return nil }
-    return .inject(bytes)
+    return .inject(expectedPID: pid, bytes: bytes)
 }
 
 public func encodeWarpHelperResponse(_ response: WarpHelperResponse) -> String {

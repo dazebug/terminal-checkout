@@ -145,6 +145,11 @@ public struct ClaudeSessionIO {
     /// `send(_:io:)`만 이것을 부르고, 모든 전송은 `send`를 지난다 — 전송 자리마다 따로
     /// 확인하면 반드시 빠뜨리는 자리가 생긴다.
     public var sessionIsUnchanged: () -> Bool
+    /// 화면으로 확인할 수단이 아직 있는가(Warp: 손쉬운 사용 권한). false면 **새로 치지 않는다** —
+    /// 확인 없이 친 것은 제출도 회수도 못 하기 때문이다. 반대로 이미 친 것을 되돌리는
+    /// 정리(`clearAbandonedInput`)는 이 조건을 보지 않는다: 정리를 같이 막으면 자동 입력이
+    /// 입력창에 남아 사용자가 나중에 Enter를 눌렀을 때 실행된다.
+    public var canConfirmScreen: () -> Bool
     /// `screenText`가 우리 세션의 화면이라고 단정할 수 없는 터미널은 true.
     /// iTerm2·WezTerm은 pane/세션 id로 그 pane만 읽으므로 false다. Warp는 접근성으로
     /// "포커스된 pane"만 읽히므로 true — 그때는 입력마다 pane 증명을 먼저 태운다.
@@ -157,6 +162,7 @@ public struct ClaudeSessionIO {
         screenText: @escaping () -> String?,
         confirmSession: @escaping (TimeInterval) -> Bool,
         sessionIsUnchanged: @escaping () -> Bool = { true },
+        canConfirmScreen: @escaping () -> Bool = { true },
         screenNeedsPaneProof: Bool = false,
         wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
@@ -164,6 +170,7 @@ public struct ClaudeSessionIO {
         self.screenText = screenText
         self.confirmSession = confirmSession
         self.sessionIsUnchanged = sessionIsUnchanged
+        self.canConfirmScreen = canConfirmScreen
         self.screenNeedsPaneProof = screenNeedsPaneProof
         self.wait = wait
     }
@@ -230,6 +237,10 @@ private func typeAndSubmit(
 ) -> Bool {
     let maxAttempts = 5
     for attempt in 1...maxAttempts {
+        guard io.canConfirmScreen() else {
+            checkoutLog("화면을 확인할 수단이 사라져 더 치지 않음 — 남은 조각은 정리한다")
+            return false
+        }
         if attempt > 1 {
             guard io.confirmSession(retryConfirmTimeout) else { return false }
         }
@@ -390,7 +401,7 @@ public func deliverClaudeInputs(
     }
 
     let io = ClaudeSessionIO(
-        sendKeys: { sendKeys($0, to: handle) },
+        sendKeys: { sendKeys($0, to: handle, expectedPID: claudePID) },
         screenText: { screenText(of: handle) },
         confirmSession: { limit in
             waitUntilClaudeAcceptsInput(
@@ -402,6 +413,8 @@ public func deliverClaudeInputs(
         sessionIsUnchanged: {
             probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
         },
+        // 권한이 회수되면 화면 확인이 불가능해진다 — 그때는 새로 치지 않고 정리만 한다
+        canConfirmScreen: { handle.screenNeedsPaneProof ? accessibilityIsTrusted() : true },
         // Warp만 true — 접근성으로 읽히는 것은 "포커스된 pane"이라 우리 것이라는 보장이 없다
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
@@ -456,7 +469,7 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
 }
 
 /// 키 입력을 개행 추가 없이 그대로 보낸다. "\r"는 제출, "\u{15}"(Ctrl+U)는 입력창 클리어.
-private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool {
+private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expectedPID: Int) -> Bool {
     switch handle {
     case .iterm(let sessionID, _):
         // 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 전용 스크립트로 분기한다
@@ -482,16 +495,13 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle) -> Bool 
         )
         return result?.status == 0
     case .warp(let socket):
-        // 권한이 사라지면 화면 확인이 멈춰 CR은 막히지만 타이핑은 계속 나갈 수 있다 —
-        // 그러면 사용자 입력창에 우리 텍스트가 남고 Ctrl+U가 사용자가 치던 것을 지운다.
-        // 확인할 수 없게 된 순간부터는 아무것도 보내지 않는다 (정리는 전달 루프가 끝낸 뒤
-        // `deliverClaudeInputs`가 한 번만 한다)
-        guard accessibilityIsTrusted() else { return false }
         // 헬퍼가 우리 pane의 tty 입력 큐에 바이트를 직접 넣는다(TIOCSTI) — 포커스와 무관하고
-        // 다른 pane·다른 앱으로 샐 수 없다. 합성 키 입력을 쓰지 않는 이유가 이것이다
-        guard case .ok? = warpHelperRequest(.inject(Data(text.utf8)), socket: socket) else {
-            return false
-        }
+        // 다른 pane·다른 앱으로 샐 수 없다. 합성 키 입력을 쓰지 않는 이유가 이것이다.
+        // 기대 PID를 함께 보내 헬퍼가 "지금 이 tty를 읽을 프로세스"까지 확인하게 한다 —
+        // 우리는 보내기 전만 볼 수 있고, 큐에 넣은 뒤 누가 읽는지는 거기서만 정해진다
+        guard case .ok? = warpHelperRequest(
+            .inject(expectedPID: Int32(expectedPID), bytes: Data(text.utf8)), socket: socket
+        ) else { return false }
         return true
     case .none:
         return false

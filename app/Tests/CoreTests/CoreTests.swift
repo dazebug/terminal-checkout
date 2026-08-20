@@ -661,6 +661,25 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(session.keystrokes.isEmpty, "새어 나간 바이트: \(session.keystrokes)")
     }
 
+    /// 회귀 방지(P0-2): 화면을 더 확인할 수 없게 되면(권한 회수) **새로 치는 것은** 멈춰야
+    /// 하지만, 이미 친 것을 되돌리는 정리는 나가야 한다. 정리까지 같은 조건으로 막으면
+    /// 자동 입력이 입력창에 남아 사용자가 나중에 Enter를 눌렀을 때 실행된다
+    func testLostScreenAccessStopsTypingButNotCleanup() {
+        let session = FakeClaudeSession()
+        let io = ClaudeSessionIO(
+            sendKeys: { session.io.sendKeys($0) },
+            screenText: { session.io.screenText() },
+            confirmSession: { _ in true },
+            sessionIsUnchanged: { true },
+            canConfirmScreen: { false }, // 전달 도중 권한이 사라졌다
+            wait: { _ in }
+        )
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
+        XCTAssertTrue(session.keystrokes.isEmpty, "확인할 수 없는데 친 것: \(session.keystrokes)")
+        XCTAssertTrue(clearAbandonedInput(io: io), "정리가 막혔다")
+        XCTAssertEqual(session.keystrokes, ["\u{15}"])
+    }
+
     /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
     /// 이 자리가 게이트를 우회하면 정리가 남의 세션 입력창을 지운다
     func testAbandonedInputCleanupIsGatedToo() {
@@ -1173,14 +1192,25 @@ final class WarpHelperProtocolTests: XCTestCase {
     /// claude가 입력을 제출하지 않는다
     func testInjectCarriesControlBytesUnchanged() {
         for text in ["!gh issue view 1", "\r", "\u{15}", "한글 입력", ""] {
-            XCTAssertEqual(
-                roundTrip(.inject(Data(text.utf8))), .inject(Data(text.utf8)), text.debugDescription
-            )
+            let request = WarpHelperRequest.inject(expectedPID: 4242, bytes: Data(text.utf8))
+            XCTAssertEqual(roundTrip(request), request, text.debugDescription)
         }
     }
 
+    /// 주입 요청은 "누가 읽을 것을 기대하는지"를 함께 나른다 — 헬퍼가 그 순간의 포그라운드와
+    /// 맞춰 보고 어긋나면 넣지 않는다
+    func testInjectCarriesTheExpectedReader() {
+        XCTAssertEqual(
+            parseWarpHelperRequest(encodeWarpHelperRequest(.inject(expectedPID: 91, bytes: Data("x".utf8)))),
+            .inject(expectedPID: 91, bytes: Data("x".utf8))
+        )
+        XCTAssertNil(parseWarpHelperRequest("inject notapid eA=="))
+        XCTAssertNil(parseWarpHelperRequest("inject 91"))
+    }
+
     func testEncodedRequestIsASingleLine() {
-        XCTAssertFalse(encodeWarpHelperRequest(.inject(Data("a\nb".utf8))).contains("\n"))
+        let line = encodeWarpHelperRequest(.inject(expectedPID: 7, bytes: Data("a\nb".utf8)))
+        XCTAssertFalse(line.contains("\n"))
     }
 
     func testUnknownRequestIsRejected() {
@@ -1190,7 +1220,7 @@ final class WarpHelperProtocolTests: XCTestCase {
     }
 
     func testInjectWithBadBase64IsRejected() {
-        XCTAssertNil(parseWarpHelperRequest("inject !!!not-base64!!!"))
+        XCTAssertNil(parseWarpHelperRequest("inject 91 !!!not-base64!!!"))
     }
 
     func testResponsesRoundTrip() {
@@ -1205,6 +1235,29 @@ final class WarpHelperProtocolTests: XCTestCase {
     func testResponseWithoutPrefixIsRejected() {
         XCTAssertNil(parseWarpHelperResponse("/dev/ttys026"))
         XCTAssertNil(parseWarpHelperResponse(""))
+    }
+}
+
+// MARK: - Warp: 주입 직전 포그라운드 판정
+// TIOCSTI는 호출자의 세션인지만 보고 **누가 그 바이트를 읽을지는 정하지 않는다**. claude가
+// 죽어 셸이 포그라운드가 되면 큐에 남은 CR을 셸이 읽어 사용자 초안을 실행한다.
+// 실측: 앱이 고르는 claude pid가 프로세스 그룹 리더가 아닌 경우가 있다(13개 pane 중 3개) —
+// 그래서 pid가 아니라 `getpgid(pid)`와 비교해야 한다.
+
+final class WarpForegroundTests: XCTestCase {
+    func testForegroundMatchesExpectedGroup() {
+        XCTAssertTrue(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: 4242))
+    }
+
+    func testDifferentGroupIsBlocked() {
+        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: 99))
+    }
+
+    /// `tcgetpgrp`·`getpgid`가 실패하면 -1이다 — 알 수 없을 때는 넣지 않는다
+    func testUnknownGroupIsBlocked() {
+        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: -1, expectedPGID: -1))
+        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: -1))
+        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 0, expectedPGID: 0))
     }
 }
 
