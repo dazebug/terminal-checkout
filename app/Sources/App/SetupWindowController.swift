@@ -558,7 +558,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
-        // 손쉬운 사용은 없어도 실행도 입력 전달도 된다 — 오류가 아니라 경고로 다룬다
+        // 손쉬운 사용이 없어도 명령 실행은 된다(claude 입력 전달만 막힌다) — 오류가 아니라 경고로 다룬다
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
         // 터미널별 권한 UI — 케이스를 추가하면 "이 터미널에 권한 섹션이 필요한가"가 여기서
         // 컴파일 에러로 강제된다

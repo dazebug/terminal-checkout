@@ -418,7 +418,7 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
         XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
         // 알 수 없는 저장값(다른 버전이 남긴 식별자, 손으로 고친 plist)은 iTerm2 폴백 —
-        // 소비 지점마다 switch default가 따로 하던 폴백을 파싱 한 곳으로 모은 계약
+        // 폴백이 소비 지점마다 갈리지 않게 파싱 한 곳에 모은 계약
         XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
         XCTAssertEqual(Terminal(storedValue: ""), .iterm)
     }

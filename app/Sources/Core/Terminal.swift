@@ -8,8 +8,8 @@ public enum Terminal: String, CaseIterable {
     case warp
 
     /// 저장값 파싱의 단일 지점. 알 수 없는 값(다른 버전이 남긴 식별자, 손으로 고친 plist)은
-    /// iTerm2로 폴백한다 — 이전에는 소비 지점마다 switch default가 따로 폴백해, 실행은
-    /// iTerm2로 가면서 설정 창은 iTerm2 권한 섹션을 숨기는 식으로 어긋날 수 있었다.
+    /// iTerm2로 폴백한다. 폴백을 소비 지점마다 흩어 두면 실행은 iTerm2로 가면서 설정 창은
+    /// iTerm2 권한 섹션을 숨기는 식으로 서로 어긋날 수 있어 여기 한 곳에만 둔다.
     public init(storedValue: String) {
         self = Terminal(rawValue: storedValue) ?? .iterm
     }
