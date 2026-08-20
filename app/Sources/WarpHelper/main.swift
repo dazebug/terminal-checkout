@@ -21,9 +21,12 @@ import Foundation
 private let requestTIOCSTI: UInt = 0x8001_7472
 private let requestFIONREAD: UInt = 0x4004_667F
 
-/// tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다 — 앱이 "전달됐다"로
-/// 오판하지 않도록 여유 있게 잡아 두고, 넘칠 것 같으면 거절해 재시도로 돌린다.
+/// 한 번에 큐에 넣어 두는 최대 바이트. tty 입력 큐 상한(TTYHOG, 기본 1024)보다 넉넉히 낮게
+/// 잡아 두고, 넘치는 분량은 소비를 기다렸다 이어 넣는다.
 private let injectQueueLimit = 512
+/// 큐가 빌 때까지 기다리는 상한. claude가 바쁘면 소비가 늦는데, 여기서 무한정 기다리면
+/// 전달 스레드가 통째로 묶인다 — 시간을 넘기면 `err`로 돌려주고 앱의 재시도에 맡긴다.
+private let injectDrainTimeout: TimeInterval = 10
 
 /// 앱이 `bye`를 못 보내고 끝나는 경우(claude가 뜨지 않아 포기 등)에 대비한 자동 종료.
 /// claude 기동 대기가 최대 120초라 그보다 넉넉해야 한다.
@@ -31,6 +34,23 @@ private let idleTimeout: TimeInterval = 300
 private let maxLifetime: TimeInterval = 3600
 
 private let serveFlag = "--serve"
+
+/// 시그널 핸들러는 async-signal-safe한 것만 부를 수 있다 — Swift 문자열을 만들 수 없으므로
+/// 경로를 C 문자열로 미리 떠 둔다.
+private var socketPathForSignal: UnsafeMutablePointer<CChar>?
+
+/// SIGTERM(앱 재설치·`pkill`)·SIGINT·SIGHUP에서 소켓 파일을 지우고 나간다.
+/// SIGKILL은 잡을 수 없으므로 그 몫은 앱이 다음 실행에서 회수한다
+/// (`reclaimDeadWarpHelperSockets`).
+private func installSocketCleanupOnSignals(path: String) {
+    socketPathForSignal = strdup(path)
+    for number in [SIGTERM, SIGINT, SIGHUP] {
+        signal(number) { _ in
+            if let path = socketPathForSignal { unlink(path) }
+            _exit(0)
+        }
+    }
+}
 
 private func fail(_ message: String) -> Never {
     checkoutLog("Warp 주입 헬퍼 종료: \(message)")
@@ -48,22 +68,38 @@ private func ttyPendingBytes(_ fd: Int32) -> Int? {
     return result == 0 ? Int(pending) : nil
 }
 
+/// 큐 여유만큼 나눠 넣는다. 통째로 거절하면 512바이트가 넘는 claude 프롬프트가 항상
+/// 실패하는데, 그 길이는 사용자가 직접 쓰는 입력에서 드물지 않다.
+/// 바이트 단위로 잘라도 되는 이유는 tty 입력 큐가 바이트 스트림이기 때문이다 — 멀티바이트
+/// 문자가 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
 private func inject(_ bytes: Data, into ttyFD: Int32) -> WarpHelperResponse {
     guard !bytes.isEmpty else { return .ok("0") }
-    guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
-    guard pending + bytes.count <= injectQueueLimit else {
-        return .err("input queue full (\(pending) pending)")
-    }
-    for (index, byte) in bytes.enumerated() {
-        var value = CChar(bitPattern: byte)
-        let result = withUnsafeMutablePointer(to: &value) {
-            ioctl(ttyFD, requestTIOCSTI, UnsafeMutableRawPointer($0))
+    let all = [UInt8](bytes)
+    var sent = 0
+    let deadline = Date().addingTimeInterval(injectDrainTimeout)
+    while sent < all.count {
+        guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
+        let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
+        guard chunk > 0 else {
+            // claude가 아직 읽어 가지 않았다. 여기서 더 넣으면 커널이 조용히 버린다
+            guard Date() < deadline else {
+                return .err("input queue still full after \(Int(injectDrainTimeout))s (\(pending) pending)")
+            }
+            usleep(50_000)
+            continue
         }
-        // 중간에 실패하면 앞부분만 들어간 상태다 — 몇 바이트까지 갔는지 함께 알린다.
-        // 앱은 재시도 전에 Ctrl+U로 입력창을 비우므로 남은 조각은 정리된다
-        guard result == 0 else { return .err("\(lastErrnoName()) after \(index)") }
+        for index in sent..<(sent + chunk) {
+            var value = CChar(bitPattern: all[index])
+            let result = withUnsafeMutablePointer(to: &value) {
+                ioctl(ttyFD, requestTIOCSTI, UnsafeMutableRawPointer($0))
+            }
+            // 중간에 실패하면 앞부분만 들어간 상태다 — 몇 바이트까지 갔는지 함께 알린다.
+            // 앱은 재시도 전에 Ctrl+U로 입력창을 비우므로 남은 조각은 정리된다
+            guard result == 0 else { return .err("\(lastErrnoName()) after \(index)") }
+        }
+        sent += chunk
     }
-    return .ok(String(bytes.count))
+    return .ok(String(sent))
 }
 
 /// 연결 하나를 끝까지 처리한다. `bye`를 받았으면 true(헬퍼 종료).
@@ -81,8 +117,6 @@ private func serve(client: Int32, ttyFD: Int32, ttyPath: String) -> Bool {
             switch parseWarpHelperRequest(line) {
             case .tty:
                 response = .ok(ttyPath)
-            case .pending:
-                response = ttyPendingBytes(ttyFD).map { .ok(String($0)) } ?? .err(lastErrnoName())
             case .inject(let bytes):
                 response = inject(bytes, into: ttyFD)
             case .bye:
@@ -181,6 +215,7 @@ let bound = withUnsafePointer(to: &address) {
 }
 guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoName())") }
 chmod(socketPath, 0o600)
+installSocketCleanupOnSignals(path: socketPath)
 
 let startedAt = Date()
 var lastActivity = Date()
@@ -192,7 +227,12 @@ while !finished {
     if ready > 0 {
         let client = accept(server, nil, nil)
         if client >= 0 {
-            // 같은 사용자 프로세스만 허용 (앱 소켓과 같은 기준)
+            // 같은 사용자 프로세스만 허용 (앱 소켓과 같은 기준). uid만 보는 것이 여기서는
+            // 충분한 신뢰 경계다 — 같은 uid의 프로세스는 이미 이 사용자의 파일을 고치고
+            // 앱 번들을 갈아 끼우고 claude가 붙은 pane에 무엇이든 할 수 있어서, 호출자를
+            // 특정 바이너리로 좁혀도 실제로 막히는 것이 없다. 다른 사용자는 소켓 파일
+            // 퍼미션(0600)에서 먼저 걸린다. 경로의 난수 토큰은 비밀이 아니라 실행끼리
+            // 섞이지 않게 하는 이름표다 (Tab Config에 그대로 적혀 pane에도 보인다)
             var uid: uid_t = 0
             var gid: gid_t = 0
             if getpeereid(client, &uid, &gid) == 0, uid == getuid() {

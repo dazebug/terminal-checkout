@@ -269,17 +269,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ]))
     }
 
-    /// 입력 전달 자체는 이 권한과 무관하다(pane 안 헬퍼가 tty에 직접 넣는다) — 화면을 읽어
-    /// "claude가 그 입력을 받았는지" 확인하는 데만 쓴다. 없어도 되는 권한임을 문구로 밝힌다.
+    /// 화면을 읽어 "claude가 그 입력을 받았는지" 확인하는 데 쓴다. 확인 없이 제출하면 claude가
+    /// 초기화 중 버린 입력이 "전달됨"으로 기록되므로(실측), 이 권한 없이는 claude 입력을
+    /// 전달하지 않는다 — 명령 실행과는 무관하다는 것을 문구로 갈라 준다.
     private func buildAccessibilitySection() {
         accessibilitySection.orientation = .vertical
         accessibilitySection.alignment = .leading
         accessibilitySection.spacing = 9
         accessibilitySection.addArrangedSubview(hairline())
-        accessibilitySection.addArrangedSubview(sectionTitle("Warp 화면 읽기 (손쉬운 사용, 선택)"))
+        accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
         accessibilitySection.addArrangedSubview(helpLabel(
-            "claude가 입력을 받은 것을 화면으로 확인하는 데만 씁니다. 허용하지 않아도 명령 실행과 "
-                + "claude 입력 전달은 그대로이고, 확인이 덜 정확해집니다."
+            "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 버튼 명령은 "
+                + "새 탭에서 그대로 실행되지만, 예약한 claude 입력은 전달되지 않습니다."
         ))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
@@ -569,7 +570,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             apply(
                 accessibilityGranted
                     ? .ok("허용됨")
-                    : .warning("허용 안 됨 — 입력은 전달되지만 반영 확인이 덜 정확합니다"),
+                    : .warning("허용 안 됨 — 명령은 실행되지만 claude 입력은 전달되지 않습니다"),
                 to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
             )
         }
@@ -625,13 +626,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             if !PermissionChecker.isWarpInstalled {
                 terminalColor = Theme.err
                 terminalDetail = "Warp가 설치되어 있지 않음"
-            } else {
-                // 손쉬운 사용은 반영 확인을 정확하게 할 뿐이라 없어도 초록이다 —
-                // 여기서 노랗게 두면 고칠 것이 없는데 고장으로 읽힌다
+            } else if accessibilityGranted {
                 terminalColor = Theme.ok
-                terminalDetail = accessibilityGranted
-                    ? "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
-                    : "Tab Config로 새 탭 — TCC 권한 불필요 (손쉬운 사용은 선택)"
+                terminalDetail = "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
+            } else {
+                // 명령 실행은 되므로 오류가 아니라 경고다 — claude 입력만 막힌다
+                terminalColor = Theme.warn
+                terminalDetail = "손쉬운 사용 권한 없음 — 명령은 실행되고 claude 입력은 전달되지 않음"
             }
         } else {
             terminalName = "iTerm2"

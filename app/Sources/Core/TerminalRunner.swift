@@ -113,15 +113,28 @@ public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
 /// 알려 주므로 여기서 pane을 찾아 헤맬 필요가 없다 — 이 함수는 Chrome 응답을 막는
 /// execQueue 안에서 도는데, 헬퍼가 뜨기를 기다리는 일은 백그라운드 전달 스레드
 /// (`deliverClaudeInputs`)에서 하면 되기 때문이다.
+///
+/// Tab Config 파일 이름에는 요청마다 다른 토큰이 붙는다(`warpTabConfigStem`) — 고정 이름은
+/// 사용자 파일을 덮어쓰고, `open`이 돌아온 뒤에도 Warp가 파일을 읽기 전이라 연속 요청이
+/// 서로의 명령을 갈아 끼운다. 그 대신 우리 파일은 탭이 열릴 시간을 준 뒤 지운다.
 @discardableResult
 public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throws -> TerminalSessionHandle {
     guard findWarpAppBundle() != nil else { throw TerminalError.warpNotFound }
 
+    // 앱이 죽어 남은 이전 실행의 찌꺼기부터 회수한다 (살아 있는 것은 건드리지 않는다)
+    reclaimStaleWarpTabConfigs()
+    reclaimDeadWarpHelperSockets()
+
+    let token = warpHelperToken()
     var socketPath: String?
     var commands = [command]
     if injectsClaudeInput {
-        // 헬퍼를 못 갖추면 명령만 실행한다 — 탭이 열리는 것까지 포기할 이유는 없다
-        if let helper = warpHelperExecutablePath(), let path = warpHelperSocketPath(token: warpHelperToken()) {
+        // 손쉬운 사용 권한이 없으면 claude가 입력을 받았는지 확인할 수 없어 어차피 보내지
+        // 않는다(`deliverClaudeInputs`). 그럴 때 헬퍼를 띄우면 아무도 붙지 않는 프로세스가
+        // 유휴 타임아웃까지 pane에 남고, 사용자에게는 정체 모를 명령 한 줄이 더 보인다
+        if !accessibilityIsTrusted() {
+            checkoutLog("손쉬운 사용 권한이 없어 Warp 주입 헬퍼를 띄우지 않음 — 명령만 실행한다")
+        } else if let helper = warpHelperExecutablePath(), let path = warpHelperSocketPath(token: token) {
             commands.insert(warpHelperCommand(executable: helper, socketPath: path), at: 0)
             socketPath = path
         } else {
@@ -129,17 +142,30 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
         }
     }
 
+    let stem = warpTabConfigStem(token: token)
+    let path = warpTabConfigPath(stem: stem)
     do {
         try FileManager.default.createDirectory(
             atPath: warpTabConfigDirectory(), withIntermediateDirectories: true
         )
-        try warpTabConfigTOML(commands: commands)
-            .write(toFile: warpTabConfigPath(), atomically: true, encoding: .utf8)
+        // 토큰이 겹칠 일은 없지만, 겹쳤다면 그것은 사용자 파일일 수도 있다 — 덮어쓰지 않는다
+        guard !FileManager.default.fileExists(atPath: path) else {
+            throw TerminalError.warpTabConfigFailed("이미 있는 파일을 덮어쓰지 않습니다: \(path)")
+        }
+        try warpTabConfigTOML(commands: commands).write(toFile: path, atomically: true, encoding: .utf8)
+    } catch let error as TerminalError {
+        throw error
     } catch {
         throw TerminalError.warpTabConfigFailed(errorMessage(error))
     }
+    // 회수 예약은 파일을 쓰자마자 건다 — `open`이 던지는 갈래에서도 파일이 남지 않아야 한다.
+    // Warp는 `open`이 돌아온 뒤에 파일을 읽으므로(pane 등장까지 실측 0.5∼0.7초) 곧바로
+    // 지우면 안 된다
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + warpTabConfigLifetime) {
+        try? FileManager.default.removeItem(atPath: path)
+    }
 
-    let result = try runProcess("/usr/bin/open", [warpTabConfigURL()], timeout: 15)
+    let result = try runProcess("/usr/bin/open", [warpTabConfigURL(stem: stem)], timeout: 15)
     guard result.status == 0 else {
         throw TerminalError.warpTabConfigFailed(
             result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -148,6 +174,10 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
     guard let socketPath else { return .none }
     return .warp(helperSocket: socketPath)
 }
+
+/// Warp가 Tab Config를 읽고 pane을 띄우기까지 기다려 주는 시간. 실측 0.5∼0.7초의 여유분이며,
+/// 이보다 짧으면 탭이 열리지 않고 길면 `+` 메뉴에 우리 파일이 오래 남는다.
+let warpTabConfigLifetime: TimeInterval = 20
 
 /// WezTerm CLI 경로 탐색: PATH → Homebrew/앱 번들 fallback
 /// (앱은 GUI 프로세스라 PATH가 /usr/bin:/bin 수준으로 제한되므로 명시적 후보가 필수)

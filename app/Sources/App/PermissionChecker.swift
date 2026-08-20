@@ -40,8 +40,10 @@ enum PermissionChecker {
         findWarpExecutable() != nil
     }
 
-    /// 손쉬운 사용(접근성) 권한. Warp 화면을 읽어 claude가 입력을 받은 것을 확인하는 데만 쓴다 —
-    /// 입력 전달 자체는 pane 안 헬퍼가 tty로 하므로 이 권한이 없어도 실행도 전달도 된다.
+    /// 손쉬운 사용(접근성) 권한. Warp에서 claude 입력을 예약한 버튼의 필수 조건이다 —
+    /// 화면을 읽지 못하면 claude가 입력을 받았는지 확인할 수 없고, 확인 없이 CR을 보내면
+    /// claude가 버린 입력이 "전달됨"으로 기록된 채 빈 줄이 제출된다(실측).
+    /// 명령 실행 자체에는 필요 없다.
     static var isAccessibilityGranted: Bool {
         accessibilityIsTrusted()
     }

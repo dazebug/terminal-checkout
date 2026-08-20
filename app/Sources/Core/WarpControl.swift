@@ -6,20 +6,48 @@ import Foundation
 // (번들에 .sdef 없음, Info.plist에 NSAppleScriptEnabled 없음), warpctrl은 Stable에서 기본
 // 비활성이며, pane에 텍스트를 보내는 CLI(`wezterm cli send-text` 같은 것)도 없다 — 모두 실측.
 
-/// Tab Config 파일 이름은 고정이다 — 실행할 때마다 새 파일을 만들면 Warp `+` 메뉴가
-/// 우리 파일로 오염된다. 파일은 열 때마다 다시 읽히므로 내용만 갈아 끼우면 된다(실측).
-public let warpTabConfigStem = "terminal-checkout"
+/// 요청마다 다른 이름을 쓴다. 고정 이름은 두 가지를 동시에 깨뜨렸다:
+/// ① 같은 이름의 사용자 Tab Config가 있으면 말없이 덮어쓴다
+/// ② `open`이 돌아온 뒤에도 Warp는 파일을 조금 뒤에 읽는다(pane 등장까지 실측 0.5∼0.7초) —
+///    그 사이 다음 요청이 덮어쓰면 두 탭 중 하나에 남의 명령이 뜬다
+/// 이름을 나누면 두 문제가 파일 하나당 하나의 요청이라는 성질로 함께 사라진다. 대신 `+` 메뉴에
+/// 파일이 쌓이지 않도록 실행이 끝나면 지우고(`runInWarp`), 앱이 그 전에 죽어 남은 것은
+/// 다음 실행이 회수한다(`reclaimStaleWarpTabConfigs`).
+public let warpTabConfigPrefix = "terminal-checkout-"
+
+/// 이 브랜치 초기 빌드가 쓰던 고정 이름 — 회수 대상으로만 남긴다
+let warpTabConfigLegacyStem = "terminal-checkout"
+
+/// 생성 파일임을 알아보는 표시. 사용자 파일을 지우지 않기 위한 마지막 확인이다.
+public let warpTabConfigHeader = "# Terminal Checkout이 자동 생성합니다"
+
+public func warpTabConfigStem(token: String) -> String { warpTabConfigPrefix + token }
 
 /// Stable 채널만 본다 — Preview 등 다른 채널은 이 디렉토리부터 `~/.warp-<channel>`로 갈린다.
 public func warpTabConfigDirectory() -> String {
     (NSHomeDirectory() as NSString).appendingPathComponent(".warp/tab_configs")
 }
 
-public func warpTabConfigPath() -> String {
-    (warpTabConfigDirectory() as NSString).appendingPathComponent("\(warpTabConfigStem).toml")
+public func warpTabConfigPath(stem: String) -> String {
+    (warpTabConfigDirectory() as NSString).appendingPathComponent("\(stem).toml")
 }
 
-public func warpTabConfigURL() -> String { "warp://tab_config/\(warpTabConfigStem)" }
+public func warpTabConfigURL(stem: String) -> String { "warp://tab_config/\(stem)" }
+
+/// 회수해도 되는 파일 이름인가 — 우리 접두사 + 16진 토큰, 또는 옛 고정 이름.
+public func warpTabConfigFileIsOurs(name: String) -> Bool {
+    guard name.hasSuffix(".toml") else { return false }
+    let stem = String(name.dropLast(".toml".count))
+    if stem == warpTabConfigLegacyStem { return true }
+    guard stem.hasPrefix(warpTabConfigPrefix) else { return false }
+    let token = stem.dropFirst(warpTabConfigPrefix.count)
+    return !token.isEmpty && token.allSatisfy(\.isHexDigit)
+}
+
+/// 내용까지 확인한다 — 이름이 우연히 겹친 사용자 파일을 지우면 안 된다.
+public func warpTabConfigIsOurs(contents: String) -> Bool {
+    contents.hasPrefix(warpTabConfigHeader)
+}
 
 /// TOML basic string 이스케이프. 제어문자는 리터럴로 담을 수 없어 반드시 escape sequence로
 /// 바꿔야 한다 — 하나라도 새면 Warp가 파일 파싱에 실패해 탭이 아예 열리지 않는다.
@@ -54,7 +82,7 @@ public func escapeForTOMLBasicString(_ text: String) -> String {
 public func warpTabConfigTOML(commands: [String]) -> String {
     let list = commands.map { "\"\(escapeForTOMLBasicString($0))\"" }.joined(separator: ", ")
     return """
-    # Terminal Checkout이 자동 생성합니다 — 직접 고쳐도 다음 실행에 덮어씁니다.
+    \(warpTabConfigHeader) — 탭이 열리면 지웁니다.
     name = "\(appDisplayName)"
 
     [[panes]]
@@ -94,17 +122,27 @@ public func warpHelperToken() -> String {
     String(format: "%08x", UInt32.random(in: .min ... .max))
 }
 
+/// 회수해도 되는 소켓 파일 이름인가 — 우리 접두사 + 16진 토큰.
+public func warpHelperSocketFileIsOurs(name: String) -> Bool {
+    guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(".sock") else { return false }
+    let token = name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count)
+    return !token.isEmpty && token.allSatisfy(\.isHexDigit)
+}
+
+public let warpHelperSocketPrefix = "tcw-"
+
 /// 후보 디렉토리 중 sun_path 104바이트에 들어가는 첫 경로. 하나도 안 들어가면 nil.
 public func warpHelperSocketPath(token: String, directories: [String]) -> String? {
     for directory in directories {
-        let path = (directory as NSString).appendingPathComponent("tcw-\(token).sock")
+        let path = (directory as NSString).appendingPathComponent("\(warpHelperSocketPrefix)\(token).sock")
         if makeUnixSockaddr(path) != nil { return path }
     }
     return nil
 }
 
-/// 임시 디렉토리를 쓰는 이유는 두 가지다: 경로가 짧아 104바이트 제한에 여유가 있고,
-/// 헬퍼가 비정상 종료해 소켓 파일이 남아도 OS가 청소한다.
+/// 임시 디렉토리를 쓰는 이유는 경로가 짧아 sun_path 104바이트 제한에 여유가 있어서다.
+/// 남은 파일을 OS가 치워 주리라고 기대하지 않는다 — 헬퍼가 SIGKILL로 끝나면 `unlink`가 돌지
+/// 못하므로, 다음 실행이 죽은 소켓을 직접 회수한다(`reclaimDeadWarpHelperSockets`).
 public func warpHelperSocketPath(token: String) -> String? {
     warpHelperSocketPath(token: token, directories: [NSTemporaryDirectory(), "/tmp"])
 }
@@ -236,6 +274,54 @@ private func firstTextAreaValue(in element: AXUIElement, depth: Int) -> String? 
         if let nested = firstTextAreaValue(in: child, depth: depth - 1) { return nested }
     }
     return nil
+}
+
+// MARK: - 회수
+// 정상 경로는 스스로 치운다: 헬퍼는 `bye`·pane 종료·잡을 수 있는 시그널에서 소켓을 지우고,
+// `runInWarp`은 탭이 열린 뒤 Tab Config를 지운다. 건너뛰는 것은 SIGKILL·전원 차단·앱 크래시다.
+// 그 몫을 다음 실행이 훑어 되찾는다 — **살아 있는 것을 건드리지 않는 것**이 조건이다.
+
+/// 주인이 죽은 헬퍼 소켓 파일을 지운다. 연결되면 살아 있는 헬퍼이므로 그대로 둔다.
+/// 갓 만들어진 파일을 건너뛰는 이유는 `bind`와 `listen` 사이의 짧은 순간에 연결이 거절되기
+/// 때문이다 — 그 창에서 지우면 살아 있는 헬퍼의 소켓을 없애 전달이 통째로 사라진다.
+func reclaimDeadWarpHelperSockets(
+    in directories: [String] = [NSTemporaryDirectory(), "/tmp"], youngerThan grace: TimeInterval = 60
+) {
+    for directory in Set(directories) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
+        for name in names where warpHelperSocketFileIsOurs(name: name) {
+            let path = (directory as NSString).appendingPathComponent(name)
+            guard let modified = fileModificationDate(path),
+                  Date().timeIntervalSince(modified) > grace else { continue }
+            if let fd = connectToUnixSocket(path: path) {
+                close(fd)
+                continue
+            }
+            unlink(path)
+        }
+    }
+}
+
+/// 앱이 자기 Tab Config를 지우기 전에 죽으면 파일이 남아 Warp `+` 메뉴에 쌓인다.
+/// 나이를 보는 이유는 지금 막 열리고 있는 다른 요청의 파일을 지우지 않기 위해서고,
+/// 내용까지 보는 이유는 이름이 겹친 사용자 파일을 지우지 않기 위해서다.
+func reclaimStaleWarpTabConfigs(
+    in directory: String = warpTabConfigDirectory(), olderThan age: TimeInterval = 300
+) {
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
+    for name in names where warpTabConfigFileIsOurs(name: name) {
+        let path = (directory as NSString).appendingPathComponent(name)
+        guard let modified = fileModificationDate(path),
+              Date().timeIntervalSince(modified) > age,
+              let contents = try? String(contentsOfFile: path, encoding: .utf8),
+              warpTabConfigIsOurs(contents: contents)
+        else { continue }
+        try? FileManager.default.removeItem(atPath: path)
+    }
+}
+
+private func fileModificationDate(_ path: String) -> Date? {
+    (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
 }
 
 // MARK: - 헬퍼 소켓 클라이언트

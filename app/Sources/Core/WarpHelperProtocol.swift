@@ -12,12 +12,19 @@ import Foundation
 public enum WarpHelperRequest: Equatable {
     /// 헬퍼가 붙어 있는 pane의 tty 경로. 앱은 이 값으로 게이트 ①②③을 태운다
     case tty
-    /// tty 입력 큐에 아직 읽히지 않은 바이트 수 (FIONREAD)
-    case pending
     /// 그 바이트들을 tty 입력 큐에 넣는다
     case inject(Data)
     /// 전달이 끝났으니 종료해라 — 헬퍼가 pane에 남아 떠도는 것을 막는 정상 경로다
     case bye
+}
+
+/// tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다. 그래서 한 번에 넣는 양을
+/// 큐에 남은 여유로 제한하고, 넘치는 만큼은 소비를 기다렸다 이어 넣는다 — 상한을 넘는 입력을
+/// 통째로 거절하면 512바이트가 넘는 claude 프롬프트가 항상 실패한다.
+/// 바이트 단위로 자르는 것은 안전하다: tty 입력 큐는 바이트 스트림이라 멀티바이트 문자가
+/// 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
+public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int {
+    max(0, min(remaining, limit - pending))
 }
 
 public enum WarpHelperResponse: Equatable {
@@ -28,7 +35,6 @@ public enum WarpHelperResponse: Equatable {
 public func encodeWarpHelperRequest(_ request: WarpHelperRequest) -> String {
     switch request {
     case .tty: return "tty"
-    case .pending: return "pending"
     case .bye: return "bye"
     case .inject(let bytes): return "inject " + bytes.base64EncodedString()
     }
@@ -39,7 +45,6 @@ public func parseWarpHelperRequest(_ line: String) -> WarpHelperRequest? {
     let text = trimmingLineEnding(line)
     switch text {
     case "tty": return .tty
-    case "pending": return .pending
     case "bye": return .bye
     default: break
     }

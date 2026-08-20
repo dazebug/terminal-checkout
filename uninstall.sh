@@ -17,6 +17,14 @@ if pgrep -x TerminalCheckout >/dev/null 2>&1; then
     pkill -x TerminalCheckout || true
     sleep 1
 fi
+# Warp pane 안에서 도는 주입 헬퍼는 앱의 자식이 아니라 pane 셸 쪽에 붙어 있어 위 pkill로는
+# 잡히지 않는다. SIGTERM을 받으면 스스로 소켓을 지우고 나가지만, 이미 죽어 남은 파일도 있다
+if pgrep -f 'terminal-checkout-warp-helper --serve' >/dev/null 2>&1; then
+    pkill -f 'terminal-checkout-warp-helper --serve' || true
+    sleep 1
+fi
+rm -f "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock 2>/dev/null || true
+rm -f "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml 2>/dev/null || true
 if [ -d "$APP_PATH" ]; then
     rm -rf "$APP_PATH"
     echo "[1/4] 앱 삭제됨: $APP_PATH"
