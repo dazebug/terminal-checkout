@@ -36,6 +36,43 @@ public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int
     return max(0, min(remaining, limit))
 }
 
+/// 주입한 바이트가 읽히는지 지켜보는 동안, **표본 하나로** 내리는 판정.
+///
+/// 이력을 인자로 받지 않는 것이 이 함수의 요점이다. 한때는 직전 표본과 비교해 "큐가 늘었으면
+/// 사용자 키가 섞인 것"으로 보고, 늘지 않았으면 남은 바이트를 우리 것으로 여겨 `tcflush`로
+/// 버렸다. 그 추론은 두 자리에서 깨진다(검증자 재현): **첫 표본**은 비교 대상이 없어 어떤 값도
+/// 섞였다고 세우지 못하고, 그 뒤에도 claude가 5바이트를 읽는 사이 사용자가 4바이트를 치면
+/// 총량은 10 → 9로 **줄어** 같은 오판이 된다. `FIONREAD`는 출처 없는 총량뿐이라 "남은 것이 우리
+/// 바이트"를 증명할 방법이 애초에 없다 — 그래서 증명을 강화하는 대신 **버리는 동작 자체를
+/// 없앴다.**
+///
+/// 그 대가로 우리 바이트가 셸 줄 버퍼에 **잔해로 남는 창**이 다시 넓어진다. 그래도 이쪽을
+/// 택하는 이유는 남는 잔해는 사용자가 보고 지울 수 있지만, 잘못된 `tcflush`는 사용자가 방금 친
+/// 키를 **조용히** 지우기 때문이다.
+public enum WarpInjectWatch: Equatable {
+    /// 큐가 비었고 우리가 겨눈 독자가 가져갔다 — 유일한 성공
+    case delivered
+    /// 아직 우리 독자가 읽는 중이다
+    case keepWaiting
+    /// 큐는 비었으나 겨눈 독자가 아닌 쪽(대개 claude가 끝난 뒤의 셸)이 가져갔다
+    case drainedByOther
+    /// 겨눈 독자가 사라졌는데 큐에 바이트가 남았다 — 버리지 않고 남은 수만 알린다
+    case readerGone(pending: Int)
+    /// 예산 안에 읽히지 않았다 (fail-closed)
+    case notReadInTime(pending: Int)
+}
+
+/// 큐 잔량·독자 동일성·예산 소진으로 다음 동작을 정한다.
+/// 빈 큐를 먼저 보는 이유는 그것만이 성공 조건이기 때문이고, 독자 확인이 예산보다 앞서는 이유는
+/// 남의 독자가 붙은 뒤에는 더 기다릴 이유가 없기 때문이다.
+public func warpInjectWatchDecision(
+    pending: Int, readerIsOurs: Bool, budgetExpired: Bool
+) -> WarpInjectWatch {
+    if pending <= 0 { return readerIsOurs ? .delivered : .drainedByOther }
+    if !readerIsOurs { return .readerGone(pending: pending) }
+    return budgetExpired ? .notReadInTime(pending: pending) : .keepWaiting
+}
+
 /// 헬퍼가 요청 **하나**에 쓰는 시간의 상한 — 큐가 비기를 기다리고, 넣은 바이트가 읽히는지
 /// 지켜보는 전부가 이 안에 들어간다.
 public let warpHelperWorkBudget: TimeInterval = 2

@@ -539,7 +539,10 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
-        XCTAssertTrue(session.keystrokes.isEmpty) // 재시도 타이핑이 나가면 안 된다
+        // 재시도 타이핑이 나가면 안 된다. 첫 타이핑은 전송 자체가 실패했지만 바이트는 이미
+        // 들어갔을 수 있어, 포기하면서 지우는 Ctrl+U 하나만 뒤따른다
+        XCTAssertFalse(session.keystrokes.contains(inputs[0]), "재시도 타이핑: \(session.keystrokes)")
+        XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
     /// 입력창 클리어(Ctrl+U)가 실패했으면 타이핑하지 않는다 — 남아 있을지 모르는 텍스트
@@ -566,7 +569,9 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        XCTAssertEqual(session.sendCallCount, 2) // 타이핑 1 + CR 1 — 재전송을 더 시도하면 안 된다
+        // 타이핑 1 + CR 1 + 포기 후 정리 1 — CR 재전송을 더 시도하면 안 된다
+        XCTAssertEqual(session.sendCallCount, 3)
+        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
     }
 
     /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도
@@ -606,6 +611,23 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.dropTypingAt = Set(1...100)
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
+    }
+
+    /// 회귀 방지(검증자 재현 P2): 주입은 **포커스와 무관하게 우리 tty로** 들어가므로
+    /// "화면에서 확인하지 못했다"가 "입력창에 없다"를 뜻하지 않는다. 본문이 이미 들어간 채로
+    /// 반영 확인이 끝내 실패하면, 그 조각을 지우지 않고 끝낼 경우 사용자가 나중에 누른 Enter가
+    /// 그것을 제출한다(`!…` 셸 모드면 명령까지 실행된다).
+    /// 권한이 살아 있어도 마찬가지라 정리 조건은 "권한 상실"이 아니라 **"다 끝내지 못했고 우리
+    /// 조각이 남아 있을 수 있음"**이어야 한다.
+    func testUnconfirmedTypingIsClearedWhenDeliveryGivesUp() {
+        let session = FakeClaudeSession()
+        session.dropTypingAt = Set(1...100) // 바이트는 들어갔는데 화면에는 영영 안 뜬다
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertEqual(
+            session.keystrokes.last, claudeClearInputKey,
+            "포기하고 끝내면서 입력창에 남은 우리 조각을 지우지 않았다: \(session.keystrokes)"
+        )
     }
 
     /// 회귀 방지(P0-2): 접근성으로 읽는 화면이 우리 pane이라는 보장은 없다. 다른 pane에 우연히
@@ -709,7 +731,10 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        XCTAssertEqual(session.keystrokes.count, 1, "권한이 사라진 뒤에도 나간 것: \(session.keystrokes)")
+        // 새로 치는 것은 표식 하나에서 멈춘다. 그 뒤에 나가는 것은 **이미 친 표식을 지우는**
+        // 정리뿐이다 — 정리까지 막으면 표식이 입력창에 남아 사용자가 그것을 제출하게 된다
+        XCTAssertEqual(session.keystrokes.count, 2, "권한이 사라진 뒤에도 새로 친 것: \(session.keystrokes)")
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
     }
 
     /// 회귀 방지(P1-3): 우리가 한 바이트도 보내지 않았으면 정리도 하지 않는다 —
@@ -783,7 +808,8 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
-        XCTAssertEqual(session.keystrokes, [inputs[0]]) // 타이핑만 나가고 CR은 막혔다
+        // 타이핑만 나가고 CR은 막혔다. 그 타이핑은 입력창에 남으므로 포기하면서 지운다
+        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
     }
 
     /// 같은 입력을 두 번 예약했을 때, 앞의 것이 화면(대화 기록)에 남아 있어도 뒤의 것이
@@ -1388,6 +1414,80 @@ final class WarpInjectChunkTests: XCTestCase {
         XCTAssertEqual(warpInjectChunkSize(pending: 0, remaining: 30, limit: 512), 30)
     }
 }
+
+// MARK: - Warp: 주입한 바이트가 읽히는지 지켜보기
+// 넣은 뒤 큐가 비는 것을 확인해야 전달로 인정한다. 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는
+// **부정** 신호일 뿐이고, 남은 바이트가 **누구 것인지는 말해 주지 않는다** — 총량 하나뿐이라
+// 우리 것과 사용자가 방금 친 키를 가를 수 없다. 그래서 판정은 표본 하나로 끝나고, 이력을
+// 인자로 받지 않는다: 받는 순간 "총량 변화로 출처를 추론"하는 갈래가 되살아난다.
+
+final class WarpInjectWatchTests: XCTestCase {
+    /// 회귀 방지(검증자 재현 ①): 옛 판정은 직전 표본과 비교해 "큐가 늘었으면 사용자 키가 섞였다"로
+    /// 봤는데, **첫 표본은 비교 대상이 없어** 어떤 값이어도 섞였다고 세우지 못했다. claude가 우리
+    /// 바이트를 모두 읽은 뒤 사용자가 한 글자를 치고 그 순간 포그라운드가 바뀌면, 그 한 글자를
+    /// 우리 것으로 보고 큐를 통째로 버렸다(`tcflush`) — 사용자 키를 조용히 지우는 오판이다.
+    func testFirstSampleNeverJustifiesDiscardingTheQueue() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 1, readerIsOurs: false, budgetExpired: false),
+            .readerGone(pending: 1)
+        )
+    }
+
+    /// 회귀 방지(검증자 재현 ②): 첫 표본을 넘겨도 마찬가지다. claude가 5바이트를 읽는 사이
+    /// 사용자가 4바이트를 치면 큐는 10 → 9로 **줄어든다** — 단조 감소는 "남은 것이 우리 바이트"의
+    /// 증거가 못 된다. 어느 표본에서도 결론은 같다: 버리지 않고 실패만 알린다.
+    func testMonotonicDecreaseIsNotProofOfOwnership() {
+        for pending in [10, 9] {
+            XCTAssertEqual(
+                warpInjectWatchDecision(pending: pending, readerIsOurs: false, budgetExpired: false),
+                .readerGone(pending: pending)
+            )
+        }
+    }
+
+    /// 성공은 **큐가 빈 것을 우리 독자가 만든 경우뿐**이다
+    func testDeliveredOnlyWhenOurReaderEmptiedTheQueue() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 0, readerIsOurs: true, budgetExpired: false), .delivered
+        )
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 0, readerIsOurs: true, budgetExpired: true), .delivered
+        )
+    }
+
+    /// 큐는 비었지만 그 사이 claude가 끝나 셸이 가져갔으면 실패다 — 성공으로 답하면 앱이 그 위에
+    /// CR을 얹고, 사용자의 다음 Enter가 그 줄을 실행한다
+    func testEmptyQueueDrainedByAnotherReaderIsFailure() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 0, readerIsOurs: false, budgetExpired: false),
+            .drainedByOther
+        )
+    }
+
+    /// 우리 독자가 그대로면 예산이 남는 동안 기다린다
+    func testWaitsWhileOurReaderStillHasBytes() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: false), .keepWaiting
+        )
+    }
+
+    /// 예산 안에 안 읽혔으면 실패다(fail-closed) — 성공으로 답하면 큐에 남은 tail 위로 CR이 얹힌다
+    func testBudgetExpiryFailsClosed() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: true),
+            .notReadInTime(pending: 7)
+        )
+    }
+
+    /// 독자가 사라진 갈래는 예산과 무관하게 같은 결론이다 — 남은 바이트를 버리지 않는다
+    func testReaderGoneOutranksBudget() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 3, readerIsOurs: false, budgetExpired: true),
+            .readerGone(pending: 3)
+        )
+    }
+}
+
 
 // MARK: - Warp: 줄 단위 수신 버퍼
 // 소켓 read()는 줄 경계를 지켜 주지 않는다 — 한 번에 두 줄이 오기도, 한 줄이 쪼개져 오기도 한다.

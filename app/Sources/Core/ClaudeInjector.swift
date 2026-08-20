@@ -248,18 +248,37 @@ public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
 ) -> Int {
+    // 나가는 바이트를 세어 "입력창에 우리 조각이 남아 있을 수 있는가"를 따라간다.
+    // 추적을 이 함수 안에 두는 이유는 **실패 종료 경로가 여럿**이기 때문이다(입력 사이 세션
+    // 확인 실패·재시도 소진). 정리를 바깥에 두면 그중 하나만 정리에 닿는다
+    var ownership = InputBoxOwnership()
+    var tracked = io
+    tracked.sendKeys = { keys in
+        let sent = io.sendKeys(keys)
+        ownership.recordSend(keys: keys, sent: sent)
+        return sent
+    }
+
     var submitted = 0
     for (index, input) in inputs.enumerated() {
-        if index > 0 { io.wait(0.4) }
-        guard io.confirmSession(betweenInputTimeout) else {
+        if index > 0 { tracked.wait(0.4) }
+        guard tracked.confirmSession(betweenInputTimeout) else {
             checkoutLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
-            return submitted
+            break
         }
-        guard typeAndSubmit(input, io: io, retryConfirmTimeout: retryConfirmTimeout) else {
+        guard typeAndSubmit(input, io: tracked, retryConfirmTimeout: retryConfirmTimeout) else {
             checkoutLog("claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
-            return submitted
+            break
         }
         submitted += 1
+    }
+    // 다 끝내지 못한 채 나가면 입력창에 우리 조각이 남아 있을 수 있다. **화면으로 확인하지
+    // 못했을 뿐 바이트는 이미 우리 tty에 들어가 있다** — 주입은 포커스와 무관하기 때문이다.
+    // 지우지 않으면 사용자가 나중에 누른 Enter가 그것을 제출한다(`!…`면 셸 명령까지 실행된다).
+    // 조건이 "권한 상실"이 아니라 여기인 이유가 그것이다: 권한이 멀쩡해도 반영 확인은 실패한다
+    if submitted < inputs.count,
+       clearAbandonedInput(io: tracked, weSentSomething: ownership.mayHoldOurs) {
+        checkoutLog("전달을 끝내지 못해 claude 입력창에 남았을 우리 조각을 지움")
     }
     return submitted
 }
@@ -443,14 +462,8 @@ public func deliverClaudeInputs(
         return
     }
 
-    // 정리(Ctrl+U)를 보낼지 가르는 상태 — 규칙과 그 이유는 `InputBoxOwnership`에 있다
-    var ownership = InputBoxOwnership()
     let io = ClaudeSessionIO(
-        sendKeys: { keys in
-            let sent = sendKeys(keys, to: handle, expectedPID: claudePID)
-            ownership.recordSend(keys: keys, sent: sent)
-            return sent
-        },
+        sendKeys: { keys in sendKeys(keys, to: handle, expectedPID: claudePID) },
         screenText: { screenText(of: handle) },
         confirmSession: { limit in
             waitUntilClaudeAcceptsInput(
@@ -469,19 +482,14 @@ public func deliverClaudeInputs(
     )
     let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
-    // 전달 도중 화면 확인 수단이 사라지면 CR은 막히지만, 그때까지 친 텍스트는 입력창에 남는다.
-    // 우리 tty로만 가는 Ctrl+U를 한 번 보내 그 조각을 지우고 끝낸다.
-    // 아래 로그가 "손쉬운 사용 권한"을 지목하는 것은 `canConfirmScreen`이 false가 될 수 있는
-    // 터미널이 현재 Warp뿐이라서다(`screenNeedsPaneProof`) — 확인 수단이 권한이 아닌 터미널이
-    // 붙으면 문구를 함께 갈라야 한다
-    if !io.canConfirmScreen() {
-        // 정리도 같은 문을 지난다 — 세션이 바뀐 뒤라면 남의 입력창을 지우게 된다.
-        // 우리가 아무것도 못 보냈으면 지울 우리 조각도 없다(사용자 초안만 지우게 된다)
-        if clearAbandonedInput(io: io, weSentSomething: ownership.mayHoldOurs) {
-            checkoutLog("전달 도중 손쉬운 사용 권한이 사라짐 — claude 입력창을 비우고 중단")
-        } else {
-            checkoutLog("손쉬운 사용 권한이 없어 전달하지 못함 — 우리가 보낸 것이 없어 입력창은 건드리지 않음")
-        }
+    // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —
+    // 정리 조건은 권한이 아니라 "다 끝내지 못했다"이기 때문이다. 여기서는 진단만 남긴다:
+    // Warp에서 전달이 멎는 가장 흔한 이유가 권한 회수인데, 무엇을 허용해야 하는지 로그에
+    // 없으면 사용자가 알 수 없다. 이 문구가 권한을 지목할 수 있는 것은 `canConfirmScreen`이
+    // false가 될 수 있는 터미널이 현재 Warp뿐이라서다(`screenNeedsPaneProof`) —
+    // 확인 수단이 권한이 아닌 터미널이 붙으면 문구를 함께 갈라야 한다
+    if submitted < inputs.count, !io.canConfirmScreen() {
+        checkoutLog("전달 도중 화면을 확인할 수단이 사라짐 — 앱 설정 창에서 손쉬운 사용 권한을 허용하세요")
     }
 }
 

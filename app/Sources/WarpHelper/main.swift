@@ -55,7 +55,8 @@ private let foregroundRecheckStride = 16
 //
 // 경계와 **무관한** 잔여(악의가 없어도 남는 것)는 따로다 — 섞지 않는다:
 //  - pane 증명이 본문 타이핑 시점까지만 유효한 창 (`proveOurPane` 주석)
-//  - 큐에 넣은 CR을 셸이 먼저 읽어 가는 경합 (`watchUntilRead` 주석)
+//  - 큐에 넣은 CR을 셸이 먼저 읽어 가는 경합, 그리고 겨눈 claude가 사라졌을 때 **읽히지 않은
+//    우리 바이트가 셸 줄 버퍼에 잔해로 남는 것** — 버려서 막지 않는다(`watchUntilRead` 주석)
 //  - Tab Config 20초 예약 삭제가 "Warp가 읽었다"를 보장하지 못하는 것 (`runInWarp` 주석)
 //  - 전달 중 사용자가 같은 pane에 타이핑하면 입력창에서 섞여 함께 제출되는 것 (이슈 #16).
 //    큐 단계에서는 정상으로 보인다 — claude가 즉시 읽어 가 큐가 계속 비기 때문이다.
@@ -203,25 +204,21 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
     return watchUntilRead(expectedPID: expectedPID, state: state, injected: sent, deadline: deadline)
 }
 
-/// 넣은 바이트가 읽힐 때까지 잠깐 지켜본다. 아직 큐에 남아 있는데 포그라운드가 우리가 겨눈
-/// claude에서 벗어났으면 `tcflush`로 입력 큐를 버린다.
+/// 넣은 바이트가 읽힐 때까지 잠깐 지켜본다. 판정은 `warpInjectWatchDecision`이 하고, 여기서는
+/// 표본을 뜨고 그 결론을 실행만 한다.
 ///
-/// **이것은 창을 닫지 못한다 — 좁힐 뿐이다.** 실측: 포그라운드가 죽는 순간 셸이 이미
-/// `read()`에 걸려 있으면 우리 폴링(5ms)보다 먼저 읽어 간다(프로브에서 `SHELL_READ=b'\r'`).
-/// 그래도 두는 이유는 **셸이 아직 읽지 않은 경우에만 동작**하기 때문이다 — 그 경우가 바로
-/// 아직 막을 수 있는 경우다. 큐에 우리 본문이 남아 있다가 셸의 줄 버퍼에 들어가면 사용자가
-/// 나중에 누른 Enter가 그것을 셸 명령으로 실행한다(`!…`로 시작하는 입력이면 특히 나쁘다).
-/// 사용자가 그 순간 친 키가 함께 버려질 수 있지만, 버려지는 상황은 "셸이 아직 아무것도 읽지
-/// 않은" 순간이라 잃는 것은 방금 친 몇 글자다.
+/// **읽히지 않은 바이트를 버리지 않는다.** 예전에는 포그라운드가 우리 claude에서 벗어났을 때
+/// `tcflush`로 큐를 비웠지만, "남은 것이 우리 바이트"를 `FIONREAD`(출처 없는 총량)로는 증명할 수
+/// 없어 사용자가 방금 친 키를 지우는 갈래가 있었다(`warpInjectWatchDecision` 주석에 재현 둘).
+/// 그래서 증명을 강화하는 대신 버리는 동작을 없앴다 — **트레이드오프**: 우리 바이트가 셸 줄
+/// 버퍼에 잔해로 남는 창이 다시 넓어진다(`!…`로 시작하는 입력이면 사용자가 나중에 누른 Enter가
+/// 그것을 실행할 수 있다). 그래도 이쪽이 나은 이유는 잔해는 **보이고** 사용자가 지울 수 있는
+/// 반면, 잘못된 `tcflush`는 사용자의 키를 **조용히** 없애기 때문이다.
 ///
 /// **시간 안에 안 읽혔으면 실패다(fail-closed).** 한때 "포그라운드는 그대로니 claude가 느린
 /// 것"이라며 성공으로 돌려줬는데, 그러면 큐에 남은 tail을 앱이 모른 채 CR을 얹는다 —
 /// 앱의 화면 확인은 앞 24자만 보므로 claude가 앞부분만 읽어도 통과한다. 그 뒤 claude가
 /// 끝나면 셸이 [tail + CR]을 읽어 **명령으로 실행한다.** 성공은 큐가 빈 것을 본 경우뿐이다.
-///
-/// `tcflush`는 **우리 바이트만 남아 있을 때만** 한다. 큐에 우리가 넣은 것보다 많이 들어 있으면
-/// 사용자가 그 사이 친 키가 섞인 것이라, 버리면 우리가 막으려던 피해(사용자 입력 손실)를
-/// 우리가 일으킨다. 그때는 버리지 않고 실패만 알린다.
 ///
 /// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 라운드 1에서 없앤 것은
 /// "읽혔으니 claude가 그렸을 것"이라는 **긍정** 추론이고, 그쪽은 되살리지 않는다 —
@@ -229,43 +226,32 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
 private func watchUntilRead(
     expectedPID: Int32, state: HelperState, injected: Int, deadline: Date
 ) -> WarpHelperResponse {
-    // 넣은 직후부터 큐는 **줄기만 해야 한다**. 한 번이라도 늘면 그 사이 사용자가 친 키가
-    // 섞인 것이다 — `FIONREAD`는 총량만 주므로 출처를 가릴 다른 방법이 없다.
-    // 총량 비교(`pending <= injected`)로는 못 가른다: 우리 42바이트가 모두 소비된 뒤
-    // 사용자가 한 글자를 치면 `1 <= 42`라 사용자 것을 버리게 된다(검증자 재현).
-    var lowWaterMark = Int.max
-    var sawForeignBytes = false
     while true {
         guard let pending = ttyPendingBytes(state.ttyFD) else { return .err(lastErrnoName()) }
-        if pending > lowWaterMark { sawForeignBytes = true }
-        lowWaterMark = min(lowWaterMark, pending)
-
-        let readerIsOurs = warpForegroundIsExpected(
-            foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
-        )
-        if pending == 0 {
-            // 큐는 비었지만 **누가 가져갔는지**를 함께 봐야 한다. 그 사이 claude가 끝나
-            // 포그라운드가 셸이면 우리 tail을 셸이 읽어 간 것이다 — 성공으로 답하면 앱이
-            // 그 위에 CR을 얹고, 사용자의 다음 Enter가 그 줄을 실행한다
-            guard readerIsOurs else {
-                checkoutLog("Warp 주입 헬퍼: 큐는 비었으나 겨눈 claude가 아닌 쪽이 읽어 감")
-                return .err("queue drained by a different reader")
-            }
+        // 큐에 남은 바이트가 **누구 것인지는 묻지 않는다** — 물을 수단이 없다.
+        // 판정에 이력을 넘기지 않는 것이 그 추론이 되살아나지 못하게 하는 자리다
+        switch warpInjectWatchDecision(
+            pending: pending,
+            readerIsOurs: warpForegroundIsExpected(
+                foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
+            ),
+            budgetExpired: Date() >= deadline
+        ) {
+        case .delivered:
             return .ok(String(injected))
-        }
-        if !readerIsOurs {
-            guard !sawForeignBytes else {
-                checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라졌으나 큐(\(pending)바이트)에 사용자 입력이 섞여 버리지 않음")
-                return .err("expected reader gone; queue holds user input")
-            }
-            tcflush(state.ttyFD, TCIFLUSH)
-            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라져 읽히지 않은 우리 입력 \(pending)바이트를 버림")
-            return .err("expected reader gone; input queue flushed")
-        }
-        guard Date() < deadline else {
+        case .drainedByOther:
+            checkoutLog("Warp 주입 헬퍼: 큐는 비었으나 겨눈 claude가 아닌 쪽이 읽어 감")
+            return .err("queue drained by a different reader")
+        case .readerGone(let pending):
+            // 버리지 않는다. 남은 바이트는 셸 줄 버퍼에 잔해로 갈 수 있지만, 그것을 막겠다고
+            // 큐를 비우면 사용자가 방금 친 키까지 조용히 사라진다
+            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라짐 — 읽히지 않은 \(pending)바이트를 버리지 않고 실패로 알림")
+            return .err("expected reader gone; \(pending) bytes unread")
+        case .notReadInTime(let pending):
             return .err("injected bytes not read in time (\(pending) pending)")
+        case .keepWaiting:
+            usleep(5_000)
         }
-        usleep(5_000)
     }
 }
 
