@@ -70,6 +70,8 @@ cd terminal-checkout
 
 ### 3. Finish in the setup window
 
+> **Note:** The app's own UI is still in Korean — localization is tracked in [#24](https://github.com/dazebug/terminal-checkout/issues/24). Until it lands, the English labels used in this README appear in the app as: Install in Chrome = 「Chrome에 설치하기」, Request iTerm2 Permission = 「iTerm2 권한 요청」, Run in Terminal = 「터미널에서 실행」, Run Test = 「동작 테스트」, Open Extension Options Page = 「확장 옵션 페이지 열기」, Show Setup Guide Again = 「설치 안내 다시 보기」, Open System Settings = 「시스템 설정 열기」, Register/Update = 「등록/업데이트」.
+
 When the app opens, walk through the setup window in order. Native Host registration and extension-folder preparation finish automatically at launch; the window is state-driven — completed cards disappear, remaining only as the pipeline lights (●) at the top.
 
 1. **Extension** — click [Install in Chrome]. The extension folder path is copied to your clipboard, `chrome://extensions` opens, and the window shows a ①→④ guide:
