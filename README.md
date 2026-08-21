@@ -1,5 +1,8 @@
 # Terminal Checkout
 
+[![CI](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **One click from GitHub to your Mac terminal.**
 
 Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository pages. Press one and your command runs in a new tab of iTerm2, WezTerm, or Warp — check out the branch, create a worktree, or launch a [Claude Code](https://claude.com/claude-code) session that has already read the issue. It ships as a Chrome extension plus a native macOS app.
@@ -190,3 +193,7 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 ```
 
 Remove the Chrome extension yourself at `chrome://extensions`.
+
+## License
+
+[MIT](LICENSE)

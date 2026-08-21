@@ -33,10 +33,10 @@ for sock in "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock; do
         rm -f "$sock"
     fi
 done
-# The header prefix below mirrors `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
-# match only its stable leading words so the two stay in sync even if the sentence is reworded
+# The header below must equal `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
+# UninstallScriptSyncTests enforces the match (the app still writes this header in Korean)
 for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do
-    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -q '^# Terminal Checkout'; then
+    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -q '^# Terminal Checkout이 자동 생성합니다'; then
         rm -f "$toml"
     fi
 done
