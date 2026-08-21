@@ -486,3 +486,17 @@ test('a page message without a target is not a request we can check', () => {
   assert.equal(isPageTarget({ kind: 'pr', owner: 'o', repo: 'r', number: 7 }), false, 'the number is a string');
   assert.equal(isPageTarget([{ kind: 'pr', owner: 'o', repo: 'r', number: '7' }]), false);
 });
+
+test('an http:// GitHub page is not a page of ours', () => {
+  // The host was checked and the scheme was not, so `http://github.com/o/r/pull/1` came back as a
+  // perfectly good target. The manifest only injects the content script over https, but the icon
+  // path never goes through it: `activeTab` grants executeScript on the tab that was clicked, so an
+  // http page could still be read for the branch and the default branch. An http response is not a
+  // GitHub document — it is whatever was on the wire — and it decides what the command runs against.
+  const { pageTargetOfUrl } = vm.runInThisContext('({ pageTargetOfUrl })');
+  assert.equal(pageTargetOfUrl('http://github.com/o/r/pull/1'), null);
+  assert.equal(pageTargetOfUrl('ftp://github.com/o/r'), null);
+  assert.equal(pageTargetOfUrl('javascript:alert(1)//github.com/o/r'), null);
+  assert.deepEqual(pageTargetOfUrl('https://github.com/o/r/pull/1'),
+    { kind: 'pr', owner: 'o', repo: 'r', number: '1' });
+});

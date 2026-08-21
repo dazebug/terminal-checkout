@@ -80,8 +80,10 @@ async function runButtonCommand(action, index, config) {
     action,
     buttonIndex: index,
     shown: buttonFingerprint(config),
-    // Read now, not when the button was drawn: the button is drawn once and the page moves under it
-    target: pageTargetOf(location.pathname),
+    // Read now, not when the button was drawn: the button is drawn once and the page moves under it.
+    // From the full href rather than the pathname, so this goes through the same origin check the
+    // service worker uses — one validator, one answer to "is this a page of ours".
+    target: pageTargetOfUrl(location.href),
   });
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
@@ -331,10 +333,13 @@ async function tryInsertRepoButtons() {
   return true;
 }
 
-// Insert the buttons according to the page type
+// Insert the buttons according to the page type.
+//
+// The same reading the click and the service worker use, so a page we would refuse to run anything
+// on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
-  const pageType = pageTypeOf(location.pathname);
-  if (!pageType) return false;
+  const target = pageTargetOfUrl(location.href);
+  if (!target) return false;
 
   let result = false;
 
@@ -342,9 +347,9 @@ async function tryInsertButton() {
   result = await tryInsertRepoButtons() || result;
 
   // PR and issue pages also get their own custom command buttons (configured separately)
-  if (pageType === 'pr') {
+  if (target.kind === 'pr') {
     result = await tryInsertPRButtons() || result;
-  } else if (pageType === 'issue') {
+  } else if (target.kind === 'issue') {
     result = await tryInsertIssueButtons() || result;
   }
 
@@ -353,7 +358,7 @@ async function tryInsertButton() {
 
 // Wrap the History API to detect URL changes
 let lastUrl = location.href;
-let lastTarget = pageTargetOf(location.pathname);
+let lastTarget = pageTargetOfUrl(location.href);
 
 // Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
 // insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
@@ -367,7 +372,7 @@ function removeInsertedButtons() {
 function onUrlChange() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
-  const target = pageTargetOf(location.pathname);
+  const target = pageTargetOfUrl(location.href);
   // Only when the *target* changed. Moving between a repository's tabs (/issues → /pulls) leaves the
   // buttons meaning exactly what they meant, and redrawing there would flicker for nothing.
   if (!sameTarget(target, lastTarget)) removeInsertedButtons();

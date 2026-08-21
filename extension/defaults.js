@@ -228,8 +228,15 @@ function sameTarget(a, b) {
   return a.kind === b.kind && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
 }
 
-// The same four parts from a full URL. A tab reports a URL rather than a pathname, and a tab on some
-// other site is not a page of ours however its path happens to be shaped.
+// The same four parts from a full URL. A tab reports a URL rather than a pathname, and a page on
+// some other **origin** is not a page of ours however its path happens to be shaped.
+//
+// The scheme is half of that origin and it was missing: `http://github.com/o/r/pull/1` came back as
+// a perfectly good target. The manifest only injects the content script over https, but the icon
+// path never goes through the content script — `activeTab` grants executeScript on whatever tab was
+// clicked — so an http page could still be read for the branch and for the default branch. An http
+// response is not a GitHub document, it is whatever was on the wire, and those reads decide what the
+// command runs *against*. The command itself still comes from storage; its target would not have.
 function pageTargetOfUrl(url) {
   let parsed;
   try {
@@ -237,7 +244,7 @@ function pageTargetOfUrl(url) {
   } catch {
     return null; // tabs we have no host permission for hand us nothing
   }
-  if (parsed.hostname !== 'github.com') return null;
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return null;
   return pageTargetOf(parsed.pathname);
 }
 

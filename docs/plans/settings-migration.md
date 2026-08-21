@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R11 커밋(항목 17 — `requestIsCoherent` 삼자 일치(clicked·source·current)로 ABA 차단·게이트를 `tabs.get` 버리고 `executeScript` live location으로·낡은 주석 정정, verified) · 게이트 그린(드라이버 재실행 — node 152/0, swift 210/0, e2e 9 PASS; red 독립 재현 2건; chrome.tabs 호출 0·clicked 출처 0) · **여전히 실측 못 함**: live location의 pushState 반영도 환경상 미측정 — 단 문서 근거가 tabs.get과 반대(pushState 정의=location 변경). 수기 검사 · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×10** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R12 커밋(항목 18 — `pageTargetOfUrl`에 `protocol==='https:'`·content 페이지 판정 4곳을 같은 검증기로 통일·게이트~native 원자성 잔여 서술 정정, verified) · 게이트 그린(드라이버 재실행 — node 153/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건) · Codex 재검증 대기(종료 질의 재제출 예정)
+- 최근 검증자 판정: **차단(no) ×11** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -130,11 +130,13 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 15 | **R9 — Codex R8 차단(no)의 세 부류 + 현행 결함 1.** **⒜ 실행은 신뢰된 클릭만**: `onUserClick`(defaults.js)이 `isTrusted`를 핸들러 본체보다 **먼저** 보고, content의 두 클릭 경로가 그것을 통과한다. **⒝ 실행 대상 정합**: `pageTargetOf`/`sameTarget`을 공유하고, content가 **클릭 시점 대상**을 실어 보내며, background가 tab URL 시점과 **DOM을 실제로 읽은 pathname** 두 곳에서 대조해 불일치면 거부(`PAGE_CHANGED_ERROR`). 주입 함수 둘이 자기 `pathname`을 함께 반환해 **number와 branch가 같은 페이지·같은 시점**에서 온다. 대상이 바뀌면 content가 옛 버튼을 제거하고 다시 그린다. **⒞ 페이지 작업 배제의 전수화**: `shouldStartPageTask`/`pageIsBusy` 하나로 save·import를 함께 막고, adoption의 `taskInFlight`가 import도 포함한다. **⒟ payload 크기 상한**: `planSave`가 키별 직렬화 바이트를 `MAX_STORED_ITEM_BYTES`(6,144)와 대조해 초과면 **어느 키인지 밝히고 거부**. 문서: §9 조항 보완 5건(**여전히 사용자 확정 대기**) | agreed | 아래 R9 로그 · Codex R10: "R9의 네 단방향 재현은 닫혔다" | R9 |
 
-| 16 | **R10 — Codex R9 차단(no)의 P1 4건을 한 부류로.** **⒜ 최종 게이트 하나**: 네이티브 전송 직전 `assertStillOnClickedPage`가 `chrome.tabs.get`으로 **지금의** tab URL을 재조회해 `clicked`와 대조한다 — 뒤에 남는 await가 없는 유일한 지점이라 A·B·D의 중간 await를 **함께** 덮는다. 그 위에 **내부 정합**은 유지: `getDefaultBranchFromPage`가 fetch **완료 후** pathname을 읽고(A), 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다(C). 지점마다 검사를 다는 방식은 **폐기**(R9가 그래서 놓쳤다). **⒝ `onMessage`가 `target`을 필수로** 요구한다(`shown`과 대칭). 문서: §9 조항 보완 6건(**여전히 사용자 확정 대기**) | verified | 아래 R10 로그 | R10 |
+| 16 | **R10 — Codex R9 차단(no)의 P1 4건을 한 부류로.** **⒜ 최종 게이트 하나**: 네이티브 전송 직전 `assertStillOnClickedPage`가 `chrome.tabs.get`으로 **지금의** tab URL을 재조회해 `clicked`와 대조한다 — 뒤에 남는 await가 없는 유일한 지점이라 A·B·D의 중간 await를 **함께** 덮는다. 그 위에 **내부 정합**은 유지: `getDefaultBranchFromPage`가 fetch **완료 후** pathname을 읽고(A), 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다(C). 지점마다 검사를 다는 방식은 **폐기**(R9가 그래서 놓쳤다). **⒝ `onMessage`가 `target`을 필수로** 요구한다(`shown`과 대칭). 문서: §9 조항 보완 6건(**여전히 사용자 확정 대기**) | agreed | 아래 R10 로그 · Codex R11: "R10의 두 재현은 막혔다" | R10 |
 
 | 17 | **R11 — Codex R10 차단(no)의 P1 2건 — 게이트 자체의 두 축.** **⒜ 삼자 일치**: `requestIsCoherent({clicked, source, current})`가 `clicked == source`(변수의 출처 = `sender.tab.url`)와 `clicked == current`를 함께 요구한다. 빠져 있던 축은 `source`이고, 그것은 **await가 필요 없다**(메시지 도착 시점에 고정) — 그래서 지점 검사 복원이 아니라 게이트에 **정적으로** 더했다. **⒝ 게이트가 문서에 물어보지 않고 페이지에 물어본다**: `chrome.tabs.get().url`(= last committed URL, `pushState` 미반영 가능)을 버리고 `chrome.scripting.executeScript(() => location.pathname)`으로 **live location**을 읽는다. 게이트 → 동기 조립 → `sendToNativeHost` 사이에 await가 없음을 코드로 보장. **⒞** 낡은 아이콘 주석 정정 | verified | 아래 R11 로그 | R11 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤.
+| 18 | **R12 — Codex R11 차단(no)의 P1 1건 + 잔여 서술 정정.** **⒜ origin의 절반이 빠져 있었다**: `pageTargetOfUrl`이 `protocol === 'https:'`를 함께 요구한다 — `http://github.com/…`이 정상 target으로 통과해 아이콘 경로(`activeTab`)가 변조 가능한 HTTP 응답에서 실행 대상을 읽을 수 있었다. 겸사겸사 `content.js`의 페이지 판정 4곳을 전부 같은 검증기(`pageTargetOfUrl(location.href)`)로 돌려 **그리는 규칙과 실행하는 규칙을 하나로** 만들었다. **⒝ 게이트∼native 원자성 서술 정정**(코드 변경 없음): "창이 없다"는 틀렸다 — JS 동기 구간에만 창이 없고, `sendNativeMessage` 이후 native가 실제로 실행하기까지는 **get↔set 동종의 TOCTOU 잔여**다. 주석·잔여 절·소탕 표에 명시 | claimed | 아래 R12 로그 | R12 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -170,6 +172,8 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] 클릭 후 `storage.sync.get`(오버라이드 조회)이 도는 동안 이동해도 거부된다
 - [ ] **`pushState` 이동 중 실행이 거부되는지 확인** — R11부터 게이트가 `tab.url`이 아니라 페이지의 live `location`을 읽으므로, 위 네 항목이 그 전제를 함께 확인한다
 - [ ] **ABA**: PR 1에서 버튼을 누른 직후 PR 2로 갔다가 곧바로 PR 1로 돌아오면 거부된다 — PR 2의 번호와 PR 1의 branch가 섞인 요청이 나가지 않는다
+- [ ] `http://github.com/<owner>/<repo>`에서 확장 아이콘을 클릭하면 아무것도 실행되지 않는다(콘솔에 "Not a GitHub repository page"). https 페이지에서는 그대로 동작한다
+- [ ] http GitHub 페이지에는 버튼이 아예 그려지지 않는다(그리는 판정과 실행하는 판정이 같은 함수를 쓴다)
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -428,7 +432,19 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 
 **왜 `chrome.tabs.get`이 아닌가(R11 정정)**: `Tab.url`은 문서상 **last committed URL**이고 GitHub의 `pushState`는 커밋을 만들지 않는다(Chrome은 그것을 `webNavigation.onHistoryStateUpdated`로 따로 노출한다). 즉 탭 레코드가 **우리가 떠난 페이지를 정직하게** 보고할 수 있고, 그 위에 세운 게이트는 클릭과 일치한다고 판단해 명령을 통과시킨다. R10이 "표준 동작"이라 적은 것은 **문서와 어긋난 미검증 전제**였다. 이제 게이트는 페이지 안의 `location`에게 묻는다 — 페이지가 자기 위치보다 늦을 수는 없다. DOM 읽기가 이미 쓰는 메커니즘이라 새 권한도 없다.
 
-**게이트와 전송 사이에 await가 없다.** `runButton`은 게이트 → 메시지 조립(동기) → `sendToNativeHost`이고, `sendToNativeHost`의 첫 문장이 `chrome.runtime.sendNativeMessage`다. await가 하나라도 끼면 이 게이트도 "뒤에 틈이 있는 검사"가 되어 지금까지 닫아 온 결함과 같은 모양이 된다.
+**게이트와 전송 사이에 await가 없다 — 그리고 거기까지다(R12 정정).** `runButton`은 게이트 → 메시지 조립(동기) → `sendToNativeHost`이고, `sendToNativeHost`의 첫 문장이 `chrome.runtime.sendNativeMessage`다. await가 하나라도 끼면 이 게이트도 "뒤에 틈이 있는 검사"가 된다. **그러나 그것으로 닫히는 것은 이 스크립트 안뿐이다**: Chrome에 메시지를 넘기는 것은 명령이 실행되는 것이 아니고, 넘긴 뒤 native IPC를 건너 앱이 실제로 실행하기까지 페이지는 움직일 수 있다. 판정과 실행은 **원자적이지 않다** — R11이 "창 자체가 없다"고 적은 것은 틀렸고, 이것은 `get`↔`set`과 **같은 부류의 TOCTOU 잔여**다(아래 「실행 경로의 잔여」).
+
+**스킴도 origin의 절반이다(R12).** 페이지 판정은 **전부** `pageTargetOfUrl`을 지나고, 그것이 `https:`가 아니면 `null`을 돌려준다. 진입점별로: `source`는 `parseGitHubUrl`(→ 같은 함수) 경유라 http면 `null`이 되어 executor가 게이트 이전에 던지고, 아이콘 경로의 `clicked`도 같은 함수라 `null`이면 "Not a GitHub repository page"로 끝나며, 페이지가 보내는 `clicked`도 이제 `pageTargetOfUrl(location.href)`라 `isPageTarget`이 `onMessage`에서 거른다. 게이트가 읽는 `current`와 DOM 정합의 `pathname`에는 스킴이 없지만 검사가 필요 없다 — 둘 다 `clicked`와 대조되고 `clicked`는 이미 스킴을 통과한 값이다.
+
+### 실행 경로의 잔여 — 게이트∼native (R12에서 명시)
+
+| 구간 | 창이 있는가 |
+|:--|:--|
+| 클릭 → 게이트 | **없음(닫힘)** — 사이의 모든 await를 게이트 하나가 덮는다(위 표) |
+| 게이트 → `sendNativeMessage` 호출 | **없음** — JS 동기 구간이다 |
+| `sendNativeMessage` → 앱이 실제로 실행 | **있음(잔여)** — native messaging IPC를 건너가는 동안 페이지가 이동할 수 있다. `get`↔`set`과 같은 TOCTOU이고, 경계에 compare-and-set이 없어 닫히지 않는다 |
+
+**더 좁힐 값싼 수단이 있는가 — 없다.** 검토한 것: (a) 앱이 실행 직전 재확인 — 앱은 브라우저의 페이지 상태를 볼 수단이 전혀 없으므로 무엇과도 대조할 수 없다. (b) 전송 후 다시 읽어 달라진 것을 감지 — 이미 실행된 뒤라 탐지일 뿐 예방이 아니다. (c) 앱의 확인 응답을 기다린 뒤 실행 — 왕복이 하나 더 늘 뿐, 그 사이에도 페이지는 움직이고 앱은 여전히 페이지를 못 본다. 앱(Swift)까지 바꾸는 것은 이번 범위 밖이고, 바꾼다 해도 (a)의 이유로 해결되지 않는다.
 
 **`clicked`는 여전히 비교 키다.** 게이트가 읽은 live location도 마찬가지 — repo·owner·number는 여전히 `sender.tab.url`과 DOM에서만 오고, 게이트 값은 **대조에만** 쓰인다(`grep -n 'clicked\.\|clicked\[' extension/background.js` → 0건).
 
@@ -712,7 +728,7 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 신규 P3: `background.js:159`의 주석이 R10 이후 낡았다(아이콘도 이제 target을 넘긴다). P2: §9 aggregate quota는 이미 v2 몫으로 조항에 있다 — 코드 변경 없음.
 - 부류 이동: "await 뒤 이동"(R9·R10)은 닫혔고, 남은 것은 **dispatch 스냅샷의 ABA**와 **게이트가 무엇에 물어보는가**였다.
 
-### R11 — 워킹트리(미커밋, base `986504d`) · 항목 17
+### R11 — `00aa732` (Codex 판정: 차단) · 항목 17
 
 - 범위: Codex R10 차단의 P1 2건(source-target ABA · `tabs.get` freshness)과 P3(낡은 주석). §9 aggregate quota는 이미 조항 2·4에 **v2 몫**으로 적혀 있어 코드 변경 없음 — 현행 flat 키별 6,144B 검사가 현행 배치에 유효하다는 점만 재확인했다(소탕 표 15 그대로). R9 4건은 재검증에서 전부 통과했으므로 건드리지 않았다.
 - 자리: `defaults.js:244`(`requestIsCoherent` — `stillOnClickedPage`를 대체), `background.js:159`(아이콘 주석 정정)·`:176`(`readCurrentPathname`)·`:182-196`(`assertRequestIsCoherent`)·`:245`(`runButton`의 동기 블록)·`:295`·`:312`·`:332`(세 executor가 `{tab, clicked, source}`를 넘김).
@@ -731,4 +747,27 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 실측: `node --test` **152/0**(R10 151 → 신규 1: ABA), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
 - **잔여**: (1) `get`↔`set` 창은 그대로. (2) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가는 여전히 열린 별도 항목. (3) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
 - **미검증(정직하게)**: 이 환경에 브라우저가 없어 **executeScript가 읽는 live location이 `pushState`를 반영하는지도 실측하지 못했다**. 다만 `tabs.get`과 근거의 종류가 다르다 — `tabs.get`은 "문서가 last committed URL이라 말하는데 우리가 반영될 것이라 **가정**"이었고, live `location`은 **`pushState`의 정의 자체가 `location`을 바꾸는 것**이라 문서가 반대로 뒷받침한다. 그래도 실측은 실측이므로 수기 검사에 남겼다. `chrome.scripting` 스텁이 없어 게이트의 비동기 실동작도 순수 술어(`requestIsCoherent`)까지만 고정했다.
+- **Codex 판정: 차단(no).** R10의 P1 2건(source-target ABA · `pushState` 미반영)은 **전부 차단 확인** → 항목 17의 삼자 일치와 live location 게이트는 섰다. 판단 1 부분 수용, 2 수용(단 protocol), 3 **부분 수용 — 원자성 반박**, 4 조건부, 5 **반박**("새 결함이 없다는 뜻은 아니다").
+- 신규 P1 **`http://` 스킴이 GitHub 페이지로 승인된다**(드라이버 실측 확인). `pageTargetOfUrl`이 `hostname`만 보고 **protocol을 보지 않아** `http://github.com/o/r/pull/1`이 정상 target을 돌려준다. 매니페스트는 content script를 `https://github.com/*/*`에만 주입하지만 **아이콘 경로는 content script를 거치지 않고**, `activeTab` 권한이 클릭된 탭에 임시 `executeScript` 권한을 준다 — 그래서 http GitHub 페이지에서도 아이콘 경로가 동작하고, **변조 가능한 HTTP 응답**에서 branch·default branch·페이지 판정이 나온다. command 자체는 storage에서 오지만 **그것이 실행되는 대상이 오염**된다.
+- 신규 P1 잔여 **게이트∼native는 원자적이지 않다**(서술 반박, 코드 결함 아님). 드라이버가 종료 질의에서 "게이트∼native는 단일 동기 구간이라 창 자체가 없다"고 한 것을 Codex가 반박했고 **그 반박이 옳다**: `executeScript`가 location=A를 읽고 → Promise 반환 → `sendNativeMessage`가 native host에 전달 → **그 사이·이후에 페이지가 B로 이동할 수 있다**. `await`가 없다고 페이지 판정과 native 실행이 원자화되지 않는다(native는 비동기 IPC 뒤에서 처리된다). CAS 없이 못 닫는 **get↔set 동종의 TOCTOU 잔여**다.
+- 부류 이동: 실행 대상 정합의 **시간 축**(await 뒤·ABA·게이트 근간)은 닫혔고, 이번에 남은 것은 **공간 축의 값싼 입력 검증 하나**(origin의 절반인 스킴)와 **잔여의 정직한 서술**이었다.
+
+### R12 — 워킹트리(미커밋, base `00aa732`) · 항목 18
+
+- 범위: Codex R11 차단의 P1 1건(`http://` 스킴)과 잔여 서술 정정 1건(게이트∼native 원자성). §9 aggregate quota는 이미 조항 2·4에 v2 몫으로 있어 코드 변경 없음. R10 2건은 재검증에서 통과했으므로 건드리지 않았다.
+- 자리: `defaults.js:240`(`pageTargetOfUrl`의 `protocol !== 'https:'`), `content.js:86`·`:341`·`:361`·`:375`(페이지 판정 4곳을 `pageTargetOfUrl(location.href)`로), `background.js:250-256`(원자성 주석 정정).
+- **⒜ 검사는 공유 검증기 한 곳에.** `pageTargetOfUrl`이 `protocol === 'https:'`를 함께 요구한다. **origin은 스킴과 호스트 둘 다**인데 호스트만 보고 있었다 — 그래서 `http://github.com/o/r/pull/1`이 정상 target으로 통과했다. 아이콘 경로가 content script를 거치지 않고 `activeTab`이 그 탭에 `executeScript`를 주므로, http 페이지에서도 branch·default branch를 읽어 **변조 가능한 응답이 실행 대상을 정할** 수 있었다. command 자체는 여전히 storage에서 오지만 그것이 **어디에 대해** 실행되는지가 오염된다.
+  - **content.js의 방어 심층은 "별도 한 줄"이 아니라 "같은 검증기"로 했다.** content가 `pageTargetOf(location.pathname)`을 쓰고 있었는데 pathname에는 스킴이 없다 — `location.href`를 `pageTargetOfUrl`에 넘기면 **같은 함수가 같은 판정을 내린다**. 검증 원천이 둘로 갈라지지 않으므로 드리프트가 생길 자리가 없다(이 루프가 `adoptStoredButtons`·`userAction`·`shouldStartPageTask`에서 반복해 택한 형태다).
+  - 그 김에 `tryInsertButton`의 `pageTypeOf(location.pathname)`도 같은 함수로 바꿔 **그리는 규칙과 실행하는 규칙을 하나로** 만들었다. 실행을 거부할 페이지에 버튼을 그리는 것은 "누르면 반드시 실패하는 버튼"이고, 아무것도 그리지 않는 편이 정직하다. `content.js`에 pathname만 보는 페이지 판정은 이제 **0건**이다.
+  - 스킴이 없는 두 값(게이트의 `current`, DOM 정합의 `pathname`)에는 검사를 넣지 않았다 — 둘 다 `clicked`와 대조되고 `clicked`는 이미 스킴을 통과한 값이라, 넣어 봐야 같은 사실을 두 번 묻는 것이다. 소탕 표 16에 진입점별 근거를 적었다.
+- **⒝ 원자성 서술 정정(코드 변경 없음).** R11 종료 보고의 "게이트∼native는 단일 동기 구간이라 창이 없다"는 **틀렸고**, Codex의 반박이 옳다. 정확한 경계:
+  - **창 없음**: 클릭 → 게이트(모든 중간 await를 게이트가 덮는다), 그리고 게이트 → `sendNativeMessage` 호출(JS 동기 구간).
+  - **잔여**: `sendNativeMessage` → 앱이 실제로 실행. native messaging IPC를 건너는 동안 페이지는 이동할 수 있고, `await`가 없다는 사실은 여기에 아무 힘이 없다.
+  - `get`↔`set`과 **같은 부류**로 분류하고 잔여 절·소탕 표·`runButton` 주석 세 곳에 적었다. **없앤 척하지 않는다**가 이 루프의 원칙이고, R11은 그 원칙을 서술에서 어겼다.
+  - **더 좁힐 값싼 수단: 없음.** (a) 앱의 실행 직전 재확인 — 앱은 브라우저 페이지 상태를 볼 수단이 없어 대조 대상이 없다. (b) 전송 후 재확인 — 탐지일 뿐 예방이 아니다. (c) 앱의 확인 응답 대기 — 왕복만 늘고 (a)의 이유로 해결되지 않는다. 앱(Swift) 변경은 범위 밖이고, 해도 안 된다.
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 → `grep 'VERSION_KEY\|SETTINGS_VERSION' extension/content.js extension/background.js` **0건**. `{success:false}` → 변경 없음(거부 경로가 늘지 않았다). `clicked`가 출처 아님 → **0건**.
+- red 기록: `not ok 49 - an http:// GitHub page is not a page of ours`(AssertionError — `http://github.com/o/r/pull/1`이 정상 target을 돌려줬다). 확인 후 구현.
+- 실측: `node --test` **153/0**(R11 152 → 신규 1), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다.
+- **잔여**: (1) `get`↔`set` 창. (2) **게이트∼native TOCTOU**(위에서 처음으로 명시). (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 여전히 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
+- **미검증**: 브라우저가 없어 실동작은 여전히 순수 술어까지만이다. 이번 것은 특히 확인이 쉬운 축에 속한다 — http GitHub 페이지에서 아이콘을 누르는 것뿐이라 수기 검사 2항목으로 남겼다. `activeTab`이 http 탭에 실제로 `executeScript`를 허용하는지도 **이 환경에서 확인하지 못했다**(드라이버 실측으로 스킴 미검사 자체는 확인됨).
 - 판정: 미요청.
