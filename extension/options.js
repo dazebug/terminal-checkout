@@ -23,6 +23,14 @@ const state = {
   dirty: false,
   // Bumped on every edit. Used after a save to tell whether the user changed anything in the meantime.
   revision: 0,
+  // The schema generation read from storage, and whether the user has since decided about it.
+  // `reviewed` is the consent: only it lets a save move the version forward, so an ordinary edit can
+  // never swallow a pending migration (versionToSave in migrations.js).
+  loadedVersion: SETTINGS_VERSION,
+  reviewed: false,
+  plan: null,
+  // Ids of the checked candidates — they start checked, so this starts as all of them.
+  selection: new Set(),
 };
 
 function section(kind) {
@@ -312,8 +320,7 @@ function serializeOverrides() {
 
 // The terminal choice is owned solely by the Terminal Checkout app (its settings window)
 async function loadSettings() {
-  const keys = SECTIONS.map(s => s.storageKey).concat(['defaultMain', 'repoMainBranch']);
-  const data = await chrome.storage.sync.get(keys);
+  const data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
 
   for (const { kind, storageKey, defaults } of SECTIONS) {
     const saved = data[storageKey];
@@ -321,6 +328,12 @@ async function loadSettings() {
   }
   state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   document.getElementById('default-main').value = data.defaultMain || 'main';
+
+  // The plan is computed against what is *stored*, not against the edit state: it describes the
+  // settings the user has, and applying it is what puts it into the edit state.
+  state.loadedVersion = storedSchemaVersion(data);
+  state.reviewed = false;
+  setPlan(planMigration(data, state.loadedVersion));
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderOverrides();
@@ -345,11 +358,17 @@ async function saveSettings() {
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
   const savedRevision = state.revision;
 
+  // The version moves only when the user decided something (applied, declined, acknowledged, or
+  // reset). Stamping the current version on every save would clear the notice for someone who only
+  // renamed a tooltip, and their stale commands would never be offered again.
+  const version = versionToSave({ loadedVersion: state.loadedVersion, reviewed: state.reviewed });
+
   try {
     await chrome.storage.sync.set({
       ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])),
       defaultMain,
       repoMainBranch: overrides.value,
+      [VERSION_KEY]: version,
     });
   } catch (error) {
     showStatus('error', `Could not save: ${error.message}`);
@@ -373,6 +392,15 @@ async function saveSettings() {
   state.overrides = Object.entries(overrides.value).map(([repo, branch]) => ({ repo, branch }));
   renderOverrides();
 
+  // What was just written is now what is stored, so the notice reflects that — and because the
+  // version rode along, the other machines on this account drop their notice as the change syncs.
+  state.loadedVersion = version;
+  state.reviewed = false;
+  setPlan(planMigration(
+    { ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])), [VERSION_KEY]: version },
+    version
+  ));
+
   clearDirty();
   showStatus('success', 'Settings saved.');
 }
@@ -387,8 +415,131 @@ function resetSettings() {
   document.getElementById('default-main').value = 'main';
 
   renderOverrides();
+  // Reset replaces every command with the current preset, so the settings are the current
+  // generation by construction — taking that as a decision keeps the notice from lingering over
+  // settings that have nothing stale left in them.
+  markReviewed();
   markDirty();
   showStatus('info', 'Reset to defaults. Press Save to apply.');
+}
+
+// --- The update notice ---
+// The stored settings can predate the current presets. What we may rewrite (an old preset matched
+// verbatim, or a customized command whose first clause was exactly the old jump) is offered per
+// item; anything else is only pointed at. Applying fills the edit state — the write still goes
+// through Save, like import.
+
+function setPlan(plan) {
+  state.plan = plan;
+  state.selection = new Set(plan.actionable.map(item => item.id));
+  renderMigration();
+}
+
+// The user has decided about this generation — by applying some or none of it, by declining, or by
+// resetting. That decision is what lets the next save move the version.
+function markReviewed() {
+  state.reviewed = true;
+  state.plan = null;
+  state.selection = new Set();
+  renderMigration();
+}
+
+function migrationItemRow(item, { checkbox }) {
+  const row = document.createElement('div');
+  row.className = 'mig-item';
+  row.dataset.id = item.id;
+  const where = `${section(item.kind).storageKey}[${item.index}]`;
+  row.innerHTML = `
+    <div class="mig-head">
+      ${checkbox ? `<input type="checkbox" class="mig-check" checked>` : ''}
+      <span class="mig-label"></span>
+      <span class="mig-where"></span>
+      ${checkbox ? `<span class="mig-source"></span>` : ''}
+    </div>
+  `;
+  row.querySelector('.mig-label').textContent = item.label || '(no tooltip)';
+  row.querySelector('.mig-where').textContent = where;
+  if (checkbox) {
+    // 'verbatim' = this was one of our old presets; 'prefix' = you had edited it, and only the
+    // leading jump is being replaced. Saying which is how the user knows we noticed their edit.
+    row.querySelector('.mig-source').textContent = item.source;
+  }
+
+  const detail = document.createElement('div');
+  if (checkbox) {
+    detail.className = 'mig-diff';
+    const from = document.createElement('div');
+    from.className = 'mig-from';
+    from.textContent = `- ${item.from}`;
+    const to = document.createElement('div');
+    to.className = 'mig-to';
+    to.textContent = `+ ${item.to}`;
+    detail.append(from, to);
+  } else {
+    detail.className = 'mig-note';
+    detail.textContent = item.note;
+  }
+  row.appendChild(detail);
+  return row;
+}
+
+function renderMigration() {
+  const badge = document.getElementById('migration-badge');
+  const panel = document.getElementById('migration-section');
+  const plan = state.plan;
+  const pending = !!plan && state.loadedVersion < plan.targetVersion;
+
+  badge.hidden = !pending;
+  if (!pending) {
+    panel.hidden = true;
+    return;
+  }
+
+  const summary = migrationSummary(plan, state.selection);
+  const step = MIGRATIONS.find(entry => entry.to === plan.targetVersion);
+  document.getElementById('migration-describe').textContent = summary.reviewOnly
+    ? 'Nothing here can be rewritten safely, but these commands still use the old form:'
+    : (step?.describe || '');
+
+  const actionable = document.getElementById('migration-actionable');
+  const informational = document.getElementById('migration-informational');
+  actionable.innerHTML = '';
+  informational.innerHTML = '';
+  for (const item of plan.actionable) {
+    const row = migrationItemRow(item, { checkbox: true });
+    row.querySelector('.mig-check').checked = state.selection.has(item.id);
+    actionable.appendChild(row);
+  }
+  for (const item of plan.informational) {
+    informational.appendChild(migrationItemRow(item, { checkbox: false }));
+  }
+
+  const apply = document.getElementById('migration-apply');
+  apply.hidden = summary.reviewOnly;
+  apply.disabled = summary.nothingToApply;
+  const keep = document.getElementById('migration-keep');
+  keep.textContent = summary.reviewOnly ? 'Got it' : 'Keep mine';
+  document.getElementById('migration-hint').textContent = summary.reviewOnly
+    ? 'Dismissing this marks your settings as reviewed — press Save afterwards.'
+    : `${summary.selectedCount} of ${summary.actionableCount} selected. Applying fills the form; press Save to store it.`;
+}
+
+// Fills the edit state with the selected rewrites. Storage is untouched until Save, exactly like
+// import — the edit state is the only thing that changes here.
+function applyMigration() {
+  const stored = Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [
+    storageKey, state.buttons[kind].map(b => ({ ...b })),
+  ]));
+  const migrated = applyMigrationPlan(stored, state.plan, state.selection);
+  const count = state.selection.size;
+
+  for (const { kind, storageKey } of SECTIONS) {
+    state.buttons[kind] = migrated[storageKey].map(normalizeButton);
+    renderButtons(kind);
+  }
+  markReviewed();
+  markDirty();
+  showStatus('info', `${count} command${count === 1 ? '' : 's'} updated in the form. Press Save to apply.`);
 }
 
 // --- Export / import ---
@@ -396,7 +547,9 @@ function resetSettings() {
 // Chrome profiles on the same Google account — this path is for moving them without an account, or
 // for a file backup against a reinstall.
 
-const BACKUP_KEYS = [...SECTIONS.map(s => s.storageKey), 'defaultMain', 'repoMainBranch'];
+// The version rides along, so a backup records which generation of the presets it was written
+// against and an old one still gets offered the migration when it comes back in.
+const BACKUP_KEYS = [...SETTINGS_KEYS, VERSION_KEY];
 const MAX_IMPORT_BYTES = 256 * 1024;
 
 // Validate file text into a fragment of the storage schema. It touches neither the DOM nor the
@@ -412,6 +565,12 @@ function parseImportedSettings(raw) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('The top level of the settings file is not an object.');
   }
+
+  // A file from a newer extension is refused whole, before anything is read out of it: we do not
+  // know what its keys mean, and filling the form from a half-understood file invites a Save that
+  // downgrades the account. This throws rather than joining `skipped` — it is not a key we ignored,
+  // it is an import that must not happen.
+  const version = importedSchemaVersion(data);
 
   // Values from a file can't be trusted to have the right type. Non-string fields are dropped to
   // an empty value so the required-field check catches them on save (left as they are, saving
@@ -460,7 +619,7 @@ function parseImportedSettings(raw) {
   if (Object.keys(settings).length === 0) {
     throw new Error(`Nothing to import (one of ${BACKUP_KEYS.join(', ')} is required).`);
   }
-  return { settings, skipped };
+  return { settings, skipped, version };
 }
 
 async function exportSettings() {
@@ -516,6 +675,13 @@ async function importSettings(file) {
   }
 
   applyImportedSettings(imported.settings);
+
+  // An old backup gets the same review as old stored settings: the file's own generation decides,
+  // and the preview is the same one, still landing on the same Save.
+  state.loadedVersion = imported.version;
+  state.reviewed = false;
+  setPlan(planMigration(imported.settings, imported.version));
+
   const dropped = imported.skipped.length ? ` (skipped: ${imported.skipped.join(', ')})` : '';
   showStatus('info', `Settings imported. Press Save to apply.${dropped}`);
 }
@@ -775,6 +941,44 @@ document.getElementById('default-main').addEventListener('input', markDirty);
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
 document.getElementById('reset-btn').addEventListener('click', resetSettings);
+
+// --- Update notice ---
+
+document.getElementById('migration-badge').addEventListener('click', () => {
+  const panel = document.getElementById('migration-section');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) panel.scrollIntoView({ block: 'nearest' });
+});
+
+document.getElementById('migration-actionable').addEventListener('change', (e) => {
+  if (!e.target.classList.contains('mig-check')) return;
+  const { id } = e.target.closest('.mig-item').dataset;
+  if (e.target.checked) state.selection.add(id);
+  else state.selection.delete(id);
+  renderMigration();
+  // Re-opening after a redraw would be surprising: the panel was open, keep it open
+  document.getElementById('migration-section').hidden = false;
+});
+
+document.getElementById('migration-apply').addEventListener('click', applyMigration);
+
+// Declining is a decision too, and it is the only thing that stops the notice coming back forever
+// for someone who means to keep their commands. It changes no command — only the version, and only
+// once the user presses Save.
+document.getElementById('migration-keep').addEventListener('click', () => {
+  markReviewed();
+  markDirty();
+  showStatus('info', 'Marked as reviewed. Press Save to keep your commands as they are.');
+});
+
+// A save on another machine on this account arrives here as a storage change. Adopting it is what
+// makes the notice disappear everywhere once anyone has dealt with it — but never at the cost of
+// what someone is typing right now.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync') return;
+  if (!shouldAdoptSyncedChange(state.dirty, changes)) return;
+  loadSettings();
+});
 
 const importInput = document.getElementById('import-file');
 

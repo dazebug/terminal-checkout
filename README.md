@@ -109,7 +109,7 @@ git pull --ff-only
 
 Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
 
-> **Updating from a version without the base directory?** Your saved buttons keep the exact command you already had — nothing rewrites them. The presets now open with `{cd}` instead of `z {repo}`; to move a button onto it, open the extension options page, apply the preset again on that button, and press **Save**.
+> **Presets improved since you last saved?** Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When the presets move on, the options page shows an update notice listing each affected button as `old → new`, saying what the change does, with a checkbox per item. Applying only fills the form; the write goes through the same **Save** as any other edit, and declining ("Keep mine") is recorded too, so the notice doesn't come back. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
 
 ## Usage
 

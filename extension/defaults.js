@@ -123,6 +123,28 @@ const BUTTON_KINDS = {
   },
 };
 
+// --- Settings schema version ---
+// Saved commands are snapshots of the presets at save time, so improving a preset never reaches
+// anyone who already pressed Save. The stored version says which generation of the presets a
+// settings object has been **reviewed against** — not "was rewritten to". Applying a migration,
+// applying part of one, declining it, and resetting to defaults are all reviews; ordinary edits are
+// not, and must never move it (see migrations.js).
+// This constant is the single source of truth for the current generation, and a test pins the
+// registry in `extension/migrations.js` to carry one entry per step up to it.
+const SETTINGS_VERSION = 1;
+
+// The version rides alongside the settings in storage.sync, and therefore in the export/import
+// JSON, so reviewing once clears the notice on every machine on the account.
+const VERSION_KEY = 'version';
+
+// Every key the settings live under, minus the version. options.js derives BACKUP_KEYS from this,
+// and "is anything stored at all" — fresh install versus legacy v0 — is decided by it.
+const SETTINGS_KEYS = [
+  ...Object.values(BUTTON_KINDS).map(kind => kind.storageKey),
+  'defaultMain',
+  'repoMainBranch',
+];
+
 // GitHub path → page type. content.js (button insertion) and background.js (extension icon
 // routing) must reach the same verdict — an icon click never goes through the content script, so
 // if the two diverge a path like `/settings/profile` reads as a repository and `z profile` runs in

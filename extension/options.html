@@ -264,6 +264,24 @@
     }
     #dirty-indicator { color: var(--warn); font: 11px var(--mono); margin-left: 4px; }
     .add-hint { font-size: 12px; color: var(--faint); margin-left: 8px; }
+
+    /* Update notice. The badge sits in the header and appears only when the saved settings were
+       written against an older generation of the presets; the panel opens from it. */
+    #migration-badge {
+      margin-top: 10px; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+      background: rgba(224, 177, 78, 0.12); border: 1px solid rgba(224, 177, 78, 0.45);
+      color: var(--warn); font: 600 11px var(--mono);
+    }
+    #migration-badge:hover { background: rgba(224, 177, 78, 0.2); }
+    .mig-item { border-top: 1px solid var(--border); padding: 10px 0; }
+    .mig-item:first-child { border-top: none; }
+    .mig-head { display: flex; align-items: center; gap: 8px; font: 12px var(--ui); color: var(--text); }
+    .mig-where { color: var(--faint); font: 11px var(--mono); }
+    .mig-source { font: 10px var(--mono); padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--dim); }
+    .mig-diff { margin: 6px 0 0 22px; font: 11px/1.7 var(--mono); word-break: break-all; }
+    .mig-from { color: var(--err); }
+    .mig-to { color: var(--ok); }
+    .mig-note { margin: 4px 0 0 22px; font-size: 11px; color: var(--faint); line-height: 1.6; }
     .btn-primary {
       background: var(--action);
       color: #fff;
@@ -304,7 +322,23 @@
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
     <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window</p>
+    <button id="migration-badge" hidden>● Your saved buttons predate the current presets — review</button>
   </header>
+
+  <!-- Shown only when the stored settings were reviewed against an older generation of the presets.
+       Applying fills the edit state and leaves the write to the same Save button as everything
+       else — nothing here touches storage on its own. -->
+  <section class="section" id="migration-section" hidden>
+    <h2 class="section-prompt"><span class="prompt">❯</span> update <span class="section-where">— saved commands versus the current presets</span></h2>
+    <p class="help" id="migration-describe"></p>
+    <div id="migration-actionable"></div>
+    <div id="migration-informational"></div>
+    <div style="margin-top:12px">
+      <button class="btn-primary" id="migration-apply">Apply selected</button>
+      <button class="btn-secondary" id="migration-keep">Keep mine</button>
+      <span class="add-hint" id="migration-hint"></span>
+    </div>
+  </section>
 
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> buttons <span class="section-where">— PR pages</span></h2>
@@ -365,6 +399,7 @@
     <h2 class="section-prompt"><span class="prompt">❯</span> backup <span class="section-where">— export, import, account sync</span></h2>
     <p class="help">Settings (PR, issue, and repository buttons, and the main branch) are stored in Chrome's account-synced area (<code>storage.sync</code>). This extension has a fixed ID (the manifest key), so any two Chrome profiles signed in to the <b>same Google account</b> with "Extensions" enabled in sync settings share these settings automatically. Export and import are for moving settings without an account, or for keeping a file backup.</p>
     <p class="help">Export downloads the <b>saved</b> settings as a file; import only fills in the form — nothing takes effect until you press <b>Save</b>.</p>
+    <p class="help">The file also records which generation of the presets it was written against. Importing an older backup offers the same update notice as stored settings do; a backup written by a <b>newer</b> extension is refused rather than half-read — update the extension first.</p>
     <div style="display:flex; gap:10px; margin-top:10px">
       <button class="btn-secondary" id="export-btn">Export (JSON)</button>
       <button class="btn-secondary" id="import-btn">Import…</button>
@@ -380,6 +415,7 @@
   <div id="status" class="status"></div>
 
   <script src="defaults.js"></script>
+  <script src="migrations.js"></script>
   <script src="options.js"></script>
 </body>
 </html>
