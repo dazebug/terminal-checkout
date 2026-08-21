@@ -3,29 +3,35 @@
 // values, so they live here and nowhere else.
 // The content script, the service worker, and the options page all load this file first.
 
+// Every preset opens with `{cd}` — the clause that moves into the repository. Its value comes from
+// the app, not from this file: with no base directory configured it is exactly `z {repo}` (what
+// these presets used to spell out), and with one configured it falls back to `cd <base>/<repo>` and
+// then to cloning. A bare `z {repo}` exits non-zero on a cold zoxide DB, which kills the whole `&&`
+// chain with nothing to see anywhere (issue #30).
+//
 // PR pages: buttons next to the branch name. The { } is grouping, not a subshell — cd has to stick
 // in the current shell, so ( ) must not be used
 const PR_PRESETS = [
   {
     name: 'Checkout Branch', face: '⏏️',
     // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
-    command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
+    command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
   },
   {
     name: 'Checkout + Claude', face: '🤖',
-    command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude',
+    command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude',
   },
   {
     name: 'Worktree + Claude', face: '🌳',
-    command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude',
+    command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude',
   },
   {
     name: 'Worktree', face: '🪵',
-    command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}',
+    command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}',
   },
   {
     name: 'Review PR (claude)', face: '🔍',
-    command: 'z {repo} && claude',
+    command: '{cd} && claude',
     // A leading `!` in claude hands the line to the shell — gh output piles straight into claude's context
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
   },
@@ -35,7 +41,7 @@ const PR_PRESETS = [
 const ISSUE_PRESETS = [
   {
     name: 'Read Issue (claude)', face: '📋',
-    command: 'z {repo} && claude',
+    command: '{cd} && claude',
     claudeInputs: [
       '!gh issue view {number}',
       '!gh issue view {number} --comments',
@@ -45,12 +51,12 @@ const ISSUE_PRESETS = [
   },
   {
     name: 'Start Work on Issue', face: '🌳',
-    command: 'z {repo} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
+    command: '{cd} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
     claudeInputs: ['!gh issue view {number} --comments'],
   },
   {
     name: 'Open Issue', face: '📂',
-    command: 'z {repo}',
+    command: '{cd}',
     claudeInputs: [],
   },
 ];
@@ -61,15 +67,15 @@ const ISSUE_PRESETS = [
 const REPO_PRESETS = [
   {
     name: 'Open in Terminal', face: 'Open in Terminal',
-    command: 'z {repo}',
+    command: '{cd}',
   },
   {
     name: 'Open + Claude', face: 'Open + Claude',
-    command: 'z {repo} && claude',
+    command: '{cd} && claude',
   },
   {
     name: 'Update main', face: 'main ⤓',
-    command: 'z {repo} && git checkout {main} && git pull --ff-only',
+    command: '{cd} && git checkout {main} && git pull --ff-only',
   },
 ];
 
@@ -88,13 +94,20 @@ const DEFAULT_REPO_BUTTONS = [
   { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
 ];
 
+// Variables the app fills in on its own, usable on every page. They are deliberately kept out of
+// the per-page `variables` lists below, which mean "what the extension actually sends": the app is
+// the single source for these values, exactly as it is for the terminal choice, and a request that
+// carries one of these names is rejected outright ("Unknown variable: {cd}") rather than merged.
+// {cd} = the clause that moves into the repository — see the preset comment at the top of the file.
+const APP_VARIABLES = ['cd'];
+
 // Definitions per page type. If the storage keys were scattered across content.js (rendering),
 // background.js (execution), and options.js (editing), one of them drifting out of sync would be
 // enough to make saved settings silently ignored, so all three files read them from here.
 // `variables` is what the extension actually passes on that page — a test pins presets and
-// defaults to this list (tests/buttons.test.js). Using a variable that isn't passed makes the app
-// reject the request, so the button does nothing. {base} is only passed when it could be read off
-// the PR page, so it does not always arrive.
+// defaults to this list plus APP_VARIABLES (tests/buttons.test.js). Using a variable that is
+// neither passed nor app-provided makes the app reject the request, so the button does nothing.
+// {base} is only passed when it could be read off the PR page, so it does not always arrive.
 const BUTTON_KINDS = {
   pr: {
     storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,

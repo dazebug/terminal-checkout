@@ -18,6 +18,16 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "terminal") }
     }
 
+    /// The top-level folder repositories are cloned into — where a command moves when `z` fails.
+    /// This only **stores the string**; validation, normalization, and fragment assembly all live
+    /// in Core (`normalizedBaseDirectory`, `repoEntryCommand`). The extension neither knows nor
+    /// sends this value: paths differ per machine while extension settings ride storage.sync
+    /// across an account.
+    static var baseDirectory: String {
+        get { UserDefaults.standard.string(forKey: "baseDirectory") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "baseDirectory") }
+    }
+
     /// 소켓으로 마지막 요청이 도착한 시각 — "확장이 Chrome에 로드되어 실제로 연결됐다"는 유일한 증거.
     /// (폴더 준비 여부만으로는 Chrome 로드 완료를 알 수 없다)
     static var lastRequestAt: Date? {

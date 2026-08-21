@@ -94,7 +94,10 @@ final class HostServer {
             Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
             let response = execQueue.sync {
-                handleRequest(json: json) { resolved in
+                // Like the terminal choice, the base directory has the app's settings as its
+                // single source — hand over the stored string only; validation, normalization,
+                // and `{cd}` assembly belong to Core (no logic here)
+                handleRequest(json: json, baseDirectory: Settings.baseDirectory) { resolved in
                     // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
                     let handle = try runInTerminal(
                         command: resolved.command, terminal: Settings.terminal,
