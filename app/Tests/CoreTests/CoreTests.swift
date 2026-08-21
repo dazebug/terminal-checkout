@@ -962,6 +962,38 @@ final class ClaudeInputPlanTests: XCTestCase {
         XCTAssertTrue(claudeBodyJoinsSafely("gh pr diff 42"))
     }
 
+    /// **Reproduction (round 14, independent reviewer).** The two scanners in this file disagreed
+    /// about the same words: the append scanner folds `if`/`for`/`while`/`until`/`select` as
+    /// "grammar we do not model", while the join gate waved them through. Both halves of that
+    /// grammar bite on a merged line, and both were measured:
+    ///  - the grammar the scan cannot see belongs to the **whole line**, not to one body:
+    ///    `for i in 1 2 do echo x; done` (one `;` missing) is a parse error in zsh and bash, and
+    ///    neither the body before it nor the one after it runs
+    ///  - a *well-formed* compound still leaks: `for i in 1 2; do :; done` leaves `i=2` behind
+    ///    (measured, both shells), and later bodies on the merged line read it, while separate `!`
+    ///    submissions never could — item 117's class, reached through a word the gate did not fold
+    ///
+    /// So the keyword set lives in one constant that both scanners read.
+    func testCompoundCommandKeywordsFoldInBothScanners() {
+        for keyword in shellCompoundCommandKeywords {
+            XCTAssertFalse(claudeBodyJoinsSafely("echo x \(keyword) y"), keyword)
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt("\(keyword) && claude"), keyword)
+        }
+        XCTAssertEqual(
+            claudeTypedInputs(["!for i in 1 2 do echo x; done", "!gh pr diff 1"]),
+            ["!for i in 1 2 do echo x; done", "!gh pr diff 1"]
+        )
+        // …and the shipped preset run still merges — its `select` sits inside the `--jq` quotes,
+        // which the scan skips whole
+        XCTAssertEqual(
+            claudeTypedInputs([
+                "!gh issue view 42",
+                "!gh api repos/o/r/issues/42/timeline --jq '[.[]|select(.event==\"x\")]'",
+            ]).count,
+            1
+        )
+    }
+
     /// A state-changing word does not stop being one because an operator or a backslash is stuck to
     /// it. `cd>/dev/null` really changes directory (measured: `cd /tmp; cd>/dev/null; pwd` prints
     /// `$HOME`), and so does `\c\d /usr` — both are the wrong-directory class of item 117, reached
@@ -978,7 +1010,8 @@ final class ClaudeInputPlanTests: XCTestCase {
 
     /// The merged line reaches Warp as **one** injection payload, and the helper refuses anything
     /// over 8 KiB. Merging is the optimisation, so it is what gives way: a run that would exceed
-    /// the ceiling is typed input by input, each far below the limit, and nothing is truncated
+    /// the ceiling is typed input by input — not a promise that each of them is short, since a single
+    /// input has no limit of its own, only that the merge stops adding to it. Nothing is truncated
     func testARunTooLongToInjectInOnePieceIsTypedSeparately() {
         let long = "!gh api " + String(repeating: "x", count: 2500)
         XCTAssertEqual(claudeTypedInputs([long, long]), [long, long])
