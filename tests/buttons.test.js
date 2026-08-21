@@ -446,18 +446,31 @@ test('pageTargetOfUrl: a full URL reduces to the same four parts, or to nothing'
   assert.equal(pageTargetOfUrl(undefined), null);
 });
 
-test('the final gate refuses unless the tab still shows the page that was clicked', () => {
+test('the final gate refuses unless every part of the request describes the clicked page', () => {
   // Checked once, immediately before the command leaves, so every await behind it is covered at once
-  const { stillOnClickedPage, pageTargetOfUrl } = vm.runInThisContext('({ stillOnClickedPage, pageTargetOfUrl })');
-  const clicked = pageTargetOfUrl('https://github.com/o/r/issues/7');
-  assert.equal(stillOnClickedPage(clicked, 'https://github.com/o/r/issues/7'), true);
-  // The repro shape shared by all four reports: the tab moved on while we were still working
-  assert.equal(stillOnClickedPage(clicked, 'https://github.com/o/r/issues/8'), false);
-  assert.equal(stillOnClickedPage(clicked, 'https://github.com/other/r/issues/7'), false);
-  // Fail closed: no click to be coherent with, no url to compare, a tab that vanished
-  assert.equal(stillOnClickedPage(null, 'https://github.com/o/r/issues/7'), false);
-  assert.equal(stillOnClickedPage(clicked, undefined), false);
-  assert.equal(stillOnClickedPage(clicked, ''), false);
+  const { requestIsCoherent, pageTargetOf } = vm.runInThisContext('({ requestIsCoherent, pageTargetOf })');
+  const one = pageTargetOf('/o/r/issues/7');
+  const two = pageTargetOf('/o/r/issues/8');
+  assert.equal(requestIsCoherent({ clicked: one, source: one, current: one }), true);
+  // The shape shared by every report so far: the tab moved on while we were still working
+  assert.equal(requestIsCoherent({ clicked: one, source: one, current: two }), false);
+  assert.equal(requestIsCoherent({ clicked: one, source: one, current: pageTargetOf('/other/r/issues/7') }), false);
+  // Fail closed: nothing to be coherent with, nothing read back, a tab that vanished
+  assert.equal(requestIsCoherent({ clicked: null, source: null, current: null }), false);
+  assert.equal(requestIsCoherent({ clicked: one, source: one, current: null }), false);
+});
+
+test('the ABA repro: a page that went 1 → 2 → 1 must not mix the two', () => {
+  // `clicked` is where the user pressed the button; `source` is the tab as the message was
+  // dispatched, and it is where the repository, owner and number are actually read from. Nobody
+  // compared those two, so a tab that left page 1 and came back produced a request holding page 2's
+  // number and page 1's branch — and the other two checks both agreed, because both saw page 1.
+  const { requestIsCoherent, pageTargetOf } = vm.runInThisContext('({ requestIsCoherent, pageTargetOf })');
+  const clicked = pageTargetOf('/o/r/pull/1');
+  const source = pageTargetOf('/o/r/pull/2'); // sender.tab.url at dispatch
+  const current = pageTargetOf('/o/r/pull/1'); // live location at the gate — back on page 1
+  assert.equal(requestIsCoherent({ clicked, source, current }), false, 'the number came from page 2');
+  assert.equal(requestIsCoherent({ clicked, source: clicked, current }), true);
 });
 
 test('a page message without a target is not a request we can check', () => {

@@ -156,8 +156,9 @@ async function loadButtons(kind) {
 // its own check.
 //
 // `clicked` is a comparison key and never a source: every value still comes from the tab and its
-// DOM, so a message can cause a refusal but cannot name its own repository. It is absent on the
-// extension-icon path, which has no page-rendered button and no click on a page to be coherent with.
+// DOM, so a message can cause a refusal but cannot name its own repository. The extension-icon path
+// sends no *fingerprint* — nothing was drawn for it to disagree with — but it does send a target,
+// read from the tab when the icon was pressed, so it takes this same gate.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
 
 // Internal coherence: the values a single read produced describe one page. This is what the final
@@ -169,21 +170,37 @@ function assertSamePage(clicked, pathname) {
   }
 }
 
-// The final gate. Asked once, immediately before the command leaves, against the tab as it is *now*
-// rather than as it was when the message arrived — so every await behind it is covered together and
-// there is no next await to forget. `chrome.tabs.get` rather than the `tab` handed to us, because
-// that object is a snapshot from message-dispatch time and cannot have moved.
+// Read the page's own idea of where it is. `chrome.scripting` injects this on its own, so it cannot
+// reference anything outside itself.
+function readCurrentPathname() {
+  return location.pathname;
+}
+
+// The final gate. Asked once, immediately before the command leaves, so every await behind it is
+// covered together and there is no next await to forget.
 //
-// The URL comes back because the manifest holds `host_permissions` for github.com; if it ever does
-// not, `stillOnClickedPage` sees no URL and refuses, which is the right way to be wrong.
-async function assertStillOnClickedPage(tab, clicked) {
+// It asks the *document*, not `chrome.tabs.get`. A `Tab`'s url is documented as the last **committed**
+// URL, and GitHub navigates with `pushState`, which commits nothing — Chrome exposes those separately
+// as `webNavigation.onHistoryStateUpdated`. So a tab record can honestly report the page we left, and
+// a gate built on it would agree with the click and let the command through. `location` inside the
+// page is the page's own answer and cannot lag behind itself. (This is the mechanism the DOM reads
+// already use, so it brings no new permission.)
+//
+// A failure to inject is a refusal, not a shrug: the usual reason is that the page is no longer there.
+//
+// The caller must send with no await in between, or this becomes another check with a gap after it.
+async function assertRequestIsCoherent(tab, { clicked, source }) {
   let current;
   try {
-    current = await chrome.tabs.get(tab.id);
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: readCurrentPathname,
+    });
+    current = pageTargetOf(results[0]?.result ?? '');
   } catch {
-    throw new Error(PAGE_CHANGED_ERROR); // the tab is gone; there is nothing to run against
+    throw new Error(PAGE_CHANGED_ERROR); // the tab is gone, or we can no longer reach it
   }
-  if (!stillOnClickedPage(clicked, current?.url)) throw new Error(PAGE_CHANGED_ERROR);
+  if (!requestIsCoherent({ clicked, source, current })) throw new Error(PAGE_CHANGED_ERROR);
 }
 
 // The button a click meant, or a refusal.
@@ -225,9 +242,12 @@ async function sendToNativeHost(message) {
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
 // only send the raw material
-async function runButton(button, variables, tab, clicked) {
-  // The one place every command passes through, and therefore the only place this check has to be
-  await assertStillOnClickedPage(tab, clicked);
+async function runButton(button, variables, page) {
+  // The one place every command passes through, and therefore the only place this check has to be.
+  // Everything from here to the send is synchronous **on purpose**: an await in between would make
+  // this one more check with a gap behind it, which is the shape of every defect this loop has been
+  // closing. sendToNativeHost hands the message to Chrome as its own first statement.
+  await assertRequestIsCoherent(page.tab, page);
   const message = { command_template: button.command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
@@ -272,7 +292,8 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
   // don't pass it at all, so the app rejects it as not provided (silently substituting another
   // branch would mean merging or rebasing onto the wrong one)
   if (domResult.detectedMain) variables.base = domResult.detectedMain;
-  await runButton(button, variables, tab, clicked);
+  // `target` is where these variables were read from — the third axis of the gate
+  await runButton(button, variables, { tab, clicked, source: target });
 }
 
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
@@ -294,7 +315,7 @@ async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
     owner: target.owner,
     number: target.number,
     main,
-  }, tab, clicked);
+  }, { tab, clicked, source: target });
 }
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
@@ -309,7 +330,7 @@ async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
   const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
   const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
-  await runButton(button, { repo: target.repo, owner: target.owner, main }, tab, clicked);
+  await runButton(button, { repo: target.repo, owner: target.owner, main }, { tab, clicked, source: target });
 }
 
 // Check whether this page really rendered as a repository. Only pages GitHub drew as a repository

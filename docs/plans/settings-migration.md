@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R10 커밋(항목 16 — 실행 직전 `assertStillOnClickedPage` 단일 최종 게이트로 P1 4건을 한 부류로 닫음·내부 정합 유지·onMessage target 필수·§9 조항 6건 보완, verified) · 게이트 그린(드라이버 재실행 — node 151/0, swift 210/0, e2e 9 PASS; red 독립 재현 3건) · **미검증 핵심 전제**: `chrome.tabs.get().url`이 SPA pushState를 반영하는지 환경상 실측 불가(수기 검사) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×9** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R11 커밋(항목 17 — `requestIsCoherent` 삼자 일치(clicked·source·current)로 ABA 차단·게이트를 `tabs.get` 버리고 `executeScript` live location으로·낡은 주석 정정, verified) · 게이트 그린(드라이버 재실행 — node 152/0, swift 210/0, e2e 9 PASS; red 독립 재현 2건; chrome.tabs 호출 0·clicked 출처 0) · **여전히 실측 못 함**: live location의 pushState 반영도 환경상 미측정 — 단 문서 근거가 tabs.get과 반대(pushState 정의=location 변경). 수기 검사 · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×10** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -128,11 +128,13 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 14 | **R8 — Codex R7 차단(no)의 세 부류.** **⒜ 클릭된 것은 화면에 보인 그것이다**: 클릭이 index만 보내고 background가 storage를 다시 읽어 실행하던 것을, content가 **그린 버튼의 지문**(`buttonFingerprint`)을 함께 보내고 background가 재조회 값과 대조해 불일치면 `{success:false, error}`로 거부하도록 했다(대안 ② 채택 — 근거는 R8 로그). content의 "get 실패 → 기본값 그리기" 폴백은 **아무것도 그리지 않고 폴링 재시도**로 바꿨다. **⒝ 페이지 단위 비동기 작업은 하나씩**: `shouldStartImport`로 import 직렬화 + 사유 표시. **⒞ 이탈 경고도 단일 술어**: `hasUnsavedWork`가 `dirty`·`reviewTouched`·`saving`을 함께 보고 `beforeunload`가 그것을 쓴다. 부수: `claudeInputs`의 hole 판정을 인덱스 실재 검사로, `applyMigrationPlan`이 **실제 적용 건수**를 반환하고 메시지가 그것을 쓴다. 문서: 결정 9 하위 조항 5건(**사용자 확정 대기**) | agreed | 아래 R8 로그 · Codex R8: "R7의 기존 5건은 모두 막혔지만" | R8 |
 
-| 15 | **R9 — Codex R8 차단(no)의 세 부류 + 현행 결함 1.** **⒜ 실행은 신뢰된 클릭만**: `onUserClick`(defaults.js)이 `isTrusted`를 핸들러 본체보다 **먼저** 보고, content의 두 클릭 경로가 그것을 통과한다. **⒝ 실행 대상 정합**: `pageTargetOf`/`sameTarget`을 공유하고, content가 **클릭 시점 대상**을 실어 보내며, background가 tab URL 시점과 **DOM을 실제로 읽은 pathname** 두 곳에서 대조해 불일치면 거부(`PAGE_CHANGED_ERROR`). 주입 함수 둘이 자기 `pathname`을 함께 반환해 **number와 branch가 같은 페이지·같은 시점**에서 온다. 대상이 바뀌면 content가 옛 버튼을 제거하고 다시 그린다. **⒞ 페이지 작업 배제의 전수화**: `shouldStartPageTask`/`pageIsBusy` 하나로 save·import를 함께 막고, adoption의 `taskInFlight`가 import도 포함한다. **⒟ payload 크기 상한**: `planSave`가 키별 직렬화 바이트를 `MAX_STORED_ITEM_BYTES`(6,144)와 대조해 초과면 **어느 키인지 밝히고 거부**. 문서: §9 조항 보완 5건(**여전히 사용자 확정 대기**) | verified | 아래 R9 로그 | R9 |
+| 15 | **R9 — Codex R8 차단(no)의 세 부류 + 현행 결함 1.** **⒜ 실행은 신뢰된 클릭만**: `onUserClick`(defaults.js)이 `isTrusted`를 핸들러 본체보다 **먼저** 보고, content의 두 클릭 경로가 그것을 통과한다. **⒝ 실행 대상 정합**: `pageTargetOf`/`sameTarget`을 공유하고, content가 **클릭 시점 대상**을 실어 보내며, background가 tab URL 시점과 **DOM을 실제로 읽은 pathname** 두 곳에서 대조해 불일치면 거부(`PAGE_CHANGED_ERROR`). 주입 함수 둘이 자기 `pathname`을 함께 반환해 **number와 branch가 같은 페이지·같은 시점**에서 온다. 대상이 바뀌면 content가 옛 버튼을 제거하고 다시 그린다. **⒞ 페이지 작업 배제의 전수화**: `shouldStartPageTask`/`pageIsBusy` 하나로 save·import를 함께 막고, adoption의 `taskInFlight`가 import도 포함한다. **⒟ payload 크기 상한**: `planSave`가 키별 직렬화 바이트를 `MAX_STORED_ITEM_BYTES`(6,144)와 대조해 초과면 **어느 키인지 밝히고 거부**. 문서: §9 조항 보완 5건(**여전히 사용자 확정 대기**) | agreed | 아래 R9 로그 · Codex R10: "R9의 네 단방향 재현은 닫혔다" | R9 |
 
 | 16 | **R10 — Codex R9 차단(no)의 P1 4건을 한 부류로.** **⒜ 최종 게이트 하나**: 네이티브 전송 직전 `assertStillOnClickedPage`가 `chrome.tabs.get`으로 **지금의** tab URL을 재조회해 `clicked`와 대조한다 — 뒤에 남는 await가 없는 유일한 지점이라 A·B·D의 중간 await를 **함께** 덮는다. 그 위에 **내부 정합**은 유지: `getDefaultBranchFromPage`가 fetch **완료 후** pathname을 읽고(A), 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다(C). 지점마다 검사를 다는 방식은 **폐기**(R9가 그래서 놓쳤다). **⒝ `onMessage`가 `target`을 필수로** 요구한다(`shown`과 대칭). 문서: §9 조항 보완 6건(**여전히 사용자 확정 대기**) | verified | 아래 R10 로그 | R10 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤.
+| 17 | **R11 — Codex R10 차단(no)의 P1 2건 — 게이트 자체의 두 축.** **⒜ 삼자 일치**: `requestIsCoherent({clicked, source, current})`가 `clicked == source`(변수의 출처 = `sender.tab.url`)와 `clicked == current`를 함께 요구한다. 빠져 있던 축은 `source`이고, 그것은 **await가 필요 없다**(메시지 도착 시점에 고정) — 그래서 지점 검사 복원이 아니라 게이트에 **정적으로** 더했다. **⒝ 게이트가 문서에 물어보지 않고 페이지에 물어본다**: `chrome.tabs.get().url`(= last committed URL, `pushState` 미반영 가능)을 버리고 `chrome.scripting.executeScript(() => location.pathname)`으로 **live location**을 읽는다. 게이트 → 동기 조립 → `sendToNativeHost` 사이에 await가 없음을 코드로 보장. **⒞** 낡은 아이콘 주석 정정 | verified | 아래 R11 로그 | R11 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -166,7 +168,8 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] `chrome.scripting.executeScript`가 실패하도록 흉내 낸 상태에서 클릭 직후 이동해도 폴백 브랜치로 옛 페이지의 요청이 나가지 않는다
 - [ ] 확장 아이콘을 누른 직후 다른 PR로 이동하면 거부된다(아이콘 경로도 최종 게이트를 탄다)
 - [ ] 클릭 후 `storage.sync.get`(오버라이드 조회)이 도는 동안 이동해도 거부된다
-- [ ] **`tab.url`이 SPA `pushState`를 반영하는지 확인** — 위 네 항목이 전부 이 전제에 기대므로, 하나라도 통과하면 전제도 확인된 것으로 본다
+- [ ] **`pushState` 이동 중 실행이 거부되는지 확인** — R11부터 게이트가 `tab.url`이 아니라 페이지의 live `location`을 읽으므로, 위 네 항목이 그 전제를 함께 확인한다
+- [ ] **ABA**: PR 1에서 버튼을 누른 직후 PR 2로 갔다가 곧바로 PR 1로 돌아오면 거부된다 — PR 2의 번호와 PR 1의 branch가 섞인 요청이 나가지 않는다
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -419,12 +422,15 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 | 4 | 그 안의 `fetch(/owner/repo)` | 최종 게이트 + **내부 정합(R10에서 고침)**: pathname을 `await` **뒤에** 읽는다. R9는 앞에서 읽어 이동해도 옛 pathname을 반환했고, 그래서 검사가 **통과**했다 — 검사가 있는데 틀린 값을 봤다 |
 | 5 | `executeScript`가 **reject**했을 때(`detectDefaultBranch`의 catch) | **최종 게이트만.** 내부 정합은 답이 없으므로 성립하지 않는다(pathname을 못 받았다). R9는 여기서 `null`을 반환하고 검사에 **도달하지 않았다**; 이제 폴백 경로도 최종 게이트 뒤에 있다 |
 | 6 | `resolveMainBranch` → `storage.sync.get` | **최종 게이트만.** R9에는 이 뒤에 아무것도 없었다(P1-D) |
-| 7 | **`sendToNativeHost` 직전** | **최종 게이트 그 자체** — `assertStillOnClickedPage(tab, clicked)`가 `chrome.tabs.get(tab.id)`으로 지금의 URL을 읽어 `clicked`와 대조. 모든 command가 `runButton` 한 곳을 지나므로 검사도 한 곳이면 된다 |
+| 7 | **`sendToNativeHost` 직전** | **최종 게이트 그 자체** — `assertRequestIsCoherent`가 `executeScript(() => location.pathname)`로 **페이지의 live location**을 읽어 `requestIsCoherent({clicked, source, current})`를 판정. 모든 command가 `runButton` 한 곳을 지나므로 검사도 한 곳이면 된다 |
 | 8 | 아이콘 경로의 `isRepoPage` → `executeScript` | **최종 게이트만.** R10부터 아이콘도 `clicked`(클릭 시점 tab URL의 대상)를 넘기므로 게이트가 실제로 판정한다 — R9에서는 `clicked`가 없어 즉시 통과했다(P1-C) |
+| 0 | **await 아님 — 메시지 도착 시점** | `source = parseGitHubUrl(tab.url)`. 변수(repo·owner·number)가 여기서 나오는데 R10까지 **`clicked`와 대조되지 않았다** → 1→2→1 ABA(R10 P1-A). R11부터 게이트의 **셋째 축**이고, 시간이 흐르지 않는 값이라 게이트에 정적으로 얹힌다 |
 
-**왜 `chrome.tabs.get`인가**: 핸들러가 받은 `tab`(그리고 `sender.tab`)은 **메시지 디스패치 시점의 스냅샷**이라 이동해도 변하지 않는다 — 그 값으로는 "지금 어디인가"에 답할 수 없다. `url`이 채워지는 것은 매니페스트의 `host_permissions: ["https://github.com/*"]` 덕이고, 그것이 없으면 `stillOnClickedPage`가 URL을 못 받아 **거부**한다(닫히는 쪽으로 틀린다). **미실측**: SPA의 `pushState`가 `tab.url`에 반영되는지는 이 환경에서 확인하지 못했다 — 문서상 반영되며(`tabs.onUpdated`가 그때 발화한다) 수기 검사 항목으로 남겼다.
+**왜 `chrome.tabs.get`이 아닌가(R11 정정)**: `Tab.url`은 문서상 **last committed URL**이고 GitHub의 `pushState`는 커밋을 만들지 않는다(Chrome은 그것을 `webNavigation.onHistoryStateUpdated`로 따로 노출한다). 즉 탭 레코드가 **우리가 떠난 페이지를 정직하게** 보고할 수 있고, 그 위에 세운 게이트는 클릭과 일치한다고 판단해 명령을 통과시킨다. R10이 "표준 동작"이라 적은 것은 **문서와 어긋난 미검증 전제**였다. 이제 게이트는 페이지 안의 `location`에게 묻는다 — 페이지가 자기 위치보다 늦을 수는 없다. DOM 읽기가 이미 쓰는 메커니즘이라 새 권한도 없다.
 
-**`clicked`는 여전히 비교 키다.** 최종 게이트가 재조회한 URL도 마찬가지 — repo·owner·number는 여전히 `sender.tab.url`과 DOM에서만 오고, 재조회 값은 **대조에만** 쓰인다(`grep -n 'clicked\.\|clicked\[' extension/background.js` → 0건).
+**게이트와 전송 사이에 await가 없다.** `runButton`은 게이트 → 메시지 조립(동기) → `sendToNativeHost`이고, `sendToNativeHost`의 첫 문장이 `chrome.runtime.sendNativeMessage`다. await가 하나라도 끼면 이 게이트도 "뒤에 틈이 있는 검사"가 되어 지금까지 닫아 온 결함과 같은 모양이 된다.
+
+**`clicked`는 여전히 비교 키다.** 게이트가 읽은 live location도 마찬가지 — repo·owner·number는 여전히 `sender.tab.url`과 DOM에서만 오고, 게이트 값은 **대조에만** 쓰인다(`grep -n 'clicked\.\|clicked\[' extension/background.js` → 0건).
 
 ### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
 
@@ -680,7 +686,7 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 신규 P2 ×2: `onMessage`가 `shown`만 필수화하고 `target`은 보지 않아, target 없이 오는 메시지(업데이트 직후 열려 있던 옛 content script 등)가 페이지 검사를 조용히 통과한다. 그리고 §9 v2의 aggregate quota(아래 조항 보완 1).
 - 부류 이동: 대상 정합의 **설계**는 섰고(내부 정합 + 클릭 대상), 남은 것은 그 설계를 **어디서 한 번에 강제하는가**였다 — 지점마다가 아니라 실행 직전 한 곳.
 
-### R10 — 워킹트리(미커밋, base `d1ff32e`) · 항목 16
+### R10 — `986504d` (Codex 판정: 차단) · 항목 16
 
 - 범위: Codex R9 차단의 P1 4건(A·B·C·D)과 P2 1건(`onMessage`의 `target`), 그리고 §9 조항 보완 6건(문서). R8 3건은 재검증에서 통과했으므로 건드리지 않았다. **네 P1을 따로 고치지 않았다** — 전부 "await 뒤에 이동이 일어난다"는 한 부류이고, 그것을 지점마다 막으려 한 것이 R9의 실패였다.
 - 자리: `defaults.js:233`(`pageTargetOfUrl`)·`:257`(`stillOnClickedPage`)·`:264`(`isPageTarget`), `background.js:90-96`(fetch **뒤**에 pathname을 읽는 세 지점)·`:179`(`assertStillOnClickedPage`)·`:228`(`runButton`이 게이트를 통과한 뒤에만 전송)·`:364`(아이콘이 `clicked`를 넘김)·`:386`(`target` 필수).
@@ -700,4 +706,29 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 실측: `node --test` **151/0**(R9 148 → 신규 3, 전부 `buttons.test.js`), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다.
 - **잔여**: (1) `get`↔`set` 창은 그대로. (2) 최종 게이트와 `sendNativeMessage` 사이에도 창이 남는다 — 그러나 이제 그 창은 **await 하나 안**이지 여러 개에 걸치지 않는다. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가는 여전히 열린 별도 항목. (4) §9 계약은 문서뿐이고 조항 6건은 **사용자 확정 대기**.
 - **미검증**: **`tab.url`이 SPA `pushState`를 반영하는지 실측하지 못했다** — 이 환경에 브라우저가 없다. 최종 게이트의 유효성이 그 전제에 기대므로 수기 검사 5항목으로 남겼고, 마지막 항목이 전제 자체를 확인한다. `chrome.tabs.get` 스텁이 없어 게이트의 **비동기 실동작**도 순수 술어(`stillOnClickedPage`)까지만 고정했다. `host_permissions`가 실제로 `tab.url`을 채우는지도 코드 근거(기존 `executeScript`·`sender.tab.url` 동작)이지 이번 실측은 아니다.
+- **Codex 판정: 차단(no).** R9의 P1 4건(단방향 이동)은 **전부 차단 확인** → 항목 16의 최종 게이트 구조는 섰다. 판단 1 **부분 수용**("단일 게이트 구조는 맞으나 source 일관성을 검사하지 않는다"), 2·3 수용, 4 **조건부**(freshness 미실측), 5 **반박**("새 결함이 없다는 뜻은 아니다"). 부류는 여전히 **실행 대상 정합** — 이번엔 게이트 **자체**의 두 축이다.
+- 신규 P1 (A) **source-target ABA**(Codex가 source-level mock으로 확인). 조합: `clicked` = `/o/r/pull/1`, executor의 `tab.url` = `/o/r/pull/2`, DOM 결과 pathname = `/o/r/pull/1`, DOM branch = `branch-1`, `tabs.get().url` = `/o/r/pull/1`. `executeCommand`가 **number를 `sender.tab.url`(=2)에서** 읽는데, 내부 검사(clicked/1 == DOM/1)도 최종 게이트(clicked/1 == 현재/1)도 통과한다 — **number=2 · branch=branch-1이 섞여** 네이티브까지 간다. 페이지가 1→2→1로 갔다 온 ABA이고, **`clicked`(클릭 시점)와 `sender.tab.url`(dispatch 시점)의 불일치를 아무도 보지 않았다**.
+- 신규 P1 (B, 조건부) **`tabs.get()` freshness — 게이트 근간의 미검증 전제.** Codex가 Chrome 문서로 반박: `Tab.url`은 **last committed URL**이고 `pushState`는 별도의 `webNavigation.onHistoryStateUpdated` 대상이다 — 즉 `chrome.tabs.get().url`이 SPA 이동을 **반영하지 않을 수 있고**, 그러면 최종 게이트가 오탐 통과한다. **드라이버가 "표준 동작"이라 한 판단이 문서와 어긋난다**(R10 로그의 미검증 항목이 실제로 틀린 전제였다).
+- 신규 P3: `background.js:159`의 주석이 R10 이후 낡았다(아이콘도 이제 target을 넘긴다). P2: §9 aggregate quota는 이미 v2 몫으로 조항에 있다 — 코드 변경 없음.
+- 부류 이동: "await 뒤 이동"(R9·R10)은 닫혔고, 남은 것은 **dispatch 스냅샷의 ABA**와 **게이트가 무엇에 물어보는가**였다.
+
+### R11 — 워킹트리(미커밋, base `986504d`) · 항목 17
+
+- 범위: Codex R10 차단의 P1 2건(source-target ABA · `tabs.get` freshness)과 P3(낡은 주석). §9 aggregate quota는 이미 조항 2·4에 **v2 몫**으로 적혀 있어 코드 변경 없음 — 현행 flat 키별 6,144B 검사가 현행 배치에 유효하다는 점만 재확인했다(소탕 표 15 그대로). R9 4건은 재검증에서 전부 통과했으므로 건드리지 않았다.
+- 자리: `defaults.js:244`(`requestIsCoherent` — `stillOnClickedPage`를 대체), `background.js:159`(아이콘 주석 정정)·`:176`(`readCurrentPathname`)·`:182-196`(`assertRequestIsCoherent`)·`:245`(`runButton`의 동기 블록)·`:295`·`:312`·`:332`(세 executor가 `{tab, clicked, source}`를 넘김).
+- **⒜ 게이트에 축을 더했다(대안 ①). 변수 출처 이전(대안 ②)은 검토 후 기각.**
+  - 채택: `source`(= `parseGitHubUrl(tab.url)`, 변수 repo·owner·number가 실제로 나오는 곳)를 게이트의 셋째 축으로 넣어 **`clicked == source` ∧ `clicked == current`**를 요구한다. `source`는 **시간이 흐르지 않는 값**이다 — 메시지가 도착한 순간 고정이라, 게이트에 정적으로 얹는 것과 "지점에 검사를 다는 것"은 다르다. 놓칠 다음 await가 없다.
+  - 기각한 대안 ②(변수를 게이트가 재조회한 현재 탭에서 읽기): ABA를 원천 차단하지만, **게이트 이전에 이미 필요한 값이 있다** — `resolveMainBranch(target.repo, …)`는 오버라이드 조회에 repo를 쓰고 그것은 게이트보다 앞이다. 그러면 (i) dispatch 스냅샷과 게이트 재조회 **두 출처**를 쓰거나 (ii) `clicked.repo`를 쓰게 되는데, 후자는 **`clicked`를 출처로 만든다** — R8부터 지켜 온 "비교 키이지 출처가 아니다"를 깨는 것이라 배제. ①은 출처를 하나로 유지한 채 그 하나를 클릭 페이지와 맞대므로 같은 결과를 더 적은 변경으로 얻는다.
+  - 비용: 1→2→1 ABA에서 실제로는 무해한 경우(사용자가 갔다 왔을 뿐)도 거부된다. 잘못 실행하는 대신 **보이는 거부**이고, 이 루프가 계속 택해 온 쪽이다.
+- **⒝ 게이트가 탭 레코드가 아니라 페이지에게 묻는다.** `Tab.url`은 문서상 **last committed URL**이고 `pushState`는 커밋을 만들지 않는다 — Chrome이 그것을 `webNavigation.onHistoryStateUpdated`로 따로 노출한다는 사실 자체가 근거다. R10이 "표준 동작"이라 적은 것은 **문서와 어긋난 미검증 전제**였고, 그 위에 게이트 전체가 서 있었다. 이제 `executeScript(readCurrentPathname)`로 페이지 안의 `location.pathname`을 읽는다 — 페이지가 자기 위치보다 늦을 수는 없다.
+  - **`tabs.get`은 병용하지 않고 대체했다.** 병용해도 얻는 것이 없다: 낡은 `tabs.get`은 우리가 떠난 페이지(= `clicked`)를 보고하므로 **통과**시킬 뿐 거부하지 못한다. 방어를 늘리지 않으면서 await만 하나 더 쓰는 셈이라 뺐다. `chrome.tabs` 호출은 확장에서 **0건**이 됐다(`grep -n 'chrome.tabs' extension/*.js` → 주석 1줄뿐).
+  - **주입 실패는 거부**(fail closed) — 대개 이유가 "그 페이지가 더 이상 없다"이다.
+  - **게이트와 전송 사이에 await가 없다**(코드로 확인): `runButton`은 게이트 → 메시지 조립(동기 3줄) → `sendToNativeHost`이고, `sendToNativeHost`의 첫 문장이 `chrome.runtime.sendNativeMessage`다. 주석으로 그 이유를 남겨 다음 사람이 await를 끼우지 않게 했다.
+- **⒞ 낡은 주석 정정**(`background.js:159`). "아이콘 경로에는 페이지에 그려진 버튼도, 정합을 맞출 클릭도 없다"는 R10 이후 틀렸다 — 아이콘은 **지문**이 없을 뿐 **target은 넘기고 같은 게이트를 탄다**. 그렇게 고쳐 적었다.
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 → `grep 'VERSION_KEY\|SETTINGS_VERSION' extension/content.js extension/background.js` **0건**(executeScript가 하나 늘었지만 주입 함수는 `location.pathname` 한 줄이다). `{success:false}` → 게이트의 거부도 `throw` → `.catch` → `{success:false, error}` → 버튼 ❌. **`clicked`가 출처가 아님** → `grep -n 'clicked\.\|clicked\[' extension/background.js` **0건**.
+- red 기록: `not ok 46 - the final gate refuses unless every part of the request describes the clicked page` · `not ok 47 - the ABA repro: a page that went 1 → 2 → 1 must not mix the two`(둘 다 `ReferenceError: requestIsCoherent`). 확인 후 구현.
+- 기존 테스트 1건 교체: `stillOnClickedPage`(URL 기반 2축)를 `requestIsCoherent`(3축)로 — 축이 하나 늘어난 것이 이번 라운드의 요지다. 삭제한 테스트는 없다(같은 자리에 더 강한 것이 들어갔고 ABA 케이스가 추가됐다).
+- 실측: `node --test` **152/0**(R10 151 → 신규 1: ABA), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
+- **잔여**: (1) `get`↔`set` 창은 그대로. (2) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가는 여전히 열린 별도 항목. (3) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
+- **미검증(정직하게)**: 이 환경에 브라우저가 없어 **executeScript가 읽는 live location이 `pushState`를 반영하는지도 실측하지 못했다**. 다만 `tabs.get`과 근거의 종류가 다르다 — `tabs.get`은 "문서가 last committed URL이라 말하는데 우리가 반영될 것이라 **가정**"이었고, live `location`은 **`pushState`의 정의 자체가 `location`을 바꾸는 것**이라 문서가 반대로 뒷받침한다. 그래도 실측은 실측이므로 수기 검사에 남겼다. `chrome.scripting` 스텁이 없어 게이트의 비동기 실동작도 순수 술어(`requestIsCoherent`)까지만 고정했다.
 - 판정: 미요청.

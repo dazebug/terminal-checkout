@@ -241,21 +241,27 @@ function pageTargetOfUrl(url) {
   return pageTargetOf(parsed.pathname);
 }
 
-// The last question asked before a command runs: is the tab still showing the page the click came
-// from?
+// The last question asked before a command runs. Three answers, from three different moments, and
+// all three have to name the same page:
 //
-// Between a click and the command leaving there are several awaits — the buttons are read from
-// storage, a script is injected to read the DOM, the main-branch overrides are read — and the page
-// can move during any of them. Putting a check after each one is how the next one gets forgotten,
-// and it was, four times over: a fetch that resolved after a navigation reported the page it had
-// left, an executeScript failure returned before reaching its check, the extension-icon path sent
-// nothing to check against, and the last read had no check after it at all. This is asked once,
-// where it covers all of them together.
+//   `clicked` — where the user was when they pressed the button (the content script read it then)
+//   `source`  — where the values in this request were read from: the tab as the message was
+//               dispatched, which is what the repository, owner and number come out of
+//   `current` — where the page is *right now*, read immediately before the command leaves
 //
-// It fails closed on every kind of "cannot tell" — no clicked page, no URL, a tab that no longer
-// exists. Not knowing where a command would land is not a reason to send it.
-function stillOnClickedPage(clicked, currentUrl) {
-  return sameTarget(clicked, pageTargetOfUrl(currentUrl));
+// Between a click and the send there are several awaits — the buttons come from storage, a script is
+// injected to read the DOM, the main-branch overrides are read — and the page can move during any of
+// them. Putting a check after each one is how the next one gets forgotten, and it was, four times
+// over. `current` is asked once, where it covers all of them together.
+//
+// `source` is the axis that was missing, and it is the one that needs no await at all: it is fixed
+// the moment the message arrives. Without it a tab that went 1 → 2 → 1 produced a request holding
+// page 2's number and page 1's branch, while `clicked` and `current` both agreed on page 1.
+//
+// Fails closed on every kind of "cannot tell" — nothing clicked, nothing read back, a tab that no
+// longer exists. Not knowing where a command would land is not a reason to send it.
+function requestIsCoherent({ clicked, source, current }) {
+  return sameTarget(clicked, source) && sameTarget(clicked, current);
 }
 
 // Whether a value is a page target we can compare against, as opposed to something we would compare
