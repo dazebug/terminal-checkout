@@ -248,7 +248,7 @@ struct InputBoxOwnership {
 /// (`prepareRequest` merges all inputs or none), so there is no startup submission racing us for
 /// the input box. That invariant is what lets this function trust "the CR went out" — with both
 /// routes in one session it did **not**: the argv submission clears the box and a wiped input was
-/// recorded as delivered. What remains of that lesson is `submissionSurvived`.
+/// recorded as delivered. What remains of that lesson is `submissionTookEffect`.
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
@@ -300,6 +300,11 @@ public func submitClaudeInputs(
 /// 15초를 기다린 뒤 찍힌다). 어느 호출이 실패했는지까지는 좁히지 못했다.
 /// 다만 재타이핑 전에는 세션 동일성을 다시 확인한다 — 실패가 "세션이 죽었다"였을 수도 있어,
 /// 확인 없이 다시 치면 그 tty에 새로 뜬 claude에 입력이 흘러든다.
+///
+/// **재시도는 CR을 보내기 전까지만 있다.** CR이 한 번이라도 나갔으면 그 입력은 다시 치지
+/// 않는다 — 전송 호출이 실패를 보고했어도 바이트는 들어갔을 수 있고, 그때 재타이핑하면 같은
+/// 메시지가 두 번 제출된다(`!` 입력이면 사용자 명령이 두 번 실행된다). 이 경계 뒤의 실패는
+/// 전부 "전달을 멈추고 보고"로 끝나며, 입력창에 남았을 조각은 호출자의 정리가 지운다.
 private func typeAndSubmit(
     _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval
 ) -> Bool {
@@ -341,7 +346,7 @@ private func typeAndSubmit(
             continue
         }
 
-        var reflected = false
+        var reflected: String?
         var failure = "입력이 화면에 반영되지 않음"
         for _ in 0..<5 {
             io.wait(0.4)
@@ -350,51 +355,79 @@ private func typeAndSubmit(
                 break
             }
             if screenReflectsNewInput(before: before, after: screen, input: text) {
-                reflected = true
+                reflected = screen
                 break
             }
         }
-        if reflected {
-            if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) {
-                if submissionSurvived(io: io, before: before, text: text) { return true }
-                // Positive evidence that the CR did not turn into a message. Reported, **not
-                // retried**: this is the one place where retyping could duplicate a message that
-                // did go through, and the caller stopping is what keeps the next input from
-                // landing in a session that never got this one
-                checkoutLog("제출한 입력이 화면에서 사라짐 — 제출되지 않은 것으로 보고 전달을 멈춤")
+        if let reflected {
+            guard submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) else {
+                // **A CR that went out may have landed even when the call reports failure** — the
+                // helper can inject part of a write and then error. So this input is never typed
+                // again: retyping is the only move that can submit the same message twice, and
+                // with a `!` input that runs the user's command twice. Resending the CR is fine
+                // (a CR into an empty box does nothing, measured) and `submitConfirmedInput`
+                // already did that; once those are exhausted, delivery stops here
+                checkoutLog("제출(CR) 전송 실패 — 이미 CR을 보낸 입력은 다시 치지 않고 전달을 멈춤")
                 return false
             }
-            failure = "제출(CR) 전송 실패"
+            if submissionTookEffect(io: io, before: before, whenTyped: reflected, text: text) {
+                return true
+            }
+            // Positive evidence that the CR did not turn into a message. Reported, **not
+            // retried**, for the same reason as above — and the caller stopping is what keeps the
+            // next input from landing in a session that never got this one
+            checkoutLog("제출한 입력이 claude에 들어가지 않은 것으로 보임 — 다시 치지 않고 전달을 멈춤")
+            return false
         }
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
     }
     return false
 }
 
-/// After the CR, is the input **still** on screen? Submitting moves it from the input box into
-/// the transcript, so it stays; something that wiped the box instead makes it disappear.
+/// After the CR, did the submission take effect? "We sent a CR" is not "claude received a
+/// message" — this repository has measured claude discarding input during initialisation while
+/// the app logged it as delivered.
 ///
-/// Why this exists: "we sent a CR" is not "claude received a message". Two independent reviewers
-/// drove the delivery loop into reporting `submitted=1` for an input claude never got, and this
-/// repository has measured the same shape before — claude discarding input during initialisation
-/// while the app logged it as delivered. Sending is ours to see; the message existing is not,
-/// and the reflection check already gives us the vocabulary for the difference.
+/// **Round 5 rebuilt this check because both ways of being wrong were reproduced on the previous
+/// one, by two reviewers who did not know about each other:**
+///  - *False positive.* It compared the post-CR screen against the **pre-typing** snapshot — the
+///    question the reflection check had already answered yes. Text still sitting in the input box
+///    passed, so a CR the TUI never acted on was counted as a message.
+///  - *False negative.* It read "our input is not on this screen" as "the box was wiped". On Warp
+///    `screenText` returns **whatever pane has focus**, not nil, so switching tabs — which the
+///    design explicitly expects you to do — produced someone else's screen, reported a delivered
+///    input as lost, and dropped every input after it.
 ///
-/// It reuses the single `screenReflectsNewInput` with the **same `before` snapshot** as the
-/// typing check, so "still there" means exactly what "appeared" meant.
+/// So the check now runs only where the screen is **ours by construction** (iTerm2 and WezTerm
+/// read their own session or pane by id; `screenNeedsPaneProof` marks the terminals where it is
+/// not), and it asks for movement rather than presence: the screen must differ from the one the
+/// input was seen typed in, with the input still visible — submitting moves it out of the box and
+/// into the transcript. A screen frozen with our text in it is a CR that did nothing; the text
+/// gone from a screen that did change is the box being emptied without a message.
 ///
-/// Two honest limits. A screen we cannot read (nil) is **not** treated as absence — that would
-/// turn a Warp tab switch into a false alarm, so it keeps the old assumption and says nothing.
-/// And a transcript that scrolls the message out of the viewport within this window would look
-/// like a wipe; the cost of that misreading is one under-count and a stopped delivery, never a
-/// duplicate submission.
-private func submissionSurvived(io: ClaudeSessionIO, before: String?, text: String) -> Bool {
-    for attempt in 1...3 {
+/// **What it does not claim.** Where the screen cannot be attributed to our pane, or cannot be
+/// read at all, this says "delivered" without confirming anything — unknown is not evidence, and
+/// treating it as failure is itself destructive because stopping drops every later input. Warp
+/// therefore keeps the old assumption: the pane proof is only valid up to the moment the body is
+/// typed, and re-proving here would mean typing bytes into a box the submission has just emptied.
+/// A transcript that scrolls the message out of view inside this window reads as a wipe, which
+/// costs an under-count and a stopped delivery, never a duplicate. And a screen that changed for
+/// some other reason (a spinner, a clock) passes: this rules out the two states we can see.
+private func submissionTookEffect(
+    io: ClaudeSessionIO, before: String?, whenTyped: String, text: String
+) -> Bool {
+    guard !io.screenNeedsPaneProof else { return true }
+    var stillUnchanged = false
+    for attempt in 1...5 {
         if attempt > 1 { io.wait(0.4) }
-        guard let screen = io.screenText() else { return true }
-        if screenReflectsNewInput(before: before, after: screen, input: text) { return true }
+        guard let screen = io.screenText() else { continue }
+        if screen == whenTyped {
+            stillUnchanged = true // the CR has produced nothing yet — keep looking
+            continue
+        }
+        return screenReflectsNewInput(before: before, after: screen, input: text)
     }
-    return false
+    return !stillUnchanged
 }
 
 /// 읽히는 화면이 우리 pane인지 증명한다. 우리 tty에만 들어가는 난수를 하나 넣고 그것이

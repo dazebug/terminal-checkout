@@ -37,6 +37,16 @@ public enum ClaudeInputBlocker: Equatable, CaseIterable {
     /// pane cannot be addressed — `send-text` and `get-text` both need a mux pane id
     case wezTermSessionUnavailable
 
+    /// Is the setup window the place to fix this? It holds the Accessibility card and the install
+    /// state, so it answers the two Warp reasons. It has no WezTerm control on it — bringing it
+    /// forward for "start WezTerm first" takes focus away from Chrome and shows nothing to do.
+    public var setupWindowCanHelp: Bool {
+        switch self {
+        case .warpAccessibility, .warpHelperUnavailable: return true
+        case .wezTermSessionUnavailable: return false
+        }
+    }
+
     /// Each reason implies a **different next action**. One shared wording would send a user who
     /// needs to grant a permission off to reinstall instead
     public var message: String {
@@ -46,9 +56,11 @@ public enum ClaudeInputBlocker: Equatable, CaseIterable {
                 + " Terminal Checkout 설정 창에서 허용하세요."
         case .warpHelperUnavailable:
             return "Warp 주입 헬퍼를 준비하지 못했습니다 — ./install.sh로 다시 설치하세요."
+        // Two ways to land here — no mux at all, and a mux whose spawn attempts all failed — so
+        // the wording covers both rather than asserting the first
         case .wezTermSessionUnavailable:
-            return "WezTerm 창이 없어 claude 입력을 넣을 수 없습니다 —"
-                + " WezTerm을 먼저 실행한 뒤 다시 누르세요."
+            return "WezTerm에서 claude 입력을 넣을 pane을 잡지 못했습니다 —"
+                + " WezTerm 창이 떠 있는지 확인한 뒤 다시 누르세요."
         }
     }
 }
@@ -90,8 +102,13 @@ public func claudeInputBlocker(
 /// The fallback starts a **new WezTerm process**: no mux, so no pane id, so `.none` for a session
 /// handle and nothing to type into. That used to be a log line while the response said
 /// `{success:true}`. It is raised at the fallback boundary rather than in `claudeInputBlocker`
-/// because that is the first moment it is known — and it is still before any side effect, since
-/// the mux queries that failed on the way here neither spawn nor write anything.
+/// because that is the first moment it is known.
+///
+/// "Before any side effect" is exact for the common way in — no mux found, and asking the mux
+/// neither spawns nor writes. The other way in is a mux that answered but whose spawn attempts all
+/// failed; a `wezterm cli spawn` that timed out **may** have opened a tab whose id we never read.
+/// Not measured, and it does not change the decision (rejecting is still better than running with
+/// the input dropped), but the claim is narrower than the branch.
 func wezTermFallbackRejection(injectsClaudeInput: Bool) -> TerminalError? {
     guard injectsClaudeInput else { return nil }
     return claudeInputRejection(.wezTermSessionUnavailable)
@@ -131,7 +148,7 @@ public enum ClaudeInputGuidance {
 /// appear, none of them can become "a ❌ with the reason nowhere" — the extension only sends the
 /// `error` string to the console (issue #29).
 public func claudeInputRejection(_ blocker: ClaudeInputBlocker) -> TerminalError {
-    ClaudeInputGuidance.present?(blocker)
+    if blocker.setupWindowCanHelp { ClaudeInputGuidance.present?(blocker) }
     return .claudeInputNotDeliverable(blocker)
 }
 

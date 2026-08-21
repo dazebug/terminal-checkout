@@ -12,6 +12,8 @@ const vm = require('node:vm');
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
 const { BUTTON_KINDS, pageTypeOf } = vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf })');
+const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
+  vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -131,4 +133,26 @@ test('pageTypeOf: reserved paths in the owner position are not repositories', ()
 test('pageTypeOf: no verdict without a repository name', () => {
   assert.equal(pageTypeOf('/'), null);
   assert.equal(pageTypeOf('/dazebug'), null);
+});
+
+// The app merges scheduled claude inputs into claude's opening message only when the rendered
+// command's last word is a bare `claude` (it then invokes it as `command claude`), and only when
+// no input is a boundary. That judgement lives in Swift, so nothing on this side would notice a
+// preset drifting out of the shape — and a preset that stops merging silently brings back the Warp
+// Accessibility requirement the merge exists to remove. Deliberately narrow: only the shape.
+test('presets carrying claude inputs stay mergeable', () => {
+  const withInputs = [...PR_PRESETS, ...ISSUE_PRESETS, ...REPO_PRESETS]
+    .filter(p => (p.claudeInputs || []).length > 0);
+  assert.ok(withInputs.length >= 3, 'presets carrying claude inputs disappeared');
+  for (const preset of withInputs) {
+    assert.match(preset.command, /(^|&&|\|\||;|\(|\{|\s)\s*claude$/, preset.name);
+    let sawPlainText = false;
+    for (const input of preset.claudeInputs) {
+      // A slash command or a `#` memory line anywhere, or a `!` after plain text, sends every
+      // input down the typed route instead
+      assert.ok(!input.startsWith('/') && !input.startsWith('#'), `${preset.name}: ${input}`);
+      assert.ok(!(sawPlainText && input.startsWith('!')), `${preset.name}: ${input}`);
+      if (!input.startsWith('!')) sawPlainText = true;
+    }
+  }
 });

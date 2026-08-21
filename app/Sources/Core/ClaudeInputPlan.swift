@@ -19,16 +19,17 @@ import Foundation
 private enum ClaudeInputKind {
     /// Starts with `!` — claude's shell mode. Run ahead of time so its output joins the prompt
     case shellCommand
-    /// Starts with `/` — a slash command
-    case slashCommand
+    /// A line the **input box** reads specially: `/` dispatches a slash command, `#` files the
+    /// line into memory. Neither meaning exists in argv, where the text is just text
+    case inputBoxDirective
     /// Anything else: free text
     case interactive
 
     init(_ input: String) {
         if input.hasPrefix("!") {
             self = .shellCommand
-        } else if input.hasPrefix("/") {
-            self = .slashCommand
+        } else if input.hasPrefix("/") || input.hasPrefix("#") {
+            self = .inputBoxDirective
         } else {
             self = .interactive
         }
@@ -50,8 +51,9 @@ public struct ClaudeInputPlan: Equatable {
 
 /// Finds the **longest prefix** that could be merged. There are only two boundaries:
 ///
-/// 1. **A slash command** — it is only read as a command when it is the whole message. Only a
-///    leading `/` reaches the slash dispatcher; put a banner in front and it becomes inert text
+/// 1. **A line the input box reads specially** — a slash command or a `#` memory line. Both only
+///    mean what they mean when they are the whole message, typed into the box. Only a leading `/`
+///    reaches the slash dispatcher; put a banner in front and it becomes inert text
 ///    (`claude -p "/help"` → recognised as a command, `claude -p $'banner\n/help\n…'` → handled as
 ///    ordinary text; both measured). Merging one would silently discard what it meant.
 /// 2. **A `!` that follows an interactive input** — its output was meant as context for the
@@ -66,7 +68,7 @@ public func claudeInputPlan(_ inputs: [String]) -> ClaudeInputPlan {
             ClaudeInputPlan(prefix: Array(inputs[..<index]), tail: Array(inputs[index...]))
         }
         switch ClaudeInputKind(input) {
-        case .slashCommand: return split()
+        case .inputBoxDirective: return split()
         case .shellCommand where sawInteractive: return split()
         case .shellCommand: continue
         case .interactive: sawInteractive = true
@@ -88,14 +90,25 @@ private struct ShellWord {
     var opaque = false
 }
 
-/// Words that make us give up on appending, **read only in command position**.
+/// Words that make us give up on appending, read **wherever they appear**.
 ///
-/// The list is closed by an argument about the shell, not by enumerating attacks. For the final
-/// `claude` to be anything other than the `claude` on PATH, something has to rebind that name in
-/// **the same shell** that will run it. Only a builtin or a keyword can do that (a child process
-/// cannot reach back into its parent), so it has to appear in command position — and the ways to
-/// get there are: directly, behind a command modifier, or behind a variable assignment. All three
-/// are covered:
+/// This list is the *second* layer, and it is not claimed to be complete. The first layer is
+/// structural: the append invokes `command claude`, which runs the executable past any function or
+/// alias (`appendedPromptCommand`), so the wrapper class this list used to be the only defence
+/// against cannot receive our prompt at all. What is left for the list is the shell being able to
+/// rebind `command` itself, plus grammar we do not model.
+///
+/// Why every word and not just the first. Reading only the first word of a segment was wrong: a
+/// **redirection** (`> /dev/null eval …`) and a **precommand modifier** (zsh's `noglob`,
+/// `nocorrect`, `-`) both sit in front of the command name, and both were used to hide an `eval`
+/// (reproduced by two independent reviewers, sentinel confirmed). Neither list is closed across
+/// shells, so instead of locating the command position we require **every** word to be one that
+/// would be safe there. Wherever the command position turns out to be, that word has been checked.
+/// The price is over-folding on arguments spelled like these words (`git add .`) or on words we
+/// cannot read (`-m 'msg'`), which costs the merge and nothing else — the request falls back to
+/// typing, which is what it did before this track existed.
+///
+/// The named groups:
 ///
 ///  - **Definition and rebinding**: `function` (the keyword form has no `(` — this is what both
 ///    reviewers used), `alias`/`unalias`, `hash` (rewrites the lookup table), `autoload`
@@ -110,12 +123,16 @@ private struct ShellWord {
 ///    rebinding — they open command positions that a flat segment scan does not model, so a
 ///    definition could hide behind one. We fold on grammar we do not model rather than guess.
 ///
-/// **What is still not caught**, both because it needs runtime knowledge the app does not have:
-/// a `claude` function or alias defined in the user's shell **rc** (it is not in the command text
-/// at all), and a command that *writes* a `claude` executable earlier on PATH (`cp x ~/bin/claude
-/// && claude`) — telling that apart from any other `cp` needs the PATH and the filesystem. Both
-/// are recorded as residuals in `docs/new-terminal-checklist.md`; in both the merged prompt
-/// arrives as that wrapper's argument.
+/// **What is still not caught** — all of it needs runtime knowledge of the user's shell and
+/// filesystem, and none of it can put our prompt text through a shell:
+///  - Anything that changes **PATH** by a route that is not an assignment word: `printf -v PATH`,
+///    `read PATH < file`, or a PATH exported from the rc. Then `claude` resolves to a different
+///    program — a different program receiving the prompt as its argument, not the shell executing
+///    our text. `cp x ~/bin/claude && claude` is the same class; telling it from any other `cp`
+///    would need the PATH and the filesystem.
+///  - A **`command` function or alias** in the rc, which would capture the invocation this list's
+///    structural partner relies on. It is not in the command text, so nothing here can see it.
+/// Both are recorded as residuals in `README.md` and `docs/new-terminal-checklist.md`.
 private let commandPositionWordsThatFold: Set<String> = [
     "function", "alias", "unalias", "hash", "autoload", "enable",
     "eval", "source", ".", "trap",
@@ -126,12 +143,18 @@ private let commandPositionWordsThatFold: Set<String> = [
     "case", "esac", "select", "coproc",
 ]
 
-/// `NAME=` / `NAME+=` in command position — a variable assignment. `PATH=…` alone changes which
-/// `claude` runs, and `PROMPT_COMMAND=…`/`BASH_ENV=…` run text later in this shell.
+/// `NAME=` / `NAME+=` / `NAME[index]=` — a variable assignment. `PATH=…` alone changes which
+/// `claude` runs, `PROMPT_COMMAND=…`/`BASH_ENV=…` run text later in this shell, and zsh's
+/// `functions[claude]=…` rebinds a function through a **subscripted** assignment, which the name
+/// check used to miss because it stopped at the `[`.
 private func looksLikeAnAssignment(_ word: String) -> Bool {
     guard let equals = word.firstIndex(of: "=") else { return false }
     var name = word[word.startIndex..<equals]
     if name.hasSuffix("+") { name = name.dropLast() }
+    // What is inside the brackets does not matter — the name in front of them is assigned to
+    if name.hasSuffix("]"), let bracket = name.firstIndex(of: "[") {
+        name = name[name.startIndex..<bracket]
+    }
     guard let first = name.first, first.isLetter || first == "_" else { return false }
     return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
 }
@@ -286,13 +309,13 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
     endSegment()
 
     if lastSeparatorWasPipe { return false } // claude on the receiving end of a pipe has no TUI
-    // **Command position is the first word of every segment.** Both of the ways to sit in front
-    // of a command name — a modifier and an assignment — are themselves on the fold list, so
-    // reading the first word is enough to reach every one of them
-    for first in segments.compactMap(\.first) {
-        if first.opaque { return false }
-        if commandPositionWordsThatFold.contains(first.text) { return false }
-        if looksLikeAnAssignment(first.text) { return false }
+    // **Every word is judged as if it were the command name.** Reading only the first word meant
+    // deciding where the command position is, and redirections and precommand modifiers move it
+    // (`commandPositionWordsThatFold`)
+    for word in segments.joined() {
+        if word.opaque { return false }
+        if commandPositionWordsThatFold.contains(word.text) { return false }
+        if looksLikeAnAssignment(word.text) { return false }
     }
     guard let last = segments.last, last.count == 1, !last[0].opaque else { return false }
     return last[0].text == claudeExecutableName
@@ -305,6 +328,26 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
 /// friends) would be — with the same consequence that shell functions like zoxide's `z` are
 /// unavailable here, exactly as they are unavailable to claude's `!`.
 let claudePromptShell = "/bin/sh"
+
+/// Shells that can run the appended text. **csh and tcsh have no `$( )`**: the append is a parse
+/// error there and the shell throws away the whole line, so even the part in front of `&&` — the
+/// user's actual command — never runs (measured: `/bin/tcsh -c 'echo START; echo -- "$(/bin/echo
+/// hi)"'` prints no START). Merging must not be able to break a command that works today.
+///
+/// Unknown names type instead of merging, the same fallback everything else uses. fish is left out
+/// on purpose: `{ }` grouping and `[ … ]` differ enough there that the shipped presets do not run
+/// in it at all.
+let posixFamilyShellNames: Set<String> = [
+    "sh", "bash", "zsh", "dash", "ksh", "ksh93", "mksh", "ash", "yash",
+]
+
+/// Judged from the **account's login shell**, which is the best signal the app has: the pane's
+/// shell is chosen by the terminal and can differ (WezTerm's fallback runs `/bin/bash` outright).
+/// Being wrong in the safe direction costs a merge; being wrong the other way would cost the
+/// command, which is why an unrecognised shell does not merge.
+public func shellCanRunAppendedPrompt(_ shellPath: String) -> Bool {
+    posixFamilyShellNames.contains((shellPath as NSString).lastPathComponent)
+}
 
 /// Slack subtracted from the argv budget. ARG_MAX covers argv **and** the environment together,
 /// and our own command line, the other arguments and any growth in the environment all live in
@@ -463,6 +506,30 @@ public func claudePromptScriptBody(
     return lines.joined(separator: "\n")
 }
 
+/// Rewrites a trailing `claude` into `command claude`, or nil when the command does not end in
+/// that word.
+///
+/// **This is the structural half of "our prompt is never executed as shell code".** A `claude`
+/// **function or alias** — the shape both reviewers used to get a plain-text input executed, and
+/// the shape that is invisible to any scanner when it comes from the user's rc — receives our
+/// prompt as `$1` and can do what it likes with it. `command` is POSIX for "skip functions and
+/// aliases, run the executable", and the name after it is not in alias-expansion position either.
+/// So instead of detecting wrappers we stop handing them the prompt.
+///
+/// The cost, accepted deliberately: someone who wraps `claude` on purpose (extra flags, an env
+/// var) loses that wrapper **on the merge path only** — commands with no claude input, and the
+/// typed route, are untouched, and naming the wrapper anything else keeps it. The alternative was
+/// to keep feeding wrappers and rely on spotting the dangerous ones, which is the blacklist this
+/// round removed. What it does not cover: `command` itself rebound in the rc, and a PATH that
+/// resolves `claude` to another program.
+private func invokingClaudeDirectly(_ trimmed: String) -> String? {
+    guard trimmed.hasSuffix(claudeExecutableName) else { return nil }
+    let head = String(trimmed.dropLast(claudeExecutableName.count))
+    // Only when `claude` is a whole word — a stand-in like `myclaude` must not be cut in half
+    if let last = head.last, !(last == " " || last == "\t" || "&|;({".contains(last)) { return nil }
+    return head + "command " + claudeExecutableName
+}
+
 /// Appends the prompt substitution to the command. The script deletes itself once its work is
 /// done, **inside the same substitution** (the way spawn-claude does it) — if the chain never
 /// reaches claude the substitution never runs at all, so there is no window in which a later
@@ -490,7 +557,11 @@ public func appendedPromptCommand(_ command: String, scriptPath: String) -> Stri
     let trimmed = command.replacingOccurrences(
         of: "[ \t]+$", with: "", options: .regularExpression
     )
-    return trimmed + " -- \"$(\(claudePromptShell) \(quoted)"
+    // `prepareRequest` only ever passes a command whose last word is a bare `claude`
+    // (`commandAcceptsAppendedClaudePrompt`); anything else keeps its own last word, so a
+    // stand-in used in a test still runs and simply does not get the wrapper bypass
+    let invocation = invokingClaudeDirectly(trimmed) ?? trimmed
+    return invocation + " -- \"$(\(claudePromptShell) \(quoted)"
         + " || \(ShellUtility.printf) '%s' \(shellSingleQuoted(claudePromptLostInstruction));"
         + " \(ShellUtility.rm) -f -- \(quoted))\""
 }
@@ -549,15 +620,21 @@ private func writeNewPrivateFile(path: String, contents: String) -> Bool {
 
 /// The script deletes itself inside the substitution, but **nobody deletes the context** —
 /// deleting it and then having `execve` fail would lose the assembled content entirely, and that
-/// failure has actually been reproduced. So reclaiming happens here alone, on two different ages:
-///  - Normally short (6 hours by default). Whether the script ran (the content already went out
-///    in argv) or the tab never opened at all, by then nobody needs that directory
-///  - **Long when the hand-off marker is there** (7 days by default). On the over-budget branch
-///    claude reads that file during the session — another request's sweep removing it after six
-///    hours would leave the session unable to find the file it was told to read
+/// failure has actually been reproduced. So reclaiming happens here alone, and it asks whether the
+/// directory has been **used up** rather than only how old it is:
+///  - `prompt.sh` gone ⇒ the substitution ran, the content is already in claude's argv. Nobody
+///    needs the directory after that, so the short age (6 hours by default) applies
+///  - `prompt.sh` still there ⇒ **nothing has consumed it**. Age cannot tell "has not run yet"
+///    from "died unused", and it got the first one wrong: with `sleep 21601 && claude` the script
+///    was still waiting six hours later and another request's sweep took it, so the command
+///    finally started claude with the lost-context notice (reproduced). Unconsumed directories get
+///    the long age, which costs almost nothing — until the script runs, the directory holds only
+///    the script; the assembled context is written by the script itself
+///  - **Hand-off marker present** ⇒ the over-budget branch told claude to read that file *during*
+///    the session, so it has to outlive the six hours as well
 func reclaimStaleClaudePromptDirectories(
     in directory: String = NSTemporaryDirectory(),
-    leftoverAge: TimeInterval = 6 * 3600, handedOffAge: TimeInterval = 7 * 24 * 3600
+    consumedAge: TimeInterval = 6 * 3600, unfinishedAge: TimeInterval = 7 * 24 * 3600
 ) {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
     for name in names where claudePromptDirectoryIsOurs(name: name) {
@@ -565,9 +642,12 @@ func reclaimStaleClaudePromptDirectories(
         var info = stat()
         // Never follow a symlink — following one would delete the whole directory it points at
         guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
-        let handoff = (path as NSString).appendingPathComponent(claudePromptHandoffName)
-        var handoffInfo = stat()
-        let age = lstat(handoff, &handoffInfo) == 0 ? handedOffAge : leftoverAge
+        func contains(_ file: String) -> Bool {
+            var entry = stat()
+            return lstat((path as NSString).appendingPathComponent(file), &entry) == 0
+        }
+        let unfinished = contains(claudePromptScriptName) || contains(claudePromptHandoffName)
+        let age = unfinished ? unfinishedAge : consumedAge
         let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
         guard Date().timeIntervalSince(modified) > age else { continue }
         try? FileManager.default.removeItem(atPath: path)
@@ -604,7 +684,15 @@ private func claimPrivateDirectory(_ path: String) -> Bool {
 /// It does not throw: this conversion cannot fail a request. Not being able to write the temp
 /// files is a fallback, not a rejection — throwing here would make a request that works today
 /// fail because of the state of the disk.
-public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
+///
+/// That fallback does reach a rejection **on Warp without the Accessibility permission**, because
+/// everything then has to be typed and the precondition gate refuses to open a tab it cannot
+/// deliver into. Kept deliberately: the alternative is running the command with the context
+/// silently missing, which is the symptom this whole route exists to remove. The user sees ❌ and
+/// the log line above says the cause was the temp file, not the permission.
+public func prepareRequest(
+    _ resolved: ResolvedRequest, loginShell: String = loginShellPath()
+) -> PreparedRequest {
     func injectEverything() -> PreparedRequest {
         PreparedRequest(
             command: resolved.command, claudeInputs: resolved.claudeInputs,
@@ -619,7 +707,8 @@ public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
 
     let plan = claudeInputPlan(resolved.claudeInputs)
     guard !plan.prefix.isEmpty, plan.tail.isEmpty,
-          commandAcceptsAppendedClaudePrompt(resolved.command) else {
+          commandAcceptsAppendedClaudePrompt(resolved.command),
+          shellCanRunAppendedPrompt(loginShell) else {
         return injectEverything()
     }
 
