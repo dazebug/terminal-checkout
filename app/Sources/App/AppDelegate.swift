@@ -6,11 +6,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindow: SetupWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 전달 불가로 요청을 거절할 때 사용자가 볼 곳으로 데려간다. 확장은 실패를 ❌ 하나로만
-        // 보여 주고 사유 문자열은 콘솔에만 남으므로(이슈 #29), 앱이 여는 이 창이 유일한 설명
-        // 채널이다. 거절은 소켓 처리 큐에서 나므로 메인으로 넘긴다. 헤드리스 서버
-        // (`--headless-server`)는 이 델리게이트를 만들지 않아 훅이 nil로 남는다 — e2e가 창을
-        // 띄우지 않는 이유가 그것이다
+        // Takes the user somewhere that explains a rejection. The extension shows a failure as a
+        // single ❌ and the reason string only reaches the console (issue #29), so this window is
+        // the only channel the app has. Rejections come off the socket queue, hence the hop to
+        // main. The headless server (`--headless-server`) never builds this delegate, so the hook
+        // stays nil there — which is why e2e does not open a window
         ClaudeInputGuidance.present = { [weak self] _ in
             DispatchQueue.main.async { self?.showSetupWindow() }
         }

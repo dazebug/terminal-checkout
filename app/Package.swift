@@ -17,5 +17,6 @@ let package = Package(
         .executableTarget(name: "Relay", dependencies: ["Core"]),
         .executableTarget(name: "WarpHelper", dependencies: ["Core"]),
         .testTarget(name: "CoreTests", dependencies: ["Core"]),
+        .testTarget(name: "AppTests", dependencies: ["App", "Core"]),
     ]
 )

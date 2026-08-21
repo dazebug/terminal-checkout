@@ -211,7 +211,7 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **A claude input didn't merge into the opening message** — The command must end in a bare `claude`. A trailing flag (`claude --resume`), a redirect, a pipe, a trailing comment, or another command after it all send every input to the typed route instead. That's the old behaviour, not a failure — but on Warp it means the Accessibility permission comes back into play.
 
-**Permission prompts again after rebuilding** — Ad-hoc signing means a rebuild changes the signing identity; allow the Automation prompt once more.
+**Permission prompts again after rebuilding** — Ad-hoc signing means a build whose code changed also changes the signing identity; allow the Automation prompt once more. The Accessibility grant fails worse than that: the old entry stays listed in System Settings with its switch on but no longer applies, and toggling it does not revive it. `./install.sh` compares the installed and freshly built code hashes and, only when they differ, resets that entry so you can grant it again — it matters only if you use Warp claude input. If the reset can't run, the script prints the single command to run yourself instead of doing anything interactive.
 
 **`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`).
 
