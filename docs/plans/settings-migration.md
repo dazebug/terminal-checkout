@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R13 커밋(항목 19 — `pageTargetOfUrl`을 `parsed.origin` 한 비교로, scheme·host·port 세 축 동시 검증, origin 부류 종결, verified) · 게이트 그린(드라이버 재실행 — node 154/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건; origin 부분검사 전수 → 이 한 곳뿐) · Codex 재검증 대기(종료 질의 재제출 예정)
-- 최근 검증자 판정: **차단(no) ×12** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R14 커밋(항목 20 — 주입 함수 셋이 href 반환·게이트 current·assertSamePage가 pageTargetOfUrl로, 네 관측 전부 origin 검사 통과·소스 오라클로 pageTargetOf 직접호출 0 고정, verified) · 게이트 그린(드라이버 재실행 — node 157/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건; pageTargetOf 직접호출 0·clicked 출처 0·version 무지 0) · Codex 재검증 대기(종료 질의 재제출 예정)
+- 최근 검증자 판정: **차단(no) ×13** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -138,7 +138,9 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 19 | **R13 — Codex R12 차단(no)의 P2 1건, origin 부류 종결.** `pageTargetOfUrl`이 `protocol`+`hostname`을 따로 보던 것을 **`parsed.origin !== 'https://github.com'` 한 비교**로 바꿨다. origin은 scheme·host·**port** 셋 전부이므로 한 축씩 닫아 온 방식이 끝난다 — 다음에 잊을 넷째 축이 없다. `:443`은 파서가 정규화해 통과, `:8443`은 거부(실측). 전수 확인: 확장 전체에 URL을 **부분 검사**하는 지점이 더 없음(`grep -n 'hostname\|protocol\|\.origin\|github\.com' extension/*.js` → 이 한 곳 + 주석뿐), 낡은 주석 1곳 정정 | verified | 아래 R13 로그 | R13 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤; 19는 R12 판정 뒤.
+| 20 | **R14 — Codex R13 차단(no)의 P1 1건: 관측도 origin을 지나야 한다.** 주입 함수 셋이 `location.pathname` 대신 **`location.href`**를 돌려주고, 게이트의 `current`와 내부 정합 `assertSamePage`가 **`pageTargetOfUrl`**로 판정한다 — 이제 `clicked`·`source`·`current`·내부 정합 **네 관측 전부**가 같은 origin 검사를 지난다. 주입 함수는 바깥 참조가 불가능하므로 **href 문자열만 반환**하고 origin 검증은 주입 밖에서 한다(경계 유지). 부류 종결 조건을 **소스 수준 오라클**로 고정: 실행 경로에서 `pageTargetOf` 직접 호출 **0건** | verified | 아래 R14 로그 | R14 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤; 19는 R12 판정 뒤; 20은 R13 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -177,6 +179,7 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] `http://github.com/<owner>/<repo>`에서 확장 아이콘을 클릭하면 아무것도 실행되지 않는다(콘솔에 "Not a GitHub repository page"). https 페이지에서는 그대로 동작한다
 - [ ] http GitHub 페이지에는 버튼이 아예 그려지지 않는다(그리는 판정과 실행하는 판정이 같은 함수를 쓴다)
 - [ ] `https://github.com:8443/<owner>/<repo>`(프록시 등)에서도 버튼이 그려지지 않고 아이콘 클릭이 아무것도 실행하지 않는다
+- [ ] 정상 `https://github.com` PR에서 버튼을 누른 직후 같은 경로의 `https://github.com:8443/...`로 이동하면 거부된다 — 비표준 포트 문서에서 읽은 branch가 명령에 실리지 않는다
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -445,9 +448,14 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 | 아이콘 경로의 `clicked`(`onClicked`의 `tab.url`) | 같은 함수 | `null` → "Not a GitHub repository page"로 끝 |
 | 페이지가 보내는 `clicked`(`pageTargetOfUrl(location.href)`) | 같은 함수 | `null` → `onMessage`의 `isPageTarget`이 거른다 |
 | content의 그리기 판정(`tryInsertButton`) | 같은 함수 | `null` → 버튼을 그리지 않는다 |
-| 게이트의 `current`, DOM 정합의 `pathname` | **해당 없음(pathname에는 origin이 없다)** | 검사 불필요 — 둘 다 `clicked`와 대조되고 `clicked`는 이미 통과한 값이다 |
+| 게이트의 `current`(주입 `readCurrentHref` → href) | 같은 함수 | `null` → `requestIsCoherent`가 거부 |
+| 내부 정합의 `assertSamePage(clicked, href)` ×2(PR DOM · default branch) | 같은 함수 | `null` → `sameTarget`이 false → 거부 |
 
 실측(`new URL(...).origin`): `https://github.com/x` → `https://github.com` ✓ · `https://github.com:443/x` → `https://github.com` ✓(정규화) · `https://github.com:8443/x` → `https://github.com:8443` ✗ · `http://github.com/x` → `http://github.com` ✗ · `https://github.com.evil.com/x` → `https://github.com.evil.com` ✗.
+
+**입력만이 아니라 관측도(R14).** R12·R13은 페이지가 **들어오는** 길만 origin으로 막았고, 게이트가 페이지를 **내다보는** 길(`location.pathname` → `pageTargetOf`)은 origin이 없는 별도 함수였다 — 그래서 탭이 `:8443`으로 이동해도 pathname이 같으면 통과했다. 이제 주입 함수 셋이 **href**를 돌려주고 위 표의 모든 행이 `pageTargetOfUrl`을 지난다. 종결 조건은 소스 수준 오라클로 고정했다: **실행 경로에서 `pageTargetOf`를 직접 부르는 곳이 0건**(`tests/buttons.test.js`, "nothing in the execution path judges a page without its origin"). `pageTargetOf`는 `pageTargetOfUrl` **안에서만** 쓰이는 pathname 파싱 헬퍼로 남는다.
+
+**주입 함수의 경계**: `chrome.scripting`이 주입하는 함수는 바깥 상수·헬퍼를 참조할 수 없으므로 `pageTargetOfUrl`을 그 안에서 부를 수 없다. 그래서 주입 함수는 **href 문자열만** 돌려주고, origin 검증은 주입 밖(서비스 워커)에서 한다.
 
 ### 실행 경로의 잔여 — 게이트∼native (R12에서 명시)
 
@@ -787,7 +795,7 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 신규 P2 **비표준 HTTPS 포트가 같은 target으로 접힌다**(드라이버 실측). `pageTargetOfUrl("https://github.com:8443/o/r/pull/1")` → `{kind:'pr',…}`로 통과한다. `pageTargetOf`와 게이트의 `current`는 pathname만 남기므로 **port를 볼 수 없고**, `clicked`(github.com) · `source`(github.com:8443) · `current`(`/o/r/pull/1`) 셋이 같은 target으로 정규화돼 게이트가 스스로와 일치한다. Chrome의 match pattern은 **포트를 생략하면 전 포트에 매칭**되므로 매니페스트의 `https://github.com/*`도 이 경로를 허용한다 — `github.com:8443`을 프록시나 로컬 리다이렉트로 다른 서버에 띄우면 http와 같은 부류의 변조 응답이 된다.
 - 부류 이동: 실행 대상 정합의 **공간 축**이 `origin`으로 좁혀졌다 — R12가 scheme을, R13이 port를 닫는다. 한 축씩 닫는 방식 자체가 문제라는 점이 R13의 요지가 된다.
 
-### R13 — 워킹트리(미커밋, base `04f00ef`) · 항목 19
+### R13 — `764a8d9` (Codex 판정: 차단) · 항목 19
 
 - 범위: Codex R12 차단의 P2 1건(비표준 HTTPS 포트). R11의 http 스킴은 재검증에서 닫힘 확인, 원자성 서술도 수용됐으므로 건드리지 않았다. **이번 라운드는 한 줄짜리 수정이고, 요지는 그 한 줄이 무엇을 끝내는가에 있다.**
 - 자리: `defaults.js:246`(`GITHUB_ORIGIN`)·`:255`(`parsed.origin !== GITHUB_ORIGIN`), `background.js:5-11`(낡은 주석 정정 — "host를 정확히 검사한다" → "origin을 통째로 비교한다").
@@ -810,4 +818,22 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 실측: `node --test` **154/0**(R12 153 → 신규 1), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다(R12의 http 테스트는 그대로 통과한다 — 같은 비교가 두 축을 함께 덮는다는 증거이기도 하다).
 - **잔여**: (1) `get`↔`set` 창. (2) 게이트∼native TOCTOU. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
 - **미검증**: 이번 수정은 순수 함수 한 줄이라 **순수 술어로 완전히 고정된다**(DOM·브라우저 불필요) — 이 루프에서 드물게 미검증 잔여가 없는 항목이다. 다만 `:8443` 프록시를 실제로 띄워 아이콘 경로가 거부되는지는 수기 검사 1항목으로 남겼고, `activeTab`이 그런 탭에 `executeScript`를 허용하는지는 여전히 **이 환경에서 확인 불가**다.
+- **Codex 판정: 차단(no).** R12의 포트 **입력**은 닫힘 확인. 신규 P1 — **게이트가 origin을 버린다**. 최종 게이트의 `current`와 내부 정합 `assertSamePage`가 origin 없는 `pageTargetOf(pathname)`을 쓴다. 순수 재현: `clicked` = `pageTargetOfUrl('https://github.com/o/r/pull/1')`, `source` = 같음, `current` = `pageTargetOf(new URL('https://github.com:8443/o/r/pull/1').pathname)` → 포트가 사라져 `/o/r/pull/1`이 되고 **`requestIsCoherent`가 true**. 실제 순서: 정상 PR에서 클릭 → 처리 중 탭이 `github.com:8443/o/r/pull/1`로 이동 → `getBranchAndMainFromDOM`·`getDefaultBranchFromPage`가 **비표준 포트 문서**에서 branch를 읽음 → 게이트가 pathname만 봐 같은 PR로 판단 → 그 branch가 native command 변수가 된다.
+- **드라이버 R13 판단 오류(기록).** R13이 "origin 부류 종결"이라 적은 근거는 `grep -n 'hostname\|protocol\|\.origin\|github\.com'`이 한 곳만 잡았다는 것이었다. 그 grep은 **구조적으로 이 결함을 찾을 수 없다** — 찾은 것은 "origin을 *검사하는* 곳"이고, 결함은 "origin이 *없는* 곳"이기 때문이다. 부재는 존재를 찾는 질의로 잡히지 않는다. 올바른 질문은 **"origin 없는 판독기를 누가 부르는가"**(`pageTargetOf` 직접 호출자)였고, R14는 그것을 소스 수준 오라클로 고정한다. 검증 범위를 **입력**에만 두고 **관측**을 빠뜨린 것이 근본이며, 이는 이 루프가 반복해 만난 "판정은 단일 함수를 공유한다"의 위반이다(입력 `pageTargetOfUrl` / 관측 `pageTargetOf`).
+- 부류 이동: origin 부류가 살아 있되 축이 아니라 **적용 범위**로 옮겨졌다 — 모든 페이지 **관측**이 같은 판정 함수를 지나는가.
+
+### R14 — 워킹트리(미커밋, base `764a8d9`) · 항목 20
+
+- 범위: Codex R13 차단의 P1 1건(게이트·내부 정합이 origin을 버린다). R12의 포트 **입력**은 재검증에서 닫힘 확인이라 건드리지 않았다.
+- 자리: `background.js:18-21`·`:45`·`:54`·`:65`(PR DOM 리더가 `href` 반환)·`:85-97`(default branch 리더가 `href` 반환)·`:119`·`:285`(`assertSamePage`에 href)·`:171-172`(`assertSamePage`가 `pageTargetOfUrl`)·`:176-178`(`readCurrentHref`)·`:201`(게이트의 `current`가 `pageTargetOfUrl`).
+- **뿌리는 "판정이 두 함수로 갈라져 있었다"**는 것이다. 페이지가 **들어오는** 길은 `pageTargetOfUrl`(origin 검사)을 지났고, 게이트가 페이지를 **내다보는** 길은 `pageTargetOf(location.pathname)`이었다 — pathname에는 origin이 없으므로 검사할 것도 없었다. 이 루프가 `adoptStoredButtons`·`userAction`·`shouldStartPageTask`·`hasUnsavedWork`에서 반복해 도달한 규칙("하나의 질문에는 하나의 함수")의 위반이고, 위반의 대가도 매번 같았다: 한쪽만 고쳐지고 다른 쪽이 남는다.
+- **수정**: 주입 함수 셋이 `location.pathname` 대신 **`location.href`**를 돌려주고, 관측 판정 전부가 `pageTargetOfUrl`을 지난다. 이제 origin 검사를 지나는 관측은 넷이다 — `clicked`(페이지·아이콘 양쪽), `source`, 게이트의 `current`, `assertSamePage` ×2.
+- **주입 함수의 경계 확인**: `chrome.scripting`이 주입하는 함수는 바깥 상수·헬퍼를 참조할 수 없어 `pageTargetOfUrl`을 그 안에서 부를 수 없다. 그래서 주입 함수는 **href 문자열만** 돌려주고 검증은 주입 밖에서 한다. 실제로 셋 다 바깥 이름을 참조하지 않음을 확인했다(유일한 `pageTargetOfUrl` 등장은 주석이다).
+- **부류 종결 조건을 소스 수준 오라클로 고정했다.** R13이 "종결"이라 판단한 근거(`grep 'hostname\|protocol\|origin'`)는 **구조적으로 이 결함을 찾을 수 없었다** — 그 질의가 찾는 것은 "origin을 검사하는 곳"이고 결함은 "origin이 없는 곳"이라, **부재는 존재를 찾는 질의로 잡히지 않는다**. 올바른 질문은 "origin 없는 판독기를 누가 부르는가"이고, 그것을 테스트로 만들었다: `nothing in the execution path judges a page without its origin` — `background.js`·`content.js`·`options.js`·`migrations.js`에서 `pageTargetOf(` 직접 호출 **0건**, `defaults.js`에서는 **정확히 1건**(`pageTargetOfUrl` 안, origin을 확인한 뒤). 다음에 누가 origin 없는 판정을 되살리면 이 테스트가 즉시 붉어진다.
+- **red 기록**: 처음 쓴 red 두 개는 **붉어지지 않았다** — `pageTargetOfUrl`·`requestIsCoherent`만 건드려서, 결함이 사는 `background.js`에 닿지 못했기 때문이다. 그것을 확인하고 **소스 수준 오라클**로 바꾸자 `not ok 53 - nothing in the execution path judges a page without its origin`(`background.js judges a page without its origin`)이 나왔다. 붉히지 못한 테스트도 규칙의 서술로 쓸모가 있어 남겼다(관측이 href를 지날 때의 조합 셋).
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 → **0건**. `{success:false}` → 거부 경로가 늘지 않아 변경 없음. `clicked`가 출처 아님 → **0건**.
+- 실측: `node --test` **157/0**(R13 154 → 신규 3), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제한 테스트 없음.
+- **부류 판단**: origin 검증이 **입력과 관측 양쪽에서** 닫혔다고 본다 — 다만 R13에서 같은 판단을 하고 틀렸으므로, 이번 근거는 grep이 아니라 **테스트로 고정된 불변식**(직접 호출 0건)이라는 점을 근거로 든다. 그 불변식이 유지되는 한 origin 없는 판정이 실행 경로에 다시 생길 수 없다.
+- **잔여**: (1) `get`↔`set` 창. (2) 게이트∼native TOCTOU. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
+- **미검증**: `chrome.scripting`·브라우저가 없어 게이트의 실동작은 여전히 순수 술어와 소스 오라클까지다. `:8443` 프록시로 이동 중 클릭을 거부하는지는 수기 검사 1항목으로 추가했다.
 - 판정: 미요청.

@@ -15,10 +15,12 @@ function parseGitHubUrl(url) {
 
 // Extract the branch name and the base branch from the DOM
 function getBranchAndMainFromDOM() {
-  // The pathname is read here, in the same synchronous pass as the branch, so the two cannot come
-  // from different pages: the caller compares it against the page the click came from
-  const pathname = location.pathname;
-  const match = pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
+  // The location is read here, in the same synchronous pass as the branch, so the two cannot come
+  // from different pages: the caller compares it against the page the click came from.
+  // The whole href, not just the path — a path cannot say which origin served it, and the caller's
+  // check is only as good as what it is given (`pageTargetOfUrl` in defaults.js).
+  const href = location.href;
+  const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return null;
 
   // Cross-fork PRs: the head ref link can point at the fork's path, so search every tree link
@@ -42,7 +44,7 @@ function getBranchAndMainFromDOM() {
     }
   }
 
-  if (headBranch) return { branch: headBranch, detectedMain: baseBranch, pathname };
+  if (headBranch) return { branch: headBranch, detectedMain: baseBranch, href };
 
   // Legacy UI fallback 1: head-ref element
   const headRef = document.querySelector('.head-ref a, .head-ref span');
@@ -51,7 +53,7 @@ function getBranchAndMainFromDOM() {
     return {
       branch: headRef.textContent.trim(),
       detectedMain: baseRef ? baseRef.textContent.trim() : null,
-      pathname,
+      href,
     };
   }
 
@@ -62,7 +64,7 @@ function getBranchAndMainFromDOM() {
     return {
       branch: branchElement.textContent.trim(),
       detectedMain: baseElement ? baseElement.textContent.trim() : null,
-      pathname,
+      href,
     };
   }
 
@@ -82,19 +84,20 @@ function getBranchAndMainFromDOM() {
 // chrome.scripting injects this function on its own, so it cannot reference outer constants or helpers.
 async function getDefaultBranchFromPage(owner, repo) {
   const pattern = /"defaultBranch"\s*:\s*"([^"]+)"/;
-  // Read alongside the answer, every time. Capturing the pathname once at the top was exactly
+  // Read alongside the answer, every time. Capturing the location once at the top was exactly
   // backwards: if the page moved while the fetch below was in flight, the answer came back stamped
   // with the page we had left, and the caller's check agreed with it and let the command through.
-  // The pathname has to describe the page that exists when the answer does.
+  // The location has to describe the page that exists when the answer does — and it is the whole
+  // href, because a path cannot say which origin served it.
   for (const script of document.querySelectorAll('script[type="application/json"]')) {
     const match = script.textContent.match(pattern);
-    if (match) return { branch: match[1], pathname: location.pathname }; // synchronous: same page
+    if (match) return { branch: match[1], href: location.href }; // synchronous: same page
   }
   try {
     const html = await (await fetch(`/${owner}/${repo}`)).text();
-    return { branch: html.match(pattern)?.[1] || null, pathname: location.pathname };
+    return { branch: html.match(pattern)?.[1] || null, href: location.href };
   } catch {
-    return { branch: null, pathname: location.pathname };
+    return { branch: null, href: location.href };
   }
 }
 
@@ -113,7 +116,7 @@ async function detectDefaultBranch(tab, owner, repo, clicked) {
     return null;
   }
   // Outside the catch: a page that moved is a refusal, not a detection failure to shrug off
-  assertSamePage(clicked, read?.pathname);
+  assertSamePage(clicked, read?.href);
   return read?.branch || null;
 }
 
@@ -165,16 +168,14 @@ const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload a
 // Internal coherence: the values a single read produced describe one page. This is what the final
 // gate below cannot answer — that the number and the branch belong together — so the two are not
 // alternatives.
-function assertSamePage(clicked, pathname) {
-  if (!sameTarget(clicked, pathname ? pageTargetOf(pathname) : null)) {
-    throw new Error(PAGE_CHANGED_ERROR);
-  }
+function assertSamePage(clicked, href) {
+  if (!sameTarget(clicked, pageTargetOfUrl(href))) throw new Error(PAGE_CHANGED_ERROR);
 }
 
 // Read the page's own idea of where it is. `chrome.scripting` injects this on its own, so it cannot
 // reference anything outside itself.
-function readCurrentPathname() {
-  return location.pathname;
+function readCurrentHref() {
+  return location.href;
 }
 
 // The final gate. Asked once, immediately before the command leaves, so every await behind it is
@@ -195,9 +196,9 @@ async function assertRequestIsCoherent(tab, { clicked, source }) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: readCurrentPathname,
+      func: readCurrentHref,
     });
-    current = pageTargetOf(results[0]?.result ?? '');
+    current = pageTargetOfUrl(results[0]?.result ?? '');
   } catch {
     throw new Error(PAGE_CHANGED_ERROR); // the tab is gone, or we can no longer reach it
   }
@@ -280,8 +281,8 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
   const domResult = results[0]?.result;
   if (!domResult?.branch) throw new Error('Could not extract branch name');
   // The authoritative check: the branch below and the number above have to describe one page, and
-  // this is the pathname the branch was actually read from
-  assertSamePage(clicked, domResult.pathname);
+  // this is the page the branch was actually read from, origin included
+  assertSamePage(clicked, domResult.href);
 
   const main = await resolveMainBranch(target.repo, domResult.detectedMain);
 

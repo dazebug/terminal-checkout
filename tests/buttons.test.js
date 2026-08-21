@@ -519,3 +519,72 @@ test('an http:// GitHub page is not a page of ours', () => {
   assert.deepEqual(pageTargetOfUrl('https://github.com/o/r/pull/1'),
     { kind: 'pr', owner: 'o', repo: 'r', number: '1' });
 });
+
+// --- The origin has to survive being observed, not just being parsed (R14) ---
+// R12 and R13 closed the origin on the way *in* (`pageTargetOfUrl`). Every observation the gate
+// makes went a different way: `location.pathname` through `pageTargetOf`, which by construction has
+// no origin to check. Two functions answering "which page is this" is the same defect this loop
+// keeps closing elsewhere — one judgment, one function.
+
+test('an observation that dropped the origin folds a look-alike into the clicked page', () => {
+  // Codex's combination, exactly. The tab moved to a non-standard port mid-flight; the branch was
+  // read out of *that* document, and the gate compared pathnames and saw the same PR.
+  const { pageTargetOf, pageTargetOfUrl, requestIsCoherent, sameTarget } =
+    vm.runInThisContext('({ pageTargetOf, pageTargetOfUrl, requestIsCoherent, sameTarget })');
+  const lookalike = 'https://github.com:8443/o/r/pull/1';
+  const clicked = pageTargetOfUrl('https://github.com/o/r/pull/1');
+
+  // What the old observation produced, kept here as the thing that must never be a target again
+  assert.ok(pageTargetOf(new URL(lookalike).pathname), 'a bare pathname cannot tell the two apart');
+
+  // What an observation has to produce now: the whole href, judged by the one origin check
+  const current = pageTargetOfUrl(lookalike);
+  assert.equal(current, null);
+  assert.equal(sameTarget(clicked, current), false);
+  assert.equal(requestIsCoherent({ clicked, source: clicked, current }), false);
+});
+
+test('the gate and the DOM reads judge an href, the same way the click did', () => {
+  // The injected functions hand back a string and nothing else — `chrome.scripting` runs them in the
+  // page, where none of our helpers exist — so the origin check happens out here, on their result.
+  const { pageTargetOfUrl, requestIsCoherent } =
+    vm.runInThisContext('({ pageTargetOfUrl, requestIsCoherent })');
+  const clicked = pageTargetOfUrl('https://github.com/o/r/pull/1');
+
+  // executeScript stubs: what the page reports about itself
+  const asGate = href => pageTargetOfUrl(href);
+  assert.equal(requestIsCoherent({
+    clicked, source: clicked, current: asGate('https://github.com/o/r/pull/1'),
+  }), true);
+  assert.equal(requestIsCoherent({
+    clicked, source: clicked, current: asGate('https://github.com/o/r/pull/2'),
+  }), false, 'a different page');
+  assert.equal(requestIsCoherent({
+    clicked, source: clicked, current: asGate('https://github.com:8443/o/r/pull/1'),
+  }), false, 'a different origin');
+  assert.equal(requestIsCoherent({
+    clicked, source: clicked, current: asGate('http://github.com/o/r/pull/1'),
+  }), false, 'a different scheme');
+  assert.equal(requestIsCoherent({ clicked, source: clicked, current: asGate('') }), false,
+    'nothing read back is not agreement');
+});
+
+test('nothing in the execution path judges a page without its origin', () => {
+  // The rule this loop keeps arriving at: one question, one function. `pageTargetOf` answers "which
+  // page is this pathname", and a pathname has no origin — so calling it directly is how an
+  // observation escapes the origin check that `pageTargetOfUrl` performs. It is a helper *inside*
+  // that function and nowhere else.
+  //
+  // A source-level oracle because that is where the defect lives: the previous sweep grepped for
+  // `hostname|protocol|origin` and could not, by construction, find the call sites that had none of
+  // them. Asking "who calls the origin-less reader" is the question that finds them.
+  const direct = /(?<!function\s)\bpageTargetOf\s*\(/g; // calls, not the declaration
+  for (const file of ['background.js', 'content.js', 'options.js', 'migrations.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '../extension', file), 'utf8');
+    assert.deepEqual(source.match(direct) ?? [], [], `${file} judges a page without its origin`);
+  }
+  // In defaults.js exactly one call survives: the one inside pageTargetOfUrl, reached only after
+  // the origin has been checked
+  const defaults = fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8');
+  assert.equal((defaults.match(direct) ?? []).length, 1);
+});
