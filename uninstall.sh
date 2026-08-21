@@ -26,9 +26,11 @@ if pgrep -f 'terminal-checkout-warp-helper --serve' >/dev/null 2>&1; then
 fi
 # Delete only what the app itself would recognize: for sockets, only things that really are
 # sockets (anyone can drop a regular file or a symlink under the same name); for Tab Configs,
-# only files carrying the header we write
+# only files carrying the header we write.
+# The `/` before the glob is explicit: `$TMPDIR` carries a trailing slash on macOS but nothing
+# guarantees it, and without one the pattern would silently match nothing
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
-for sock in "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock; do
+for sock in "${TMPDIR:-/tmp}"/tcw-*.sock /tmp/tcw-*.sock; do
     if [ -S "$sock" ] && [ ! -L "$sock" ]; then
         rm -f "$sock"
     fi
@@ -41,7 +43,7 @@ done
 # out from under a session that is still running would break it in a way nothing explains. Those
 # are reported instead, with the command to remove them
 KEPT_CONTEXTS=()
-for dir in "${TMPDIR:-/tmp}"tc-prompt-* /tmp/tc-prompt-*; do
+for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
     if [ -d "$dir" ] && [ ! -L "$dir" ] && [[ "${dir##*/}" =~ ^tc-prompt-[0-9a-f]{8}$ ]]; then
         if [ -e "$dir/handed-to-claude" ]; then
             KEPT_CONTEXTS+=("$dir")

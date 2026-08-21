@@ -134,7 +134,7 @@ private struct ShellWord {
 ///    structural partner relies on. It is not in the command text, so nothing here can see it.
 /// Both are recorded as residuals in `README.md` and `docs/new-terminal-checklist.md`.
 private let commandPositionWordsThatFold: Set<String> = [
-    "function", "alias", "unalias", "hash", "autoload", "enable",
+    "function", "alias", "unalias", "hash", "autoload", "enable", "zmodload",
     "eval", "source", ".", "trap",
     "export", "declare", "typeset", "local", "readonly",
     "command", "builtin", "exec", "time", "!",
@@ -594,7 +594,10 @@ public struct PreparedRequest {
 func claudePromptDirectoryIsOurs(name: String) -> Bool {
     guard name.hasPrefix(claudePromptDirectoryPrefix) else { return false }
     let token = name.dropFirst(claudePromptDirectoryPrefix.count)
-    return token.count == claudePromptTokenLength && token.allSatisfy(\.isHexDigit)
+    // Lower case only. The app formats tokens with `%08x` and `uninstall.sh` matches
+    // `[0-9a-f]{8}` — a name neither of them writes is somebody else's directory
+    return token.count == claudePromptTokenLength
+        && token.allSatisfy { $0.isNumber || ("a"..."f").contains($0) }
 }
 
 /// A different hex token per request, from the same generator the helper socket and the Tab
@@ -650,6 +653,15 @@ func reclaimStaleClaudePromptDirectories(
         let age = unfinished ? unfinishedAge : consumedAge
         let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
         guard Date().timeIntervalSince(modified) > age else { continue }
+        // Look once more immediately before removing. Between the listing above and this line a
+        // pane can start consuming the directory, and **every way of consuming it changes the
+        // directory's own mtime**: creating `context.txt`, dropping the hand-off marker, the
+        // script deleting itself. So an unchanged mtime is a cheap "nothing has happened since I
+        // looked", and it narrows the window from the whole sweep to one syscall. It cannot be
+        // closed from here — the consumer is a shell we do not control
+        var current = stat()
+        guard lstat(path, &current) == 0,
+              current.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec else { continue }
         try? FileManager.default.removeItem(atPath: path)
     }
 }
@@ -691,7 +703,8 @@ private func claimPrivateDirectory(_ path: String) -> Bool {
 /// silently missing, which is the symptom this whole route exists to remove. The user sees ❌ and
 /// the log line above says the cause was the temp file, not the permission.
 public func prepareRequest(
-    _ resolved: ResolvedRequest, loginShell: String = loginShellPath()
+    _ resolved: ResolvedRequest, loginShell: String = loginShellPath(),
+    claudeIsExecutable: Bool = true
 ) -> PreparedRequest {
     func injectEverything() -> PreparedRequest {
         PreparedRequest(
@@ -706,7 +719,7 @@ public func prepareRequest(
     reclaimStaleClaudePromptDirectories()
 
     let plan = claudeInputPlan(resolved.claudeInputs)
-    guard !plan.prefix.isEmpty, plan.tail.isEmpty,
+    guard !plan.prefix.isEmpty, plan.tail.isEmpty, claudeIsExecutable,
           commandAcceptsAppendedClaudePrompt(resolved.command),
           shellCanRunAppendedPrompt(loginShell) else {
         return injectEverything()
