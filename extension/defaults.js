@@ -228,6 +228,46 @@ function sameTarget(a, b) {
   return a.kind === b.kind && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
 }
 
+// The same four parts from a full URL. A tab reports a URL rather than a pathname, and a tab on some
+// other site is not a page of ours however its path happens to be shaped.
+function pageTargetOfUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null; // tabs we have no host permission for hand us nothing
+  }
+  if (parsed.hostname !== 'github.com') return null;
+  return pageTargetOf(parsed.pathname);
+}
+
+// The last question asked before a command runs: is the tab still showing the page the click came
+// from?
+//
+// Between a click and the command leaving there are several awaits — the buttons are read from
+// storage, a script is injected to read the DOM, the main-branch overrides are read — and the page
+// can move during any of them. Putting a check after each one is how the next one gets forgotten,
+// and it was, four times over: a fetch that resolved after a navigation reported the page it had
+// left, an executeScript failure returned before reaching its check, the extension-icon path sent
+// nothing to check against, and the last read had no check after it at all. This is asked once,
+// where it covers all of them together.
+//
+// It fails closed on every kind of "cannot tell" — no clicked page, no URL, a tab that no longer
+// exists. Not knowing where a command would land is not a reason to send it.
+function stillOnClickedPage(clicked, currentUrl) {
+  return sameTarget(clicked, pageTargetOfUrl(currentUrl));
+}
+
+// Whether a value is a page target we can compare against, as opposed to something we would compare
+// against and always agree with. Every click from a page sends one; a message without one cannot be
+// checked at all, which is not the same as passing the check.
+function isPageTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (typeof value.kind !== 'string') return false;
+  if (typeof value.owner !== 'string' || typeof value.repo !== 'string') return false;
+  return value.number === null || typeof value.number === 'string';
+}
+
 // --- What storage will accept ---
 // storage.sync measures an item as its key length plus the JSON of its value and refuses anything
 // over 8,192 bytes. Nothing capped the length of a command, so a 9,000-character one made `buttons`

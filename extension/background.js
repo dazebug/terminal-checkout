@@ -6,17 +6,10 @@ const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 // can be clicked on any tab, so check the host exactly (a string match would let
 // `example.com/github.com/foo/bar` through) and leave "is this a repository page?" to the same
 // decision content.js makes (pageTypeOf)
+// One reader for the four parts a request is built from (defaults.js), shared with the content
+// script and with the final gate below, so every side describes a page the same way
 function parseGitHubUrl(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null; // tabs we have no host permission for don't hand us a url
-  }
-  if (parsed.hostname !== 'github.com') return null;
-  // One reader for the four parts a request is built from (defaults.js), shared with the content
-  // script so both sides describe a page the same way and can be compared
-  return pageTargetOf(parsed.pathname);
+  return pageTargetOfUrl(url);
 }
 
 // Extract the branch name and the base branch from the DOM
@@ -87,19 +80,20 @@ function getBranchAndMainFromDOM() {
 //
 // chrome.scripting injects this function on its own, so it cannot reference outer constants or helpers.
 async function getDefaultBranchFromPage(owner, repo) {
-  // Captured before the await: the caller checks it against the page the click came from, and after
-  // an await `location` would be the page we navigated to rather than the one we read
-  const pathname = location.pathname;
   const pattern = /"defaultBranch"\s*:\s*"([^"]+)"/;
+  // Read alongside the answer, every time. Capturing the pathname once at the top was exactly
+  // backwards: if the page moved while the fetch below was in flight, the answer came back stamped
+  // with the page we had left, and the caller's check agreed with it and let the command through.
+  // The pathname has to describe the page that exists when the answer does.
   for (const script of document.querySelectorAll('script[type="application/json"]')) {
     const match = script.textContent.match(pattern);
-    if (match) return { branch: match[1], pathname };
+    if (match) return { branch: match[1], pathname: location.pathname }; // synchronous: same page
   }
   try {
     const html = await (await fetch(`/${owner}/${repo}`)).text();
-    return { branch: html.match(pattern)?.[1] || null, pathname };
+    return { branch: html.match(pattern)?.[1] || null, pathname: location.pathname };
   } catch {
-    return { branch: null, pathname };
+    return { branch: null, pathname: location.pathname };
   }
 }
 
@@ -166,11 +160,30 @@ async function loadButtons(kind) {
 // extension-icon path, which has no page-rendered button and no click on a page to be coherent with.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
 
+// Internal coherence: the values a single read produced describe one page. This is what the final
+// gate below cannot answer — that the number and the branch belong together — so the two are not
+// alternatives.
 function assertSamePage(clicked, pathname) {
-  if (!clicked) return;
   if (!sameTarget(clicked, pathname ? pageTargetOf(pathname) : null)) {
     throw new Error(PAGE_CHANGED_ERROR);
   }
+}
+
+// The final gate. Asked once, immediately before the command leaves, against the tab as it is *now*
+// rather than as it was when the message arrived — so every await behind it is covered together and
+// there is no next await to forget. `chrome.tabs.get` rather than the `tab` handed to us, because
+// that object is a snapshot from message-dispatch time and cannot have moved.
+//
+// The URL comes back because the manifest holds `host_permissions` for github.com; if it ever does
+// not, `stillOnClickedPage` sees no URL and refuses, which is the right way to be wrong.
+async function assertStillOnClickedPage(tab, clicked) {
+  let current;
+  try {
+    current = await chrome.tabs.get(tab.id);
+  } catch {
+    throw new Error(PAGE_CHANGED_ERROR); // the tab is gone; there is nothing to run against
+  }
+  if (!stillOnClickedPage(clicked, current?.url)) throw new Error(PAGE_CHANGED_ERROR);
 }
 
 // The button a click meant, or a refusal.
@@ -212,7 +225,9 @@ async function sendToNativeHost(message) {
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
 // only send the raw material
-async function runButton(button, variables) {
+async function runButton(button, variables, tab, clicked) {
+  // The one place every command passes through, and therefore the only place this check has to be
+  await assertStillOnClickedPage(tab, clicked);
   const message = { command_template: button.command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
@@ -225,8 +240,6 @@ async function runButton(button, variables) {
 async function executeCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'pr') throw new Error('Not a GitHub PR page');
-  // Early, so a tab that has already moved on is refused before anything is read off it
-  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('pr', buttonIndex, shown);
 
@@ -259,7 +272,7 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
   // don't pass it at all, so the app rejects it as not provided (silently substituting another
   // branch would mean merging or rebasing onto the wrong one)
   if (domResult.detectedMain) variables.base = domResult.detectedMain;
-  await runButton(button, variables);
+  await runButton(button, variables, tab, clicked);
 }
 
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
@@ -268,7 +281,6 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
 async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'issue') throw new Error('Not a GitHub issue page');
-  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('issue', buttonIndex, shown);
 
@@ -282,7 +294,7 @@ async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
     owner: target.owner,
     number: target.number,
     main,
-  });
+  }, tab, clicked);
 }
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
@@ -291,14 +303,13 @@ async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
   // Repository buttons are also attached to the header of PR and issue pages, so don't check kind
   const target = parseGitHubUrl(tab.url);
   if (!target) throw new Error('Not a GitHub repo page');
-  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('repo', buttonIndex, shown);
 
   const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
   const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
-  await runButton(button, { repo: target.repo, owner: target.owner, main });
+  await runButton(button, { repo: target.repo, owner: target.owner, main }, tab, clicked);
 }
 
 // Check whether this page really rendered as a repository. Only pages GitHub drew as a repository
@@ -344,7 +355,13 @@ chrome.action.onClicked.addListener(async (tab) => {
   try {
     // No fingerprint: nothing was drawn for this click, so there is no rendered button that could
     // disagree with what is stored. "The first button for this page" is the whole of the request.
-    await RUN_BY_KIND[target.kind](tab, 0);
+    //
+    // The page, though, still has to hold still. `target` was read from the tab when the icon was
+    // pressed, so it is the same kind of comparison key a page click sends — and it makes the icon
+    // take the same final gate. It is not a source: every value still comes from the tab and its
+    // DOM. (Whether the icon ought to run the button the user can *see* is a separate question,
+    // still open — this is only about the tab moving underneath the one it does run.)
+    await RUN_BY_KIND[target.kind](tab, 0, undefined, target);
   } catch (error) {
     console.error('Error executing command:', error); // an icon click has no button to show the failure on
   }
@@ -364,6 +381,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // A click from a page always says which button it drew. Only the extension-icon path may omit it,
   // and that one never comes through here.
   if (typeof message.shown !== 'string') return;
+  // And which page it was clicked on. A message without one cannot be checked against anything —
+  // which is not the same as passing the check, and used to be treated as if it were.
+  if (!isPageTarget(message.target)) return;
 
   RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown, message.target).then(() => {
     sendResponse({ success: true });

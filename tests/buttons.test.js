@@ -430,3 +430,46 @@ test('storedItemBytes: an item is its key plus the UTF-8 bytes of its JSON', () 
   assert.ok(MAX_STORED_ITEM_BYTES < SYNC_QUOTA_BYTES_PER_ITEM, 'the budget has to leave room');
   assert.equal(SYNC_QUOTA_BYTES_PER_ITEM, 8192);
 });
+
+// --- One final gate, not a check after every await (R10) ---
+// R9 put a target check after each await it could see, and the next await was the one it could not:
+// a fetch that resolved after a navigation reported the page it had left, an executeScript failure
+// returned before reaching its check, the icon path sent no target at all, and the storage read
+// before the command went out had nothing after it. Enumerating await points misses the next one.
+
+test('pageTargetOfUrl: a full URL reduces to the same four parts, or to nothing', () => {
+  const { pageTargetOfUrl } = vm.runInThisContext('({ pageTargetOfUrl })');
+  assert.deepEqual(pageTargetOfUrl('https://github.com/o/r/pull/7'),
+    { kind: 'pr', owner: 'o', repo: 'r', number: '7' });
+  assert.equal(pageTargetOfUrl('https://example.com/o/r/pull/7'), null, 'another host is not a page of ours');
+  assert.equal(pageTargetOfUrl('not a url'), null);
+  assert.equal(pageTargetOfUrl(undefined), null);
+});
+
+test('the final gate refuses unless the tab still shows the page that was clicked', () => {
+  // Checked once, immediately before the command leaves, so every await behind it is covered at once
+  const { stillOnClickedPage, pageTargetOfUrl } = vm.runInThisContext('({ stillOnClickedPage, pageTargetOfUrl })');
+  const clicked = pageTargetOfUrl('https://github.com/o/r/issues/7');
+  assert.equal(stillOnClickedPage(clicked, 'https://github.com/o/r/issues/7'), true);
+  // The repro shape shared by all four reports: the tab moved on while we were still working
+  assert.equal(stillOnClickedPage(clicked, 'https://github.com/o/r/issues/8'), false);
+  assert.equal(stillOnClickedPage(clicked, 'https://github.com/other/r/issues/7'), false);
+  // Fail closed: no click to be coherent with, no url to compare, a tab that vanished
+  assert.equal(stillOnClickedPage(null, 'https://github.com/o/r/issues/7'), false);
+  assert.equal(stillOnClickedPage(clicked, undefined), false);
+  assert.equal(stillOnClickedPage(clicked, ''), false);
+});
+
+test('a page message without a target is not a request we can check', () => {
+  // onMessage required `shown` and not `target`, so anything that omitted it — a content script from
+  // before the update, still running in an open tab — sailed past the page check in silence.
+  const { isPageTarget } = vm.runInThisContext('({ isPageTarget })');
+  const { pageTargetOf } = vm.runInThisContext('({ pageTargetOf })');
+  assert.equal(isPageTarget(pageTargetOf('/o/r/pull/7')), true);
+  assert.equal(isPageTarget(pageTargetOf('/o/r')), true, 'a repository page has no number');
+  assert.equal(isPageTarget(undefined), false);
+  assert.equal(isPageTarget(null), false);
+  assert.equal(isPageTarget({}), false);
+  assert.equal(isPageTarget({ kind: 'pr', owner: 'o', repo: 'r', number: 7 }), false, 'the number is a string');
+  assert.equal(isPageTarget([{ kind: 'pr', owner: 'o', repo: 'r', number: '7' }]), false);
+});

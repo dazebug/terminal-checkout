@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R9 커밋(항목 15 — 신뢰 클릭·실행 대상 정합·페이지 작업 배제 전수화·payload 크기 상한·§9 조항 보완, verified) · 게이트 그린(드라이버 재실행 — node 148/0, swift 210/0, e2e 9 PASS; red 독립 재현 — pre-R9 코드에 신규 테스트 not ok 6건) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×8** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R10 커밋(항목 16 — 실행 직전 `assertStillOnClickedPage` 단일 최종 게이트로 P1 4건을 한 부류로 닫음·내부 정합 유지·onMessage target 필수·§9 조항 6건 보완, verified) · 게이트 그린(드라이버 재실행 — node 151/0, swift 210/0, e2e 9 PASS; red 독립 재현 3건) · **미검증 핵심 전제**: `chrome.tabs.get().url`이 SPA pushState를 반영하는지 환경상 실측 불가(수기 검사) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×9** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -94,10 +94,10 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
    - 효과: 구버전 기기는 스큐 중에도 **자기 세대 데이터로 완전 동작**한다. 모양뿐 아니라 **command 문법도** 그렇다 — 옛 앱이 모르는 새 문법이 옛 기기에서 실행되는 일이 없다.
    - **지금 구현할 코드는 없다.** 우리가 최신 세대라 채택 로직의 상대가 없다 — v2를 만드는 미래 버전이 구현한다. 계약의 정본은 이 계획 파일이고, 항목 7에서 `CLAUDE.md`/`README.md`로 승계한다.
    - **하위 조항 (R8 초안 — ⚠ 사용자 확정 대기, v2 구현 전에 확정돼야 한다).** Codex R7: "결정 9 자체를 철회하라는 뜻은 아닙니다. 다만 v2 구현 전에 다음은 명문화되어야 합니다." 아래는 우리 쪽 제안이고, **채택 여부는 사용자 몫**이다.
-     1. **seed 경쟁, 그리고 seed 원본이 다중 키라는 것(R9 보완).** 두 기기가 동시에 "v2 없음"을 보고 각각 seed하면 나중 `set`이 상대의 동의 선택을 덮는다. *제안*: seed는 동의 직후 **존재를 한 번 더 확인하고** 쓴다(있으면 그것을 채택으로 전환). 그래도 남는 창은 CAS가 없는 한 닫히지 않으므로 **잔여 LWW와 같은 부류**로 명시한다 — 없앤 척하지 않는다. **여기에 더해**: 존재 재확인은 *목적지*의 문제만 다루고 **출처**의 문제는 다루지 않는다. 현행 flat 네임스페이스는 `buttons`·`version`·`defaultMain`이 **각기 sync되므로**, v2 seed가 찢어진 스냅샷(buttons는 옛 값, version은 새 값)을 읽을 수 있다. *제안*: seed는 **source를 두 번 읽어 deep-equal일 때만** 진행하고 다르면 재시도한다(`sameStoredValue`가 이미 그 비교를 한다), 또는 세대 안에 revision을 두어 한 번의 읽기로 정합을 판정한다. 어느 쪽이든 **조항 2의 단일 키가 이 문제를 대신 풀어 주지는 않는다** — 그것은 새 네임스페이스의 부분 존재만 막는다.
-     2. **부분 존재 오인.** 여러 키가 따로 sync되면 `v2.buttons`만 먼저 도착해 "v2가 있다"로 오인될 수 있다. *제안*: **세대당 단일 storage 키**(한 세대 = 한 객체). `set`이 키 단위로 원자적이므로 **새 네임스페이스의** 부분 존재가 구조적으로 불가능해지고, 1의 목적지 쪽 창도 좁아진다. **적용 범위 명시(R9)**: 이 조항은 새 네임스페이스만 다루고, **seed 원본(옛 flat 키들)의 다중 키 문제는 조항 1이 맡는다** — 둘을 한 조항으로 묶으면 해결되지 않은 절반이 해결된 것처럼 보인다. 크기(R9 실측): 현행 전체가 **1,978B**, seed 스냅샷을 같은 객체에 넣으면 그 2배 남짓이라 8,192B 안에 든다. 그리고 **⒟의 command 상한(`MAX_STORED_ITEM_BYTES` 6,144B, 소탕 표 15)이 서면서 세대 크기에 상계가 생겨** quota 안전이 추정이 아니라 보장이 됐다 — 다만 단일 키 포장이 실제로 채택되면 그 상한은 "세대 + 스냅샷이 한 항목에 든다"는 기준으로 **다시 계산해야 한다**.
-     3. **pre-consent 런타임과 정본 우선순위(R9 보완).** 새 기기에서 동의 전 content/background가 무엇을 읽는가. "현재 세대가 있으면 그것을 쓴다"와 "동의 전에는 직전 세대를 쓴다"는 그대로 두면 충돌하므로, **우선순위로 명문화한다**: (a) 현재 세대 네임스페이스가 **온전하면** 그것, (b) 없거나 손상이면 **직전 세대를 read-only로**, (c) 둘 다 없으면 기본값. "온전"의 판정은 단일 키 객체의 **전체 파싱 성공 + 완전성 marker**(세대 번호와 필수 키가 모두 있음)로 정의한다 — 부분 파싱은 조항 2가 막으려는 상태를 다시 허용한다. 기본값 폴백을 (c)로만 두는 이유: 커스텀이 사라진 것처럼 보이고, 그 화면으로 실행하면 R8 ⒜가 막 닫은 "보인 것 ≠ 실행되는 것"이 세대 축으로 재발한다.
-     4. **quota — 그리고 삭제와 영구 보존의 충돌(R9 보완).** 세대당 **1,978B 남짓**(실측) × `QUOTA_BYTES` 102,400B이면 **수십 세대**까지 여유고, ⒟의 상한이 세대 크기 상계를 주므로 이 계산이 유지된다. 충돌 해소: **영구 보존이 기본이고, 삭제는 "그 세대를 쓰는 기기가 더 이상 없음이 확인될 때"만** 한다. 확인할 수 없으면 **삭제하지 않는다** — 살아 있는 v1 기기의 v1을 지우면 그 기기가 기본값으로 동작하고, 이는 조항 3의 (c)로 떨어지는 참사다. 게다가 Export/import는 **현행 세대만** 다루므로(조항 5) 옛 세대를 단독으로 내보내는 경로가 없다 — 즉 "Export 안내 후 삭제"는 지금 형태로는 성립하지 않는다. 결론: 삭제 트리거는 **수동, 확인된 경우만**으로 축소하고 지금은 만들지 않는다.
+     1. **seed 경쟁, 그리고 seed 원본이 다중 키라는 것(R9 보완).** 두 기기가 동시에 "v2 없음"을 보고 각각 seed하면 나중 `set`이 상대의 동의 선택을 덮는다. *제안*: seed는 동의 직후 **존재를 한 번 더 확인하고** 쓴다(있으면 그것을 채택으로 전환). 그래도 남는 창은 CAS가 없는 한 닫히지 않으므로 **잔여 LWW와 같은 부류**로 명시한다 — 없앤 척하지 않는다. **여기에 더해**: 존재 재확인은 *목적지*의 문제만 다루고 **출처**의 문제는 다루지 않는다. 현행 flat 네임스페이스는 `buttons`·`version`·`defaultMain`이 **각기 sync되므로**, v2 seed가 찢어진 스냅샷(buttons는 옛 값, version은 새 값)을 읽을 수 있다. *제안*: seed는 **source를 두 번 읽어 deep-equal일 때만** 진행하고 다르면 재시도한다(`sameStoredValue`가 이미 그 비교를 한다), 또는 세대 안에 revision을 두어 한 번의 읽기로 정합을 판정한다. 어느 쪽이든 **조항 2의 단일 키가 이 문제를 대신 풀어 주지는 않는다** — 그것은 새 네임스페이스의 부분 존재만 막는다. **R10 보완 둘**: (a) **두 번 읽기는 CAS가 아니다** — source를 재확인한 뒤 write하기까지의 창에서 바뀌면 그대로 지나간다. 이 잔여를 "완화"가 아니라 **잔여 LWW**로 명시한다(이 계획서가 `get`↔`set` 창에 대해 쓰는 것과 같은 문장). (b) **source snapshot이 담아야 하는 것**: 정규화 결과가 아니라 **키의 존재·부재와 원본 모양 그대로**다. 정규화본만 저장하면 손상값이 정상값으로 접혀 보이고 부분 키 변경(한 키만 지워진 경우)이 검출되지 않는다 — 스냅샷의 용도가 "그 뒤에 옛 네임스페이스가 바뀌었는가"이므로 비교 대상은 우리가 해석하기 **전**의 것이어야 한다.
+     2. **부분 존재 오인.** 여러 키가 따로 sync되면 `v2.buttons`만 먼저 도착해 "v2가 있다"로 오인될 수 있다. *제안*: **세대당 단일 storage 키**(한 세대 = 한 객체). `set`이 키 단위로 원자적이므로 **새 네임스페이스의** 부분 존재가 구조적으로 불가능해지고, 1의 목적지 쪽 창도 좁아진다. **적용 범위 명시(R9)**: 이 조항은 새 네임스페이스만 다루고, **seed 원본(옛 flat 키들)의 다중 키 문제는 조항 1이 맡는다** — 둘을 한 조항으로 묶으면 해결되지 않은 절반이 해결된 것처럼 보인다. 크기(R9 실측): 현행 전체가 **1,978B**, seed 스냅샷을 같은 객체에 넣으면 그 2배 남짓이라 8,192B 안에 든다. 그리고 **⒟의 command 상한(`MAX_STORED_ITEM_BYTES` 6,144B, 소탕 표 15)이 서면서 세대 크기에 상계가 생겨** quota 안전이 추정이 아니라 보장이 됐다 — 다만 단일 키 포장이 실제로 채택되면 그 상한은 "세대 + 스냅샷이 한 항목에 든다"는 기준으로 **다시 계산해야 한다**. **R10 보완(Codex 반박 수용)**: 현행 flat 키별 6,144B 상한은 **현행 flat 배치에만** 유효하다. v2가 settings와 sourceSnapshot을 한 객체에 넣으면 키당 상한이 곧 항목 상한이 아니게 되고, 실측 기준(키 하나 2.5KB × 3키 ≈ 7.5KB + 스냅샷)이면 **8,192B를 넘긴다**. 따라서 조항 2는 "**단일 namespace 객체 전체 + 스냅샷의 aggregate 상한을 v2가 계산한다**"를 포함해야 하고, 소탕 표 15의 숫자를 그대로 물려받아서는 안 된다.
+     3. **pre-consent 런타임과 정본 우선순위(R9 보완).** 새 기기에서 동의 전 content/background가 무엇을 읽는가. "현재 세대가 있으면 그것을 쓴다"와 "동의 전에는 직전 세대를 쓴다"는 그대로 두면 충돌하므로, **우선순위로 명문화한다**: (a) 현재 세대 네임스페이스가 **온전하면** 그것, (b) 없거나 손상이면 **직전 세대를 read-only로**, (c) 둘 다 없으면 기본값. "온전"의 판정은 단일 키 객체의 **전체 파싱 성공 + 완전성 marker**(세대 번호와 필수 키가 모두 있음)로 정의한다 — 부분 파싱은 조항 2가 막으려는 상태를 다시 허용한다. **R10 보완**: (a)가 (b)를 가리는 경우를 막는 조건 하나가 더 필요하다 — 현재 세대가 온전하더라도 **source snapshot이 옛 네임스페이스의 현재 값과 다르면 반드시 검토 패널을 띄운다**. 그렇지 않으면 seed 이후 옛 기기가 옛 네임스페이스에 한 편집이 "현재 세대가 온전하다"는 이유로 영원히 보이지 않는다(가시적 잔존 > 조용한 삭제라는 §9의 취지 그대로). 기본값 폴백을 (c)로만 두는 이유: 커스텀이 사라진 것처럼 보이고, 그 화면으로 실행하면 R8 ⒜가 막 닫은 "보인 것 ≠ 실행되는 것"이 세대 축으로 재발한다.
+     4. **quota — 그리고 삭제와 영구 보존의 충돌(R9 보완).** 세대당 **1,978B 남짓**(실측) × `QUOTA_BYTES` 102,400B이면 **수십 세대**까지 여유고, ⒟의 상한이 세대 크기 상계를 주므로 이 계산이 유지된다. 충돌 해소: **영구 보존이 기본이고, 삭제는 "그 세대를 쓰는 기기가 더 이상 없음이 확인될 때"만** 한다. 확인할 수 없으면 **삭제하지 않는다** — 살아 있는 v1 기기의 v1을 지우면 그 기기가 기본값으로 동작하고, 이는 조항 3의 (c)로 떨어지는 참사다. 게다가 Export/import는 **현행 세대만** 다루므로(조항 5) 옛 세대를 단독으로 내보내는 경로가 없다 — 즉 "Export 안내 후 삭제"는 지금 형태로는 성립하지 않는다. 결론: 삭제 트리거는 **수동, 확인된 경우만**으로 축소하고 지금은 만들지 않는다. **R10 보완 둘**: (a) **기기 생존은 `storage.sync`만으로 판정할 수 없다** — heartbeat나 lease가 없으면 "그 세대를 쓰는 기기가 없다"는 조건은 영원히 미충족이거나 오판이다. 그러므로 조항을 "**자동 삭제는 생존 프로토콜이 생기기 전에는 하지 않는다. 삭제는 사용자가 명시적으로 확인한 경우에만.**"으로 강화한다. (b) **손상 시 옛 세대를 백업할 길이 없다** — 옛 세대는 보존되지만 Export가 현행 세대만 다루므로(조항 5), 현재 네임스페이스가 손상됐을 때 옛 세대를 파일로 빼낼 수단이 없다. **"손상 복구용 옛 세대 export 경로"를 v2 과제로 명기**한다.
      5. **세대 건너뛰기·백업 범위, 그리고 그 검증의 주체(R9 보완).** v1 기기가 v3로 직행하면 시드 출처가 모호하다. *제안*: **존재하는 가장 새로운 옛 세대**에서 `stepsFrom` 체인으로 시드한다. Export/import는 **현행 세대만** 다룬다고 명시한다 — 백업 파일에 세대를 섞으면 "미래 백업 거부"(결정 5)의 판정 대상이 무엇인지 흐려진다. **검증의 주체(중요)**: 지금 레지스트리가 보증하는 것은 **0→CURRENT의 연속성뿐**이다(기존 red "레지스트리가 0→CURRENT 전 구간을 덮는다"). v1→v3 합성이 옳은가 — 중간 command를 거치는 체인, prefix 규칙의 단계별 적용, 단계별 동의, 원본 보존 — 는 **세대별 역사 fixture 없이는 지금 세울 수 없고**, `tests/fixtures/presets-v0.json`에 해당하는 v1·v2 fixture는 그 세대를 만드는 라운드에서만 생긴다. 따라서 이 항목은 **v2/v3를 만드는 라운드의 필수 red**로 명기한다: 세대별 fixture + `stepsFrom` 합성 테스트가 없으면 그 세대는 출시하지 않는다.
    - **따름정리 — 격리(quarantine) UI·[Discard] 폐기.** "못 읽는 entry"의 유일한 현실적 생성기는 **기기 간 버전 갈림**인데 위 계약이 그것을 구조적으로 없앤다. 남는 것은 손 편집과 우리 자신의 버그뿐이고, 거기에는 skip + 경고면 충분하다는 사용자 판단. 손 편집에 대해서는 **"자기가 덮어써서 생긴 일은 자기 책임으로 인지할거야"**(사용자, 2026-08-22) — devtools 등으로 사용자 자신이 저장값을 덮어 생긴 손상은 사용자 책임 영역이고, 확장이 그로부터 사용자를 보호할 의무는 없다. 따라서 R7의 축소된 ⒝ 4건 중 **기본값 미충전과 경고 문구는 사용자 보호 장치가 아니라 ① 우리 자신의 필터 버그 대비와 ② "조용한 삭제 대신 가시적 결과"를 위한 최소 장치**로 남긴다.
 
@@ -130,7 +130,9 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 15 | **R9 — Codex R8 차단(no)의 세 부류 + 현행 결함 1.** **⒜ 실행은 신뢰된 클릭만**: `onUserClick`(defaults.js)이 `isTrusted`를 핸들러 본체보다 **먼저** 보고, content의 두 클릭 경로가 그것을 통과한다. **⒝ 실행 대상 정합**: `pageTargetOf`/`sameTarget`을 공유하고, content가 **클릭 시점 대상**을 실어 보내며, background가 tab URL 시점과 **DOM을 실제로 읽은 pathname** 두 곳에서 대조해 불일치면 거부(`PAGE_CHANGED_ERROR`). 주입 함수 둘이 자기 `pathname`을 함께 반환해 **number와 branch가 같은 페이지·같은 시점**에서 온다. 대상이 바뀌면 content가 옛 버튼을 제거하고 다시 그린다. **⒞ 페이지 작업 배제의 전수화**: `shouldStartPageTask`/`pageIsBusy` 하나로 save·import를 함께 막고, adoption의 `taskInFlight`가 import도 포함한다. **⒟ payload 크기 상한**: `planSave`가 키별 직렬화 바이트를 `MAX_STORED_ITEM_BYTES`(6,144)와 대조해 초과면 **어느 키인지 밝히고 거부**. 문서: §9 조항 보완 5건(**여전히 사용자 확정 대기**) | verified | 아래 R9 로그 | R9 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤.
+| 16 | **R10 — Codex R9 차단(no)의 P1 4건을 한 부류로.** **⒜ 최종 게이트 하나**: 네이티브 전송 직전 `assertStillOnClickedPage`가 `chrome.tabs.get`으로 **지금의** tab URL을 재조회해 `clicked`와 대조한다 — 뒤에 남는 await가 없는 유일한 지점이라 A·B·D의 중간 await를 **함께** 덮는다. 그 위에 **내부 정합**은 유지: `getDefaultBranchFromPage`가 fetch **완료 후** pathname을 읽고(A), 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다(C). 지점마다 검사를 다는 방식은 **폐기**(R9가 그래서 놓쳤다). **⒝ `onMessage`가 `target`을 필수로** 요구한다(`shown`과 대칭). 문서: §9 조항 보완 6건(**여전히 사용자 확정 대기**) | verified | 아래 R10 로그 | R10 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -160,6 +162,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] PR #1 → PR #2로 이동하면 옛 버튼이 사라지고 다시 그려진다. 같은 저장소 안에서 /issues → /pulls 이동은 깜빡이지 않는다
 - [ ] 설정 파일을 고르고 읽는 동안 [Save]를 누르면 "A settings file is already being read — try again in a moment."이 뜨고 아무것도 기록되지 않는다
 - [ ] command에 9,000자를 붙여 넣고 [Save]를 누르면 "too large … (buttons is over the 6144-byte limit …)"가 뜨고 아무것도 기록되지 않는다
+- [ ] 이슈 7에서 버튼을 누른 직후 이슈 8로 이동하면(`getDefaultBranchFromPage`의 fetch가 도는 동안) 거부되고 이슈 7의 명령이 이슈 8에서 실행되지 않는다
+- [ ] `chrome.scripting.executeScript`가 실패하도록 흉내 낸 상태에서 클릭 직후 이동해도 폴백 브랜치로 옛 페이지의 요청이 나가지 않는다
+- [ ] 확장 아이콘을 누른 직후 다른 PR로 이동하면 거부된다(아이콘 경로도 최종 게이트를 탄다)
+- [ ] 클릭 후 `storage.sync.get`(오버라이드 조회)이 도는 동안 이동해도 거부된다
+- [ ] **`tab.url`이 SPA `pushState`를 반영하는지 확인** — 위 네 항목이 전부 이 전제에 기대므로, 하나라도 통과하면 전제도 확인된 것으로 본다
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -400,6 +407,25 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 
 측정은 **문자가 아니라 바이트**다(`TextEncoder`) — face는 대개 이모지라 한 문자가 4바이트이고, 문자 수로 재면 한도를 넘긴 payload가 통과한다. 검사는 `planSave`의 두 번째 문장이고, 어느 키가 넘었는지 이름을 밝힌다. **편집기 textarea에 실시간 카운터는 두지 않았다**: 한도가 사는 자리가 둘로 늘고(드리프트), 거절 시점에 키 이름과 한도가 함께 나오므로 필요한 정보는 이미 전달된다.
 
+### 소탕 표 16 — 실행 경로의 모든 `await`와, 그 뒤에서 이동이 일어나면 무엇이 막는가 (R10, 부류 ⒜)
+
+R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 네 건이 전부 그것이다). 그래서 이 표의 목적은 "지점마다 무엇을 달았는가"가 아니라 **"기본 방어가 하나이고, 그것이 모든 행을 덮는가"**다. 기본 방어는 마지막 행의 **최종 게이트**이고, 내부 정합 검사는 그것이 답할 수 **없는** 것(한 번의 read가 낸 값들이 서로 같은 페이지를 가리키는가)만 맡는다.
+
+| # | `await` 지점 | 이동이 그 뒤에 일어나면 무엇이 막는가 |
+|:--|:--|:--|
+| 1 | `clickedButton` → `loadButtons` → `storage.sync.get` | **최종 게이트만.** 버튼 지문은 설정만 보므로 페이지 이동을 모른다 |
+| 2 | `executeScript`(`getBranchAndMainFromDOM`, PR) | 최종 게이트 + **내부 정합**: 주입 함수가 branch와 `location.pathname`을 같은 동기 패스에서 읽어 함께 반환하고 `assertSamePage`가 대조 — number와 branch가 한 페이지에서 왔음은 최종 게이트가 답할 수 없다 |
+| 3 | `executeScript`(`getDefaultBranchFromPage`, issue·repo) | 최종 게이트 + 내부 정합(같은 방식) |
+| 4 | 그 안의 `fetch(/owner/repo)` | 최종 게이트 + **내부 정합(R10에서 고침)**: pathname을 `await` **뒤에** 읽는다. R9는 앞에서 읽어 이동해도 옛 pathname을 반환했고, 그래서 검사가 **통과**했다 — 검사가 있는데 틀린 값을 봤다 |
+| 5 | `executeScript`가 **reject**했을 때(`detectDefaultBranch`의 catch) | **최종 게이트만.** 내부 정합은 답이 없으므로 성립하지 않는다(pathname을 못 받았다). R9는 여기서 `null`을 반환하고 검사에 **도달하지 않았다**; 이제 폴백 경로도 최종 게이트 뒤에 있다 |
+| 6 | `resolveMainBranch` → `storage.sync.get` | **최종 게이트만.** R9에는 이 뒤에 아무것도 없었다(P1-D) |
+| 7 | **`sendToNativeHost` 직전** | **최종 게이트 그 자체** — `assertStillOnClickedPage(tab, clicked)`가 `chrome.tabs.get(tab.id)`으로 지금의 URL을 읽어 `clicked`와 대조. 모든 command가 `runButton` 한 곳을 지나므로 검사도 한 곳이면 된다 |
+| 8 | 아이콘 경로의 `isRepoPage` → `executeScript` | **최종 게이트만.** R10부터 아이콘도 `clicked`(클릭 시점 tab URL의 대상)를 넘기므로 게이트가 실제로 판정한다 — R9에서는 `clicked`가 없어 즉시 통과했다(P1-C) |
+
+**왜 `chrome.tabs.get`인가**: 핸들러가 받은 `tab`(그리고 `sender.tab`)은 **메시지 디스패치 시점의 스냅샷**이라 이동해도 변하지 않는다 — 그 값으로는 "지금 어디인가"에 답할 수 없다. `url`이 채워지는 것은 매니페스트의 `host_permissions: ["https://github.com/*"]` 덕이고, 그것이 없으면 `stillOnClickedPage`가 URL을 못 받아 **거부**한다(닫히는 쪽으로 틀린다). **미실측**: SPA의 `pushState`가 `tab.url`에 반영되는지는 이 환경에서 확인하지 못했다 — 문서상 반영되며(`tabs.onUpdated`가 그때 발화한다) 수기 검사 항목으로 남겼다.
+
+**`clicked`는 여전히 비교 키다.** 최종 게이트가 재조회한 URL도 마찬가지 — repo·owner·number는 여전히 `sender.tab.url`과 DOM에서만 오고, 재조회 값은 **대조에만** 쓰인다(`grep -n 'clicked\.\|clicked\[' extension/background.js` → 0건).
+
 ### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
 
 `adoptStoredButtons` → `readableButtonFields`. 하나라도 어긋나면 **entry 전체**를 버리고 센다 — 필드만 고쳐 살려 두는 것이 `claudeInputs` 유실의 원인이었다.
@@ -629,7 +655,7 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 결정 9 하위 조항 5건에 구멍이 지적됐다(seed 원본이 다중 키·단일 키의 적용 범위·pre-consent 정본 우선순위·quota 삭제와 영구 보존의 충돌·v1→v3 검증 주체) — §9 조항 보완으로 반영, 확정은 여전히 사용자 몫.
 - 부류 이동: "무엇이 실행되는가"는 R8이 세웠고, 남은 것은 **누가 눌렀는가**(신뢰된 제스처)와 **어느 페이지에 대해 실행되는가**(대상 정합), 그리고 페이지 작업 배제의 **전수성**이다.
 
-### R9 — 워킹트리(미커밋, base `3e12853`) · 항목 15
+### R9 — `d1ff32e` (Codex 판정: 차단) · 항목 15
 
 - 범위: Codex R8 차단 5건 전부 — ⒜ P1(신뢰된 클릭), ⒝ P1(실행 대상 정합 + SPA 잔존 버튼), ⒞ P2(페이지 작업 배제), ⒟ 현행 결함(payload 크기 상한) — 과 ⒠ §9 조항 보완 5건(문서). R7 5건은 재검증에서 전부 통과했으므로 건드리지 않았다.
 - 자리: `defaults.js:195`(`isUserGesture`)·`:202`(`onUserClick`)·`:217`(`pageTargetOf`)·`:226`(`sameTarget`)·`:235-246`(`SYNC_QUOTA_BYTES_PER_ITEM`·`MAX_STORED_ITEM_BYTES`·`storedItemBytes`), `content.js:43`·`:162`(두 클릭 경로)·`:84`(클릭 시점 대상 동봉)·`:362`(`removeInsertedButtons`)·`:370`(`onUrlChange`의 대상 비교), `background.js:167-173`(`PAGE_CHANGED_ERROR`·`assertSamePage`)·`:229`·`:243`(PR 두 지점)·`:271`·`:294`(issue·repo)·`:121`(`detectDefaultBranch`), `migrations.js:419-427`(크기 거부)·`:441-458`(`pageIsBusy`·`shouldStartPageTask`·`pageBusyMessage`), `options.js:171`(`pageTasks`).
@@ -649,4 +675,29 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 실측: `node --test` **148/0**(R8 139 → 신규 9: `buttons.test.js` 5 + `migration.test.js` 4), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
 - **잔여**: (1) `get`↔`set` 창은 그대로. (2) 대상 정합도 **탐지**다 — `assertSamePage`와 네이티브 메시지 전송 사이의 마이크로초 창에서 이동하면 잡히지 않는다. (3) **아이콘 클릭 ↔ 보이는 첫 버튼의 동일성**은 이번 범위 밖(위 참조). (4) §9 계약은 여전히 문서뿐이고 조항 5건은 **사용자 확정 대기**이며, 조항 5는 "v2를 만드는 라운드의 필수 red"로 미뤘다.
 - **미검증**: ⒜⒝의 실동작(synthetic click 거부, 실제 SPA 이동 중 클릭, 아이콘 경로)은 자동 게이트가 없다 — 순수 함수(`isUserGesture`·`onUserClick`의 순서·`pageTargetOf`·`sameTarget`)만 red로 고정했고 나머지는 수기 검사 5항목으로 남겼다. `chrome.scripting.executeScript`가 실제로 `pathname`을 실어 오는지, `sender.tab.url`이 이동 직후 무엇을 주는지는 **실측하지 않았다**. ⒟의 6,144B도 계산된 값이지 실측 상한이 아니다(기준선 1,978B과 하드 한도 8,192B만 실측).
+- **Codex 판정: 차단(no).** R8 3건 **차단 확인**. 판단 1·2 **부분 수용**("설계는 맞으나 구현이 닫히지 않았다"), 3 **반박**(미래 aggregate quota), 4 수용, 5 **반박**("남은 것이 그 네 잔여뿐이라는 서술은 이르다"). **신규 P1 ×4가 전부 R9 ⒝(대상 정합)의 미봉이고, 교훈은 하나다 — R9는 `await` 지점을 하나씩 막았고, 열거는 다음 지점을 놓친다.**
+- P1 재현(전부 실측 확인): **(A)** `getDefaultBranchFromPage`가 pathname을 `await` **전**에 캡처해 fetch 뒤 그 옛 값을 반환한다 — issue 7→8 이동 중 fetch가 끝나면 반환 pathname이 7이라 `assertSamePage`를 **통과**하고 issue 8에서 7의 명령이 돈다. R9가 단 주석("after an await `location` would be the page we navigated to")이 **정확히 거꾸로**였다: 결과가 이동 후에 오면 이동 후 pathname을 반환해야 탐지된다. **(B)** `detectDefaultBranch`가 `executeScript` reject 시 `null`을 반환하고 그 뒤의 `assertSamePage`에 **도달하지 않는다** — SPA 이동 + executeScript 실패면 폴백 branch로 issue 7의 요청이 issue 8에서 실행된다. 예외가 "이동"인지 "검출 실패"인지 구분하지 못한다. **(C)** 아이콘 경로가 `clicked` 없이 `RUN_BY_KIND[kind](tab, 0)`을 불러 `assertSamePage`가 즉시 통과한다 — 아이콘 클릭 후 SPA 이동이면 tab URL의 PR 1 번호 + DOM의 PR 2 branch. **드라이버 정정**: 이것을 "아이콘/보이는 첫 버튼 동일성"과 묶어 별도 항목으로 분리한 것은 부분적으로 틀렸다 — 그것과 무관한 **현재 탭 이동 정합**이다. **(D)** PR 경로가 DOM 검사를 통과한 뒤 `resolveMainBranch`(`storage.sync.get`) await 중 이동해도 **네이티브 전송 직전 재검사가 없다** — R9가 "마이크로초 창"이라 적은 것은 실제로 **storage await 전체**였다.
+- 신규 P2 ×2: `onMessage`가 `shown`만 필수화하고 `target`은 보지 않아, target 없이 오는 메시지(업데이트 직후 열려 있던 옛 content script 등)가 페이지 검사를 조용히 통과한다. 그리고 §9 v2의 aggregate quota(아래 조항 보완 1).
+- 부류 이동: 대상 정합의 **설계**는 섰고(내부 정합 + 클릭 대상), 남은 것은 그 설계를 **어디서 한 번에 강제하는가**였다 — 지점마다가 아니라 실행 직전 한 곳.
+
+### R10 — 워킹트리(미커밋, base `d1ff32e`) · 항목 16
+
+- 범위: Codex R9 차단의 P1 4건(A·B·C·D)과 P2 1건(`onMessage`의 `target`), 그리고 §9 조항 보완 6건(문서). R8 3건은 재검증에서 통과했으므로 건드리지 않았다. **네 P1을 따로 고치지 않았다** — 전부 "await 뒤에 이동이 일어난다"는 한 부류이고, 그것을 지점마다 막으려 한 것이 R9의 실패였다.
+- 자리: `defaults.js:233`(`pageTargetOfUrl`)·`:257`(`stillOnClickedPage`)·`:264`(`isPageTarget`), `background.js:90-96`(fetch **뒤**에 pathname을 읽는 세 지점)·`:179`(`assertStillOnClickedPage`)·`:228`(`runButton`이 게이트를 통과한 뒤에만 전송)·`:364`(아이콘이 `clicked`를 넘김)·`:386`(`target` 필수).
+- **⒜ 지시대로 상위 고도안을 우선 채택했다 — 최종 게이트 하나.** 근거:
+  - `sendToNativeHost`는 `runButton` 한 곳에서만 불린다(`grep` 확인). **모든 command가 지나는 유일한 문**이므로, 검사도 거기 하나면 뒤에 남는 await가 없다. 지점 열거는 "다음에 생기는 await"를 구조적으로 놓치고, R9가 정확히 그렇게 놓쳤다(P1 넷 중 셋이 "검사를 달았는데 그 뒤에 await가 하나 더 있었다"이다).
+  - `chrome.tabs.get(tab.id)`를 쓰는 이유: 핸들러가 받은 `tab`·`sender.tab`은 **메시지 디스패치 시점의 스냅샷**이라 이동해도 값이 그대로다 — "지금 어디인가"에 답할 수 있는 것은 재조회뿐이다.
+  - 모든 "알 수 없음"에서 **닫힌다**: 클릭 대상 없음, URL 없음, 탭 소멸 전부 거부(`stillOnClickedPage`가 `sameTarget`을 쓰므로 `null`은 어느 쪽이든 불일치다).
+- **내부 정합은 그 위에 남겼다** — 최종 게이트가 답할 수 **없는** 질문이 하나 있기 때문이다: 한 번의 read가 낸 값들이 서로 같은 페이지를 가리키는가(number와 branch). 둘은 대안이 아니라 층이다.
+  - **A 수정**: `getDefaultBranchFromPage`가 `location.pathname`을 **답이 만들어지는 자리마다** 읽는다(fetch 뒤 포함). R9는 맨 위에서 한 번 읽고 그것을 반환했고, 주석이 그 반대를 주장했다 — 결과가 이동 후에 오면 **이동 후** pathname을 반환해야 탐지된다. 검사가 없었던 것이 아니라 **검사가 틀린 값을 보고 있었다**.
+  - **C 수정**: 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다. R9에서 이것을 "아이콘/보이는 첫 버튼 동일성"과 묶어 범위 밖으로 미룬 것은 틀렸다(Codex 지적 수용) — 그것과 무관한 **현재 탭 이동 정합**이고, 최종 게이트를 태우면 끝난다. 아이콘/첫 버튼 동일성은 여전히 별도 열린 항목이다.
+  - **B**: `executeScript` reject 경로는 내부 정합을 세울 재료가 없다(pathname을 못 받는다). 그래서 **최종 게이트가 유일한 방어**이고, 폴백 경로가 그 뒤에 있음을 소탕 표 16의 5행으로 고정했다.
+  - **D**: `resolveMainBranch`의 storage await는 최종 게이트가 덮는다. R9가 "마이크로초 창"이라 적은 것은 실제로 **storage await 전체**였다 — 서술을 정정했다.
+  - **이른 `tab.url` 검사 3개는 제거했다.** 최종 게이트와 같은 것을 비교하는 중복이었고, 남겨 두면 "지점마다 검사"라는 폐기된 방식이 여전히 방어인 것처럼 읽힌다.
+- **⒝ `onMessage`가 `target`을 필수로 요구한다**(`isPageTarget`). `shown`을 필수화한 R8과 같은 부류다 — **검사할 것이 없다**는 것은 검사를 통과한 것과 다르고, R9는 그것을 통과로 취급했다.
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 — `grep 'VERSION_KEY\|SETTINGS_VERSION' extension/content.js extension/background.js` → **0건**. `{success:false}` 검사 — 새 거부도 `throw` → `onMessage`의 `.catch` → `{success:false, error}` → `runButtonCommand`의 검사 → 버튼 ❌ 체인 안이다. **`clicked`가 출처가 아님** — `grep -n 'clicked\.\|clicked\[' extension/background.js` → **0건**(`clicked`는 `sameTarget`/`stillOnClickedPage`에 통째로 넘겨 대조에만 쓰인다).
+- red 기록: `not ok 45 - pageTargetOfUrl: …` · `not ok 46 - the final gate refuses unless the tab still shows the page that was clicked` · `not ok 47 - a page message without a target is not a request we can check`(전부 `ReferenceError`). 확인 후 구현.
+- 실측: `node --test` **151/0**(R9 148 → 신규 3, 전부 `buttons.test.js`), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다.
+- **잔여**: (1) `get`↔`set` 창은 그대로. (2) 최종 게이트와 `sendNativeMessage` 사이에도 창이 남는다 — 그러나 이제 그 창은 **await 하나 안**이지 여러 개에 걸치지 않는다. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가는 여전히 열린 별도 항목. (4) §9 계약은 문서뿐이고 조항 6건은 **사용자 확정 대기**.
+- **미검증**: **`tab.url`이 SPA `pushState`를 반영하는지 실측하지 못했다** — 이 환경에 브라우저가 없다. 최종 게이트의 유효성이 그 전제에 기대므로 수기 검사 5항목으로 남겼고, 마지막 항목이 전제 자체를 확인한다. `chrome.tabs.get` 스텁이 없어 게이트의 **비동기 실동작**도 순수 술어(`stillOnClickedPage`)까지만 고정했다. `host_permissions`가 실제로 `tab.url`을 채우는지도 코드 근거(기존 `executeScript`·`sender.tab.url` 동작)이지 이번 실측은 아니다.
 - 판정: 미요청.
