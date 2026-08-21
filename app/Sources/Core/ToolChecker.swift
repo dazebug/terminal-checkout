@@ -8,6 +8,17 @@ import Foundation
 /// gh/claude는 각각 이슈 프리셋과 claude 입력에서만 쓰인다.
 public let checkedTools = ["z", "gh", "claude"]
 
+/// Whether missing this tool means "every button fails" — how the setup window splits error (red)
+/// from warning (yellow).
+///
+/// Only `z` depends on whether a base directory is configured. With one, `{cd}`'s fallback
+/// (`cd` → `clone`) covers a failing `z` (`BaseDirectory.swift`), so "every button fails" stops
+/// being true. `gh` also appears in the clone clause once a base directory is set, but the z and
+/// cd branches survive without it, so it stays a warning.
+public func toolIsCritical(_ tool: String, baseDirectoryConfigured: Bool) -> Bool {
+    tool == "z" && !baseDirectoryConfigured
+}
+
 /// 사용자의 로그인 셸. GUI 앱의 SHELL 환경변수는 launchd가 물려준 값이라 신뢰할 수 없어
 /// 계정 레코드에서 직접 읽는다.
 public func loginShellPath() -> String {

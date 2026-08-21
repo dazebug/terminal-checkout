@@ -1,10 +1,19 @@
 import Foundation
 
+/// Why a base directory was rejected. Each surface words it differently (the button response is
+/// English, the setup window is Korean until #24), so only the reason travels as a value and every
+/// surface builds its own sentence.
+public enum BaseDirectoryProblem {
+    case notAbsolute
+    case invalidCharacters
+}
+
 public enum CommandError: Error, CustomStringConvertible {
     case invalidCharacters(String)
     case unknownVariable(String)
     case variableNotProvided(String)
     case badRequest(String)
+    case invalidBaseDirectory(BaseDirectoryProblem, String)
 
     public var description: String {
         switch self {
@@ -12,6 +21,10 @@ public enum CommandError: Error, CustomStringConvertible {
         case .unknownVariable(let name): return "Unknown variable: {\(name)}"
         case .variableNotProvided(let name): return "Variable {\(name)} not provided"
         case .badRequest(let message): return message
+        case .invalidBaseDirectory(.notAbsolute, let value):
+            return "Base directory must be an absolute path: \(value)"
+        case .invalidBaseDirectory(.invalidCharacters, let value):
+            return "Invalid characters in base directory: \(value)"
         }
     }
 }
@@ -32,7 +45,10 @@ private let allowedValueScalars: Set<Unicode.Scalar> = {
     return set
 }()
 
-private func sanitizeValue(_ value: String) throws -> String {
+/// The single place a value is validated. The base directory (`BaseDirectory.swift`) runs through
+/// this very function, which is why it is visible module-wide — the moment the verdict exists in
+/// two copies, only one of them getting fixed is a matter of time.
+func sanitizeValue(_ value: String) throws -> String {
     guard !value.isEmpty, value.unicodeScalars.allSatisfy({ allowedValueScalars.contains($0) }) else {
         throw CommandError.invalidCharacters(value)
     }
@@ -41,13 +57,39 @@ private func sanitizeValue(_ value: String) throws -> String {
 
 private let variableRegex = try! NSRegularExpression(pattern: "\\{(\\w+)\\}")
 
-/// command template의 `{var}`를 검증된 변수 값으로 치환한다.
+/// Substitutes `{var}` in a command template with validated variable values.
+///
+/// This is the whole public surface: everything it substitutes has passed the character whitelist.
+/// Bypassing that whitelist is possible only through the module-internal overload below, whose sole
+/// caller is `resolveRequest`.
 public func renderCommand(template: String, variables: [String: String]) throws -> String {
-    var sanitized: [String: String] = [:]
+    try renderCommand(template: template, variables: variables, appVariables: [:])
+}
+
+/// `variables` comes from the extension, so every last one of them has to pass the character
+/// whitelist. `appVariables` is a shell fragment the app assembled (`{cd}` —
+/// `BaseDirectory.swift`): it contains spaces and braces, so it cannot pass that verdict, and there
+/// is no reason it should — its ingredients being already-validated values is what earns the
+/// exemption. That exemption is why this overload is **not public**: a general `[String: String]`
+/// can't express "assembled by us", so the type can't carry the guarantee and the module boundary
+/// has to. Keep the only caller `resolveRequest`, which builds the dictionary from
+/// `repoEntryCommand` alone.
+///
+/// The two dictionaries cannot collide on a name: a fragment name is absent from
+/// `allowedVariables`, so a request carrying one is rejected by the loop below first. The merge
+/// order is only a safety net.
+///
+/// Substituted values are never rescanned (matches are taken from the template alone), so there is
+/// no path by which a `{…}` inside a fragment gets substituted a second time.
+func renderCommand(
+    template: String, variables: [String: String], appVariables: [String: String]
+) throws -> String {
+    var values: [String: String] = [:]
     for (key, value) in variables {
         guard allowedVariables.contains(key) else { throw CommandError.unknownVariable(key) }
-        sanitized[key] = try sanitizeValue(value)
+        values[key] = try sanitizeValue(value)
     }
+    for (key, value) in appVariables { values[key] = value }
 
     var result = ""
     var last = template.startIndex
@@ -57,7 +99,7 @@ public func renderCommand(template: String, variables: [String: String]) throws 
               let nameRange = Range(match.range(at: 1), in: template) else { continue }
         result += template[last..<whole.lowerBound]
         let name = String(template[nameRange])
-        guard let value = sanitized[name] else { throw CommandError.variableNotProvided(name) }
+        guard let value = values[name] else { throw CommandError.variableNotProvided(name) }
         result += value
         last = whole.upperBound
     }

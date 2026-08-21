@@ -27,6 +27,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var extensionCard: NSView!
     private var toolsCard: NSView!
     private let toolsList = NSStackView()
+    /// Where repositories are cloned. Stays visible like the terminal card — it is a setting the
+    /// user may want to change, not an install step that completes and disappears.
+    private var baseDirCard: NSView!
+    private let baseDirField = NSTextField(string: "")
+    private let baseDirStatusLabel = NSTextField(labelWithString: "")
     private var guideBlock: NSView!
     private var utilityRow: NSView!
     /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
@@ -34,23 +39,34 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var requestObserver: (any NSObjectProtocol)?
     private var toolsObserver: (any NSObjectProtocol)?
 
-    /// 없을 때 무엇이 깨지는지 — 사용자가 설치 여부를 판단할 근거가 되는 문장.
-    /// z는 기본 명령의 첫 단어라 없으면 모든 버튼이 실패하므로 오류로 다룬다.
-    private let toolAdvice: [(name: String, critical: Bool, advice: String)] = [
-        (
-            "z", true,
-            "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. "
-                + "brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하세요."
-        ),
-        (
-            "gh", false,
-            "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋이 실패합니다. brew install gh 후 gh auth login."
-        ),
-        (
-            "claude", false,
-            "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다."
-        ),
-    ]
+    /// What breaks without the tool — the sentence a user judges "do I need to install this?" by.
+    /// Only `z` splits on whether a base directory is configured: with one, the entry clause falls
+    /// back to `cd`/`clone`, so "every button fails" stops being true. The severity verdict itself
+    /// lives in Core (`toolIsCritical`) so it can be pinned by a test; only the copy is here.
+    private func toolAdvice(
+        baseDirectoryConfigured: Bool
+    ) -> [(name: String, critical: Bool, advice: String)] {
+        [
+            (
+                "z", toolIsCritical("z", baseDirectoryConfigured: baseDirectoryConfigured),
+                baseDirectoryConfigured
+                    ? "명령을 찾을 수 없습니다 — 저장소 기본 폴더로 대신 이동하므로 버튼은 동작합니다. "
+                        + "zoxide를 설치하면 기본 폴더 밖의 저장소로도 점프합니다(brew install zoxide)."
+                    : "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. "
+                        + "brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하거나, "
+                        + "아래 「저장소 기본 폴더」를 설정하세요."
+            ),
+            (
+                "gh", false,
+                "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋과 저장소 기본 폴더의 clone 단계가 실패합니다. "
+                    + "brew install gh 후 gh auth login."
+            ),
+            (
+                "claude", false,
+                "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다."
+            ),
+        ]
+    }
 
     private let contentWidth: CGFloat = 560
     private let terminalRadioWidth: CGFloat = 120
@@ -121,6 +137,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         chromeCard = buildChromeCard()
         extensionCard = buildExtensionCard()
+        baseDirCard = buildBaseDirCard()
         toolsCard = buildToolsCard()
         utilityRow = buildUtilityRow()
 
@@ -131,11 +148,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(chromeCard)
         stack.addArrangedSubview(extensionCard)
         stack.addArrangedSubview(terminalCard())
+        stack.addArrangedSubview(baseDirCard)
         stack.addArrangedSubview(toolsCard)
         stack.addArrangedSubview(testCard())
         stack.addArrangedSubview(utilityRow)
 
-        for label in [manifestStatusLabel, extensionStatusLabel, permissionStatusLabel, testResultLabel] {
+        for label in [manifestStatusLabel, extensionStatusLabel, permissionStatusLabel, testResultLabel,
+                      baseDirStatusLabel] {
             label.font = Theme.mono(11.5)
             configureWrapping(label)
         }
@@ -201,6 +220,45 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             buttonRow([installButton]),
             guideBlock,
             installFeedbackLabel,
+        ])
+    }
+
+    /// Where repositories live. `z {repo}` silently does nothing when zoxide's DB has never
+    /// recorded that repository (issue #30); with this set, the command falls back to
+    /// `cd <base>/<repo>` and then to cloning. Validation, `~` expansion, and clause assembly all
+    /// live in Core — this card stores the **normalized** result (echoed back into the field) and
+    /// only words the rejection reasons.
+    private func buildBaseDirCard() -> NSView {
+        baseDirField.placeholderString = "예: ~/Codes"
+        baseDirField.font = Theme.mono(11.5)
+        baseDirField.target = self
+        baseDirField.action = #selector(baseDirectoryEdited)
+        // Save on focus loss as well as Enter — nobody should close the window wondering
+        // whether it was saved
+        baseDirField.cell?.sendsActionOnEndEditing = true
+        baseDirField.widthAnchor.constraint(equalToConstant: contentWidth - 28 - 110).isActive = true
+
+        let row = NSStackView(views: [baseDirField, button("폴더 선택…", #selector(chooseBaseDirectory))])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+
+        return card("저장소 기본 폴더", [
+            helpLabel(
+                "저장소들을 클론해 두는 최상위 폴더입니다. z가 이동에 실패하면(zoxide 기록이 없거나 "
+                    + "zoxide를 안 쓰는 경우) 이 폴더 아래의 저장소로 이동하고, 없으면 gh로 clone합니다. "
+                    + "비워 두면 지금까지와 똑같이 z로만 이동합니다."
+            ),
+            row,
+            baseDirStatusLabel,
+            // Saved button commands are never rewritten for the user, so someone upgrading from an
+            // earlier version gets no fallback from setting the folder alone — say what the missing
+            // step is, since nothing else in this window can
+            helpLabel(
+                "이전 버전부터 쓰던 버튼은 저장해 둔 command를 그대로 유지합니다 — 폴더만 지정해서는 "
+                    + "폴백이 걸리지 않습니다. 확장 옵션 페이지에서 그 버튼에 프리셋을 다시 적용하고 "
+                    + "저장하세요."
+            ),
         ])
     }
 
@@ -553,6 +611,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         extensionCard.isHidden = evidence != nil && !forceShowInstall
         utilityRow.isHidden = !extensionCard.isHidden
 
+        updateBaseDirCard()
         updateToolsCard()
 
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
@@ -594,13 +653,56 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         resizeToFit()
     }
 
+    /// Redraws the base directory card from what is stored. The field is not touched while the
+    /// user is typing in it — refresh() runs on every window activation and on every socket
+    /// request, and overwriting a half-typed path would be maddening.
+    private func updateBaseDirCard() {
+        let stored = Settings.baseDirectory
+        if window?.firstResponder !== baseDirField.currentEditor() {
+            baseDirField.stringValue = stored
+        }
+        // A stored value can only be invalid if it was edited outside this window (a hand-edited
+        // plist, an older build). Say so here rather than let every button fail unexplained.
+        // `try?` would fold "threw" and "not configured" into the same nil, so catch explicitly.
+        let resolved: String?
+        do {
+            resolved = try normalizedBaseDirectory(stored)
+        } catch {
+            apply(
+                .error("저장된 값이 올바르지 않습니다(\(baseDirectoryReason(error))) — 다시 지정해 주세요"),
+                to: baseDirStatusLabel
+            )
+            return
+        }
+        guard let normalized = resolved else {
+            apply(
+                .warning("설정하지 않음 — z로만 이동합니다. zoxide 기록에 없는 저장소에서는 명령이 아무것도 하지 않습니다"),
+                to: baseDirStatusLabel
+            )
+            return
+        }
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory)
+        if exists && isDirectory.boolValue {
+            apply(.ok("\(normalized) — z가 실패하면 여기로 이동하고, 저장소가 없으면 clone합니다"), to: baseDirStatusLabel)
+        } else {
+            // clone creates the leading directories (measured), so a missing folder still works —
+            // this only says so out loud, which is how a typo gets noticed
+            apply(.warning("\(normalized) — 아직 없는 폴더입니다. clone할 때 만들어집니다"), to: baseDirStatusLabel)
+        }
+    }
+
     /// 없는 도구만 줄로 남긴다 — 준비된 도구까지 나열하면 정상 상태에서도 카드가 계속 떠 있게 된다.
     private func updateToolsCard() {
         guard let availability = Settings.toolAvailability else {
             toolsCard.isHidden = true // 아직 확인 전 (백그라운드에서 진행 중)
             return
         }
-        let missing = toolAdvice.filter { availability[$0.name] == false }
+        // nil covers both "not configured" and "stored value is unusable" — in either case the
+        // fallback cannot run, so z is back to being critical
+        let configured = (try? normalizedBaseDirectory(Settings.baseDirectory)) != nil
+        let missing = toolAdvice(baseDirectoryConfigured: configured)
+            .filter { availability[$0.name] == false }
         toolsCard.isHidden = missing.isEmpty
         toolsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for tool in missing {
@@ -700,6 +802,57 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         installFeedbackLabel.textColor = Theme.accent
         installFeedbackLabel.isHidden = false
         refresh()
+    }
+
+    /// The Korean wording for a rejection. Core hands back only the reason so each surface can word
+    /// it its own way — the button response is English, this window is Korean until #24 lands.
+    private func baseDirectoryReason(_ error: Error) -> String {
+        guard case CommandError.invalidBaseDirectory(let problem, _) = error else {
+            return errorMessage(error)
+        }
+        switch problem {
+        case .notAbsolute: return "절대 경로가 아닙니다"
+        case .invalidCharacters: return "공백이나 한글 등 셸에서 안전하지 않은 문자가 있습니다"
+        }
+    }
+
+    /// Saves what was typed. An unusable path is **not** stored — the text stays in the field so it
+    /// can be fixed, and the status line says it wasn't saved. A valid one is stored normalized
+    /// (`~` expanded, trailing slash gone) and echoed back, so the field shows what will actually
+    /// run rather than what was typed.
+    @objc private func baseDirectoryEdited() {
+        let typed = baseDirField.stringValue
+        do {
+            let normalized = try normalizedBaseDirectory(typed)
+            Settings.baseDirectory = normalized ?? ""
+            baseDirField.stringValue = normalized ?? ""
+        } catch {
+            apply(
+                .error("저장하지 않았습니다 — \(baseDirectoryReason(error))"),
+                to: baseDirStatusLabel
+            )
+            resizeToFit()
+            return
+        }
+        refresh()
+    }
+
+    @objc private func chooseBaseDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "선택"
+        let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.baseDirField.stringValue = url.path
+            self.baseDirectoryEdited()
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: apply)
+        } else {
+            apply(panel.runModal())
+        }
     }
 
     @objc private func openOptionsPage() {

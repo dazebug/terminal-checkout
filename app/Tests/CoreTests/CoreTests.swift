@@ -78,6 +78,160 @@ final class RenderTests: XCTestCase {
     }
 }
 
+// MARK: - Base directory normalization
+// The fallback for issue #30: on a cold zoxide DB `z {repo}` exits non-zero and the whole chain
+// dies with nothing to see. The value reaches the shell unquoted, so it takes the **same**
+// character verdict as a command variable.
+
+final class BaseDirectoryTests: XCTestCase {
+    func testAbsolutePathPassesThrough() throws {
+        XCTAssertEqual(try normalizedBaseDirectory("/Users/x/Codes"), "/Users/x/Codes")
+    }
+
+    // Adding `~` to the allowed characters would let it flow into the shell verbatim — expand it
+    // here instead of widening the whitelist
+    func testTildeIsExpandedSoItNeverReachesTheShell() throws {
+        XCTAssertEqual(try normalizedBaseDirectory("~/Codes"), NSHomeDirectory() + "/Codes")
+        XCTAssertEqual(try normalizedBaseDirectory("~"), NSHomeDirectory())
+    }
+
+    func testTrailingSlashesAreStripped() throws {
+        XCTAssertEqual(try normalizedBaseDirectory("/Users/x/Codes/"), "/Users/x/Codes")
+        XCTAssertEqual(try normalizedBaseDirectory("/Users/x/Codes///"), "/Users/x/Codes")
+    }
+
+    // Pasting into a text field easily drags surrounding spaces along
+    func testSurroundingWhitespaceIsTrimmed() throws {
+        XCTAssertEqual(try normalizedBaseDirectory("  /Users/x/Codes  "), "/Users/x/Codes")
+    }
+
+    // An empty value is not an error but "not configured" — staying on the old behavior with no
+    // fallback is a legitimate state
+    func testEmptyMeansNotConfigured() throws {
+        XCTAssertNil(try normalizedBaseDirectory(""))
+        XCTAssertNil(try normalizedBaseDirectory("   "))
+    }
+
+    func testRelativePathIsRejected() {
+        for bad in ["Codes", "./Codes", "../Codes", "Users/x"] {
+            XCTAssertThrowsError(try normalizedBaseDirectory(bad), "should be rejected: \(bad)")
+        }
+    }
+
+    // The same whitelist as command variables — a path with spaces, quotes, or substitution
+    // characters would be split apart or executed by the shell
+    func testPathCharactersOutsideTheWhitelistAreRejected() {
+        for bad in ["/Users/x/My Codes", "/Users/x/Codes; rm -rf /", "/Users/x/$HOME",
+                    "/Users/x/`whoami`", "/Users/x/코드", "/Users/x/Codes\n"] {
+            XCTAssertThrowsError(try normalizedBaseDirectory(bad), "should be rejected: \(bad)")
+        }
+    }
+
+    func testRootStaysRoot() throws {
+        XCTAssertEqual(try normalizedBaseDirectory("/"), "/")
+    }
+}
+
+// MARK: - Repository entry clause assembly (the value of {cd})
+
+final class RepoEntryCommandTests: XCTestCase {
+    private let base = "/Users/x/Codes"
+
+    // For a user with no base directory the command must be **byte-identical** to before this
+    // change
+    func testWithoutBaseDirectoryTheEntryIsExactlyTodaysFirstClause() throws {
+        XCTAssertEqual(
+            try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: ""),
+            "z remy"
+        )
+    }
+
+    // The cd clause is gated on the directory actually being a repository. A bare `cd` returning 0
+    // would read as "found it" for an empty or unrelated directory too, and the rest of the preset
+    // chain (`git fetch`, `git checkout`) would then run somewhere the user never asked for.
+    func testBaseDirectoryAddsCdThenCloneFallback() throws {
+        XCTAssertEqual(
+            try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base),
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
+                + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
+        )
+    }
+
+    // Without an owner there is no clone address — drop the clause and chain z→cd only
+    func testWithoutOwnerTheCloneClauseIsOmitted() throws {
+        let cmd = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: base)
+        XCTAssertEqual(
+            cmd,
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
+        )
+        XCTAssertFalse(cmd.contains("clone"))
+    }
+
+    func testEmptyOwnerCountsAsAbsent() throws {
+        XCTAssertEqual(
+            try repoEntryCommand(repo: "remy", owner: "", baseDirectory: base),
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
+        )
+    }
+
+    // ( … ) is a subshell, so a cd inside it does not stick in the current shell — grouping is
+    // { …; } and nothing else
+    func testGroupingNeverUsesASubshell() throws {
+        for owner in ["frograms", ""] {
+            let cmd = try repoEntryCommand(repo: "remy", owner: owner, baseDirectory: base)
+            XCTAssertFalse(cmd.contains("("), "subshell grouping leaked in: \(cmd)")
+            XCTAssertFalse(cmd.contains(")"), "subshell grouping leaked in: \(cmd)")
+        }
+    }
+
+    // The base directory must not override a jump z made successfully — z is always the first
+    // clause
+    func testZComesFirst() throws {
+        XCTAssertTrue(
+            try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
+                .hasPrefix("{ z remy || ")
+        )
+    }
+
+    // The reason for the fallback has to stay readable on screen — suppressing stderr would take
+    // real failures down with it.
+    // The repository guard discards `git rev-parse`'s *stdout* (on success it prints the .git path,
+    // which is pure noise), so "contains /dev/null" stopped telling the two apart. The check is
+    // narrowed to stderr redirection itself, which is what decision 7 is actually about: `fatal:
+    // not a git repository` and `cannot change to` have to reach the screen and explain the fallback.
+    func testStderrIsNotSuppressed() throws {
+        let cmd = try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
+        XCTAssertFalse(cmd.contains("2>"), cmd)  // 2>/dev/null, 2>&1, 2>>…
+        XCTAssertFalse(cmd.contains("&>"), cmd)  // the both-streams form
+    }
+
+    // A corrupted stored value (a hand-edited plist, say) is not silently ignored — the button
+    // fails and carries the reason
+    func testInvalidBaseDirectoryThrows() {
+        XCTAssertThrowsError(try repoEntryCommand(repo: "remy", owner: "f", baseDirectory: "Codes"))
+        XCTAssertThrowsError(
+            try repoEntryCommand(repo: "remy", owner: "f", baseDirectory: "/Users/x/My Codes")
+        )
+    }
+
+    // Every ingredient of the fragment is a validated value — the assembly site checks again
+    func testUnsanitizedRepoOrOwnerThrows() {
+        XCTAssertThrowsError(try repoEntryCommand(repo: "a;rm -rf /", owner: "f", baseDirectory: base))
+        XCTAssertThrowsError(try repoEntryCommand(repo: "remy", owner: "a b", baseDirectory: base))
+        XCTAssertThrowsError(try repoEntryCommand(repo: "", owner: "f", baseDirectory: base))
+    }
+
+    func testRootBaseDirectoryDoesNotDoubleTheSlash() throws {
+        XCTAssertEqual(
+            try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "/"),
+            "{ z remy || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
+        )
+    }
+}
+
 // MARK: - 요청 해석 (command_template 포맷)
 
 final class RequestTests: XCTestCase {
@@ -152,6 +306,92 @@ final class RequestTests: XCTestCase {
             "command_template": "z {repo}", "variables": ["repo": "remy"],
             "claude_inputs": ["checkout {nope} please"],
         ]))
+    }
+
+    // MARK: {cd} — the shell fragment the app assembles and fills in
+
+    // For a user with no base directory the command must be byte-identical to before this change
+    func testCDWithoutBaseDirectoryRendersTodaysCommand() throws {
+        let req: [String: Any] = [
+            "command_template": "{cd} && git fetch origin && git checkout {branch}",
+            "variables": ["repo": "remy", "owner": "frograms", "branch": "fix/x"],
+        ]
+        XCTAssertEqual(
+            try resolveRequest(req).command,
+            "z remy && git fetch origin && git checkout fix/x"
+        )
+    }
+
+    func testCDWithBaseDirectoryRendersTheFallbackChain() throws {
+        let req: [String: Any] = [
+            "command_template": "{cd} && git fetch origin",
+            "variables": ["repo": "remy", "owner": "frograms"],
+        ]
+        XCTAssertEqual(
+            try resolveRequest(req, baseDirectory: "/Users/x/Codes").command,
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
+                + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
+                + " && git fetch origin"
+        )
+    }
+
+    // The app is the single source for the base directory — a value the extension sends under the
+    // same name is rejected, not merged. (Allowing the merge would open a hole through which the
+    // extension could run an arbitrary shell fragment.)
+    func testCDCannotComeFromTheExtension() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "{cd}", "variables": ["cd": "rm -rf /"],
+        ])) { error in
+            XCTAssertEqual(errorMessage(error), "Unknown variable: {cd}")
+        }
+    }
+
+    // Assembling the fragment needs repo — when it is missing, the reason reported is the thing
+    // that is actually absent, not {cd}
+    func testCDWithoutRepoIsRejected() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "{cd}", "variables": ["owner": "frograms"],
+        ])) { error in
+            XCTAssertEqual(errorMessage(error), "Variable {repo} not provided")
+        }
+    }
+
+    // A command that doesn't use {cd} is unchanged even with a base directory configured
+    func testBaseDirectoryDoesNotTouchCommandsWithoutCD() throws {
+        let req: [String: Any] = ["command_template": "z {repo}", "variables": ["repo": "remy"]]
+        XCTAssertEqual(try resolveRequest(req, baseDirectory: "/Users/x/Codes").command, "z remy")
+    }
+
+    // Keeps the contract (README) that variables work identically in commands and claude inputs
+    func testCDIsSubstitutedInClaudeInputsToo() throws {
+        let r = try resolveRequest([
+            "command_template": "{cd} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["!{cd} && git status"],
+        ], baseDirectory: "")
+        XCTAssertEqual(r.claudeInputs, ["!z remy && git status"])
+    }
+
+    // A corrupted stored value is not silently ignored — the button fails and carries the reason
+    func testInvalidStoredBaseDirectoryIsReported() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "{cd}", "variables": ["repo": "remy"],
+        ], baseDirectory: "~/My Codes")) { error in
+            XCTAssertTrue(
+                errorMessage(error).contains("Invalid characters in base directory"),
+                errorMessage(error)
+            )
+        }
+    }
+
+    // The fragment is made of characters sanitizeValue cannot pass (spaces, braces) — running the
+    // app-assembled value through the request-variable check would kill every button
+    func testAssembledFragmentIsNotRunThroughTheValueWhitelist() throws {
+        let cmd = try resolveRequest([
+            "command_template": "{cd}", "variables": ["repo": "remy", "owner": "frograms"],
+        ], baseDirectory: "/Users/x/Codes").command
+        XCTAssertTrue(cmd.contains(" || "), cmd)
+        XCTAssertTrue(cmd.hasPrefix("{ z remy"), cmd)
     }
 }
 
@@ -923,6 +1163,23 @@ final class ToolCheckTests: XCTestCase {
     func testLoginShellIsAbsolutePath() {
         XCTAssertTrue(loginShellPath().hasPrefix("/"))
     }
+
+    // "Without z every button fails" holds only until a base directory is configured. Keeping it
+    // an error afterwards leaves a red line in the setup window of a perfectly fine environment
+    func testZIsCriticalOnlyWhileNoBaseDirectoryIsConfigured() {
+        XCTAssertTrue(toolIsCritical("z", baseDirectoryConfigured: false))
+        XCTAssertFalse(toolIsCritical("z", baseDirectoryConfigured: true))
+    }
+
+    // gh and claude are used by some presets only, so either way they are warnings
+    // (gh also appears in the clone clause once a base directory is set, but the z and cd
+    // fallbacks survive without it)
+    func testOtherToolsAreNeverCritical() {
+        for tool in ["gh", "claude"] {
+            XCTAssertFalse(toolIsCritical(tool, baseDirectoryConfigured: false), tool)
+            XCTAssertFalse(toolIsCritical(tool, baseDirectoryConfigured: true), tool)
+        }
+    }
 }
 
 // MARK: - AppleScript 이스케이프
@@ -1158,8 +1415,9 @@ final class WarpTabConfigTests: XCTestCase {
         )
     }
 
-    // directory를 두지 않는다 — iTerm2·WezTerm과 같이 기본 cwd에서 시작하고
-    // 명령의 `z {repo}`가 이동한다. 여기서 cwd를 정하면 터미널별로 동작이 갈린다
+    // No directory key — like iTerm2 and WezTerm the pane starts in the default cwd and the
+    // command's entry clause (`{cd}`) does the moving. Pinning a cwd here would make the behavior
+    // differ per terminal
     func testTOMLDoesNotPinDirectory() {
         XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("directory"))
     }
@@ -1799,19 +2057,19 @@ final class WarpReclaimTests: XCTestCase {
 // **한계**: 문자열이 파일에 있는지만 본다. 그래서 uninstall.sh를 고칠 때 문자열을 주석이나 죽은
 // 코드에만 남기면 이 가드는 통과한다 — 셸 구문까지 보지는 않는다.
 
-final class UninstallScriptSyncTests: XCTestCase {
-    /// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
-    /// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
-    /// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
-    private func repoFileContents(_ name: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
-            .deletingLastPathComponent() // CoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // app
-            .deletingLastPathComponent() // 리포 루트
-        return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
-    }
+/// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
+/// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
+/// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
+private func repoFileContents(_ name: String) throws -> String {
+    let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
+        .deletingLastPathComponent() // CoreTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // app
+        .deletingLastPathComponent() // 리포 루트
+    return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+}
 
+final class UninstallScriptSyncTests: XCTestCase {
     func testUninstallScriptSweepsWithTheSameConstants() throws {
         let script = try repoFileContents("uninstall.sh")
         // 스크립트에 그대로 나타나야 하는 것들. `--serve` 플래그는 일부러 빠져 있다 —
@@ -1830,5 +2088,53 @@ final class UninstallScriptSyncTests: XCTestCase {
                 "uninstall.sh가 \(needle.debugDescription)을 다루지 않는다 — Swift 상수만 바뀌었다"
             )
         }
+    }
+}
+
+// MARK: - extension/defaults.js ↔ Swift: names the app fills in
+// The name of an app-provided variable exists twice: `repoEntryVariable` here and `APP_VARIABLES`
+// in `extension/defaults.js`. Neither side can catch the other drifting at runtime, and the damage
+// is total either way: rename the name on one side alone and every preset dies with a
+// "Variable {…} not provided" rejection (`renderCommand` never passes an unresolved placeholder
+// through) — visible, but shipped. This test turns that drift into a red before it ships.
+//
+// **Limit**: it reads the array literal out of the file's text. Computing `APP_VARIABLES` at
+// runtime, or spelling it across several statements, would slip past this guard.
+
+final class AppVariableSyncTests: XCTestCase {
+    /// Pulls the element names out of `const APP_VARIABLES = ['cd'];`. Returns nil when the
+    /// declaration is missing or no longer a plain array literal — the caller fails, rather than
+    /// comparing against an empty set and passing for the wrong reason.
+    private func appVariablesFromDefaults(_ source: String) -> Set<String>? {
+        guard let range = source.range(of: #"APP_VARIABLES\s*=\s*\[([^\]]*)\]"#, options: .regularExpression)
+        else { return nil }
+        let body = source[range].drop { $0 != "[" }.dropFirst().dropLast()
+        let names = body
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " \t\n'\"")) }
+            .filter { !$0.isEmpty }
+        return Set(names)
+    }
+
+    func testAppProvidedVariableNamesMatchTheExtension() throws {
+        let defaults = try repoFileContents("extension/defaults.js")
+        let fromJS = try XCTUnwrap(
+            appVariablesFromDefaults(defaults),
+            "APP_VARIABLES is gone from extension/defaults.js, or is no longer an array literal"
+        )
+        XCTAssertEqual(
+            fromJS, [repoEntryVariable],
+            "the app-provided variable names have drifted: JS has \(fromJS.sorted()), "
+                + "Swift has [\(repoEntryVariable)]"
+        )
+    }
+
+    /// The parser has to be able to fail — otherwise the test above passes on a file it never read
+    /// correctly. These are the shapes that must not be mistaken for a match.
+    func testParserRejectsWhatItCannotRead() {
+        XCTAssertNil(appVariablesFromDefaults("const OTHER = ['cd'];"))
+        XCTAssertNil(appVariablesFromDefaults("// APP_VARIABLES was here"))
+        XCTAssertEqual(appVariablesFromDefaults("const APP_VARIABLES = ['cd', 'zz'];"), ["cd", "zz"])
+        XCTAssertEqual(appVariablesFromDefaults("const APP_VARIABLES = [];"), [])
     }
 }

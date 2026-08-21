@@ -11,7 +11,8 @@ const vm = require('node:vm');
 // vm context have a different prototype, so deepStrictEqual fails even on structurally equal values.
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
-const { BUTTON_KINDS, pageTypeOf } = vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf })');
+const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
+  vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf, APP_VARIABLES })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -85,7 +86,10 @@ const variablesUsed = btn => [btn.command, ...(btn.claudeInputs || [])]
 
 for (const [kind, { presets, defaults, variables }] of Object.entries(BUTTON_KINDS)) {
   test(`${kind} presets and defaults only use variables that page provides`, () => {
-    const allowed = new Set(variables);
+    // APP_VARIABLES are filled in by the app, not passed by the extension, so they are usable on
+    // every page — but they are kept out of `variables` so that list keeps meaning "what the
+    // extension actually sends"
+    const allowed = new Set([...variables, ...APP_VARIABLES]);
     for (const btn of [...presets, ...defaults]) {
       for (const name of variablesUsed(btn)) {
         assert.ok(allowed.has(name), `${kind} "${btn.name || btn.label}": {${name}} is not available on this page`);
@@ -95,9 +99,35 @@ for (const [kind, { presets, defaults, variables }] of Object.entries(BUTTON_KIN
 }
 
 test('the default repository button only moves to the repo', () => {
-  // The Open in Terminal behavior from before it became customizable — changing the default changes existing users' buttons
+  // The Open in Terminal behavior from before it became customizable — changing the default changes
+  // existing users' buttons. `{cd}` replaced the bare `z {repo}` (issue #30): with a cold zoxide DB
+  // that first clause exits non-zero and the whole && chain dies silently, so the app now renders
+  // the entry clause itself — and with no base directory configured it renders exactly `z {repo}`.
   assert.equal(BUTTON_KINDS.repo.defaults.length, 1);
-  assert.equal(BUTTON_KINDS.repo.defaults[0].command, 'z {repo}');
+  assert.equal(BUTTON_KINDS.repo.defaults[0].command, '{cd}');
+});
+
+// Every preset has to enter the repository through the app-rendered clause. A preset that opens
+// with a bare `z {repo}` brings back the silent no-op of issue #30 on a cold zoxide DB.
+test('every preset enters the repository through {cd}', () => {
+  for (const [kind, { presets, defaults }] of Object.entries(BUTTON_KINDS)) {
+    for (const btn of [...presets, ...defaults]) {
+      const name = `${kind} "${btn.name || btn.label}"`;
+      assert.ok(btn.command.startsWith('{cd}'), `${name}: command must start with {cd}`);
+      assert.ok(!/\bz \{repo\}/.test(btn.command), `${name}: bare 'z {repo}' is back in the command`);
+    }
+  }
+});
+
+// The app is the single source for {cd} — the extension neither knows nor sends its value, exactly
+// like the terminal choice. Listing it in `variables` would make the extension pass it and the app
+// reject the request ("Unknown variable: {cd}").
+test('app-provided variables are not in any page\'s variable list', () => {
+  for (const [kind, { variables }] of Object.entries(BUTTON_KINDS)) {
+    for (const name of APP_VARIABLES) {
+      assert.ok(!variables.includes(name), `${kind}: {${name}} must not be sent by the extension`);
+    }
+  }
 });
 
 test('each page type has its own storage key', () => {
