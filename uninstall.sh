@@ -31,7 +31,7 @@ fi
 # guarantees it, and without one the pattern would silently match nothing
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
 for sock in "${TMPDIR:-/tmp}"/tcw-*.sock /tmp/tcw-*.sock; do
-    if [ -S "$sock" ] && [ ! -L "$sock" ]; then
+    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.sock$ ]]; then
         rm -f "$sock"
     fi
 done
@@ -45,13 +45,15 @@ done
 KEPT_CONTEXTS=()
 for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
     if [ -d "$dir" ] && [ ! -L "$dir" ] && [[ "${dir##*/}" =~ ^tc-prompt-[0-9a-f]{8}$ ]]; then
-        # Checked twice, with the removal between the two as tightly as a shell allows: the
-        # marker is dropped by a running pane, so it can appear right after the first test. The
-        # window cannot be closed from a script — the second test only narrows it
-        if [ -e "$dir/handed-to-claude" ]; then
-            KEPT_CONTEXTS+=("$dir")
-        elif [ ! -e "$dir/handed-to-claude" ]; then
+        # The marker is dropped by a running pane, so it can appear between the test and the
+        # removal. The window cannot be closed from a script; what we can do is look again
+        # **after** the attempt, so a directory that survived is reported rather than silently
+        # skipped
+        if [ ! -e "$dir/handed-to-claude" ]; then
             rm -rf "$dir"
+        fi
+        if [ -e "$dir" ]; then
+            KEPT_CONTEXTS+=("$dir")
         fi
     fi
 done

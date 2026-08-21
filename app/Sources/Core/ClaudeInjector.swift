@@ -246,7 +246,6 @@ struct InputBoxOwnership {
 
     mutating func recordSend(keys: String, sent: Bool) {
         mayHoldOurs = true
-        if sent, keys == claudeClearInputKey { mayHoldOurs = false }
     }
 
     /// 화면이 **우리 입력이 어디에도 없다**를 보여 줬다 — 입력창이 그것을 들고 있지 않다.
@@ -291,7 +290,12 @@ public func submitClaudeInputs(
             checkoutLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
             break
         }
-        switch typeAndSubmit(input, io: tracked, retryConfirmTimeout: retryConfirmTimeout) {
+        let outcome = typeAndSubmit(
+            input, io: tracked, retryConfirmTimeout: retryConfirmTimeout,
+            // 관찰로만 내려간다 — 쓰기 성공은 증거가 아니다
+            boxObservedEmpty: { ownership.recordInputBoxIsFreeOfOurs() }
+        )
+        switch outcome {
         case .sentAndBoxIsFreeOfOurs:
             sent += 1
             ownership.recordInputBoxIsFreeOfOurs()
@@ -341,7 +345,8 @@ public func submitClaudeInputs(
 /// 메시지가 두 번 제출된다(`!` 입력이면 사용자 명령이 두 번 실행된다). 이 경계 뒤의 실패는
 /// 전부 "전달을 멈추고 보고"로 끝나며, 입력창에 남았을 조각은 호출자의 정리가 지운다.
 private func typeAndSubmit(
-    _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval
+    _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval,
+    boxObservedEmpty: () -> Void = {}
 ) -> SubmitOutcome {
     let maxAttempts = 5
     for attempt in 1...maxAttempts {
@@ -361,27 +366,29 @@ private func typeAndSubmit(
                 checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
             }
         }
-        // **항상 비우고 친다** — 이것이 규칙 (ii)의 절반이다. 입력창에 무엇이 들어 있는지
-        // 우리는 알 수 없고("모름"을 "비었음"으로 놓았다가 잔여와 다음 입력이 한 줄로 붙어
-        // 제출됐다 — 검증자 재현), 남은 것 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은
-        // 입력이 제출된다. 비울 것이 실제로 있는 갈래도 여럿이다: pane 증명이 남긴 표식,
-        // 재시도 전 조각, 앞 입력이 제출되지 않고 남은 본문.
-        // 대가는 사용자가 그 순간 치고 있던 초안이 지워지는 것이다(이슈 #16, 수용)
-        guard send(claudeClearInputKey, io: io) else {
-            checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+        guard proved else {
+            // 증명이 실패해도 표식은 지운다 — 남기면 사용자가 그것을 제출하게 된다
+            _ = send(claudeClearInputKey, io: io)
             io.wait(1.0)
             continue
         }
-        io.wait(1.0)
-        guard proved else { continue }
-        // 타이핑 직전 화면을 찍어 둔다 — "이미 떠 있던 텍스트"와 "우리가 방금 친 것"을
-        // 가르는 유일한 수단이다(`screenReflectsNewInput`)
-        let before = io.screenText()
+        guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
+            checkoutLog("화면 조회 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+            continue
+        }
+        // **실험 한 번으로 두 가지를 얻는다**(`inputBoxHoldsWhatWeType` 참고): ① 우리가 친 것이
+        // 화면에 뜬 그 자리가 **입력창**이라는 귀속 ② 그 Ctrl+U를 TUI가 실제로 **처리했다**는
+        // 확인. 둘 다 없이 CR을 보내면 되돌릴 수 없는 바이트가 남의 것을 제출할 수 있다
+        guard inputBoxHoldsWhatWeType(text, io: io, baseline: baseline, attempt: attempt) else {
+            continue
+        }
+        // 여기서 입력창은 **비어 있음이 관찰된** 상태다 — 쓰기 성공이 아니라 관찰이다
+        boxObservedEmpty()
+        // 아직 아무것도 제출되지 않았으므로 다시 치는 것이 안전한 유일한 구간이다
         guard send(text, io: io) else {
             checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
         }
-
         var reflected: String?
         var failure = "입력이 화면에 반영되지 않음"
         for _ in 0..<5 {
@@ -390,7 +397,7 @@ private func typeAndSubmit(
                 failure = "화면 조회 실패"
                 break
             }
-            if screenReflectsNewInput(before: before, after: screen, input: text) {
+            if probeCount(of: text, in: screen) == baseline + 1 {
                 reflected = screen
                 break
             }
@@ -506,14 +513,68 @@ func inputBoxAfterSubmit(
     return last
 }
 
-private func probeOccurrences(of probe: String, in screen: String) -> Int {
-    var count = 0
-    var rest = Substring(screen.filter { !$0.isWhitespace })
-    while let found = rest.range(of: probe) {
-        count += 1
-        rest = rest[found.upperBound...]
+/// Types `text`, waits for it to show up, then **clears the box and waits for it to go away**.
+///
+/// Why an experiment rather than a reading. Seeing the probe appear says only that the screen
+/// gained our text somewhere, and claude draws hint lines that can contain exactly what we typed
+/// ("try /review"); a screen that gains one of those while our typing was dropped is
+/// indistinguishable from a render, and the CR that followed submitted whatever the box really
+/// held (reviewer reproduction). **Text that disappears when the input box is cleared was in the
+/// input box** — that is the only attribution available from outside, and it is the same evidence
+/// for the other question: a Ctrl+U whose *write* succeeded is not one the TUI processed
+/// (AppleScript and the CLI answer for the terminal, not for claude), and the disappearance is
+/// what makes it observed rather than assumed.
+///
+/// The body is typed again afterwards. Retyping is safe here and **only** here — nothing has been
+/// submitted yet, so it cannot duplicate a message (contrast the rule after a CR has gone out).
+///
+/// The residual, stated plainly: between the verified-empty box and the CR, our second typing
+/// could be dropped **and** the screen gain our text from somewhere else in the same window. The
+/// damage then is a CR into an empty box, which does nothing (measured) — unless the user typed in
+/// that window, which is the issue #16 race the design already lives with.
+private func inputBoxHoldsWhatWeType(
+    _ text: String, io: ClaudeSessionIO, baseline: Int, attempt: Int
+) -> Bool {
+    guard send(text, io: io) else {
+        checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/5)")
+        return false
     }
-    return count
+    guard waitUntilProbeCount(baseline + 1, of: text, io: io) else {
+        checkoutLog("입력이 화면에 반영되지 않음 — 재시도 (\(attempt)/5)")
+        return false
+    }
+    guard send(claudeClearInputKey, io: io) else {
+        checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/5)")
+        return false
+    }
+    guard waitUntilProbeCount(baseline, of: text, io: io) else {
+        // Either what we saw was never in the box (a hint line, someone else's pane) or the
+        // TUI did not act on the clear. Both mean the same thing here: do not send a CR
+        checkoutLog("친 것이 입력창에서 지워지는 것을 확인하지 못함 — 재시도 (\(attempt)/5)")
+        return false
+    }
+    return true
+}
+
+private func waitUntilProbeCount(
+    _ wanted: Int, of text: String, io: ClaudeSessionIO, samples: Int = 5
+) -> Bool {
+    for _ in 0..<samples {
+        io.wait(0.4)
+        guard let screen = io.screenText() else { continue }
+        if probeCount(of: text, in: screen) == wanted { return true }
+    }
+    return false
+}
+
+/// How many times the input's probe appears on the screen, whitespace removed on both sides —
+/// the TUI reflows and pads what it draws (`screenReflectsNewInput` normalises the same way).
+func probeCount(of input: String, in screen: String) -> Int {
+    probeCount(claudeInputProbe(input).filter { !$0.isWhitespace }, in: screen)
+}
+
+private func probeOccurrences(of probe: String, in screen: String) -> Int {
+    probeCount(probe, in: screen)
 }
 
 /// The screen from the **last** occurrence of the probe to the end, whitespace removed. The last

@@ -370,11 +370,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         accessibilitySection.spacing = 9
         accessibilitySection.addArrangedSubview(hairline())
         accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
-        accessibilitySection.addArrangedSubview(helpLabel(
-            "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 버튼 명령은 "
-                + "새 탭에서 그대로 실행되지만, 예약한 claude 입력은 전달되지 않습니다. "
-                + "전달 중에는 그 탭을 보고 있어야 합니다."
-        ))
+        accessibilitySection.addArrangedSubview(helpLabel(warpAccessibilityHelpText()))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
             button("손쉬운 사용 권한 요청", #selector(requestAccessibility)),
@@ -893,8 +889,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 ///
 /// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
 /// line already says that one, and saying it twice reads as two different problems.
+///
+/// It does **not** name the cause as "a function or an alias": the same answer comes from a
+/// relative `PATH` entry and from a file without the executable bit (both measured), and a card
+/// that asserts the wrong cause sends people to fix the wrong thing (round 8).
 func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
     guard available?["claude"] == true, executable?["claude"] == false else { return nil }
-    return "claude가 실행 파일이 아니라 함수·별칭으로 설치돼 있어 claude 입력을 병합하지 못합니다"
+    return "claude를 실행 파일로 찾지 못해 claude 입력을 병합하지 못합니다"
+        + " (함수·별칭으로만 설치됐거나, PATH에 상대 경로 항목이 있거나, 실행 권한이 없는 경우입니다)"
         + " — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다."
+}
+
+/// What the Accessibility card says. It used to promise that the command would still run without
+/// the permission and only the claude input would be missing — the app does the opposite: a button
+/// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
+/// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
+func warpAccessibilityHelpText() -> String {
+    "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 claude 입력이 "
+        + "예약된 버튼은 탭을 열지 않고 거절됩니다(입력이 전부 병합되는 버튼과 claude 입력이 없는 "
+        + "버튼은 그대로 동작합니다). 전달 중에는 그 탭을 보고 있어야 합니다."
 }

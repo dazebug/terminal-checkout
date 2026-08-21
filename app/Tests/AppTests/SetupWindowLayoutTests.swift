@@ -140,3 +140,15 @@ final class ClaudeWrapperAdviceTests: XCTestCase {
         XCTAssertNil(claudeWrapperAdvice(available: nil, executable: nil))
     }
 }
+
+
+/// The Accessibility card told users the command would still run without the permission — the
+/// opposite of what the app does since the precondition gate landed: the request is refused and no
+/// tab opens (round 8, Codex P2). A card that contradicts the behaviour is worse than no card.
+final class WarpAccessibilityHelpTextTests: XCTestCase {
+    func testTheCardSaysTheRequestIsRefusedRatherThanPartlyRun() {
+        let text = warpAccessibilityHelpText()
+        XCTAssertFalse(text.contains("그대로 실행되지만"), text)
+        XCTAssertTrue(text.contains("거절"), text)
+    }
+}

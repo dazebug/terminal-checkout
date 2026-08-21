@@ -40,8 +40,7 @@ public func warpTabConfigFileIsOurs(name: String) -> Bool {
     let stem = String(name.dropLast(".toml".count))
     if stem == warpTabConfigLegacyStem { return true }
     guard stem.hasPrefix(warpTabConfigPrefix) else { return false }
-    let token = stem.dropFirst(warpTabConfigPrefix.count)
-    return !token.isEmpty && token.allSatisfy(\.isHexDigit)
+    return isOurRequestToken(stem.dropFirst(warpTabConfigPrefix.count))
 }
 
 /// 내용까지 확인한다 — 이름이 우연히 겹친 사용자 파일을 지우면 안 된다.
@@ -127,6 +126,17 @@ public func warpInjectionHelperIsReady() -> Bool {
 
 /// 실행마다 새로 뽑는다 — 고정 이름이면 이전 실행이 남긴 죽은 소켓 파일에 붙거나,
 /// 아직 살아 있는 이전 헬퍼(다른 pane)에 입력을 보내게 된다.
+/// Is this the token **we** put in a name? One rule for every name we reclaim, because the
+/// reclaim side used to be wider than the creation side: `%08x` writes exactly eight lower-case
+/// ASCII hex digits, so anything else — upper case, a different length, a Unicode digit — is a
+/// name we never wrote, and deleting one of those is deleting somebody else's file (round 8).
+func isOurRequestToken(_ token: Substring) -> Bool {
+    token.count == requestTokenLength && token.allSatisfy(\.isASCIIHexLower)
+}
+
+/// The width of `%08x`, which is what `warpHelperToken()` formats.
+let requestTokenLength = 8
+
 extension Character {
     /// A character our own `%08x` tokens can contain. `isHexDigit` and `isNumber` are **Unicode**
     /// predicates — Arabic-Indic digits and full-width forms satisfy them — and every place that
@@ -142,8 +152,7 @@ public func warpHelperToken() -> String {
 /// 회수해도 되는 소켓 파일 이름인가 — 우리 접두사 + 16진 토큰.
 public func warpHelperSocketFileIsOurs(name: String) -> Bool {
     guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(".sock") else { return false }
-    let token = name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count)
-    return !token.isEmpty && token.allSatisfy(\.isASCIIHexLower)
+    return isOurRequestToken(name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count))
 }
 
 public let warpHelperSocketPrefix = "tcw-"
