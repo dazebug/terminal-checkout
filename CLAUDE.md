@@ -2,8 +2,6 @@
 
 **Documentation principle**: Record only what cannot be learned from the code or `README.md`, and what tools, the harness, or the model do not otherwise guarantee (conventions, design judgments, empirically measured pitfalls). Structure, listings, and procedures have their own sources of truth, so don't enumerate them — brevity is intentional omission. Apply the same bar when adding content.
 
-**Formatting**: prose is one logical line per paragraph or bullet — never hard-wrap at a fixed column. Renderers soft-wrap, and fixed wrapping churns diffs.
-
 A Chrome extension + macOS app that runs commands in a terminal (iTerm2/WezTerm/Warp) from GitHub PR, issue, and repository pages. Installation, usage, the variable table, and troubleshooting live in `README.md`; build and test commands are in its "Development" section.
 
 ```bash
