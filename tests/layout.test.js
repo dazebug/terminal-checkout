@@ -1,15 +1,15 @@
-// extension/layout.js의 순수 함수 테스트 — 리포 루트에서 의존성 없이 `node --test`로 돌린다.
+// Tests for the pure functions in extension/layout.js — run with `node --test` from the repo root, no dependencies.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-// layout.js는 브라우저용 클래식 스크립트라 export가 없다 (tests/buttons.test.js와 같은 방식).
+// layout.js is a classic browser script, so it has no exports (same approach as tests/buttons.test.js).
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/layout.js'), 'utf8'));
 const { unclipButtonRow, UNCLIP_MAX_DEPTH } = vm.runInThisContext('({ unclipButtonRow, UNCLIP_MAX_DEPTH })');
 
-// 실제 GitHub PR 헤더를 본뜬 가짜 DOM. 자식 → 조상 순으로 넘긴 overflow-x 값으로 사슬을 만든다
+// A fake DOM modeled on the real GitHub PR header. The overflow-x values are passed child → ancestor and chained up
 function chain(...overflows) {
   const nodes = overflows.map(overflowX => ({ style: {}, overflowX }));
   nodes.forEach((node, i) => { node.parentElement = nodes[i + 1] || null; });
@@ -18,31 +18,31 @@ function chain(...overflows) {
 const overflowXOf = node => node.overflowX;
 const minWidths = nodes => nodes.map(n => n.style.minWidth);
 
-// layout.js 헤더 주석의 실측 구조 — 버튼 칸과 헤더 메타 행이 잘라내고, 그 사이 브랜치 줄은 아니다
+// The measured structure from layout.js's header comment — the button cell and the header meta row clip, the branch row between them does not
 const prHeader = () => chain('hidden', 'visible', 'hidden', 'visible');
 
-test('unclipButtonRow: 버튼 칸 자신이 overflow:hidden이어도 멈추지 않는다', () => {
+test('unclipButtonRow: does not stop even though the button cell itself is overflow:hidden', () => {
   const nodes = prHeader();
   unclipButtonRow(nodes[0], overflowXOf);
-  // 여기서 멈추면 정작 줄어들어야 할 브랜치 줄이 그대로라 버튼이 계속 잘린다
+  // Stopping here would leave the branch row — the one that has to shrink — untouched, so the buttons stay clipped
   assert.equal(nodes[1].style.minWidth, '0');
 });
 
-test('unclipButtonRow: 잘라내는 조상까지만 심고 그 위는 건드리지 않는다', () => {
+test('unclipButtonRow: goes up to the clipping ancestor and no further', () => {
   const nodes = prHeader();
   unclipButtonRow(nodes[0], overflowXOf);
   assert.deepEqual(minWidths(nodes), ['0', '0', '0', undefined]);
 });
 
-test('unclipButtonRow: 잘라내는 조상이 없으면 상한에서 멈춘다', () => {
+test('unclipButtonRow: stops at the depth limit when there is no clipping ancestor', () => {
   const nodes = chain(...Array(UNCLIP_MAX_DEPTH * 3).fill('visible'));
   unclipButtonRow(nodes[0], overflowXOf);
   assert.equal(minWidths(nodes).filter(v => v === '0').length, UNCLIP_MAX_DEPTH);
 });
 
-test('unclipButtonRow: 그래도 모자라면 버튼이 다음 줄로 접히게 한다', () => {
+test('unclipButtonRow: lets the buttons fold onto the next line when that is still not enough', () => {
   const nodes = prHeader();
   unclipButtonRow(nodes[0], overflowXOf);
   assert.equal(nodes[0].style.flexWrap, 'wrap');
-  assert.equal(nodes[1].style.flexWrap, undefined); // 브랜치 줄까지 접으면 "from"이 따로 떨어진다
+  assert.equal(nodes[1].style.flexWrap, undefined); // wrapping the branch row too would separate "from" from the branch name
 });

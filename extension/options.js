@@ -1,24 +1,27 @@
-// 버튼 기본값·프리셋·표시 규칙은 defaults.js가 단일 출처 (options.html이 먼저 로드한다)
+// defaults.js is the single source of truth for button defaults, presets, and face rules
+// (options.html loads it first)
 
-// PR·이슈·저장소 버튼은 저장 키도 쓸 수 있는 변수도 다르다(defaults.js의 BUTTON_KINDS).
-// 나머지 편집 동작은 같아서 여기서는 카드가 들어갈 DOM 자리만 얹어 같은 렌더러·이벤트
-// 핸들러를 공유한다.
+// PR, issue, and repository buttons differ in both their storage key and the variables they can
+// use (BUTTON_KINDS in defaults.js). Everything else about editing them is identical, so here we
+// only add the DOM slot each set of cards goes into and share one renderer and one set of event
+// handlers.
 const SECTIONS = [
   { kind: 'pr', container: 'pr-buttons', addButton: 'pr-add', addHint: 'pr-add-hint' },
   { kind: 'issue', container: 'issue-buttons', addButton: 'issue-add', addHint: 'issue-add-hint' },
   { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
 ].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
 
-// 표시에 자주 쓰는 이모지 — 클릭하면 표시 칸에 덧붙는다 (여러 개 조합 가능)
+// Emoji commonly used as a face — clicking one appends it to the face field (they can be combined)
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
-// 저장 스키마와 달리 overrides는 배열로 들고 있는다. repo를 키로 쓰면 이름을 고칠 때마다
-// 키를 지웠다 다시 넣어야 하고, 그때마다 행을 새로 그리느라 입력 포커스가 날아간다.
+// Unlike the storage schema, overrides are kept as an array. Keying them by repo would mean
+// deleting and re-adding the key on every keystroke in the name, and redrawing the row each time
+// would throw away the input focus.
 const state = {
   buttons: Object.fromEntries(SECTIONS.map(s => [s.kind, []])),
   overrides: [],
   dirty: false,
-  // 편집이 일어날 때마다 오른다. 저장이 끝난 뒤 그 사이에 사용자가 더 고쳤는지 판별한다.
+  // Bumped on every edit. Used after a save to tell whether the user changed anything in the meantime.
   revision: 0,
 };
 
@@ -26,28 +29,28 @@ function section(kind) {
   return SECTIONS.find(s => s.kind === kind);
 }
 
-// 프리셋 목록은 섹션마다 고정이므로 한 번만 만들어 카드마다 복제한다
+// The preset list is fixed per section, so build it once and clone it for each card
 const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
   const select = document.createElement('select');
   select.className = 'preset-select';
-  select.add(new Option('프리셋 적용…', ''));
+  select.add(new Option('Apply preset…', ''));
   presets.forEach(p => select.add(new Option(p.name, p.name)));
   return [kind, select];
 }));
 
 function normalizeButton(btn) {
   return {
-    face: btn.face ?? btn.emoji ?? '', // emoji: face 도입 전 저장값 호환
+    face: btn.face ?? btn.emoji ?? '', // emoji: compatibility with values saved before face existed
     label: btn.label || '',
     command: btn.command || '',
     claudeInputs: Array.isArray(btn.claudeInputs) ? btn.claudeInputs.map(String) : [],
   };
 }
 
-// --- UI 렌더링 ---
-// 텍스트를 고칠 때는 state만 갱신하고 다시 그리지 않는다. 다시 그리는 건 카드·행이 늘거나
-// 줄거나 순서가 바뀔 때뿐이고, 그 트리거는 전부 버튼 클릭·드래그·↑↓라 텍스트 편집 중에
-// 포커스를 잃을 일이 없다.
+// --- Rendering ---
+// Editing text only updates the state; it never redraws. Redrawing happens only when cards or rows
+// are added, removed, or reordered, and every one of those is triggered by a button click, a drag,
+// or ↑↓ — so focus is never lost while typing.
 
 function renderButtons(kind) {
   const { container: containerId, addButton, addHint } = section(kind);
@@ -61,38 +64,38 @@ function renderButtons(kind) {
     card.className = 'btn-card';
     card.dataset.index = i;
     card.dataset.kind = kind;
-    // 값은 HTML에 끼워 넣지 않고 아래에서 프로퍼티로 넣는다 (이스케이프가 필요 없어진다)
+    // Values aren't interpolated into the HTML; they are assigned as properties below (which removes the need to escape them)
     card.innerHTML = `
       <div class="btn-card-header">
         <span class="btn-number">
-          ${count > 1 ? '<button class="drag-handle" aria-label="순서 변경" title="드래그하거나 ↑↓ 키로 순서 변경">⠿</button>' : ''}
+          ${count > 1 ? '<button class="drag-handle" aria-label="Reorder" title="Drag, or use the ↑↓ keys, to reorder">⠿</button>' : ''}
           <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
         </span>
         <span class="card-actions">
-          ${count < MAX_BUTTONS ? '<button class="duplicate-btn" title="이 버튼을 복제합니다">복제</button>' : ''}
-          ${count > 1 ? '<button class="remove-btn">삭제</button>' : ''}
+          ${count < MAX_BUTTONS ? '<button class="duplicate-btn" title="Duplicate this button">Duplicate</button>' : ''}
+          ${count > 1 ? '<button class="remove-btn">Delete</button>' : ''}
         </span>
       </div>
       <div class="btn-row">
         <div class="field field-face">
-          <label for="${kind}-${i}-face">표시</label>
+          <label for="${kind}-${i}-face">Face</label>
           <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="24">
         </div>
         <div class="field field-preview">
-          <label>미리보기</label>
+          <label>Preview</label>
           <span class="face-preview"></span>
         </div>
         <div class="field field-label">
-          <label for="${kind}-${i}-label">툴팁</label>
-          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="버튼 툴팁">
+          <label for="${kind}-${i}-label">Tooltip</label>
+          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="Button tooltip">
         </div>
         <div class="field field-preset">
-          <label for="${kind}-${i}-preset">프리셋</label>
+          <label for="${kind}-${i}-preset">Preset</label>
         </div>
       </div>
       <div class="face-palette">
-        <span class="palette-label">표시 추가:</span>
-        ${FACE_EMOJI.map(e => `<button class="palette-btn" title="표시에 ${e} 추가">${e}</button>`).join('')}
+        <span class="palette-label">Add to face:</span>
+        ${FACE_EMOJI.map(e => `<button class="palette-btn" title="Add ${e} to the face">${e}</button>`).join('')}
       </div>
       <div class="field field-command">
         <label for="${kind}-${i}-command">command</label>
@@ -103,12 +106,12 @@ function renderButtons(kind) {
         </div>
       </div>
       <div class="claude-queue">
-        <div class="claude-queue-head"><span class="ret">⏎</span> claude 입력
-          <span class="help-inline">— command가 claude를 띄우면, 준비된 순서대로 그 세션에 타이핑됩니다</span>
+        <div class="claude-queue-head"><span class="ret">⏎</span> claude inputs
+          <span class="help-inline">— when the command starts claude, these are typed into that session in order</span>
         </div>
-        <div class="claude-warn" hidden>⚠ command가 claude를 실행하지 않아 이 입력들은 전달되지 않습니다</div>
+        <div class="claude-warn" hidden>⚠ The command doesn't start claude, so these inputs won't be delivered</div>
         <div class="claude-rows"></div>
-        <button class="add-input-btn">+ 입력 추가</button>
+        <button class="add-input-btn">+ Add Input</button>
       </div>
     `;
 
@@ -127,8 +130,8 @@ function renderButtons(kind) {
       row.dataset.ci = j;
       row.innerHTML = `
         <span class="ci-marker">⏎${j + 1}</span>
-        <input class="ci-input" placeholder="!gh issue view {number} 또는 이 이슈를 요약해줘">
-        <button class="ci-remove" title="삭제">×</button>
+        <input class="ci-input" placeholder="!gh issue view {number}, or: summarize this issue">
+        <button class="ci-remove" title="Remove">×</button>
       `;
       row.querySelector('.ci-input').value = text;
       rows.appendChild(row);
@@ -138,7 +141,7 @@ function renderButtons(kind) {
     updateFacePreview(card, btn.face);
     updateClaudeWarn(card, btn);
     container.appendChild(card);
-    autosize(card.querySelector('.command-input')); // 붙인 뒤라야 scrollHeight가 잡힌다
+    autosize(card.querySelector('.command-input')); // scrollHeight is only meaningful once it is attached
   });
 
   const atMax = count >= MAX_BUTTONS;
@@ -146,8 +149,10 @@ function renderButtons(kind) {
   document.getElementById(addHint).hidden = !atMax;
 }
 
-// content.js의 버튼 렌더 규칙(defaults.js의 판정 공유)과 짝을 이룬다 — 실제로 어떻게 보일지 그대로 재현.
-// 저장소 버튼만 채운 액션 버튼이라 얼굴이 텍스트든 이모지든 모양이 같다.
+// Paired with the button rendering rules in content.js (they share the decision in defaults.js) —
+// this reproduces exactly how the button will look.
+// Repository buttons are the only filled action buttons, so their shape is the same whether the
+// face is text or emoji.
 function updateFacePreview(card, face) {
   const el = card.querySelector('.face-preview');
   const shown = face.trim() || '⏏️';
@@ -172,7 +177,7 @@ function renderOverrides() {
     tr.innerHTML = `
       <td><input type="text" class="override-repo" placeholder="remy-worker"></td>
       <td><input type="text" class="override-branch" placeholder="master"></td>
-      <td><button class="remove-row" title="삭제">✕</button></td>
+      <td><button class="remove-row" title="Remove">✕</button></td>
     `;
     tr.querySelector('.override-repo').value = row.repo;
     tr.querySelector('.override-branch').value = row.branch;
@@ -184,10 +189,10 @@ function renderOverrides() {
   document.getElementById('overrides-empty').hidden = !isEmpty;
 }
 
-// 명령이 잘려 보이면 편집도 검토도 못 하므로 내용에 맞춰 높이를 늘린다
+// A clipped command can be neither edited nor reviewed, so grow the height to fit the content
 function autosize(textarea) {
   textarea.style.height = 'auto';
-  textarea.style.height = `${textarea.scrollHeight}px`; // cmd-block이 보더를 가지므로 보정 불필요
+  textarea.style.height = `${textarea.scrollHeight}px`; // cmd-block owns the border, so no adjustment is needed
 }
 
 function cardOf(el) {
@@ -199,13 +204,14 @@ function overrideInput(index, selector) {
   return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
 }
 
-// 카드 안 요소를 kind·index로 집는다 (오버라이드 행의 overrideInput과 짝). 카드를 다시 그리면
-// 예전 노드가 사라지므로 붙잡아 두지 않고 필요할 때마다 다시 찾는다.
+// Grabs an element inside a card by kind and index (the counterpart of overrideInput for override
+// rows). Redrawing a card drops the old nodes, so nothing is held on to — it is looked up again
+// every time.
 function cardElement(kind, index, selector) {
   return document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"] ${selector}`);
 }
 
-// --- 미저장 변경 표시 ---
+// --- Unsaved-change indicator ---
 
 function markDirty() {
   state.dirty = true;
@@ -218,13 +224,14 @@ function clearDirty() {
   document.getElementById('dirty-indicator').hidden = true;
 }
 
-// --- 프리셋 적용 ---
-// 드롭다운은 현재 상태를 나타내지 않는다. 상태는 카드가 보여주고 드롭다운은
-// 템플릿을 불러오는 액션일 뿐이라, 고른 즉시 placeholder로 되돌린다.
+// --- Applying a preset ---
+// The dropdown does not represent the current state. The card shows the state; the dropdown is
+// merely an action that loads a template, so it snaps back to its placeholder as soon as one is
+// picked.
 
 function applyPreset(select) {
   const name = select.value;
-  select.value = ''; // 적용하든 취소하든 언제나 placeholder로 되돌아간다
+  select.value = ''; // applied or cancelled, it always returns to the placeholder
   if (!name) return;
 
   const { kind, index } = cardOf(select);
@@ -233,7 +240,7 @@ function applyPreset(select) {
 
   const current = state.buttons[kind][index].command.trim();
   const isCustom = current !== '' && !section(kind).presets.some(p => p.command === current);
-  if (isCustom && !confirm(`${index}번 버튼의 내용을 "${preset.name}" 프리셋으로 덮어씁니다. 계속할까요?`)) {
+  if (isCustom && !confirm(`Button ${index} will be overwritten with the "${preset.name}" preset. Continue?`)) {
     return;
   }
 
@@ -242,15 +249,15 @@ function applyPreset(select) {
     claudeInputs: [...(preset.claudeInputs || [])],
   });
   markDirty();
-  renderButtons(kind); // claude 입력 행 개수까지 바뀌므로 카드 전체를 다시 그린다
+  renderButtons(kind); // the number of claude input rows changes too, so redraw the whole card
 }
 
-// --- 유효성 검사 ---
+// --- Validation ---
 
 const REQUIRED_FIELDS = [
-  { field: 'face', label: '표시를' },
-  { field: 'label', label: '툴팁을' },
-  { field: 'command', label: 'command를' },
+  { field: 'face', label: 'a face' },
+  { field: 'label', label: 'a tooltip' },
+  { field: 'command', label: 'a command' },
 ];
 
 function validateButtons() {
@@ -260,7 +267,7 @@ function validateButtons() {
       for (const { field, label } of REQUIRED_FIELDS) {
         if (state.buttons[kind][i][field].trim()) continue;
         return {
-          message: `${name}[${i}]: ${label} 입력하세요.`,
+          message: `${name}[${i}]: enter ${label}.`,
           focus: cardElement(kind, i, `[data-field="${field}"]`),
         };
       }
@@ -269,7 +276,7 @@ function validateButtons() {
   return null;
 }
 
-// 배열로 들고 있던 오버라이드를 저장 스키마(객체)로 되돌린다
+// Turn the overrides we keep as an array back into the storage schema (an object)
 function serializeOverrides() {
   const entries = new Map();
 
@@ -277,12 +284,12 @@ function serializeOverrides() {
     const repo = state.overrides[i].repo.trim();
     const branch = state.overrides[i].branch.trim();
 
-    if (!repo && !branch) continue; // 추가만 하고 채우지 않은 행은 조용히 버린다
+    if (!repo && !branch) continue; // a row that was added but never filled in is dropped silently
 
     if (!repo || !branch) {
       return {
         error: {
-          message: `오버라이드 ${i + 1}: repository와 main branch를 모두 입력하세요.`,
+          message: `Override ${i + 1}: enter both a repository and a main branch.`,
           focus: overrideInput(i, repo ? '.override-branch' : '.override-repo'),
         },
       };
@@ -290,7 +297,7 @@ function serializeOverrides() {
     if (entries.has(repo)) {
       return {
         error: {
-          message: `오버라이드 ${i + 1}: "${repo}" 리포가 중복됩니다.`,
+          message: `Override ${i + 1}: the repository "${repo}" appears more than once.`,
           focus: overrideInput(i, '.override-repo'),
         },
       };
@@ -301,9 +308,9 @@ function serializeOverrides() {
   return { value: Object.fromEntries(entries) };
 }
 
-// --- 로드/저장 ---
+// --- Load / save ---
 
-// 터미널 선택은 Terminal Checkout 앱(설정 창)이 단일 소스로 관리한다
+// The terminal choice is owned solely by the Terminal Checkout app (its settings window)
 async function loadSettings() {
   const keys = SECTIONS.map(s => s.storageKey).concat(['defaultMain', 'repoMainBranch']);
   const data = await chrome.storage.sync.get(keys);
@@ -332,7 +339,7 @@ async function saveSettings() {
       face: b.face.trim(),
       label: b.label.trim(),
       command: b.command,
-      claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // 빈 행은 조용히 버린다
+      claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // empty rows are dropped silently
     })),
   ]));
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
@@ -345,18 +352,19 @@ async function saveSettings() {
       repoMainBranch: overrides.value,
     });
   } catch (error) {
-    showStatus('error', `저장에 실패했습니다: ${error.message}`);
+    showStatus('error', `Could not save: ${error.message}`);
     return;
   }
 
-  // 저장을 기다리는 동안에도 폼은 살아 있다. 그 사이에 사용자가 더 고쳤다면 방금 저장한
-  // 스냅샷으로 화면을 되돌리는 순간 그 입력이 사라지므로, 화면은 그대로 두고 dirty도 남긴다.
+  // The form stays live while the save is in flight. If the user edited more in the meantime,
+  // resetting the view to the snapshot we just saved would wipe that input, so leave the view
+  // alone and keep the dirty flag set.
   if (state.revision !== savedRevision) {
-    showStatus('success', '설정을 저장했습니다. 저장 이후 바꾼 내용은 아직 저장되지 않았습니다.');
+    showStatus('success', 'Settings saved. Changes made since then are not saved yet.');
     return;
   }
 
-  // 저장된 결과와 화면을 맞춘다 (빈 행 정리, 공백 제거 반영)
+  // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed)
   document.getElementById('default-main').value = defaultMain;
   for (const { kind } of SECTIONS) {
     state.buttons[kind] = cleaned[kind].map(normalizeButton);
@@ -366,10 +374,10 @@ async function saveSettings() {
   renderOverrides();
 
   clearDirty();
-  showStatus('success', '설정이 저장되었습니다.');
+  showStatus('success', 'Settings saved.');
 }
 
-// 저장은 저장 버튼 하나로만 일어난다. 여기서는 화면만 되돌리고 저장소는 건드리지 않는다.
+// Saving happens through the Save button alone. This only resets the view; storage is untouched.
 function resetSettings() {
   for (const { kind, defaults } of SECTIONS) {
     state.buttons[kind] = defaults.map(normalizeButton);
@@ -380,39 +388,42 @@ function resetSettings() {
 
   renderOverrides();
   markDirty();
-  showStatus('info', '기본값으로 되돌렸습니다. 저장을 눌러야 반영됩니다.');
+  showStatus('info', 'Reset to defaults. Press Save to apply.');
 }
 
-// --- 내보내기/가져오기 ---
-// 확장 ID가 manifest key로 고정돼 같은 Google 계정의 Chrome끼리는 storage.sync가 자동으로
-// 이어진다 — 이 통로는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용이다.
+// --- Export / import ---
+// The extension ID is pinned by the manifest key, so storage.sync already carries settings between
+// Chrome profiles on the same Google account — this path is for moving them without an account, or
+// for a file backup against a reinstall.
 
 const BACKUP_KEYS = [...SECTIONS.map(s => s.storageKey), 'defaultMain', 'repoMainBranch'];
 const MAX_IMPORT_BYTES = 256 * 1024;
 
-// 파일 텍스트를 저장 스키마 조각으로 검증한다. DOM·chrome API를 쓰지 않아 단독으로 테스트할 수 있다.
-// 쓸 수 없는 파일이면 throw하고, 알아봤지만 버린 키는 skipped로 돌려준다.
+// Validate file text into a fragment of the storage schema. It touches neither the DOM nor the
+// chrome APIs, so it can be tested standalone.
+// Throws for an unusable file, and returns the keys it recognized but discarded as `skipped`.
 function parseImportedSettings(raw) {
   let data;
   try {
     data = JSON.parse(raw);
   } catch {
-    throw new Error('JSON으로 읽을 수 없는 파일입니다.');
+    throw new Error('This file could not be read as JSON.');
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('설정 파일의 최상위가 객체가 아닙니다.');
+    throw new Error('The top level of the settings file is not an object.');
   }
 
-  // 파일에서 온 값은 타입을 믿을 수 없다. 문자열이 아닌 필드는 빈 값으로 떨어뜨려 저장 시
-  // 필수 항목 검사에 걸리게 한다 (그대로 두면 저장할 때 .trim()에서 터진다).
+  // Values from a file can't be trusted to have the right type. Non-string fields are dropped to
+  // an empty value so the required-field check catches them on save (left as they are, saving
+  // would blow up in .trim()).
   const text = v => (typeof v === 'string' ? v : '');
   const settings = {};
   const skipped = [];
 
   for (const key of SECTIONS.map(s => s.storageKey)) {
     if (data[key] === undefined) continue;
-    // 빈 배열은 "버튼 없음"이 아니라 "설정 없음"으로 본다 — 배경 로직이 빈 배열에는 기본값
-    // 폴백을 걸지 않아 버튼이 통째로 사라진다.
+    // An empty array means "no setting", not "no buttons" — the background logic doesn't fall back
+    // to the defaults for an empty array, so the buttons would disappear entirely.
     const buttons = (Array.isArray(data[key]) ? data[key] : [])
       .filter(b => b && typeof b === 'object' && !Array.isArray(b))
       .slice(0, MAX_BUTTONS)
@@ -437,7 +448,7 @@ function parseImportedSettings(raw) {
   if (data.repoMainBranch !== undefined) {
     const map = data.repoMainBranch;
     if (map && typeof map === 'object' && !Array.isArray(map)) {
-      // 빈 객체는 "오버라이드 없음"이라는 유효한 설정이라 그대로 받는다
+      // An empty object is a valid setting meaning "no overrides", so take it as is
       settings.repoMainBranch = Object.fromEntries(
         Object.entries(map).filter(([, branch]) => typeof branch === 'string')
       );
@@ -447,17 +458,17 @@ function parseImportedSettings(raw) {
   }
 
   if (Object.keys(settings).length === 0) {
-    throw new Error(`가져올 설정이 없습니다 (${BACKUP_KEYS.join(' · ')} 중 하나가 필요합니다).`);
+    throw new Error(`Nothing to import (one of ${BACKUP_KEYS.join(', ')} is required).`);
   }
   return { settings, skipped };
 }
 
 async function exportSettings() {
   const data = await chrome.storage.sync.get(BACKUP_KEYS);
-  // 화면의 미저장 편집이 아니라 저장된 값을 그대로 내보낸다
+  // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
-    showStatus('error', '아직 저장된 설정이 없습니다. 저장한 뒤에 내보내세요.');
+    showStatus('error', 'No settings have been saved yet. Save first, then export.');
     return;
   }
 
@@ -468,12 +479,12 @@ async function exportSettings() {
   link.href = url;
   link.download = `terminal-checkout-settings-${stamp}.json`;
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000); // 즉시 해제하면 다운로드가 취소될 수 있다
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
 
-  if (state.dirty) showStatus('info', '저장되지 않은 변경은 내보내기에 포함되지 않았습니다.');
+  if (state.dirty) showStatus('info', 'Unsaved changes were not included in the export.');
 }
 
-// 저장은 저장 버튼 하나로만 일어난다 — 여기서도 화면만 채우고 저장소는 건드리지 않는다.
+// Saving happens through the Save button alone — this too only fills in the view and leaves storage untouched.
 function applyImportedSettings(settings) {
   for (const { kind, storageKey } of SECTIONS) {
     if (settings[storageKey]) state.buttons[kind] = settings[storageKey].map(normalizeButton);
@@ -492,7 +503,7 @@ function applyImportedSettings(settings) {
 
 async function importSettings(file) {
   if (file.size > MAX_IMPORT_BYTES) {
-    showStatus('error', '설정 파일이 너무 큽니다 (최대 256KB).');
+    showStatus('error', 'The settings file is too large (256KB max).');
     return;
   }
 
@@ -500,13 +511,13 @@ async function importSettings(file) {
   try {
     imported = parseImportedSettings(await file.text());
   } catch (error) {
-    showStatus('error', `가져오지 못했습니다: ${error.message}`);
+    showStatus('error', `Could not import: ${error.message}`);
     return;
   }
 
   applyImportedSettings(imported.settings);
-  const dropped = imported.skipped.length ? ` (건너뛴 항목: ${imported.skipped.join(', ')})` : '';
-  showStatus('info', `설정을 가져왔습니다. 저장을 눌러야 반영됩니다.${dropped}`);
+  const dropped = imported.skipped.length ? ` (skipped: ${imported.skipped.join(', ')})` : '';
+  showStatus('info', `Settings imported. Press Save to apply.${dropped}`);
 }
 
 let statusTimer = null;
@@ -524,8 +535,9 @@ function showError({ message, focus }) {
   focus?.focus();
 }
 
-// --- 이벤트 ---
-// 두 섹션이 같은 카드 구조를 쓰므로 핸들러도 공유한다. 어느 섹션인지는 카드의 data-kind가 말해준다.
+// --- Events ---
+// The sections share one card structure, so they share the handlers too. The card's data-kind says
+// which section it belongs to.
 
 function onCardInput(e) {
   const { card, kind, index } = cardOf(e.target);
@@ -564,7 +576,7 @@ function onCardClick(e) {
     state.buttons[kind] = duplicateButton(state.buttons[kind], index);
     markDirty();
     renderButtons(kind);
-    // 툴팁은 번호가 붙어 구분되지만 표시는 원본과 똑같다 — 사본의 표시 칸으로 커서를 옮긴다
+    // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
     cardElement(kind, index + 1, '.face-input').focus();
     return;
   }
@@ -599,11 +611,12 @@ function onCardClick(e) {
   }
 }
 
-// --- 순서 변경 (드래그 · ↑↓) ---
-// 버튼 순서는 GitHub 페이지에 붙는 순서이자 확장 아이콘이 실행할 버튼(첫 번째)을 정한다.
+// --- Reordering (drag, ↑↓) ---
+// The button order is the order they appear in on a GitHub page, and it decides which button (the
+// first) the extension icon runs.
 
-// 드래그 중인 카드. 두 섹션이 같은 핸들러를 공유하므로 어느 섹션에서 시작했는지도 함께 든다
-// (다른 섹션 위에서는 드롭을 받지 않기 위해).
+// The card being dragged. The sections share handlers, so this also carries which section the drag
+// started in (so a drop over another section is not accepted).
 let drag = null;
 
 function clearDropMarks(container) {
@@ -611,7 +624,7 @@ function clearDropMarks(container) {
     .forEach(el => el.classList.remove('drop-before', 'drop-after'));
 }
 
-// 포인터가 걸친 카드의 위/아래 절반으로 "몇 번 카드 앞에 넣을지"를 정한다 (끝을 지나면 개수).
+// Which half of the hovered card the pointer is over decides "before which card" it goes (past the end, that's the count).
 function dropIndex(container, y) {
   const cards = [...container.querySelectorAll('.btn-card')];
   const hit = cards.findIndex(card => {
@@ -637,9 +650,9 @@ function endDrag(container) {
   drag = null;
 }
 
-// 옮긴 뒤의 인덱스를 돌려준다 (키보드로 옮길 때 손잡이 포커스를 따라가기 위해)
+// Returns the index after the move (so keyboard reordering can keep focus on the handle)
 function reorderButtons(kind, from, insertBefore) {
-  if (insertBefore === from || insertBefore === from + 1) return from; // 제자리 드롭
+  if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
   state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
   markDirty();
   renderButtons(kind);
@@ -654,32 +667,34 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     if (e.target.classList.contains('preset-select')) applyPreset(e.target);
   });
 
-  // 드래그는 손잡이에서만 시작하게 한다 — 누르고 있는 동안에만 카드에 draggable을 건다.
-  // 카드에 상시로 걸면 카드 안 아무 데나 눌러 끄는 동작이 드래그가 되어, 입력에서 텍스트를
-  // 끌어 고르는 것과 부딪힌다 (부딪힘 자체는 아직 확인하지 못했다 — Chrome이 입력 쪽을
-  // 우선할 수도 있다. 어느 쪽이든 손잡이 방식은 실수로 카드를 끄는 일을 막는다).
+  // A drag may only start from the handle — the card is made draggable only while the handle is
+  // held down. Leaving draggable on the card permanently would turn a press-and-pull anywhere in
+  // the card into a drag, which collides with selecting text by dragging inside an input (the
+  // collision itself hasn't been confirmed — Chrome may well give the input priority. Either way,
+  // the handle approach prevents dragging a card by accident).
   element.addEventListener('mousedown', (e) => {
     if (!e.target.classList.contains('drag-handle')) return;
     const card = e.target.closest('.btn-card');
     card.draggable = true;
-    // 끌지 않고 그냥 떼면 dragend가 오지 않으므로 여기서 되돌린다
+    // Releasing without dragging never fires dragend, so undo it here
     document.addEventListener('mouseup', () => { card.draggable = false; }, { once: true });
   });
 
   element.addEventListener('dragstart', (e) => {
     const card = e.target.closest?.('.btn-card');
-    if (!card?.draggable) return; // 입력 안 텍스트를 끄는 기본 드래그는 그대로 둔다
-    // 옮길 카드는 여기서 기억한다 — dataTransfer에는 아무것도 싣지 않는다. 우리가 읽지 않는
-    // 데이터인데 text/plain으로 실어 두면 바깥(다른 입력·다른 앱)에 붙어 버리고, Chrome은
-    // 빈 데이터 저장소로도 드래그를 그대로 이어간다(실측 — dragover·dropEffect 정상)
+    if (!card?.draggable) return; // leave the native drag for selecting text inside an input alone
+    // Remember the card to move here — nothing is put into dataTransfer. It is data we never read,
+    // and carrying it as text/plain would let it be pasted outside (another input, another app),
+    // while Chrome carries the drag through fine with an empty data store (measured — dragover and
+    // dropEffect behave normally)
     drag = { kind, from: Number(card.dataset.index) };
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
 
   element.addEventListener('dragover', (e) => {
-    if (drag?.kind !== kind) return; // 다른 섹션에서 온 드래그는 받지 않는다
-    e.preventDefault(); // 기본값이 "드롭 불가"라 막아야 드롭이 열린다
+    if (drag?.kind !== kind) return; // don't accept a drag that came from another section
+    e.preventDefault(); // the default is "can't drop", so preventing it is what opens the drop
     e.dataTransfer.dropEffect = 'move';
     markDropTarget(element, dropIndex(element, e.clientY));
   });
@@ -693,23 +708,24 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
     e.preventDefault();
     const { from } = drag;
     const to = dropIndex(element, e.clientY);
-    // 뒷정리를 여기서 끝낸다 — 곧바로 다시 그리면 원래 카드가 문서에서 빠지므로 그 노드로
-    // 오는 dragend에 기대지 않는다 (dragend가 와도 같은 정리를 한 번 더 할 뿐이다)
+    // Finish the cleanup here — the redraw that follows immediately removes the original card from
+    // the document, so don't rely on the dragend that would reach that node (if dragend does
+    // arrive, it just runs the same cleanup once more)
     endDrag(element);
     reorderButtons(kind, from, to);
   });
 
-  element.addEventListener('dragend', () => endDrag(element)); // 취소·바깥 드롭
+  element.addEventListener('dragend', () => endDrag(element)); // cancelled, or dropped outside
 
   element.addEventListener('keydown', (e) => {
     if (!e.target.classList.contains('drag-handle')) return;
     const step = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
     if (!step) return;
-    e.preventDefault(); // 화살표 기본 동작(스크롤)을 막는다
+    e.preventDefault(); // block the arrow keys' default behavior (scrolling)
     const { index } = cardOf(e.target);
     const to = index + step;
     if (to < 0 || to >= state.buttons[kind].length) return;
-    // reorderButtons는 "몇 번 카드 앞"을 받는다 — 아래로 갈 때는 목적지 카드의 다음 자리다
+    // reorderButtons takes "before which card" — moving down, that is the slot after the destination card
     const moved = reorderButtons(kind, index, step < 0 ? to : to + 1);
     cardElement(kind, moved, '.drag-handle').focus();
   });
@@ -734,7 +750,7 @@ overridesBody.addEventListener('input', (e) => {
   const tr = e.target.closest('tr[data-index]');
   if (!tr) return;
   const row = state.overrides[Number(tr.dataset.index)];
-  // 입력 중에는 trim하지 않는다 (공백 정리는 저장할 때 한 번에)
+  // Don't trim while typing (whitespace is cleaned up all at once on save)
   if (e.target.classList.contains('override-repo')) row.repo = e.target.value;
   else if (e.target.classList.contains('override-branch')) row.branch = e.target.value;
   else return;
@@ -767,17 +783,17 @@ document.getElementById('import-btn').addEventListener('click', () => importInpu
 
 importInput.addEventListener('change', () => {
   const file = importInput.files[0];
-  importInput.value = ''; // 비워두지 않으면 같은 파일을 다시 골랐을 때 change가 오지 않는다
+  importInput.value = ''; // without clearing it, picking the same file again fires no change event
   if (file) importSettings(file);
 });
 
-// manifest가 options_page(전체 탭)라서 이탈 경고 다이얼로그가 실제로 뜬다.
-// options_ui(임베드)로 바꾸면 브라우저가 이 경고를 억제한다.
+// The manifest uses options_page (a full tab), so the leave-site warning dialog actually appears.
+// Switching to options_ui (embedded) makes the browser suppress it.
 window.addEventListener('beforeunload', (e) => {
   if (!state.dirty) return;
   e.preventDefault();
   e.returnValue = '';
 });
 
-// 초기 로드
+// Initial load
 loadSettings();

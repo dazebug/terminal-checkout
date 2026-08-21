@@ -1,56 +1,64 @@
 # Terminal Checkout
 
-GitHub PR·이슈·저장소 페이지에서 클릭 한 번으로 터미널(iTerm2 / WezTerm / Warp)에 명령을 실행하는 Chrome 확장 프로그램 + 맥 앱입니다. 브랜치 checkout, 워크트리 생성, 이슈를 읽은 claude 세션 띄우기 등을 버튼으로 만들어 둘 수 있습니다.
+[![CI](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## 왜 앱인가?
+**One click from GitHub to your Mac terminal.**
 
-macOS는 자동화(Apple Events) 권한을 "responsible process"에 귀속시킵니다. Chrome이 native host를 직접 띄워 터미널을 제어하면 권한 주체가 **Chrome**이 되어, Chrome 전체에 넓은 권한을 허용해야 했습니다.
+Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository pages. Press one and your command runs in a new tab of iTerm2, WezTerm, or Warp — check out the branch, create a worktree, or launch a [Claude Code](https://claude.com/claude-code) session that has already read the issue. It ships as a Chrome extension plus a native macOS app.
 
-Terminal Checkout.app 구조에서는:
+## Features
 
-- Chrome이 띄우는 relay는 아무 것도 실행하지 않고 앱에 전달만 합니다
-- 실제 터미널 제어는 LaunchServices로 실행된 **Terminal Checkout.app**이 수행합니다
-- 따라서 **"Terminal Checkout → iTerm2 제어" 권한 하나만** 허용하면 됩니다 (iTerm2를 쓸 때만. WezTerm·Warp는 TCC 권한이 필요 없습니다). Chrome이나 python3에는 아무 권한도 필요 없습니다.
+- **Buttons where you work** — up to 3 buttons each on PR, issue, and repository pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
+- **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
+- **Claude Code hand-off** — if your command starts `claude`, up to 5 scheduled inputs are typed and submitted for you once claude is actually ready — slash commands and `!` shell-mode lines included.
+- **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
+- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission only for the optional claude-input feature.
+- **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
 
+## How it works
+
+macOS attributes Automation (Apple Events) permission to the "responsible process". If Chrome spawned a native host that drove the terminal directly, the permission would attach to **Chrome**, and you'd have to grant terminal control to the whole browser. Terminal Checkout splits the path so that never happens:
+
+```mermaid
+flowchart LR
+    EXT["Chrome extension<br>(JavaScript)"] -->|stdio| RELAY["relay<br>(forwarding only, ships in the app bundle)"]
+    RELAY -->|unix socket| APP["Terminal Checkout.app<br>(TCC permission attaches here only)"]
+    APP -->|"AppleScript / wezterm cli / Warp Tab Config"| TERM["iTerm2 / WezTerm / Warp"]
 ```
-┌──────────────┐   stdio    ┌──────────────┐  unix socket  ┌──────────────────────┐  AppleScript /   ┌────────────────────┐
-│  Chrome 확장  │──────────▶│ relay (중계만) │──────────────▶│ Terminal Checkout.app │─────────────────▶│ iTerm2/WezTerm/Warp │
-│ (JavaScript) │            │  (앱 번들 내)  │               │  ← TCC 권한은 여기에만  │  wezterm cli /   │                    │
-└──────────────┘            └──────────────┘               └──────────────────────┘  Warp Tab Config └────────────────────┘
-```
 
-Warp만 예외적으로 한 조각이 더 있습니다: Warp에는 pane에 텍스트를 보내는 API가 없어, claude 입력을 예약한 버튼은 새 탭 안에서 작은 주입 헬퍼(`terminal-checkout-warp-helper`, 앱 번들 안에 함께 설치)를 먼저 띄우고 앱이 그 헬퍼에게 입력을 넘깁니다. 헬퍼는 그 탭의 tty에만 입력을 넣고, 전달이 끝나거나 탭이 닫히면 스스로 종료합니다. claude가 그 입력을 받았는지 확인하려면 화면을 읽어야 하므로, Warp에서 claude 입력을 쓰려면 손쉬운 사용 권한이 필요합니다.
+- The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
+- **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
+- Warp has one extra piece: it has no API for sending text to a pane, so a button with scheduled claude input first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the input to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why claude input on Warp needs the Accessibility permission.
 
-relay는 앱이 꺼져 있으면 자동으로 백그라운드 실행하므로, 앱을 항상 켜둘 필요는 없습니다.
-
-## 요구 사항
+## Requirements
 
 - macOS 13+
 - Google Chrome
-- iTerm2 · WezTerm · Warp 중 하나
-- Swift 툴체인 — 빌드용 (`xcode-select --install`로 Command Line Tools만 설치해도 충분)
-- [zoxide](https://github.com/ajeetdsouza/zoxide) 또는 [z.sh](https://github.com/rupa/z) (디렉토리 점프 도구)
-- 선택: [gh](https://cli.github.com) (이슈 프리셋), claude (claude 입력)
+- One of iTerm2, WezTerm, or Warp
+- Swift toolchain, for building (Command Line Tools via `xcode-select --install` is enough)
+- [zoxide](https://github.com/ajeetdsouza/zoxide) or [z.sh](https://github.com/rupa/z) — the default commands jump to your repo with `z`
+- Optional: [gh](https://cli.github.com) for the issue presets, `claude` for claude input
 
-앱은 실행할 때마다 `z`·`gh`·`claude`를 로그인 셸에서 확인해, 없는 것만 설정 창에 알려줍니다.
+On every launch the app checks `z`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window.
 
-## 설치
+## Installation
 
-### 0. zoxide 설치 (이미 설치되어 있다면 건너뛰기)
+### 1. zoxide (skip if you already have it)
 
 ```bash
 brew install zoxide
 ```
 
-`~/.zshrc`에 다음 줄 추가 후 `source ~/.zshrc`:
+Add this line to `~/.zshrc`, then `source ~/.zshrc`:
+
 ```bash
 eval "$(zoxide init zsh)"
 ```
 
-> zoxide는 자주 방문하는 디렉토리를 학습해서 `z 폴더명`으로 빠르게 이동할 수 있게 해주는 도구입니다.
-> 사용하기 전에 해당 디렉토리를 한 번 이상 `cd`로 방문해야 합니다.
+> zoxide learns the directories you visit so you can jump with `z <folder>`. Visit a directory once with `cd` before relying on it.
 
-### 1. 앱 설치
+### 2. Build and install the app
 
 ```bash
 git clone https://github.com/dazebug/terminal-checkout.git
@@ -58,147 +66,147 @@ cd terminal-checkout
 ./install.sh
 ```
 
-`install.sh`는 앱을 빌드해 `~/Applications/Terminal Checkout.app`으로 설치하고 실행합니다. sudo 불필요, 비대화식, 멱등입니다.
+`install.sh` builds the app, installs it to `~/Applications/Terminal Checkout.app`, and launches it. No sudo, non-interactive, idempotent.
 
-### 2. 앱 설정 창에서 마무리
+### 3. Finish in the setup window
 
-앱이 열리면 설정 창에서 순서대로 진행합니다. Native Host 등록과 확장 폴더 준비는 앱 실행 시 자동으로 끝나 있습니다. 설정 창은 상태 기반으로 표시됩니다 — **완료된 항목의 카드는 사라지고 상단 파이프라인 표시등(●)으로만 남습니다.**
+> **Note:** The app's own UI is still in Korean — localization is tracked in [#24](https://github.com/dazebug/terminal-checkout/issues/24). Until it lands, the English labels used in this README appear in the app as: Install in Chrome = 「Chrome에 설치하기」, Request iTerm2 Permission = 「iTerm2 권한 요청」, Run in Terminal = 「터미널에서 실행」, Run Test = 「동작 테스트」, Open Extension Options Page = 「확장 옵션 페이지 열기」, Show Setup Guide Again = 「설치 안내 다시 보기」, Open System Settings = 「시스템 설정 열기」, Register/Update = 「등록/업데이트」.
 
-1. **확장 프로그램** — [Chrome에 설치하기] 클릭 (폴더 경로가 클립보드에 복사되고 chrome://extensions가 열리며, 창에 ①→④ 안내가 나타납니다). 이어서:
-   - 우측 상단 **개발자 모드** 켜기
-   - 좌측 상단 **압축해제된 확장 프로그램을 로드합니다** 클릭
-   - 파일 선택 창에서 **⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]**
-   - **개발자 모드는 켜둔 채로 유지하세요** — Chrome 133+부터 끄면 unpacked 확장이 비활성화됩니다
-   - 이 항목은 GitHub PR 페이지에서 버튼을 처음 눌러 요청이 실제로 도착하면 완료 처리됩니다
-2. **터미널** — 명령을 실행할 터미널(iTerm2 / WezTerm / Warp)을 선택합니다
-3. **iTerm2 제어 권한** (iTerm2 선택 + 권한 미허용 시에만 표시) — [iTerm2 권한 요청] 클릭 → 프롬프트에서 허용 (권한은 이 앱에만 부여됩니다. WezTerm·Warp는 권한이 필요 없습니다)
-   - **Warp claude 입력** (Warp 선택 + 권한 미허용 시에만 표시) — 손쉬운 사용 권한을 허용하세요. claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 쓰며, 없으면 버튼 명령은 실행되지만 예약한 claude 입력은 전달되지 않습니다. 전달 중에는 그 탭을 보고 있어야 합니다
-4. **동작 테스트** — [터미널에서 실행] 클릭, 터미널 새 탭에서 echo가 실행되면 완료
+When the app opens, walk through the setup window in order. Native Host registration and extension-folder preparation finish automatically at launch; the window is state-driven — completed cards disappear, remaining only as the pipeline lights (●) at the top.
 
-설정이 모두 끝나면 창에는 터미널 선택·동작 테스트와 [확장 옵션 페이지 열기]·[설치 안내 다시 보기]만 남습니다.
+1. **Extension** — click [Install in Chrome]. The extension folder path is copied to your clipboard, `chrome://extensions` opens, and the window shows a ①→④ guide:
+   - Turn on **Developer mode** (top right)
+   - Click **Load unpacked** (top left)
+   - In the file picker: **⇧⌘G → ⌘V (paste) → Enter → [Select]**
+   - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
+   - This step is marked complete when the app first receives a request from the extension — press any Terminal Checkout button on GitHub once
+2. **Terminal** — choose iTerm2, WezTerm, or Warp
+3. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
+   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received the input; without it, commands still run but scheduled claude input is not delivered. Keep the tab visible during delivery.
+4. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
-> 다른 컴퓨터에서 이미 쓰고 있었다면: 확장을 로드한 뒤 Chrome이 같은 Google 계정으로 동기화 중이면 버튼·명령 설정이 자동으로 내려옵니다 — 옵션 페이지를 다시 설정할 필요가 없습니다.
+Once setup completes, the window keeps only the terminal selection, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
 
-> 향후 Chrome Web Store(unlisted) 배포로 전환하면 이 과정은 스토어 링크 클릭 한 번으로 줄어들 예정입니다.
+> Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
-앱은 보이지 않게 백그라운드로 동작합니다 — 메뉴 막대 아이콘이 없고, Dock에는 설정 창이 열려 있는 동안만 나타납니다. 설정 창을 다시 열려면 Spotlight(⌘Space)나 Launchpad에서 **Terminal Checkout**을 실행하세요. 앱이 꺼져 있어도 확장 버튼을 누르면 자동으로 실행되므로 항상 켜둘 필요가 없습니다.
+> Once distribution moves to the Chrome Web Store (unlisted), the unpacked-extension steps above will shrink to a store install; the app install and permission steps stay.
 
-## 사용법
+The app is invisible in daily use — no menu-bar icon, and it appears in the Dock only while the setup window is open. Reopen the window any time by launching **Terminal Checkout** from Spotlight (⌘Space) or Launchpad. Pressing an extension button starts the app automatically if it's off.
 
-### PR 페이지
+## Updating
 
-PR 헤더의 브랜치 이름 옆에 나타나는 버튼을 클릭하면 설정된 명령이 터미널 새 탭에서 실행됩니다. 버튼의 표시는 이모지 하나든 여러 개(🌳🤖)든, 짧은 이름(리뷰, WT)이든 자유입니다. 확장 아이콘을 클릭하면 첫 번째 버튼이 실행됩니다.
+```bash
+git pull --ff-only
+./install.sh
+```
 
-기본 명령 (checkout 실패 시 — 예: 브랜치가 워크트리에 체크아웃된 경우 — 관례 경로 `../{repo}-{branch_underbar}`의 워크트리로 이동):
+Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
+
+## Usage
+
+### PR pages
+
+A button appears next to the branch name in the PR header. The default command checks out the PR branch; if checkout fails (e.g. the branch is checked out in a worktree), it moves to the worktree at the conventional path `../{repo}-{branch_underbar}`:
+
 ```bash
 z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
 ```
 
-### 이슈 페이지
+The default command assumes the PR branch exists on `origin` — i.e. a same-repository PR. It doesn't fetch branches that live on a fork; a fork-safe preset (via `gh pr checkout {number}`) is planned.
 
-이슈 헤더의 상태 배지(Open/Closed) 옆에 나타나는 버튼을 클릭하면 이슈 전용 명령이 실행됩니다. PR 버튼과는 별도로 설정되며, 이슈 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.
+### Issue pages
 
-기본 버튼(**이슈 읽기**)은 저장소 디렉토리에서 claude를 띄운 뒤, claude에게 아래를 순서대로 입력해 이슈를 읽힙니다. claude 입력이 `!`로 시작하면 claude가 그 줄을 셸에서 실행하므로, `gh` 출력이 그대로 claude의 컨텍스트에 쌓입니다.
+A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory, then feeds it these lines in order — a claude input starting with `!` is run in the shell by claude, so the `gh` output lands directly in claude's context:
 
 ```bash
-!gh issue view {number}                       # 본문·메타데이터
-!gh issue view {number} --comments            # 코멘트
+!gh issue view {number}                       # body and metadata
+!gh issue view {number} --comments            # comments
 !gh api repos/{owner}/{repo}/issues/{number}/timeline \
-  --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'   # 이 이슈를 언급한 이슈·PR 번호
+  --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'   # issues/PRs that mention this one
 ```
 
-`gh`가 없으면 이 프리셋은 동작하지 않습니다 (`brew install gh` 후 `gh auth login`). 앱 설정 창이 실행할 때마다 확인해서 없으면 알려줍니다.
+This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup window warns you if it's missing.
 
-### 저장소 페이지
+### Repository pages
 
-헤더의 저장소 이름 옆에 나타나는 버튼을 클릭하면 설정된 명령이 터미널 새 탭에서 실행됩니다. 탭은 지금 보고 있는 터미널 창에 생깁니다 (WezTerm·Warp가 아직 실행 중이 아닐 때만 새 창). PR·이슈가 아닌 GitHub 페이지에서는 확장 아이콘 클릭도 이쪽 첫 번째 버튼을 실행합니다.
+A button appears next to the repository name in the header. The default **Open in Terminal** button jumps to the repo directory (`z {repo}`). Since this button takes the shape of GitHub's green action button, a text label like `Open in Terminal` suits it better than an emoji. On GitHub pages that are neither PR nor issue, the extension icon runs this set's first button.
 
-기본 버튼(**Open in Terminal**)은 해당 저장소 디렉토리로 이동합니다:
-```bash
-z {repo}
-```
+### claude input
 
-PR·이슈 버튼처럼 명령·claude 입력을 자유롭게 바꿀 수 있고 최대 3개까지 붙일 수 있습니다. 다만 이 버튼은 GitHub의 초록 액션 버튼 모양이라, 표시에는 이모지보다 `Open in Terminal` 같은 이름이 어울립니다.
+If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `/review` followed by `Summarize the changes in PR {branch}`. The app types them in order only after confirming the new tab's foreground process has become claude — the delivery gates are designed to fail closed, dropping input rather than typing into a shell; if claude doesn't appear within 2 minutes, the inputs are quietly dropped. Each input is submitted only after it's confirmed as actually typed on screen, so delivery holds while claude's trust prompt for a first-time folder is up — accept within 15 seconds and it continues; take longer and delivery is abandoned from that input on.
 
-### claude 입력
+Known limits:
 
-command가 `claude`를 실행한다면, 옵션 페이지에서 버튼마다 claude에게 보낼 입력을 최대 5개까지 예약할 수 있습니다 — 예: `/review` 다음 `PR {branch} 변경사항을 요약해줘`. `!`로 시작하면 claude가 그 줄을 셸에서 실행하므로, 명령 출력을 claude에게 읽히는 데 쓸 수 있습니다. 앱이 새 탭의 포그라운드 프로세스가 claude로 바뀐 것을 확인한 뒤에만 순서대로 타이핑하므로, claude가 뜨기 전 셸에 잘못 입력되는 일은 없습니다. 2분 내에 claude가 뜨지 않으면 조용히 보내지 않습니다.
+- Inputs are single-line only.
+- Not delivered when WezTerm was off and a fresh process was started (fallback), or on Warp when the injection helper failed to launch or the Accessibility permission is missing — the command itself still runs.
+- **On Warp, delivery happens only while you're looking at that tab.** Warp renders only the focused tab, so the app submits input only after confirming its own tab is on screen. Switching away pauses delivery; coming back resumes it.
 
-알아둘 한계: 입력은 한 줄씩만 가능합니다. WezTerm이 꺼져 있어 새 프로세스로 뜬 경우(fallback)와, Warp에서 주입 헬퍼가 뜨지 못했거나 손쉬운 사용 권한이 없는 경우에는 전달되지 않습니다 (명령 자체는 실행됩니다). **Warp는 그 탭을 보고 있는 동안에만 전달됩니다** — Warp가 화면을 "지금 포커스된 탭"만 보여 주기 때문에, 앱은 자기 탭이 화면에 보이는 것을 확인한 뒤에야 입력을 제출합니다. 다른 탭·앱으로 옮기면 멈췄다가 돌아오면 이어서 진행합니다. 각 입력은 화면에 실제로 타이핑된 것을 확인한 뒤에만 제출되므로, 새 폴더에서 claude의 신뢰(trust) 프롬프트가 떠 있는 동안에는 전달이 보류됩니다 — 15초 안에 수락하면 이어서 전달되고, 그보다 오래 걸리면 그 입력부터 전송을 포기합니다.
+## Configuration
 
-## 설정
+Installation, terminal selection, and permissions live in the app's setup window. Buttons, commands, and the main branch live in the extension options page — [Open Extension Options Page] in the setup window, or `chrome://extensions` → Terminal Checkout → Extension options.
 
-- **설치·터미널 선택·권한·확장 폴더**: Terminal Checkout.app 설정 창
-- **PR·이슈·저장소 버튼·명령·main 브랜치**: 확장 프로그램 옵션 페이지 (앱 설정 창의 [확장 옵션 페이지 열기] 또는 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션)
+- Reorder button cards by dragging the `⠿` handle, or focus the handle and press `↑` `↓`. [Duplicate] creates a copy right after the original (its tooltip gets a `(1)`-style suffix). This order is the order buttons appear on GitHub, and the first button is what the extension icon runs.
+- Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
+- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply.
 
-버튼 카드는 왼쪽 `⠿`을 끌거나 손잡이에 포커스를 준 뒤 `↑` `↓` 키로 순서를 바꿀 수 있고, [복제]로 사본을 바로 뒤에 만들 수 있습니다 (사본의 툴팁 뒤에는 `(1)`처럼 번호가 붙어 원본과 구분됩니다). 이 순서가 GitHub 페이지에 버튼이 붙는 순서이자 확장 아이콘이 실행할 버튼(첫 번째)을 정합니다.
+### Variables
 
-옵션 페이지의 설정은 Chrome 계정 동기화 영역(`storage.sync`)에 저장됩니다. 확장 ID가 manifest `key`로 고정되어 있어, **같은 Google 계정**으로 로그인하고 동기화에서 "확장 프로그램" 항목이 켜진 Chrome끼리는 컴퓨터가 달라도 설정이 자동으로 동기화됩니다. 옵션 페이지 **backup** 섹션의 [내보내기 (JSON)]·[가져오기…]는 계정을 쓰지 않는 이동이나 재설치 대비 파일 백업용입니다 — 가져오기는 화면만 채우므로 확인한 뒤 **저장**을 눌러야 반영됩니다.
-
-Command에서 쓸 수 있는 변수:
-
-| 변수 | 값 | PR | 이슈 | 저장소 |
+| Variable | Value | PR | Issue | Repo |
 |:---|:---|:---:|:---:|:---:|
-| `{repo}` | 저장소 이름 | ✓ | ✓ | ✓ |
-| `{owner}` | 저장소 소유자 (`gh api repos/{owner}/{repo}/…`에 사용) | ✓ | ✓ | ✓ |
-| `{main}` | main 브랜치 (리포별 오버라이드 → 페이지 감지 → 글로벌 기본값 순으로 결정) | ✓ | ✓ | ✓ |
-| `{number}` | PR·이슈 번호 (숫자만) | ✓ | ✓ | — |
-| `{branch}` | PR의 head 브랜치 (머지될 쪽) | ✓ | — | — |
-| `{base}` | PR의 base 브랜치 (머지받을 쪽 — PR 페이지에서 읽은 값 그대로) | ✓ | — | — |
-| `{branch_underbar}` | `{branch}`의 `/`를 `_`로 치환한 값 (worktree 디렉토리명 등에 사용) | ✓ | — | — |
+| `{repo}` | repository name | ✓ | ✓ | ✓ |
+| `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ |
+| `{main}` | main branch (per-repo override → page detection → global default) | ✓ | ✓ | ✓ |
+| `{number}` | PR/issue number (digits only) | ✓ | ✓ | — |
+| `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — |
+| `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — |
+| `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — |
 
-변수는 command와 claude 입력 양쪽에서 동일하게 동작합니다. 그 페이지에 없는 변수(이슈·저장소 버튼의 `{branch}` 계열, 저장소 버튼의 `{number}`)를 쓰면 실행이 거절됩니다.
+Variables work identically in commands and claude inputs. Using a variable the page doesn't have (the `{branch}` family on issue/repo buttons, `{number}` on repo buttons) gets the run rejected.
 
-`{main}`의 감지 단계는 페이지마다 읽는 곳이 다릅니다 — PR 페이지는 base 브랜치를, 저장소·이슈 페이지는 GitHub이 페이지에 심어 둔 리포의 **기본 브랜치**를 읽습니다. 그래서 기본 브랜치가 `master`인 리포도 오버라이드 없이 맞습니다 (보고 있는 브랜치가 아니라 리포의 기본값이라 `/tree/다른브랜치`에서도 같습니다). 감지에 실패하면 글로벌 기본값으로 떨어지므로, 그때까지 대비하려면 오버라이드를 등록하세요.
+**`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
 
-`{main}`과 `{base}`는 보통 같은 값이지만, 리포별 오버라이드가 걸려 있거나 PR이 다른 브랜치(예: `release/2`) 위로 열려 있으면 달라집니다. 이 PR이 실제로 머지될 브랜치를 기준으로 삼는 명령(`git merge --ff-only origin/{base}`, `git rebase origin/{base}` 등)에는 `{base}`를 쓰세요. PR 페이지에서 base 브랜치를 읽지 못하면 `{base}`는 전달되지 않아 실행이 거절됩니다 — 다른 브랜치로 조용히 대체하지 않습니다.
+**`{base}`** is the branch the PR actually merges into, read from the PR page as-is — no override, no fallback. `{main}` and `{base}` usually match, but they diverge when a per-repo override is set or the PR targets another branch (e.g. `release/2`). Use `{base}` for commands that must operate on the true merge target (`git merge --ff-only origin/{base}`, `git rebase origin/{base}`, …). If it can't be read from the page, it isn't sent and the run is rejected rather than silently substituted.
 
-## 개발
+## Development
 
 ```bash
-cd app && swift test   # Core 단위 테스트
-node --test            # 확장(JS) 순수 함수 단위 테스트 — 리포 루트에서, 의존성 없음
-app/build.sh           # 앱 번들 빌드 (app/build/Terminal Checkout.app)
-app/e2e.sh             # relay ↔ 소켓 ↔ 서버 왕복 회귀 테스트 (빌드 후)
+cd app && swift test   # Core unit tests
+node --test            # extension (JS) pure-function unit tests — repo root, no dependencies
+app/build.sh           # build the app bundle (app/build/Terminal Checkout.app)
+app/e2e.sh             # relay ↔ socket ↔ server round-trip regression test (after building)
 ```
 
-## 삭제
+Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLAUDE.md). Adding support for a new terminal? Start from [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md).
+
+## Security
+
+- Chrome launches the Native Host relay only for whitelisted extension IDs (`allowed_origins`) — enforced by Chrome, not by the relay itself
+- Variable values pass an alphanumeric + `-_./` whitelist, preventing command injection
+- The app socket and the Warp injection helper deliberately trust processes of the same user (uid): mode 0600 + peer verification on the socket, and the helper is killed the moment delivery ends — see [SECURITY.md](SECURITY.md) for the full trust model
+- The extension runs only on `https://github.com`
+
+## Troubleshooting
+
+**"Native host has exited" / the extension doesn't respond** — Open the setup window (launch Terminal Checkout from Spotlight); problem cards appear automatically. If the Chrome connection card shows, press [Register/Update]. If you moved the repository or reinstalled the app, run `./install.sh` again.
+
+**You denied a permission** — [Open System Settings] in the setup window → **Privacy & Security → Automation → Terminal Checkout → iTerm2**. Warp's screen reading is the **Accessibility** item on the same screen.
+
+**claude input isn't delivered on Warp** — First: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Then check the **Accessibility** permission in the setup window — without screen reading, the app gives up delivery rather than risk a wrong submission. If permission is fine, the injection helper likely failed to launch; the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`. Reinstalling (`./install.sh`) also refreshes the bundled helper.
+
+**Permission prompts again after rebuilding** — Ad-hoc signing means a rebuild changes the signing identity; allow the Automation prompt once more.
+
+**`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`).
+
+**Buttons don't appear** — GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
+
+## Uninstall
 
 ```bash
 ./uninstall.sh
 ```
 
-Chrome 확장 프로그램은 `chrome://extensions`에서 직접 삭제하세요.
+Remove the Chrome extension yourself at `chrome://extensions`.
 
-## 보안
+## License
 
-- Native Host relay는 특정 확장 프로그램 ID에서만 호출 가능 (`allowed_origins` 화이트리스트)
-- 변수 값은 영숫자·`-_./` 화이트리스트 검증을 거쳐 command injection 방지
-- 앱 소켓은 같은 사용자(uid)의 프로세스만 접근 가능 (모드 0600 + peer 검증)
-- GitHub 도메인에서만 동작
-
-## 트러블슈팅
-
-### "Native host has exited" 또는 확장에서 반응이 없음
-
-앱 설정 창(Spotlight에서 Terminal Checkout 실행)을 여세요. 문제가 있으면 해당 카드가 자동으로 나타납니다 — Chrome 연결 카드가 보이면 [등록/업데이트]를 누르세요. 저장소를 옮겼거나 앱을 재설치한 경우 `./install.sh`를 다시 실행하면 됩니다.
-
-### 권한을 거부해버렸을 때
-
-앱 설정 창의 [시스템 설정 열기]로 이동해 **개인정보 보호 및 보안 → 자동화 → Terminal Checkout → iTerm2**를 켜세요. Warp의 화면 읽기(손쉬운 사용)는 같은 화면의 **손쉬운 사용** 항목입니다.
-
-### Warp에서 claude 입력이 전달되지 않음
-
-전달이 끝날 때까지 **그 탭을 보고 있었는지** 먼저 확인하세요 — 다른 탭·앱으로 옮기면 앱이 자기 탭을 확인하지 못해 기다립니다(돌아오면 이어집니다). 그다음 앱 설정 창에서 **손쉬운 사용** 권한이 허용되어 있는지 보세요 — Warp는 이 권한으로 화면을 읽어 claude가 입력을 받았는지 확인하고, 확인할 수 없으면 잘못된 제출을 막기 위해 전달을 포기합니다. 권한이 있는데도 오지 않았다면 주입 헬퍼가 뜨지 못한 경우입니다. `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`에 이유가 남습니다. 앱을 재설치(`./install.sh`)하면 번들 안의 헬퍼도 함께 갱신됩니다.
-
-### 재빌드 후 권한을 다시 물어봄
-
-ad-hoc 서명을 사용하므로 앱을 다시 빌드하면 서명 정체성이 바뀌어 자동화 권한을 다시 요청할 수 있습니다. 한 번 허용하면 됩니다.
-
-### z 명령이 동작하지 않음
-
-터미널 설정에서 로그인 쉘을 사용하도록 되어 있는지, zoxide/z가 쉘 설정 파일(`.zshrc`, `.bashrc`)에 제대로 설정되어 있는지 확인하세요.
-
-### 버튼이 보이지 않음
-
-GitHub UI 업데이트로 버튼 위치가 변경될 수 있습니다. 확장 아이콘 클릭은 항상 동작합니다.
+[MIT](LICENSE)

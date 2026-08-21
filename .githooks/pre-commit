@@ -8,7 +8,7 @@ fi
 
 cd "$repo_root"
 
-# Remove stale AGENTS.md symlinks in CLAUDE.md 없는 디렉터리
+# Remove stale AGENTS.md symlinks in directories that have no CLAUDE.md
 while IFS= read -r -d '' link_file; do
   link_dir="$(dirname "$link_file")"
   source_file="$link_dir/CLAUDE.md"

@@ -1,0 +1,24 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core unit tests
+        run: swift test --package-path app
+      - name: Extension JS tests
+        run: node --test
+      - name: Build app bundle
+        run: bash app/build.sh
+      - name: Relay-socket-server e2e
+        run: bash app/e2e.sh
