@@ -6,6 +6,9 @@ public enum TerminalError: Error, CustomStringConvertible {
     case warpNotFound
     case warpTabConfigFailed(String)
     case timeout(String)
+    /// 탭을 만들기 **전에** 알 수 있는 전달 불가. 문자열이 아니라 타입으로 식별한다 —
+    /// 확장에는 `error` 문자열로 나가지만, 앱 안에서 사유를 가르는 것은 이 값이다
+    case claudeInputNotDeliverable(ClaudeInputBlocker)
 
     public var description: String {
         switch self {
@@ -14,8 +17,70 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
         case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
+        case .claudeInputNotDeliverable(let blocker): return blocker.message
         }
     }
+}
+
+// MARK: - claude 입력 사전 조건 (탭을 열기 전에 아는 전달 불가)
+
+/// 꼬리를 전달할 수 없는 이유. 부수효과 전에 알 수 있는 것만 여기 들어온다.
+public enum ClaudeInputBlocker: Equatable {
+    /// Warp에서 화면을 읽을 수 없다 — claude가 입력을 받았는지 확인할 수단이 없다
+    case warpAccessibility
+    /// pane 안에 띄울 주입 헬퍼를 준비하지 못했다 (번들에 없음, 소켓 경로 104바이트 초과)
+    case warpHelperUnavailable
+
+    /// 사유마다 **다음에 할 일**이 다르다. 같은 문구를 쓰면 권한을 허용해야 할 사용자가
+    /// 재설치를 하게 된다
+    public var message: String {
+        switch self {
+        case .warpAccessibility:
+            return "Warp에 claude 입력을 넣으려면 손쉬운 사용 권한이 필요합니다 —"
+                + " Terminal Checkout 설정 창에서 허용하세요."
+        case .warpHelperUnavailable:
+            return "Warp 주입 헬퍼를 준비하지 못했습니다 — ./install.sh로 다시 설치하세요."
+        }
+    }
+}
+
+/// 이 실행을 **부수효과 전에** 거절해야 하는가. `injectsClaudeInput`은 "claude 입력이
+/// 예약됐는가"가 아니라 **"병합하고 남은 꼬리가 있는가"**다(`PreparedRequest.claudeInputs`) —
+/// 배포 프리셋은 전부 꼬리가 비어 여기 걸리지 않는다.
+///
+/// 상태 조회를 `@autoclosure`로 받는 이유: 이 판정은 Chrome 응답을 막는 execQueue 안에서
+/// 돈다. 답이 상태에 달리지 않은 경우(꼬리 없음, Warp 아님)에는 TCC·파일 조회를 하지 않는다.
+///
+/// `default` 없는 switch라 터미널을 추가하면 여기서 컴파일 에러가 난다 — 새 터미널의 전제
+/// 조건을 빠뜨릴 수 없게 하는 장치다(`docs/new-terminal-checklist.md`).
+public func claudeInputBlocker(
+    terminal: Terminal, injectsClaudeInput: Bool,
+    accessibilityTrusted: @autoclosure () -> Bool,
+    injectionHelperReady: @autoclosure () -> Bool
+) -> ClaudeInputBlocker? {
+    guard injectsClaudeInput else { return nil }
+    switch terminal {
+    // iTerm2·WezTerm은 세션·pane id로 그 화면만 정확히 읽어 별도 권한이 필요 없다.
+    // (iTerm2의 자동화 권한은 명령 실행 자체의 조건이라, 없으면 osascript가 실패해 이미 거절된다)
+    case .iterm, .wezterm: return nil
+    case .warp:
+        guard accessibilityTrusted() else { return .warpAccessibility }
+        guard injectionHelperReady() else { return .warpHelperUnavailable }
+        return nil
+    }
+}
+
+/// 거절 사유를 사용자에게 보일 창을 앞으로 내는 훅. App 타깃이 꽂는다 —
+/// `--headless-server`는 `AppDelegate`가 없어 nil로 남고, 그래서 e2e가 창을 띄우지 않는다.
+public enum ClaudeInputGuidance {
+    public static var present: ((ClaudeInputBlocker) -> Void)?
+}
+
+/// 거절과 안내가 **한 문을 지나게** 한다. 거절하는 자리가 늘어도 "❌만 뜨고 이유는 어디에도
+/// 없는" 갈래가 생기지 않는다 — 확장은 `error` 문자열을 콘솔로만 보내기 때문이다(이슈 #29).
+public func claudeInputRejection(_ blocker: ClaudeInputBlocker) -> TerminalError {
+    ClaudeInputGuidance.present?(blocker)
+    return .claudeInputNotDeliverable(blocker)
 }
 
 /// 서브프로세스 실행 헬퍼 (타임아웃 + stdin 주입 + 파이프 데드락 방지)
@@ -81,6 +146,15 @@ public func runProcess(
 public func runInTerminal(
     command: String, terminal: Terminal, injectsClaudeInput: Bool = false
 ) throws -> TerminalSessionHandle {
+    // 부수효과 **전에** 아는 전달 불가는 요청 전체를 거절한다. 탭만 열어 두고 꼬리를 버리면
+    // 응답이 `{success:true}`라 버튼에 ✅가 뜨고, 맥락 없는 claude 세션이 하나 남는다
+    if let blocker = claudeInputBlocker(
+        terminal: terminal, injectsClaudeInput: injectsClaudeInput,
+        accessibilityTrusted: accessibilityIsTrusted(),
+        injectionHelperReady: warpInjectionHelperIsReady()
+    ) {
+        throw claudeInputRejection(blocker)
+    }
     switch terminal {
     case .iterm: return try runInITerm(command)
     case .wezterm: return try runInWezTerm(command)

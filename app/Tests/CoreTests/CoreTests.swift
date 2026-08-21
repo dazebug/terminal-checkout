@@ -153,6 +153,22 @@ final class RequestTests: XCTestCase {
             "claude_inputs": ["checkout {nope} please"],
         ]))
     }
+
+    /// **재현(Codex P2-6)**: NUL은 명령 치환에서 조용히 사라진다 — `"pre\0post"`가 `prepost`로
+    /// 제출됐다. 주입 경로에서도 tty에 그대로 넣을 수 없는 바이트다. 어느 쪽으로도 원문대로
+    /// 전달할 수 없으므로 조용히 바꾸지 말고 **요청을 거절**한다
+    func testNULInInputsIsRejected() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["pre\u{0}post"],
+        ]))
+    }
+
+    func testNULInTheCommandIsRejected() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],
+        ]))
+    }
 }
 
 // MARK: - 요청 핸들러 (성공/실패 JSON 응답 형태)
@@ -424,6 +440,185 @@ final class TerminalIdentifierTests: XCTestCase {
     }
 }
 
+// MARK: - claude 입력 사전 조건 (탭을 열기 전에 아는 전달 불가는 요청을 거절한다)
+// 탭을 열어 두고 입력만 포기하면 응답은 success라 버튼에 ✅가 뜨고, 맥락 없는 claude 세션이
+// 하나 남는다. **argv 트랙이 이 조건을 좁혔다**: 판정에 쓰는 값은 "claude 입력이 예약됐는가"가
+// 아니라 "병합하고 남은 **꼬리**가 있는가"다(`PreparedRequest.claudeInputs`). 부수효과 **전에**
+// 알 수 있는 것만 들어간다 — 탭이 열린 뒤의 실패는 되돌릴 것이 없어 로그로 남긴다.
+
+final class ClaudeInputPreconditionTests: XCTestCase {
+    override func tearDown() {
+        ClaudeInputGuidance.present = nil // 훅은 전역이라 테스트 간에 새면 안 된다
+        super.tearDown()
+    }
+
+    /// iTerm2·WezTerm은 화면을 세션·pane id로 정확히 읽어 별도 권한이 필요 없다.
+    /// (iTerm2의 자동화 권한은 명령 실행 자체에 필요해서, 없으면 osascript가 실패해 이미 거절된다)
+    func testITermIsNeverBlockedBeforeLaunch() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .iterm, injectsClaudeInput: true,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    func testWezTermIsNeverBlockedBeforeLaunch() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .wezterm, injectsClaudeInput: true,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    /// 회귀: 꼬리가 **없는** Warp 버튼은 권한이 없어도 지금처럼 실행된다. 배포 프리셋이 전부
+    /// 여기에 해당한다 — argv 트랙의 이득을 이 게이트가 도로 없애면 안 된다
+    func testWarpWithoutATailIsNotBlocked() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: false,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    func testWarpWithoutAccessibilityIsBlockedBeforeAnyTabOpens() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: false, injectionHelperReady: true
+            ),
+            .warpAccessibility
+        )
+    }
+
+    func testWarpWithoutInjectionHelperIsBlocked() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: true, injectionHelperReady: false
+            ),
+            .warpHelperUnavailable
+        )
+    }
+
+    func testWarpWithEverythingReadyIsNotBlocked() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: true,
+            accessibilityTrusted: true, injectionHelperReady: true
+        ))
+    }
+
+    /// 둘 다 없으면 권한을 지목한다 — 사용자가 먼저 할 일이 그것이고, 헬퍼 쪽 문구는
+    /// 재설치를 시킨다(권한 문제에 재설치를 안내하면 고쳐지지 않는다)
+    func testAccessibilityIsReportedBeforeHelperWhenBothAreMissing() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: false, injectionHelperReady: false
+            ),
+            .warpAccessibility
+        )
+    }
+
+    /// 이 판정은 Chrome 응답을 막는 execQueue 안에서 돈다 — 걸리지 않는 요청에서 TCC·파일
+    /// 조회를 하면 그만큼 버튼 반응이 늦어진다. 그래서 상태 조회는 Warp+꼬리 있음일 때만 한다
+    func testStateIsNotQueriedWhenTheAnswerCannotDependOnIt() {
+        var queries = 0
+        func probe() -> Bool {
+            queries += 1
+            return true
+        }
+        _ = claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: false,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        _ = claudeInputBlocker(
+            terminal: .iterm, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        _ = claudeInputBlocker(
+            terminal: .wezterm, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        XCTAssertEqual(queries, 0)
+        // 권한이 있으면 헬퍼까지 본다(조회 2회), 없으면 거기서 끝난다(1회)
+        _ = claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        XCTAssertEqual(queries, 2)
+    }
+
+    /// 사유마다 다음 행동이 다르므로 문구도 달라야 한다 — 같은 문구를 쓰면 사용자는 권한을
+    /// 허용해야 할 때 재설치를 하게 된다
+    func testEachBlockerTellsADifferentNextAction() {
+        let permission = ClaudeInputBlocker.warpAccessibility.message
+        let helper = ClaudeInputBlocker.warpHelperUnavailable.message
+        XCTAssertFalse(permission.isEmpty)
+        XCTAssertFalse(helper.isEmpty)
+        XCTAssertNotEqual(permission, helper)
+    }
+
+    /// 거절과 안내는 한 문을 지난다 — 거절 자리가 늘어도 "❌만 뜨고 이유는 어디에도 없는"
+    /// 갈래가 생기지 않게 하는 계약
+    func testRejectionNotifiesTheGuidanceHookWithTheSameBlocker() {
+        var seen: [ClaudeInputBlocker] = []
+        ClaudeInputGuidance.present = { seen.append($0) }
+
+        let error = claudeInputRejection(.warpHelperUnavailable)
+
+        XCTAssertEqual(seen, [.warpHelperUnavailable])
+        guard case .claudeInputNotDeliverable(let blocker) = error else {
+            return XCTFail("전달 불가 거절은 전용 케이스여야 한다 — 문자열로 식별하면 안 된다")
+        }
+        XCTAssertEqual(blocker, .warpHelperUnavailable)
+    }
+
+    /// 헤드리스 서버(`--headless-server`)는 훅을 꽂지 않는다 — 그래도 거절은 나가야 한다
+    func testRejectionWithoutAHookStillThrows() {
+        ClaudeInputGuidance.present = nil
+        XCTAssertEqual(
+            errorMessage(claudeInputRejection(.warpAccessibility)),
+            ClaudeInputBlocker.warpAccessibility.message
+        )
+    }
+
+    /// **배선**: 판정이 `runInTerminal`의 첫 줄에 있어야 탭이 열리기 전에 거절된다. 판정
+    /// 함수만 맞고 배선이 없으면 재현된 결함(접두사만 실행되고 `{success:true}`)이 그대로다.
+    /// 권한이 허용된 머신에서는 이 호출이 실제로 Warp 탭을 열게 되므로 그때는 건너뛴다 —
+    /// 에이전트·CI가 Warp를 띄우지 않는다는 규칙이 우선이다
+    func testRunInTerminalRejectsBeforeOpeningAnyTab() throws {
+        try XCTSkipIf(
+            accessibilityIsTrusted(),
+            "손쉬운 사용이 허용된 환경 — 이 경로는 실제로 Warp 탭을 연다"
+        )
+        XCTAssertThrowsError(
+            try runInTerminal(command: "claude", terminal: .warp, injectsClaudeInput: true)
+        ) { error in
+            guard case TerminalError.claudeInputNotDeliverable(let blocker) = error else {
+                return XCTFail("탭을 열기 전에 전용 거절이 나와야 한다: \(error)")
+            }
+            XCTAssertEqual(blocker, .warpAccessibility)
+        }
+    }
+
+    // 꼬리가 없을 때 거절하지 **않는다**는 회귀는 `testWarpWithoutATailIsNotBlocked`가 순수
+    // 함수로 덮는다. `runInTerminal`로 그것을 확인하려 들면 판정을 통과해 `runInWarp`까지
+    // 내려가 **실제로 Warp 탭이 열린다**(이 라운드에서 한 번 실수로 열었다) — 통과 갈래는
+    // 부수효과가 있으므로 단위 테스트에서 건드리지 않는다.
+
+    /// 전달 불가 거절이 확장까지 닿는 형태 — 확장은 `{success:false}`일 때만 버튼을 ❌로
+    /// 바꾸므로(content.js `runButtonCommand`), 이 응답 형태가 무너지면 실패가 다시 조용해진다
+    func testHandleRequestReportsClaudeInputRejectionAsFailure() {
+        let resp = handleRequest(
+            json: [
+                "command_template": "z {repo} && claude",
+                "variables": ["repo": "remy"],
+                "claude_inputs": ["!gh pr view 1"],
+            ],
+            run: { _ in throw TerminalError.claudeInputNotDeliverable(.warpAccessibility) }
+        )
+        XCTAssertEqual(resp["success"] as? Bool, false)
+        XCTAssertEqual(resp["error"] as? String, ClaudeInputBlocker.warpAccessibility.message)
+    }
+}
+
 // MARK: - claude 입력 경계 판정 (병합 접두사 / 주입 꼬리)
 // 접두사는 claude argv의 첫 메시지로 합쳐지고, 꼬리는 기존 주입 경로로 간다. 경계는 둘뿐이다:
 // ①슬래시 명령(단독 메시지라야 명령으로 해석된다 — 배너가 앞에 붙으면 불활성 텍스트가 된다)
@@ -559,6 +754,54 @@ final class ClaudeCommandTailTests: XCTestCase {
         XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude # 나중에"))
     }
 
+    // 아래 다섯은 전부 **외부 검증자(Codex) 재현 입력**이다. 토큰 휴리스틱은 마지막 조각만 보는데
+    // 그 조각이 `claude`처럼 보여도 앞쪽 문법이 뜻을 통째로 바꾼다 — "오판의 최악은 조용한 누락"이
+    // 거짓임이 이것들로 증명됐다(주석=누락, heredoc=파손, 함수 정의=**의도하지 않은 실행**).
+
+    /// 재현: 명령 중간의 주석이 뒤를 전부 삼킨다. 마지막 토큰은 `claude`지만 실행되지 않는다
+    func testCommentEarlierInTheCommandDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo ready # && claude"))
+    }
+
+    /// 재현: 마지막 `claude`가 heredoc **종료 표식**이다. 인자를 붙이면 표식이 달라져
+    /// 셸이 입력을 기다리며 멈추거나 실패한다
+    func testHeredocDelimiterThatLooksLikeClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat <<claude\nstuff\nclaude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat <<'EOF'\nx\nEOF\nclaude"))
+    }
+
+    /// 재현(가장 나쁜 것): 앞에서 정의된 셸 함수가 `claude`라는 이름을 가로채, 우리가 붙인
+    /// **평문 입력이 셸 명령으로 실행된다.** 조용한 누락이 아니라 임의 실행이다
+    func testFunctionDefinitionCapturingTheNameDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude() { /bin/sh -c \"$1\"; }\nclaude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude() ( /bin/sh -c \"$1\" )\nclaude"))
+    }
+
+    /// 백그라운드 `&` 뒤에 인자를 붙이면 그 인자가 **다음 명령**이 된다
+    func testBackgroundOperatorDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("sleep 1 & claude"))
+    }
+
+    /// 명령 치환·백틱·줄이음·개행은 판정이 보는 구조를 바꾼다 — 하나라도 보이면 접는다
+    func testSubstitutionsAndLineContinuationsDoNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo $(date) && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo `date` && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo a \\\n&& claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo a\nclaude"))
+    }
+
+    /// 회귀: 배포 프리셋의 그룹·서브셸은 **함수 정의가 아니다** — 이것까지 접으면
+    /// `Start Work on Issue`(claude 입력이 있는 프리셋)가 argv 트랙을 잃는다
+    func testGroupsAndSubshellsInShippedPresetsStillMatch() {
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && { git checkout b || cd ../r-b; } && claude"
+        ))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && ([ -d ../r-issue-1 ] || git worktree add -f ../r-issue-1"
+                + " -b issue-1 origin/main) && cd ../r-issue-1 && claude"
+        ))
+    }
+
     /// 이미 positional 프롬프트가 있으면 두 개가 되어 뜻이 갈린다
     func testExistingPositionalPromptDoesNotMatch() {
         XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude 'do it'"))
@@ -610,9 +853,44 @@ final class ClaudePromptScriptTests: XCTestCase {
     func testScriptFallsBackToAFilePointerWhenOverBudget() {
         let body = claudePromptScriptBody(prefix: ["!gh pr diff 1"], contextPath: ctx)
         XCTAssertTrue(body.contains(ctx), body)
-        XCTAssertTrue(body.contains("getconf ARG_MAX"), body)
-        XCTAssertTrue(body.contains("env | wc -c"), body)
-        XCTAssertTrue(body.contains("cat \"$TC_CTX\""), body)
+        XCTAssertTrue(body.contains("\(ShellUtility.getconf) ARG_MAX"), body)
+        XCTAssertTrue(body.contains("\(ShellUtility.env) | \(ShellUtility.wc) -c"), body)
+        XCTAssertTrue(body.contains("\(ShellUtility.cat) \"$TC_CTX\""), body)
+    }
+
+    /// **우리 스크립트는 PATH를 쓰지 않는다.** 재현(Codex): 명령이 `PATH="$PWD/bin:$PATH" && claude`
+    /// 이고 저장소에 `bin/getconf`가 있으면, 평문 입력 하나만으로 그 프로그램이 돈다.
+    /// `!` 본문은 사용자 것이라 대상이 아니지만, **우리가 쓴 줄**은 전부 절대 경로여야 한다
+    func testOurOwnUtilityCallsAreAbsolutePaths() {
+        let body = claudePromptScriptBody(prefix: ["!gh pr view 1", "plain"], contextPath: ctx)
+        for utility in ["getconf", "env", "wc", "cat", "rm", "printf", "tr"] {
+            for line in body.split(separator: "\n") where line.contains(utility) {
+                // `!` 본문을 넘기는 `sh -c '<사용자 것>'` 줄은 사용자 텍스트라 검사 대상이 아니다
+                if line.hasPrefix("\(claudePromptShell) -c ") { continue }
+                XCTAssertFalse(
+                    line.contains(" \(utility) ") || line.hasPrefix("\(utility) "),
+                    "PATH에 기대는 호출이 남았다: \(line)"
+                )
+            }
+        }
+        XCTAssertTrue(body.contains("/usr/bin/getconf ARG_MAX"), body)
+        XCTAssertTrue(body.contains("/usr/bin/env"), body)
+        XCTAssertTrue(body.contains("/bin/cat"), body)
+    }
+
+    /// 심볼릭 링크를 따라 사용자 파일을 덮어쓰지 않는다 — `set -C`의 생성 시도는 `O_EXCL`이라
+    /// 링크가 놓여 있으면 열리지 않는다(재현: 실행 직전에 링크로 바꾸자 피해 파일이 교체됨)
+    func testContextRedirectRefusesToClobber() {
+        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx)
+        XCTAssertTrue(body.contains("set -C"), body)
+    }
+
+    /// 예산에서 환경 **포인터 배열**까지 빼야 한다 — 문자열 바이트만 빼면 항목이 많은 환경에서
+    /// execve가 E2BIG로 실패한다(재현: env 9,000개·81,000바이트에서 902,040바이트를 허용)
+    func testBudgetSubtractsThePerEntryPointerCost() {
+        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx)
+        XCTAssertTrue(body.contains("/usr/bin/wc -l"), "환경 항목 수를 세지 않는다: \(body)")
+        XCTAssertTrue(body.contains("\(claudeArgvEnvEntryOverhead)"), body)
     }
 
     /// 꼬리가 있을 때만 마커를 싣는다 — 프리셋(꼬리 공집합)의 컨텍스트를 오염시키지 않는다
@@ -634,23 +912,34 @@ final class ClaudePromptScriptTests: XCTestCase {
             > (blockEndAt?.lowerBound ?? body.endIndex), body)
     }
 
-    /// 회수는 남의 파일을 지우면 안 된다 — 이름 판정이 마지막 방어선이다
+    /// 회수는 남의 것을 지우면 안 된다 — 이름 판정이 마지막 방어선이다. 토큰은 **정확히 8자**
+    /// 16진수다(길이를 안 보면 `tc-prompt-a`도 우리 것이 된다)
     func testOnlyOurGeneratedNamesAreReclaimable() {
-        XCTAssertTrue(claudePromptFileIsOurs(name: "tc-prompt-a1b2c3d4.sh"))
-        XCTAssertTrue(claudePromptFileIsOurs(name: "tc-context-a1b2c3d4.txt"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-.sh"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-not-hex.sh"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-a1b2c3d4.txt"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-context-a1b2c3d4.sh"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "important.sh"))
-        XCTAssertFalse(claudePromptFileIsOurs(name: "tcw-a1b2c3d4.sock"))
+        XCTAssertTrue(claudePromptDirectoryIsOurs(name: "tc-prompt-a1b2c3d4"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "tc-prompt-"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "tc-prompt-a"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "tc-prompt-a1b2c3d4e"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "tc-prompt-not-hexx"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "important"))
+        XCTAssertFalse(claudePromptDirectoryIsOurs(name: "tcw-a1b2c3d4.sock"))
+    }
+
+    /// 프롬프트 앞에 `--`가 있어야 한다 — 실측: 값을 먹는 플래그도, **가변인자 플래그도**
+    /// 뒤 인자를 프롬프트 대신 삼킨다(`claude -p --allowed-tools Bash 'P'` → exit 1).
+    /// 지금 판정은 bare `claude`만 통과시키지만, 이 한 토큰이 그 부류 전체의 기본 방어이고
+    /// 프롬프트가 `-`로 시작하게 되는 날의 방어이기도 하다
+    func testAppendedPromptIsSeparatedByDoubleDash() {
+        let command = appendedPromptCommand("z remy && claude", scriptPath: "/tmp/s.sh")
+        XCTAssertTrue(command.hasPrefix("z remy && claude -- \"$("), command)
     }
 
     func testAppendedSuffixQuotesTheScriptPathAndSelfCleans() {
         let command = appendedPromptCommand("z remy && claude", scriptPath: "/tmp/tc-prompt-ab'cd.sh")
         XCTAssertTrue(command.hasPrefix("z remy && claude "), command)
         XCTAssertTrue(command.contains(#"'/tmp/tc-prompt-ab'\''cd.sh'"#), command)
-        XCTAssertTrue(command.contains("command rm -f --"), command)
+        // `command rm`은 함수·별칭만 지나칠 뿐 PATH는 그대로 탄다 — 절대 경로라야 한다
+        XCTAssertTrue(command.contains("\(ShellUtility.rm) -f --"), command)
+        XCTAssertFalse(command.contains("command rm"), command)
     }
 }
 
@@ -707,7 +996,8 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
         // 순서 보존 — 병합은 입력 순서를 바꾸지 않는다
         XCTAssertTrue(try XCTUnwrap(out.range(of: "one")).lowerBound
             < XCTUnwrap(out.range(of: "two")).lowerBound)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: ctx), "예산 이내면 컨텍스트를 남기지 않는다")
+        // 컨텍스트는 스크립트가 지우지 않는다 — 회수 스윕의 몫이다(`testContextSurvivesEveryBranch`)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ctx))
     }
 
     /// `!` 본문이 실패해도 그 출력이 프롬프트에 남고 뒤 입력이 삼켜지지 않는다
@@ -774,6 +1064,85 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
         XCTAssertTrue(kept.contains("needle"), kept)
     }
 
+    /// **재현(Codex P1-1)**: PATH 앞에 가짜 `getconf`를 놓아도 우리 스크립트는 그것을 부르지
+    /// 않는다. 이 테스트가 도는 동안 sentinel이 생기면 평문 입력만으로 임의 프로그램이 도는 것이다
+    func testHostilePathIsNotConsultedByOurOwnUtilityCalls() throws {
+        let sentinel = directory + "/hijacked"
+        let binDirectory = directory + "/bin"
+        try FileManager.default.createDirectory(atPath: binDirectory, withIntermediateDirectories: true)
+        for utility in ["getconf", "env", "wc", "cat", "rm", "printf", "tr", "sh"] {
+            let path = binDirectory + "/" + utility
+            try "#!/bin/sh\nprintf '%s\\n' \(utility) >> \(sentinel)\nexit 0\n"
+                .write(toFile: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        }
+        let body = claudePromptScriptBody(
+            prefix: ["plain context"], contextPath: directory + "/ctx.txt"
+        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", body]
+        process.environment = ["PATH": binDirectory]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: sentinel),
+            "PATH의 프로그램이 실행됐다: "
+                + ((try? String(contentsOfFile: sentinel, encoding: .utf8)) ?? "")
+        )
+        XCTAssertTrue(out.contains("plain context"), out)
+    }
+
+    /// **재현(Codex P2-5)**: 컨텍스트 경로에 남의 파일로 향하는 링크가 놓여 있으면, 맨
+    /// `> "$TC_CTX"`는 그 파일을 덮어쓴다. `set -C`의 생성은 `O_EXCL`이라 링크를 따르지 않는다
+    func testSymlinkAtTheContextPathDoesNotClobberTheVictim() throws {
+        let victim = directory + "/victim.txt"
+        let ctx = directory + "/ctx.txt"
+        try "귀중한 내용".write(toFile: victim, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: ctx, withDestinationPath: victim)
+
+        let body = claudePromptScriptBody(prefix: ["!echo hijack"], contextPath: ctx)
+        let (status, out) = try runScript(body)
+        XCTAssertNotEqual(status, 0, "링크를 따라 쓰고 성공했다: \(out)")
+        XCTAssertEqual(try String(contentsOfFile: victim, encoding: .utf8), "귀중한 내용")
+    }
+
+    /// **재현(Codex P2-6)**: NUL이 든 `!` 출력은 명령 치환에서 조용히 사라진다(`pre\0post` →
+    /// `prepost`). 절단·왜곡 없이 넘기려면 파일 포인터 갈래로 보내야 한다
+    func testNULInShellOutputTakesTheFilePointerBranch() throws {
+        let ctx = directory + "/ctx.txt"
+        let body = claudePromptScriptBody(
+            prefix: ["!/usr/bin/printf 'pre\\000post'"], contextPath: ctx
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.contains(claudeContextPointerInstruction), out)
+        XCTAssertFalse(out.contains("prepost"), "NUL이 지워진 채 argv로 갔다: \(out)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ctx))
+    }
+
+    /// **불변식(Codex P2-7)**: 어느 갈래에서도 조립한 내용이 조용히 사라지지 않는다.
+    /// 예산 판정을 통과해도 execve가 E2BIG로 실패할 수 있는데, 그때 이미 지워 버렸다면
+    /// 사용자는 아무것도 되찾을 수 없다 — 그래서 스크립트는 컨텍스트를 지우지 않는다
+    func testContextSurvivesEveryBranch() throws {
+        for slack in [claudeArgvBudgetSlack, 1_000_000_000] {
+            let ctx = directory + "/ctx-\(slack).txt"
+            let body = claudePromptScriptBody(
+                prefix: ["!echo needle"], contextPath: ctx, argvSlack: slack
+            )
+            let (status, _) = try runScript(body, name: "s-\(slack).sh")
+            XCTAssertEqual(status, 0)
+            let kept = try String(contentsOfFile: ctx, encoding: .utf8)
+            XCTAssertTrue(kept.contains("needle"), "slack=\(slack)에서 내용이 사라졌다")
+        }
+    }
+
     /// 컨텍스트를 쓰지 못하면(디렉토리가 없다) **빈 프롬프트를 내놓지 않는다** — 빈 문자열이
     /// argv로 가면 claude에 빈 첫 메시지가 제출된다. 실패로 끝내 부착 쪽의 `||` 안내가 뜨게 한다
     func testUnwritableContextFailsInsteadOfProducingAnEmptyPrompt() throws {
@@ -790,10 +1159,14 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
         let prepared = prepareRequest(ResolvedRequest(
             command: "claude", claudeInputs: ["!echo merged"]
         ))
-        let script = try XCTUnwrap(prepared.temporaryPaths.first)
-        // PATH 앞에 스텁을 놓아 진짜 claude를 부르지 않는다 — argv[1]만 파일로 받아 본다
+        // 스크립트는 치환이 지우지만 컨텍스트는 회수 스윕의 몫이라 그대로 남는다 —
+        // 테스트가 $TMPDIR에 쌓지 않도록 디렉토리째 치운다
+        defer { prepared.discardTemporaryFiles() }
+        let script = try XCTUnwrap(prepared.scriptPath)
+        // PATH 앞에 스텁을 놓아 진짜 claude를 부르지 않는다 — 프롬프트만 파일로 받아 본다
         let stub = directory + "/claude"
-        try "#!/bin/sh\nprintf '%s' \"$1\" > \(directory)/argv1\n"
+        // 프롬프트는 `--` 뒤의 **마지막** 인자다 — `$1`은 `--`이므로 끝까지 훑어 받는다
+        try "#!/bin/sh\nfor a in \"$@\"; do :; done\nprintf '%s' \"$a\" > \(directory)/argv1\n"
             .write(toFile: stub, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub)
 
@@ -814,8 +1187,10 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
 
     /// 스크립트가 이미 사라진 뒤 명령이 실행돼도 **빈 프롬프트는 나가지 않는다**
     func testMissingScriptYieldsTheLostContextInstruction() throws {
+        // `printf '[%s]'`는 인자마다 형식을 다시 쓴다 — 출력이 `[--][안내문]`이면 `--`가
+        // 자리에 있고 치환이 안내문을 내놓았다는 뜻이 한 번에 확인된다
         let command = appendedPromptCommand(
-            "printf '%s'", scriptPath: directory + "/never-written.sh"
+            "/usr/bin/printf '[%s]'", scriptPath: directory + "/never-written.sh"
         )
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -828,7 +1203,7 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
             data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
         ) ?? ""
         process.waitUntilExit()
-        XCTAssertEqual(out, claudePromptLostInstruction)
+        XCTAssertEqual(out, "[--][\(claudePromptLostInstruction)]")
     }
 }
 
@@ -884,7 +1259,7 @@ final class PreparedRequestTests: XCTestCase {
         defer { prepared.discardTemporaryFiles() }
         XCTAssertEqual(prepared.command, "z remy && claude")
         XCTAssertEqual(prepared.claudeInputs, [])
-        XCTAssertEqual(prepared.temporaryPaths, [])
+        XCTAssertNil(prepared.temporaryDirectory)
     }
 
     /// 명령 꼬리에 붙일 수 없으면 전부 주입 — 오늘의 동작
@@ -894,7 +1269,7 @@ final class PreparedRequestTests: XCTestCase {
         defer { prepared.discardTemporaryFiles() }
         XCTAssertEqual(prepared.command, "z remy")
         XCTAssertEqual(prepared.claudeInputs, inputs)
-        XCTAssertEqual(prepared.temporaryPaths, [])
+        XCTAssertNil(prepared.temporaryDirectory)
     }
 
     func testMatchedCommandCarriesThePrefixInArgvAndLeavesOnlyTheTail() throws {
@@ -903,10 +1278,9 @@ final class PreparedRequestTests: XCTestCase {
             claudeInputs: ["!gh issue view 1", "설계 정리해줘", "!gh pr diff 1"]
         ))
         defer { prepared.discardTemporaryFiles() }
-        XCTAssertTrue(prepared.command.hasPrefix("z remy && claude \"$("), prepared.command)
+        XCTAssertTrue(prepared.command.hasPrefix("z remy && claude -- \"$("), prepared.command)
         XCTAssertEqual(prepared.claudeInputs, ["!gh pr diff 1"])
-        XCTAssertEqual(prepared.temporaryPaths.count, 1)
-        let script = try XCTUnwrap(prepared.temporaryPaths.first)
+        let script = try XCTUnwrap(prepared.scriptPath)
         let written = try String(contentsOfFile: script, encoding: .utf8)
         XCTAssertTrue(written.contains("'==== !gh issue view 1 ===='"), written)
         XCTAssertTrue(written.contains("printf '%s\\n' '설계 정리해줘'"), written)
@@ -920,7 +1294,7 @@ final class PreparedRequestTests: XCTestCase {
         defer { prepared.discardTemporaryFiles() }
         XCTAssertEqual(prepared.command, "z r && claude")
         XCTAssertEqual(prepared.claudeInputs, inputs)
-        XCTAssertEqual(prepared.temporaryPaths, [])
+        XCTAssertNil(prepared.temporaryDirectory)
     }
 
     /// 마커는 **꼬리가 있을 때만** 만든다. 꼬리가 없으면 주입이 없으니 볼 사람도 없고,
@@ -940,7 +1314,7 @@ final class PreparedRequestTests: XCTestCase {
         XCTAssertEqual(withTail.claudeInputs, ["!gh pr diff 1"])
         let marker = try XCTUnwrap(withTail.argvRenderMarker)
         let script = try String(
-            contentsOfFile: try XCTUnwrap(withTail.temporaryPaths.first), encoding: .utf8
+            contentsOfFile: try XCTUnwrap(withTail.scriptPath), encoding: .utf8
         )
         XCTAssertTrue(script.contains(shellSingleQuoted(marker)), script)
     }
@@ -956,12 +1330,110 @@ final class PreparedRequestTests: XCTestCase {
         XCTAssertNotEqual(try XCTUnwrap(first.argvRenderMarker), try XCTUnwrap(second.argvRenderMarker))
     }
 
+    /// 요청마다 **새 디렉토리**를 원자적으로(`mkdir`, 있으면 실패) 만들고 그 안에 둔다 —
+    /// 임시 디렉토리에 미리 놓인 링크·파일을 우리 경로로 쓰지 않기 위해서다
+    func testRequestGetsItsOwnFreshDirectory() throws {
+        let prepared = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: ["!echo hi"]))
+        defer { prepared.discardTemporaryFiles() }
+        let script = try XCTUnwrap(prepared.scriptPath)
+        let directory = (script as NSString).deletingLastPathComponent
+        XCTAssertEqual((script as NSString).lastPathComponent, claudePromptScriptName)
+        XCTAssertTrue(claudePromptDirectoryIsOurs(name: (directory as NSString).lastPathComponent))
+        var info = stat()
+        XCTAssertEqual(lstat(directory, &info), 0)
+        XCTAssertEqual(info.st_mode & S_IFMT, S_IFDIR)
+        XCTAssertEqual(info.st_mode & 0o777, 0o700, "다른 프로세스가 들어올 수 있는 모드다")
+    }
+
+    func testDiscardRemovesTheWholeDirectory() throws {
+        let prepared = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: ["!echo hi"]))
+        let script = try XCTUnwrap(prepared.scriptPath)
+        let directory = (script as NSString).deletingLastPathComponent
+        prepared.discardTemporaryFiles()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory))
+    }
+
     func testDiscardRemovesTheScript() throws {
         let prepared = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: ["!echo hi"]))
-        let script = try XCTUnwrap(prepared.temporaryPaths.first)
+        let script = try XCTUnwrap(prepared.scriptPath)
         XCTAssertTrue(FileManager.default.fileExists(atPath: script))
         prepared.discardTemporaryFiles()
         XCTAssertFalse(FileManager.default.fileExists(atPath: script))
+    }
+}
+
+// MARK: - 회수 스윕 (남은 것을 언제 지워도 되는가)
+// **살아 있는 컨텍스트를 지우면 안 된다.** 한도 초과 갈래에서 claude는 그 파일을 세션 중에
+// 읽으므로, 다른 요청의 스윕이 6시간 뒤 그것을 지우면 세션이 조용히 망가진다. 그래서 스크립트가
+// 그 갈래에서 인계 표식을 남기고, 스윕은 그 표식이 있는 디렉토리를 훨씬 길게 봐준다.
+
+final class ClaudePromptReclaimTests: XCTestCase {
+    private var root = ""
+
+    override func setUpWithError() throws {
+        root = NSTemporaryDirectory() + "tc-reclaim-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(atPath: root)
+    }
+
+    @discardableResult
+    private func makeDirectory(
+        _ name: String, ageHours: Double, files: [String] = [claudePromptContextName]
+    ) throws -> String {
+        let path = root + "/" + name
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        for file in files { try "x".write(toFile: path + "/" + file, atomically: true, encoding: .utf8) }
+        let old = Date().addingTimeInterval(-ageHours * 3600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: path)
+        return path
+    }
+
+    func testStaleLeftoverDirectoryIsReclaimed() throws {
+        let path = try makeDirectory("tc-prompt-a1b2c3d4", ageHours: 7)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testFreshDirectoryIsLeftAlone() throws {
+        let path = try makeDirectory("tc-prompt-a1b2c3d5", ageHours: 1)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// 한도 초과로 claude에 넘긴 컨텍스트는 6시간 뒤에도 살아 있어야 한다 — 세션이 그때
+    /// 읽는다. 지우면 claude는 "읽으라던 파일이 없다"를 만난다
+    func testContextHandedToClaudeSurvivesTheShortAge()
+        throws {
+        let path = try makeDirectory(
+            "tc-prompt-a1b2c3d6", ageHours: 30,
+            files: [claudePromptContextName, claudePromptHandoffName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testContextHandedToClaudeIsReclaimedEventually() throws {
+        let path = try makeDirectory(
+            "tc-prompt-a1b2c3d7", ageHours: 24 * 8,
+            files: [claudePromptContextName, claudePromptHandoffName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// 남의 것은 나이와 무관하게 건드리지 않는다. 심볼릭 링크도 따라가지 않는다 —
+    /// 따라가면 링크가 가리키는 디렉토리를 통째로 지운다
+    func testForeignEntriesAndSymlinksAreNeverTouched() throws {
+        let foreign = try makeDirectory("important-a1b2c3d4", ageHours: 100)
+        let victim = try makeDirectory("victim", ageHours: 100)
+        let link = root + "/tc-prompt-deadbeef"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: victim)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: foreign))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: victim))
     }
 }
 
@@ -1056,11 +1528,15 @@ final class ClaudeArgvRenderGateTests: XCTestCase {
     private let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
     private let tail = ["/review"]
 
+    private func gate(_ before: String?) -> ArgvPromptGate {
+        ArgvPromptGate(marker: marker, screenBefore: before)
+    }
+
     /// 게이트의 존재 이유 — 렌더 전에는 **한 바이트도** 나가면 안 된다
     func testNothingIsTypedBeforeTheArgvMessageRenders() throws {
         let session = FakeClaudeSession()
         session.screenGains = [3: marker]
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker), 1)
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면")), 1)
         XCTAssertEqual(session.submitted, tail)
         XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
     }
@@ -1070,7 +1546,41 @@ final class ClaudeArgvRenderGateTests: XCTestCase {
     func testTailIsNotTypedWhenTheArgvMessageNeverRenders() {
         let session = FakeClaudeSession()
         XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker, argvRenderTimeout: 2),
+            submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면"), argvRenderTimeout: 2),
+            0
+        )
+        XCTAssertEqual(session.keystrokes, [])
+    }
+
+    /// **재현(Codex P1-3)**: `set -x`인 zsh는 치환이 끝난 argv를 **실행 전에** 화면에 뱉는다.
+    /// 존재 여부만 보면 claude가 그리기도 전에 통과해, 꼬리가 argv 제출 clear에 지워진다 —
+    /// 게이트가 막으려던 유실이 그대로 재발한다. 그래서 존재가 아니라 **증가**로 판정한다
+    func testXtraceEchoOfTheArgvIsNotMistakenForARender() {
+        let session = FakeClaudeSession()
+        let xtrace = "+zsh:1> claude $'\(marker)\\nplain context'"
+        session.screenPrefix = xtrace
+        XCTAssertEqual(
+            submitClaudeInputs(tail, io: session.io, argvGate: gate(xtrace), argvRenderTimeout: 2),
+            0
+        )
+        XCTAssertEqual(session.keystrokes, [])
+    }
+
+    /// 그 xtrace 화면에서도 claude가 실제로 그리면(개수가 하나 는다) 통과한다
+    func testRenderIsRecognisedEvenWhenXtraceAlreadyEchoedTheMarker() {
+        let session = FakeClaudeSession()
+        let xtrace = "+zsh:1> claude $'\(marker)\\nplain context'"
+        session.screenPrefix = xtrace
+        session.screenGains = [2: marker]
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate(xtrace)), 1)
+    }
+
+    /// 스냅샷을 못 찍었으면 실패다 — 못 찍은 것을 "없었다"로 다루면 판정이 존재 여부로 되돌아간다
+    func testMissingSnapshotIsTreatedAsFailure() {
+        let session = FakeClaudeSession()
+        session.screenGains = [1: marker]
+        XCTAssertEqual(
+            submitClaudeInputs(tail, io: session.io, argvGate: gate(nil), argvRenderTimeout: 2),
             0
         )
         XCTAssertEqual(session.keystrokes, [])
@@ -1079,17 +1589,18 @@ final class ClaudeArgvRenderGateTests: XCTestCase {
     /// TUI가 마커를 줄바꿈해 그려도 렌더로 인정해야 한다 — 통짜 비교는 폭에 따라 영영 실패한다
     func testWrappedMarkerStillCountsAsRendered() {
         let session = FakeClaudeSession()
-        session.screenGains = [1: "==== terminal-checkout\n  tc-a1b2c3d4 ===="]
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker), 1)
+        session.screenGains = [1: "==== tc-\na1b2c3d4 ===="]
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면")), 1)
     }
 
-    /// 명령줄 에코에 남는 스크립트 경로(`tc-prompt-a1b2c3d4.sh`)를 렌더로 오인하면 안 된다 —
+    /// 명령줄 에코에 남는 스크립트 경로(`tc-prompt-a1b2c3d4/prompt.sh`)를 렌더로 오인하면 안 된다 —
     /// 그 에코는 claude가 뜨기도 전에 화면에 있다
     func testScriptPathEchoIsNotMistakenForTheRenderedMessage() {
         let session = FakeClaudeSession()
-        session.screenPrefix = "z remy && claude \"$(/bin/sh '/tmp/tc-prompt-a1b2c3d4.sh')\""
+        let echo = "z remy && claude \"$(/bin/sh '/tmp/tc-prompt-a1b2c3d4/prompt.sh')\""
+        session.screenPrefix = echo
         XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker, argvRenderTimeout: 2),
+            submitClaudeInputs(tail, io: session.io, argvGate: gate(echo), argvRenderTimeout: 2),
             0
         )
         XCTAssertEqual(session.keystrokes, [])
@@ -1101,7 +1612,7 @@ final class ClaudeArgvRenderGateTests: XCTestCase {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
         session.screenGains = [2: marker]
-        _ = submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker)
+        _ = submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면"))
         XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
     }
 

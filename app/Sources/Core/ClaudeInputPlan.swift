@@ -71,73 +71,126 @@ public func claudeInputPlan(_ inputs: [String]) -> ClaudeInputPlan {
 
 let claudeExecutableName = "claude"
 
-/// 최상위(따옴표 밖) 명령 구분자 뒤의 마지막 조각. 파이프 뒤이거나 따옴표가 닫히지 않았으면 nil.
+/// 명령 끝에 프롬프트 인자 하나를 덧붙여도 되는가 — **화이트리스트 문법 스캐너**.
 ///
-/// `||`는 or이지 파이프가 아니므로 구분자 덩어리를 통째로 보고 가른다 — 한 글자씩 보면
-/// `a || claude`가 파이프로 오판된다.
-private func lastSimpleCommandSegment(in command: String) -> String? {
+/// 예전 판정은 "마지막 조각의 토큰이 `claude`인가"만 봤고, 근거는 "오판의 최악은 조용한
+/// 누락"이었다. **그 근거는 거짓임이 재현으로 증명됐다**(외부 검증자):
+///  - `echo ready # && claude` → 마지막 토큰은 `claude`지만 전부 주석이다(조용한 누락)
+///  - `cat <<claude` … `claude` → 그 `claude`는 heredoc **종료 표식**이다. 인자를 붙이면
+///    표식이 달라져 셸이 입력을 기다리며 멈춘다(파손)
+///  - `claude() { /bin/sh -c "$1"; }` ⏎ `claude` → 앞에서 정의된 **함수**가 이름을 가로채,
+///    우리가 붙인 평문 입력이 셸 명령으로 **실행된다**(임의 실행)
+///
+/// 그래서 마지막 조각만 보지 않고 명령 전체를 훑어, **허용 목록에 없는 문법이 인용 밖에
+/// 하나라도 보이면 접는다**(→ 전부 주입 폴백 = 오늘의 동작). 허용하는 것은
+/// `&&`·`||`·`;`·`|`로 이어진 simple command 열과 그룹(`{ }`)·서브셸(`( )`)뿐이고,
+/// 그 위에서 **마지막 simple command가 정확히 `claude` 한 토큰**이라야 참이다.
+///
+/// 플래그도 접는 이유는 따로 있다(실측): `claude -p --resume "Reply with exactly: OK"` →
+/// `Provided value … is not a UUID` — 값을 선택적으로 먹는 플래그가 우리 인자를 삼킨다.
+/// 어떤 플래그가 값을 먹는지는 claude의 플래그 표를 알아야 하고 그 표는 버전마다 바뀐다.
+///
+/// **막지 못하는 것**(스캐너가 볼 수 없는 자리): 사용자 rc가 정의한 `claude` 함수·별칭.
+/// 명령 텍스트에 그 정의가 없으므로 판정할 방법이 없다 — `docs/new-terminal-checklist.md`의
+/// 소탕 표에 잔여로 적었다.
+public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
     let chars = Array(command)
-    let separators: Set<Character> = ["&", "|", ";", "\n", "(", "{"]
+    // 그룹·서브셸의 여닫이는 명령 열을 가르는 자리이기도 하다 — 마지막 조각을 찾는 데 쓴다
+    let separators: Set<Character> = ["&", "|", ";", "(", ")", "{", "}"]
     var index = 0
     var segmentStart = 0
-    var inSingle = false, inDouble = false
     var lastSeparatorWasPipe = false
+    var previous: Character?          // 직전 문자(공백 포함) — 주석 판정용
+    var previousMeaningful: Character? // 직전 비공백 문자 — 함수 정의 판정용
+
+    /// 단어의 첫 글자 자리인가. `#`는 여기서만 주석이다(`echo a#b`의 `#`는 리터럴)
+    func atWordStart() -> Bool {
+        guard let previous else { return true }
+        return previous.isWhitespace || separators.contains(previous)
+    }
 
     while index < chars.count {
         let character = chars[index]
-        if inSingle {
-            if character == "'" { inSingle = false }
-            index += 1
+        if character == "'" {
+            // 작은따옴표 안에는 이스케이프가 없다 — 다음 `'`까지 통째로 데이터다
+            var scan = index + 1
+            while scan < chars.count, chars[scan] != "'" { scan += 1 }
+            guard scan < chars.count else { return false } // 닫히지 않은 인용 = 판정 불가
+            index = scan + 1
+            previous = "'"
+            previousMeaningful = "'"
             continue
         }
-        if inDouble {
-            if character == "\\" {
-                index += 2
-                continue
+        if character == "\"" {
+            var scan = index + 1
+            while scan < chars.count {
+                let inner = chars[scan]
+                if inner == "\\" {
+                    scan += 2
+                    continue
+                }
+                // 큰따옴표 안에서도 치환은 살아 있다
+                if inner == "`" { return false }
+                if inner == "$", scan + 1 < chars.count, chars[scan + 1] == "(" { return false }
+                if inner == "\"" { break }
+                scan += 1
             }
-            if character == "\"" { inDouble = false }
-            index += 1
+            guard scan < chars.count else { return false }
+            index = scan + 1
+            previous = "\""
+            previousMeaningful = "\""
             continue
         }
         switch character {
-        case "'":
-            inSingle = true
-            index += 1
-        case "\"":
-            inDouble = true
-            index += 1
-        case "\\":
-            index += 2
-        case let separator where separators.contains(separator):
-            var run = ""
-            while index < chars.count, separators.contains(chars[index]) {
-                run.append(chars[index])
-                index += 1
-            }
-            segmentStart = index
-            lastSeparatorWasPipe = run.contains("|") && run != "||"
+        case "\\", "\n", "`":
+            return false // 줄이음·개행(명령이 하나 더 있다)·백틱 치환
+        case "#" where atWordStart():
+            return false // 주석 — 뒤에 붙이는 것이 전부 삼켜진다
+        case "$" where index + 1 < chars.count && chars[index + 1] == "(":
+            return false // 명령 치환
+        case "<" where index + 1 < chars.count && chars[index + 1] == "<":
+            return false // heredoc — 마지막 토큰이 종료 표식일 수 있다
+        case "(" where !(previousMeaningful.map(separators.contains) ?? true):
+            return false // 단어 바로 뒤의 `(` = 함수 정의. 명령 위치의 `(`는 서브셸이라 허용
         default:
+            break
+        }
+        guard separators.contains(character) else {
+            index += 1
+            previous = character
+            if !character.isWhitespace { previousMeaningful = character }
+            continue
+        }
+        var run = ""
+        while index < chars.count, separators.contains(chars[index]) {
+            run.append(chars[index])
             index += 1
         }
+        // `&`는 정확히 둘일 때만 and다. 하나면 백그라운드이고, 그 뒤에 붙인 인자는
+        // **다음 명령**이 되어 실행된다
+        var scan = run.startIndex
+        while scan < run.endIndex {
+            guard run[scan] == "&" else {
+                scan = run.index(after: scan)
+                continue
+            }
+            var count = 0
+            while scan < run.endIndex, run[scan] == "&" {
+                count += 1
+                scan = run.index(after: scan)
+            }
+            if count != 2 { return false }
+        }
+        // `||`는 or이지 파이프가 아니다 — 덩어리 끝을 보고 가른다
+        lastSeparatorWasPipe = run.hasSuffix("|") && !run.hasSuffix("||")
+        segmentStart = index
+        previous = run.last
+        previousMeaningful = run.last
     }
-    if inSingle || inDouble { return nil } // 따옴표가 닫히지 않았다 — 판정 불가
-    if lastSeparatorWasPipe { return nil } // 파이프로 받은 claude는 TUI가 성립하지 않는다
-    return String(chars[segmentStart...])
-}
-
-/// 명령의 **마지막 simple command**가 인자 없는 `claude` 호출인가. 참이면 끝에 positional
-/// 프롬프트 하나를 덧붙여도 claude가 그것을 첫 메시지로 받는다.
-///
-/// 덧붙이는 것은 인자 하나뿐이라 제어 흐름을 만들 수 없다 — 그래서 오판의 최악은 "프롬프트가
-/// 조용히 누락"이고, 그때는 전부 주입 폴백(오늘의 동작)으로 간다. 판정이 애매한 모양은 모두
-/// 거짓으로 보낸다: 주석 뒤에 붙이면 추가분까지 주석이 되고, 파이프·리다이렉트는 덧붙인 인자의
-/// 의미를 바꾸며, **플래그가 하나라도 있으면 그 플래그가 우리 인자를 값으로 먹을 수 있다**
-/// (실측: `claude -p --resume "Reply with exactly: OK"` → `Provided value "Reply with exactly:
-/// OK" is not a UUID` — 프롬프트가 `--resume`의 값으로 삼켜졌다). 어떤 플래그가 값을 먹는지는
-/// claude의 플래그 표를 알아야 하는데 그 표는 버전마다 바뀌므로, 플래그가 보이면 판정을 접는다.
-public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
-    guard let segment = lastSimpleCommandSegment(in: command) else { return false }
-    return segment.split(whereSeparator: \.isWhitespace) == [claudeExecutableName[...]]
+    if lastSeparatorWasPipe { return false } // 파이프로 받은 claude는 TUI가 성립하지 않는다
+    let segment = String(chars[segmentStart...])
+    let tokens = segment.split(whereSeparator: \.isWhitespace).map(String.init)
+    return tokens == [claudeExecutableName]
 }
 
 // MARK: - 프롬프트 조립 스크립트
@@ -152,8 +205,39 @@ let claudePromptShell = "/bin/sh"
 /// 64KiB는 넉넉하다.
 public let claudeArgvBudgetSlack = 65536
 
-let claudePromptScriptPrefix = "tc-prompt-"
-let claudePromptContextPrefix = "tc-context-"
+/// 스크립트가 부르는 유틸리티의 **절대 경로**. PATH를 타면 사용자가 통제하는 디렉토리의
+/// 동명 프로그램이 돈다 — 재현: 명령이 `PATH="$PWD/bin:$PATH" && claude`이고 저장소에
+/// `bin/getconf`가 있으면, claude 입력이 평문 하나여도 그 프로그램이 실행됐다.
+/// 절대 경로는 PATH뿐 아니라 **셸 함수·별칭**도 지나친다(이름에 `/`가 들어갈 수 없다).
+enum ShellUtility {
+    static let getconf = "/usr/bin/getconf"
+    static let env = "/usr/bin/env"
+    static let wc = "/usr/bin/wc"
+    static let tr = "/usr/bin/tr"
+    static let cat = "/bin/cat"
+    static let printf = "/usr/bin/printf"
+    static let rm = "/bin/rm"
+}
+
+/// 요청 하나가 쓰는 것은 **디렉토리 하나**다. 임시 디렉토리에 파일 두 개를 흩어 놓으면 이름이
+/// 예측 가능해 남이 미리 링크를 놓을 수 있고(재현됨), 회수도 파일 단위라 "이 컨텍스트가 아직
+/// 필요한가"를 알 수 없다. 디렉토리는 `mkdir`로 원자적으로 잡는다 — 이미 있으면 실패한다.
+let claudePromptDirectoryPrefix = "tc-prompt-"
+let claudePromptTokenLength = 8
+let claudePromptScriptName = "prompt.sh"
+let claudePromptContextName = "context.txt"
+/// 한도 초과 갈래가 남기는 표식. 이 파일이 있으면 컨텍스트를 claude가 세션 중에 읽는다는 뜻이라
+/// 회수 스윕이 훨씬 길게 봐준다
+let claudePromptHandoffName = "handed-to-claude"
+
+/// 환경 항목 하나가 argv 예산에서 차지하는 바이트(포인터 + 정렬 여유). `env | wc -c`는 문자열만
+/// 세므로 이것을 더 빼지 않으면 항목이 많은 환경에서 execve가 E2BIG로 실패한다(재현됨).
+public let claudeArgvEnvEntryOverhead = 32
+
+func claudePromptHandoffPath(forContext contextPath: String) -> String {
+    ((contextPath as NSString).deletingLastPathComponent as NSString)
+        .appendingPathComponent(claudePromptHandoffName)
+}
 
 /// 한도를 넘었을 때 argv에 싣는 지시. 절단하지 않는다 — 전체 컨텍스트를 파일로 남기고 claude가
 /// 읽게 한다. 기본 권한 모드에서는 Read 승인 프롬프트가 한 번 뜰 수 있다(희귀 엣지, 수용).
@@ -182,11 +266,12 @@ func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
 /// 얹지 않고 독립된 첫 줄로 둔다** — 첫 입력이 `!`가 아니면 배너 자체가 없어 마커가 조용히
 /// 사라지고, 그러면 게이트가 영영 통과하지 못해 꼬리가 통째로 버려진다.
 ///
-/// 토큰이 요청 고유이므로 Warp에서는 이 문자열의 존재 확인이 그 순간의 pane 증명을 겸한다.
-/// 명령줄 에코에 남는 스크립트 경로(`tc-prompt-<token>.sh`)와 겹치지 않도록 게이트는 줄 전체를 본다.
-public func claudeArgvRenderMarker(token: String) -> String {
-    "==== terminal-checkout tc-\(token) ===="
-}
+/// 토큰이 요청 고유이므로 Warp에서는 이 문자열 확인이 그 순간의 pane 증명을 겸한다. 명령줄
+/// 에코에 남는 스크립트 경로(`tc-prompt-<token>/prompt.sh`)와 겹치지 않도록 줄 전체를 본다.
+///
+/// **짧아야 한다**: 게이트는 `screenReflectsNewInput`를 그대로 쓰고, 그 함수는 앞
+/// `claudeInputProbe`(24자)만 비교한다 — 토큰이 24자 밖으로 밀려나면 요청 고유성이 사라진다.
+public func claudeArgvRenderMarker(token: String) -> String { "==== tc-\(token) ====" }
 
 /// pane 안에서 첫 메시지를 조립하는 스크립트 텍스트.
 ///
@@ -205,45 +290,66 @@ public func claudePromptScriptBody(
     prefix: [String], contextPath: String, marker: String? = nil,
     argvSlack: Int = claudeArgvBudgetSlack
 ) -> String {
+    let printf = ShellUtility.printf
     var lines = [
         "#!/bin/sh",
         "# \(appDisplayName)이 자동 생성합니다 — claude 첫 메시지를 조립합니다.",
+        "# 우리가 부르는 유틸리티는 전부 절대 경로다. PATH를 타면 사용자 저장소의 `bin/getconf`",
+        "# 같은 것이 돈다(재현됨) — 평문 입력 하나로 임의 프로그램이 실행되는 경로였다. 대신",
+        "# PATH 자체는 건드리지 않는다: `!` 본문(사용자 명령)이 gh 등을 찾아야 한다.",
         "TC_CTX=\(shellSingleQuoted(contextPath))",
+        // 생성이 `O_EXCL`이 되어 **심볼릭 링크를 따라가지 않는다** — 링크가 놓여 있으면 열리지
+        // 않고 실패한다(재현: 맨 `>`는 링크가 가리키는 사용자 파일을 덮어썼다)
+        "set -C",
         "{",
     ]
     for input in prefix {
         if input.hasPrefix("!") {
             let body = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
-            lines.append("printf '%s\\n' \(shellSingleQuoted(claudePromptBanner(for: input)))")
+            lines.append("\(printf) '%s\\n' \(shellSingleQuoted(claudePromptBanner(for: input)))")
             // 앞 명령이 실패해도 뒤 명령은 돈다 — `&&`로 이으면 첫 실패가 나머지를 삼킨다.
             // `2>&1`은 실패 출력도 `!`와 같이 프롬프트에 남기기 위한 것이다
             lines.append("\(claudePromptShell) -c \(shellSingleQuoted(body)) 2>&1")
         } else {
-            lines.append("printf '%s\\n' \(shellSingleQuoted(input))")
+            lines.append("\(printf) '%s\\n' \(shellSingleQuoted(input))")
         }
-        lines.append("printf '\\n'") // 블록 경계 — 붙여 쓰면 입력들이 한 덩어리로 읽힌다
+        lines.append("\(printf) '\\n'") // 블록 경계 — 붙여 쓰면 입력들이 한 덩어리로 읽힌다
     }
     lines += [
-        "} > \"$TC_CTX\"",
-        // 리다이렉트가 실패해도 셸은 다음 줄로 넘어간다(실측) — 그대로 두면 `cat`이 아무것도
-        // 못 내놓고 **빈 문자열이 claude의 첫 메시지로 제출된다.** 실패로 끝내 부착 쪽의
-        // `|| printf <claudePromptLostInstruction>`가 대신 말하게 한다. 접두사가 비어 있지
-        // 않으면 블록은 최소 한 바이트를 쓰므로, 0바이트는 언제나 사고다
-        "[ -s \"$TC_CTX\" ] || exit 1",
+        "} > \"$TC_CTX\" || exit 1",
+        "set +C",
+        // 두 겹으로 막는다: `set -C`가 못 막는 셸이 있어도 링크면 여기서 멈춘다. `-s`를 먼저
+        // 보면 링크가 가리키는 **남의 파일**이 비어 있지 않다는 이유로 통과해 그 내용이
+        // 프롬프트로 나간다. 그리고 리다이렉트가 실패해도 셸은 다음 줄로 넘어가므로(실측),
+        // 0바이트를 그냥 두면 **빈 문자열이 claude의 첫 메시지로 제출된다** — 실패로 끝내
+        // 부착 쪽의 `|| printf <claudePromptLostInstruction>`가 대신 말하게 한다
+        "if [ -L \"$TC_CTX\" ] || [ ! -f \"$TC_CTX\" ] || [ ! -s \"$TC_CTX\" ]; then exit 1; fi",
     ]
     if let marker {
         // 메시지의 **첫 줄**이다 — TUI가 긴 메시지를 접어도 앞부분이 가장 오래 보인다
-        lines.append("printf '%s\\n' \(shellSingleQuoted(marker))")
+        lines.append("\(printf) '%s\\n' \(shellSingleQuoted(marker))")
     }
     lines += [
         // 산술 치환을 거쳐 정수로 만든다 — `wc`는 앞에 공백을 붙이고 `test -le`는 그것을 싫어한다
-        "TC_SIZE=$(( $(wc -c < \"$TC_CTX\") + 0 ))",
-        "TC_BUDGET=$(( $(getconf ARG_MAX) - $(env | wc -c) - \(argvSlack) ))",
-        "if [ \"$TC_SIZE\" -le \"$TC_BUDGET\" ]; then",
-        "cat \"$TC_CTX\"",
-        "command rm -f -- \"$TC_CTX\"",
+        "TC_SIZE=$(( $(\(ShellUtility.wc) -c < \"$TC_CTX\") + 0 ))",
+        // NUL을 뺀 크기. 다르면 NUL이 있다는 뜻이고, NUL은 명령 치환에서 조용히 사라진다
+        // (`pre<NUL>post` → `prepost`, 재현됨) — 왜곡해 보내느니 파일로 넘긴다
+        "TC_CLEAN=$(( $(\(ShellUtility.tr) -d '\\000' < \"$TC_CTX\" | \(ShellUtility.wc) -c) + 0 ))",
+        // ARG_MAX는 문자열 바이트만이 아니라 **포인터 배열과 정렬**까지 포함한다. 문자열만 빼면
+        // 항목이 많은 환경(재현: 9,000개·81,000바이트)에서 execve가 E2BIG로 실패한다
+        "TC_ENV_BYTES=$(( $(\(ShellUtility.env) | \(ShellUtility.wc) -c) + 0 ))",
+        "TC_ENV_COUNT=$(( $(\(ShellUtility.env) | \(ShellUtility.wc) -l) + 0 ))",
+        "TC_BUDGET=$(( $(\(ShellUtility.getconf) ARG_MAX) - TC_ENV_BYTES"
+            + " - TC_ENV_COUNT * \(claudeArgvEnvEntryOverhead) - \(argvSlack) ))",
+        "if [ \"$TC_SIZE\" -le \"$TC_BUDGET\" ] && [ \"$TC_SIZE\" -eq \"$TC_CLEAN\" ]; then",
+        // **지우지 않는다.** 예산 판정을 통과하고도 execve가 실패할 수 있고, 그때 이미 지웠다면
+        // 조립한 내용이 통째로 사라진다. 회수 스윕이 나이를 보고 치운다
+        "\(ShellUtility.cat) \"$TC_CTX\"",
         "else",
-        "printf '%s\\n%s\\n' \(shellSingleQuoted(claudeContextPointerInstruction)) \"$TC_CTX\"",
+        "\(printf) '%s\\n%s\\n' \(shellSingleQuoted(claudeContextPointerInstruction)) \"$TC_CTX\"",
+        // 이 갈래의 컨텍스트는 claude가 **세션 중에** 읽는다 — 회수 스윕이 짧은 나이로 지우면
+        // 세션이 "읽으라던 파일이 없다"를 만난다. 표식을 남겨 스윕이 길게 봐주게 한다
+        ": > \(shellSingleQuoted(claudePromptHandoffPath(forContext: contextPath)))",
         "fi",
         "",
     ]
@@ -253,14 +359,28 @@ public func claudePromptScriptBody(
 /// 명령 끝에 프롬프트 치환을 덧붙인다. 스크립트는 자기 일을 마친 뒤 **같은 치환 안에서** 지워진다
 /// (spawn-claude와 같은 방식) — 체인이 claude에 닿지 못하면 치환이 아예 돌지 않으므로, 나중에 뜬
 /// claude가 옛 프롬프트를 집는 창이 생기지 않는다.
+/// 이 문자열은 **사용자의 대화형 셸**이 평가한다 — 우리 스크립트보다 더 통제 밖이다. 그래서
+/// `printf`·`rm`도 절대 경로로 부른다: `command rm`은 함수·별칭만 지나칠 뿐 PATH는 그대로 탄다.
+/// 컨텍스트 파일은 여기서 지우지 않는다(회수 스윕의 몫) — 지우는 것은 스크립트 하나다.
+///
+/// **`--`를 먼저 넣는다.** 실측(claude 2.1.238, 조합당 2회 전건 일치): 값을 먹는 플래그가
+/// 뒤 인자를 프롬프트 대신 자기 값으로 가져간다 — `claude -p --resume <SID> 'P'`뿐 아니라
+/// **가변인자 플래그도** 그렇다(`claude -p --allowed-tools Bash 'P'` → 프롬프트가 삼켜져
+/// exit 1). "값이 이미 붙어 있으면 안전하다"는 추론이 거짓이라는 뜻이다. `--`를 넣으면 그
+/// 부류가 전부 막힌다(`--allowed-tools Bash -- 'P'` 전달됨). 지금은 bare `claude`에만 붙이니
+/// 무해하고, 프롬프트가 `-`로 시작하게 되는 날(파일 포인터 문구·배너 변경)도 이것이 닫는다.
+///
+/// `--`가 **못 막는 것**: 명령에 이미 positional 프롬프트가 있으면 우리 것이 두 번째가 되어
+/// **exit 0·stderr 없이 조용히 버려진다**(`claude -p 'first' 'second'` → first만 기록).
+/// 그래서 판정은 여전히 "마지막 simple command가 bare `claude`"로 좁혀 둔다.
 public func appendedPromptCommand(_ command: String, scriptPath: String) -> String {
     let quoted = shellSingleQuoted(scriptPath)
     let trimmed = command.replacingOccurrences(
         of: "[ \t]+$", with: "", options: .regularExpression
     )
-    return trimmed + " \"$(\(claudePromptShell) \(quoted)"
-        + " || printf '%s' \(shellSingleQuoted(claudePromptLostInstruction));"
-        + " command rm -f -- \(quoted))\""
+    return trimmed + " -- \"$(\(claudePromptShell) \(quoted)"
+        + " || \(ShellUtility.printf) '%s' \(shellSingleQuoted(claudePromptLostInstruction));"
+        + " \(ShellUtility.rm) -f -- \(quoted))\""
 }
 
 // MARK: - 요청 준비
@@ -271,26 +391,30 @@ public struct PreparedRequest {
     public let command: String
     /// 주입 경로로 보낼 입력들. **비어 있으면 Warp 헬퍼도 손쉬운 사용 권한도 필요 없다**
     public let claudeInputs: [String]
-    /// 명령이 터미널에 닿지 못했을 때 지워야 하는 파일들
-    public let temporaryPaths: [String]
+    /// 이 요청만 쓰는 디렉토리. 명령이 터미널에 닿지 못했으면 통째로 지운다
+    public let temporaryDirectory: String?
     /// 꼬리를 치기 전에 화면에서 찾아야 하는 문자열(`claudeArgvRenderMarker`). **꼬리가 있을
     /// 때만** 있다 — 꼬리가 없으면 볼 사람이 없고, 프리셋의 첫 메시지에 줄 하나를 얹는 대가만
     /// 남는다. nil이면 게이트도 없다(argv가 없는 순수 주입 폴백이 그렇다).
     public let argvRenderMarker: String?
 
+    /// 조립 스크립트의 경로. 디렉토리가 없으면(폴백) nil이다
+    public var scriptPath: String? {
+        temporaryDirectory.map { ($0 as NSString).appendingPathComponent(claudePromptScriptName) }
+    }
+
     public func discardTemporaryFiles() {
-        for path in temporaryPaths { unlink(path) }
+        guard let temporaryDirectory else { return }
+        try? FileManager.default.removeItem(atPath: temporaryDirectory)
     }
 }
 
-/// 회수해도 되는 이름인가 — 우리 접두사 + 16진 토큰 + 정해진 확장자.
-func claudePromptFileIsOurs(name: String) -> Bool {
-    for (prefix, suffix) in [(claudePromptScriptPrefix, ".sh"), (claudePromptContextPrefix, ".txt")] {
-        guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { continue }
-        let token = name.dropFirst(prefix.count).dropLast(suffix.count)
-        return !token.isEmpty && token.allSatisfy(\.isHexDigit)
-    }
-    return false
+/// 회수해도 되는 이름인가 — 우리 접두사 + **정확히 8자** 16진 토큰. 길이를 보지 않으면
+/// `tc-prompt-a` 같은 남의 디렉토리도 우리 것이 된다.
+func claudePromptDirectoryIsOurs(name: String) -> Bool {
+    guard name.hasPrefix(claudePromptDirectoryPrefix) else { return false }
+    let token = name.dropFirst(claudePromptDirectoryPrefix.count)
+    return token.count == claudePromptTokenLength && token.allSatisfy(\.isHexDigit)
 }
 
 /// 요청마다 다른 16진 토큰. 헬퍼 소켓·Tab Config와 같은 생성기를 쓴다 — 요청 고유 문자열이
@@ -313,21 +437,29 @@ private func writeNewPrivateFile(path: String, contents: String) -> Bool {
     return true
 }
 
-/// 정상 경로는 스스로 치운다(스크립트는 치환 안에서, 컨텍스트는 예산 이내면 `cat` 직후).
-/// 남는 것은 두 갈래다: 탭이 끝내 열리지 않아 치환이 돌지 못한 스크립트, 그리고 **한도 초과로
-/// 일부러 남긴 컨텍스트**. 후자는 claude가 세션 중에 읽어야 하므로 나이를 넉넉히 본다.
-func reclaimStaleClaudePromptFiles(
-    in directory: String = NSTemporaryDirectory(), olderThan age: TimeInterval = 6 * 3600
+/// 스크립트는 치환 안에서 자기를 지우지만 **컨텍스트는 아무도 지우지 않는다** — 지우고 나서
+/// execve가 실패하면 조립한 내용이 통째로 사라지기 때문이다(그 실패는 실제로 재현됐다).
+/// 그래서 회수는 여기 한 곳이고, 나이를 두 가지로 본다:
+///  - 보통은 짧게(기본 6시간). 스크립트가 돌았든(내용은 이미 argv로 갔다) 탭이 끝내 열리지
+///    않았든, 그 시점엔 아무도 그 디렉토리를 필요로 하지 않는다
+///  - **인계 표식이 있으면 길게**(기본 7일). 한도 초과 갈래에서 claude는 그 파일을 세션 중에
+///    읽는다 — 다른 요청의 스윕이 6시간 뒤 지우면 "읽으라던 파일이 없다"가 된다
+func reclaimStaleClaudePromptDirectories(
+    in directory: String = NSTemporaryDirectory(),
+    leftoverAge: TimeInterval = 6 * 3600, handedOffAge: TimeInterval = 7 * 24 * 3600
 ) {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
-    for name in names where claudePromptFileIsOurs(name: name) {
+    for name in names where claudePromptDirectoryIsOurs(name: name) {
         let path = (directory as NSString).appendingPathComponent(name)
         var info = stat()
-        // 심볼릭 링크를 따라가지 않는다 — 따라가면 링크가 가리키는 남의 파일을 지운다
-        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { continue }
+        // 심볼릭 링크를 따라가지 않는다 — 따라가면 링크가 가리키는 남의 디렉토리를 통째로 지운다
+        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+        let handoff = (path as NSString).appendingPathComponent(claudePromptHandoffName)
+        var handoffInfo = stat()
+        let age = lstat(handoff, &handoffInfo) == 0 ? handedOffAge : leftoverAge
         let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
         guard Date().timeIntervalSince(modified) > age else { continue }
-        unlink(path)
+        try? FileManager.default.removeItem(atPath: path)
     }
 }
 
@@ -341,7 +473,7 @@ public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
     func injectEverything() -> PreparedRequest {
         PreparedRequest(
             command: resolved.command, claudeInputs: resolved.claudeInputs,
-            temporaryPaths: [], argvRenderMarker: nil
+            temporaryDirectory: nil, argvRenderMarker: nil
         )
     }
 
@@ -350,24 +482,34 @@ public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
         return injectEverything()
     }
     // 앱이 죽어 남은 이전 실행의 찌꺼기부터 회수한다 (나이로 가르므로 살아 있는 것은 건드리지 않는다)
-    reclaimStaleClaudePromptFiles()
+    reclaimStaleClaudePromptDirectories()
 
     let token = claudePromptToken()
-    let scriptPath = (NSTemporaryDirectory() as NSString)
-        .appendingPathComponent("\(claudePromptScriptPrefix)\(token).sh")
-    let contextPath = (NSTemporaryDirectory() as NSString)
-        .appendingPathComponent("\(claudePromptContextPrefix)\(token).txt")
+    let directory = (NSTemporaryDirectory() as NSString)
+        .appendingPathComponent("\(claudePromptDirectoryPrefix)\(token)")
+    // `withIntermediateDirectories: false`라 이미 있으면 던진다 — 원자적으로 잡는다는 뜻이고,
+    // 남이 그 이름으로 놓아 둔 링크·디렉토리를 우리 것으로 쓰는 일이 없다
+    guard (try? FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )) != nil else {
+        checkoutLog("프롬프트 작업 디렉토리를 만들지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
+        return injectEverything()
+    }
+    let scriptPath = (directory as NSString).appendingPathComponent(claudePromptScriptName)
+    let contextPath = (directory as NSString).appendingPathComponent(claudePromptContextName)
     // 꼬리를 칠 때만 마커를 싣는다 — 칠 것이 없으면 화면을 볼 일도 없다
     let marker = plan.tail.isEmpty ? nil : claudeArgvRenderMarker(token: token)
     let body = claudePromptScriptBody(prefix: plan.prefix, contextPath: contextPath, marker: marker)
     guard writeNewPrivateFile(path: scriptPath, contents: body) else {
         checkoutLog("프롬프트 조립 스크립트를 쓰지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
+        try? FileManager.default.removeItem(atPath: directory)
         return injectEverything()
     }
     return PreparedRequest(
         command: appendedPromptCommand(resolved.command, scriptPath: scriptPath),
         claudeInputs: plan.tail,
-        temporaryPaths: [scriptPath],
+        temporaryDirectory: directory,
         argvRenderMarker: marker
     )
 }

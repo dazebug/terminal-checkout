@@ -137,30 +137,46 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
     return count
 }
 
-/// argv 첫 메시지가 화면에 그려졌는가. 마커는 요청 고유라 **개수 비교가 필요 없다** — 이 요청
-/// 전에는 어느 화면에도 존재할 수 없는 문자열이므로 있음/없음으로 충분하다(그래서 Warp에서도
-/// 이 확인 자체가 그 순간의 pane 증명이 된다).
-/// 공백을 지우고 비교하는 이유는 반영 확인과 같다: TUI가 터미널 폭에서 줄바꿈한다.
-public func screenShowsArgvPrompt(screen: String?, marker: String) -> Bool {
-    guard let screen else { return false }
-    let needle = marker.filter { !$0.isWhitespace }
-    guard !needle.isEmpty else { return false }
-    return screen.filter { !$0.isWhitespace }.contains(needle)
+/// 꼬리를 치기 전에 통과해야 하는 게이트의 재료.
+///
+/// `screenBefore`는 **claude가 뜨기 전에** 찍은 화면이다. 존재 여부로 판정하면 안 되기
+/// 때문이다(재현): `set -x`인 zsh는 치환이 끝난 argv를 실행 **전에** 화면에 뱉는다 —
+/// `+zsh:1> claude $'==== tc-… ====\nplain context'`. 그 에코를 렌더로 오인하면 claude가
+/// 그리기도 전에 꼬리를 쳐서, argv 제출의 입력창 clear에 통째로 지워진다. 스냅샷을 먼저 찍고
+/// **개수가 하나 늘었을 때만** 통과시키면 그 에코는 스냅샷 쪽에 이미 들어 있어 통과되지 않는다.
+///
+/// 그래서 스냅샷은 claude 기동을 기다리기 **전에** 찍는다(`deliverClaudeInputs`). 못 찍었으면
+/// (nil) 실패다 — 못 찍은 것을 "없었다"로 다루면 판정이 존재 여부로 되돌아간다.
+public struct ArgvPromptGate {
+    public let marker: String
+    public let screenBefore: String?
+
+    public init(marker: String, screenBefore: String?) {
+        self.marker = marker
+        self.screenBefore = screenBefore
+    }
 }
 
 /// argv 첫 메시지가 화면에 렌더될 때까지 기다린다. **바이트를 하나도 내보내지 않는다** —
 /// 렌더 전에 친 것은 argv 제출의 입력창 clear에 지워지기 때문이고(실측), 아무것도 보내지
 /// 않았으니 실패로 끝나도 지울 조각이 없다.
 ///
+/// 판정은 `screenReflectsNewInput` **하나를 그대로 쓴다.** 같은 규칙(직전 화면보다 하나 더
+/// 보여야 한다 / 스냅샷을 못 찍었으면 실패 / 공백 무시)을 두 벌로 두면 한쪽만 강화된다.
+///
 /// 세션 동일성을 루프 안에서 재확인하지 않는 이유: 마커가 요청 고유라 **다른 세션은 애초에
 /// 이 조건을 만족시킬 수 없다.** `ps`/`stty`가 한 번 튀었다고 포기하면 기다리면 풀릴 상태
 /// (사용자가 다른 탭을 보는 중, 신뢰 다이얼로그가 떠 있는 중)에서 꼬리를 버리게 된다.
 /// 게이트를 지난 뒤 첫 입력 앞에서 `submitClaudeInputs`가 어차피 `confirmSession`을 부른다.
 func waitUntilArgvPromptRendered(
-    marker: String, io: ClaudeSessionIO, pollInterval: TimeInterval, timeout: TimeInterval
+    gate: ArgvPromptGate, io: ClaudeSessionIO, pollInterval: TimeInterval, timeout: TimeInterval
 ) -> Bool {
     for _ in 0..<max(1, Int(timeout / pollInterval)) {
-        if screenShowsArgvPrompt(screen: io.screenText(), marker: marker) { return true }
+        if let screen = io.screenText(), screenReflectsNewInput(
+            before: gate.screenBefore, after: screen, input: gate.marker
+        ) {
+            return true
+        }
         io.wait(pollInterval)
     }
     return false
@@ -281,11 +297,11 @@ struct InputBoxOwnership {
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
-    awaitingArgvMarker: String? = nil, argvRenderTimeout: TimeInterval = 120,
+    argvGate: ArgvPromptGate? = nil, argvRenderTimeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
 ) -> Int {
-    if let marker = awaitingArgvMarker, !waitUntilArgvPromptRendered(
-        marker: marker, io: io, pollInterval: 0.5, timeout: argvRenderTimeout
+    if let argvGate, !waitUntilArgvPromptRendered(
+        gate: argvGate, io: io, pollInterval: 0.5, timeout: argvRenderTimeout
     ) {
         // 기존 "claude가 입력을 받을 상태가 되지 않음"과 같은 결로 끝낸다 — 조용히 치지 않는다.
         // 한 바이트도 안 나갔으므로 정리(Ctrl+U)도 하지 않는다: 입력창에 있는 것은 사용자 것이다
@@ -503,6 +519,14 @@ public func deliverClaudeInputs(
     }
     let ttyName = String(ttyPath.dropFirst("/dev/".count))
 
+    // **claude 기동을 기다리기 전에** 찍는다. 이 시점의 화면에는 셸이 이미 뱉은 것(xtrace의
+    // argv 에코 포함)이 들어 있고 claude의 렌더는 아직 없으므로, 뒤에 개수가 느는 것은
+    // claude가 그린 것뿐이다. 기다린 뒤에 찍으면 렌더가 스냅샷에 섞여 게이트가 영영 통과하지
+    // 못할 수 있다(그때의 결과는 꼬리 유실 — fail-closed 방향이지만 피할 수 있는 손해다)
+    let argvGate = awaitingArgvMarker.map {
+        ArgvPromptGate(marker: $0, screenBefore: screenText(of: handle))
+    }
+
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
@@ -529,8 +553,7 @@ public func deliverClaudeInputs(
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
     let submitted = submitClaudeInputs(
-        inputs, io: io, awaitingArgvMarker: awaitingArgvMarker,
-        betweenInputTimeout: betweenInputTimeout
+        inputs, io: io, argvGate: argvGate, betweenInputTimeout: betweenInputTimeout
     )
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
     // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —
