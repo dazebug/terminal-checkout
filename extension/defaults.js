@@ -231,12 +231,20 @@ function sameTarget(a, b) {
 // The same four parts from a full URL. A tab reports a URL rather than a pathname, and a page on
 // some other **origin** is not a page of ours however its path happens to be shaped.
 //
-// The scheme is half of that origin and it was missing: `http://github.com/o/r/pull/1` came back as
-// a perfectly good target. The manifest only injects the content script over https, but the icon
+// The origin is compared whole, and that is the point. Naming its parts one at a time is how they
+// were closed one at a time: the host was checked and the scheme was not, so `http://github.com/…`
+// passed; then both were checked and the port was not, so `https://github.com:8443/…` passed. An
+// origin has exactly three parts and `URL.origin` is all three — there is no fourth to forget next
+// time. `:443` is normalized away by the parser, so writing out the default port still matches.
+//
+// What passing wrongly costs: the manifest only injects the content script over https, but the icon
 // path never goes through the content script — `activeTab` grants executeScript on whatever tab was
-// clicked — so an http page could still be read for the branch and for the default branch. An http
-// response is not a GitHub document, it is whatever was on the wire, and those reads decide what the
-// command runs *against*. The command itself still comes from storage; its target would not have.
+// clicked, and a match pattern with no port matches every port. So a look-alike origin could still
+// be read for the branch and the default branch. Its response is not a GitHub document, it is
+// whatever was on the wire, and those reads decide what the command runs *against*. The command
+// itself still comes from storage; its target would not have.
+const GITHUB_ORIGIN = 'https://github.com';
+
 function pageTargetOfUrl(url) {
   let parsed;
   try {
@@ -244,7 +252,7 @@ function pageTargetOfUrl(url) {
   } catch {
     return null; // tabs we have no host permission for hand us nothing
   }
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return null;
+  if (parsed.origin !== GITHUB_ORIGIN) return null;
   return pageTargetOf(parsed.pathname);
 }
 

@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R12 커밋(항목 18 — `pageTargetOfUrl`에 `protocol==='https:'`·content 페이지 판정 4곳을 같은 검증기로 통일·게이트~native 원자성 잔여 서술 정정, verified) · 게이트 그린(드라이버 재실행 — node 153/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건) · Codex 재검증 대기(종료 질의 재제출 예정)
-- 최근 검증자 판정: **차단(no) ×11** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R13 커밋(항목 19 — `pageTargetOfUrl`을 `parsed.origin` 한 비교로, scheme·host·port 세 축 동시 검증, origin 부류 종결, verified) · 게이트 그린(드라이버 재실행 — node 154/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건; origin 부분검사 전수 → 이 한 곳뿐) · Codex 재검증 대기(종료 질의 재제출 예정)
+- 최근 검증자 판정: **차단(no) ×12** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -132,11 +132,13 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 16 | **R10 — Codex R9 차단(no)의 P1 4건을 한 부류로.** **⒜ 최종 게이트 하나**: 네이티브 전송 직전 `assertStillOnClickedPage`가 `chrome.tabs.get`으로 **지금의** tab URL을 재조회해 `clicked`와 대조한다 — 뒤에 남는 await가 없는 유일한 지점이라 A·B·D의 중간 await를 **함께** 덮는다. 그 위에 **내부 정합**은 유지: `getDefaultBranchFromPage`가 fetch **완료 후** pathname을 읽고(A), 아이콘 경로가 클릭 시점 tab URL의 대상을 `clicked`로 넘긴다(C). 지점마다 검사를 다는 방식은 **폐기**(R9가 그래서 놓쳤다). **⒝ `onMessage`가 `target`을 필수로** 요구한다(`shown`과 대칭). 문서: §9 조항 보완 6건(**여전히 사용자 확정 대기**) | agreed | 아래 R10 로그 · Codex R11: "R10의 두 재현은 막혔다" | R10 |
 
-| 17 | **R11 — Codex R10 차단(no)의 P1 2건 — 게이트 자체의 두 축.** **⒜ 삼자 일치**: `requestIsCoherent({clicked, source, current})`가 `clicked == source`(변수의 출처 = `sender.tab.url`)와 `clicked == current`를 함께 요구한다. 빠져 있던 축은 `source`이고, 그것은 **await가 필요 없다**(메시지 도착 시점에 고정) — 그래서 지점 검사 복원이 아니라 게이트에 **정적으로** 더했다. **⒝ 게이트가 문서에 물어보지 않고 페이지에 물어본다**: `chrome.tabs.get().url`(= last committed URL, `pushState` 미반영 가능)을 버리고 `chrome.scripting.executeScript(() => location.pathname)`으로 **live location**을 읽는다. 게이트 → 동기 조립 → `sendToNativeHost` 사이에 await가 없음을 코드로 보장. **⒞** 낡은 아이콘 주석 정정 | verified | 아래 R11 로그 | R11 |
+| 17 | **R11 — Codex R10 차단(no)의 P1 2건 — 게이트 자체의 두 축.** **⒜ 삼자 일치**: `requestIsCoherent({clicked, source, current})`가 `clicked == source`(변수의 출처 = `sender.tab.url`)와 `clicked == current`를 함께 요구한다. 빠져 있던 축은 `source`이고, 그것은 **await가 필요 없다**(메시지 도착 시점에 고정) — 그래서 지점 검사 복원이 아니라 게이트에 **정적으로** 더했다. **⒝ 게이트가 문서에 물어보지 않고 페이지에 물어본다**: `chrome.tabs.get().url`(= last committed URL, `pushState` 미반영 가능)을 버리고 `chrome.scripting.executeScript(() => location.pathname)`으로 **live location**을 읽는다. 게이트 → 동기 조립 → `sendToNativeHost` 사이에 await가 없음을 코드로 보장. **⒞** 낡은 아이콘 주석 정정 | agreed | 아래 R11 로그 · Codex R12: "R11의 HTTP P1은 닫혔다" (R10 게이트 두 축도 R11 재검증에서 통과) | R11 |
 
 | 18 | **R12 — Codex R11 차단(no)의 P1 1건 + 잔여 서술 정정.** **⒜ origin의 절반이 빠져 있었다**: `pageTargetOfUrl`이 `protocol === 'https:'`를 함께 요구한다 — `http://github.com/…`이 정상 target으로 통과해 아이콘 경로(`activeTab`)가 변조 가능한 HTTP 응답에서 실행 대상을 읽을 수 있었다. 겸사겸사 `content.js`의 페이지 판정 4곳을 전부 같은 검증기(`pageTargetOfUrl(location.href)`)로 돌려 **그리는 규칙과 실행하는 규칙을 하나로** 만들었다. **⒝ 게이트∼native 원자성 서술 정정**(코드 변경 없음): "창이 없다"는 틀렸다 — JS 동기 구간에만 창이 없고, `sendNativeMessage` 이후 native가 실제로 실행하기까지는 **get↔set 동종의 TOCTOU 잔여**다. 주석·잔여 절·소탕 표에 명시 | claimed | 아래 R12 로그 | R12 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤.
+| 19 | **R13 — Codex R12 차단(no)의 P2 1건, origin 부류 종결.** `pageTargetOfUrl`이 `protocol`+`hostname`을 따로 보던 것을 **`parsed.origin !== 'https://github.com'` 한 비교**로 바꿨다. origin은 scheme·host·**port** 셋 전부이므로 한 축씩 닫아 온 방식이 끝난다 — 다음에 잊을 넷째 축이 없다. `:443`은 파서가 정규화해 통과, `:8443`은 거부(실측). 전수 확인: 확장 전체에 URL을 **부분 검사**하는 지점이 더 없음(`grep -n 'hostname\|protocol\|\.origin\|github\.com' extension/*.js` → 이 한 곳 + 주석뿐), 낡은 주석 1곳 정정 | verified | 아래 R13 로그 | R13 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤; 19는 R12 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -174,6 +176,7 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] **ABA**: PR 1에서 버튼을 누른 직후 PR 2로 갔다가 곧바로 PR 1로 돌아오면 거부된다 — PR 2의 번호와 PR 1의 branch가 섞인 요청이 나가지 않는다
 - [ ] `http://github.com/<owner>/<repo>`에서 확장 아이콘을 클릭하면 아무것도 실행되지 않는다(콘솔에 "Not a GitHub repository page"). https 페이지에서는 그대로 동작한다
 - [ ] http GitHub 페이지에는 버튼이 아예 그려지지 않는다(그리는 판정과 실행하는 판정이 같은 함수를 쓴다)
+- [ ] `https://github.com:8443/<owner>/<repo>`(프록시 등)에서도 버튼이 그려지지 않고 아이콘 클릭이 아무것도 실행하지 않는다
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -434,7 +437,17 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 
 **게이트와 전송 사이에 await가 없다 — 그리고 거기까지다(R12 정정).** `runButton`은 게이트 → 메시지 조립(동기) → `sendToNativeHost`이고, `sendToNativeHost`의 첫 문장이 `chrome.runtime.sendNativeMessage`다. await가 하나라도 끼면 이 게이트도 "뒤에 틈이 있는 검사"가 된다. **그러나 그것으로 닫히는 것은 이 스크립트 안뿐이다**: Chrome에 메시지를 넘기는 것은 명령이 실행되는 것이 아니고, 넘긴 뒤 native IPC를 건너 앱이 실제로 실행하기까지 페이지는 움직일 수 있다. 판정과 실행은 **원자적이지 않다** — R11이 "창 자체가 없다"고 적은 것은 틀렸고, 이것은 `get`↔`set`과 **같은 부류의 TOCTOU 잔여**다(아래 「실행 경로의 잔여」).
 
-**스킴도 origin의 절반이다(R12).** 페이지 판정은 **전부** `pageTargetOfUrl`을 지나고, 그것이 `https:`가 아니면 `null`을 돌려준다. 진입점별로: `source`는 `parseGitHubUrl`(→ 같은 함수) 경유라 http면 `null`이 되어 executor가 게이트 이전에 던지고, 아이콘 경로의 `clicked`도 같은 함수라 `null`이면 "Not a GitHub repository page"로 끝나며, 페이지가 보내는 `clicked`도 이제 `pageTargetOfUrl(location.href)`라 `isPageTarget`이 `onMessage`에서 거른다. 게이트가 읽는 `current`와 DOM 정합의 `pathname`에는 스킴이 없지만 검사가 필요 없다 — 둘 다 `clicked`와 대조되고 `clicked`는 이미 스킴을 통과한 값이다.
+**origin — scheme·host·port 셋을 한 비교로(R12 scheme → R13 종결).** 페이지 판정은 **전부** `pageTargetOfUrl`을 지나고, 그것이 `parsed.origin !== 'https://github.com'`이면 `null`을 돌려준다. 한 축씩 닫다가 두 번 놓쳤으므로(host만 → scheme 누락, scheme+host → port 누락) 이제 **origin을 통째로** 비교한다 — 축이 셋뿐이고 `URL.origin`이 그 셋이라 다음에 잊을 것이 없다.
+
+| 진입점 | origin을 어디서 통과하는가 | 실패하면 |
+|:--|:--|:--|
+| `source`(executor의 `parseGitHubUrl(tab.url)`) | 같은 함수 | `null` → executor가 게이트 이전에 던진다 |
+| 아이콘 경로의 `clicked`(`onClicked`의 `tab.url`) | 같은 함수 | `null` → "Not a GitHub repository page"로 끝 |
+| 페이지가 보내는 `clicked`(`pageTargetOfUrl(location.href)`) | 같은 함수 | `null` → `onMessage`의 `isPageTarget`이 거른다 |
+| content의 그리기 판정(`tryInsertButton`) | 같은 함수 | `null` → 버튼을 그리지 않는다 |
+| 게이트의 `current`, DOM 정합의 `pathname` | **해당 없음(pathname에는 origin이 없다)** | 검사 불필요 — 둘 다 `clicked`와 대조되고 `clicked`는 이미 통과한 값이다 |
+
+실측(`new URL(...).origin`): `https://github.com/x` → `https://github.com` ✓ · `https://github.com:443/x` → `https://github.com` ✓(정규화) · `https://github.com:8443/x` → `https://github.com:8443` ✗ · `http://github.com/x` → `http://github.com` ✗ · `https://github.com.evil.com/x` → `https://github.com.evil.com` ✗.
 
 ### 실행 경로의 잔여 — 게이트∼native (R12에서 명시)
 
@@ -752,7 +765,7 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 신규 P1 잔여 **게이트∼native는 원자적이지 않다**(서술 반박, 코드 결함 아님). 드라이버가 종료 질의에서 "게이트∼native는 단일 동기 구간이라 창 자체가 없다"고 한 것을 Codex가 반박했고 **그 반박이 옳다**: `executeScript`가 location=A를 읽고 → Promise 반환 → `sendNativeMessage`가 native host에 전달 → **그 사이·이후에 페이지가 B로 이동할 수 있다**. `await`가 없다고 페이지 판정과 native 실행이 원자화되지 않는다(native는 비동기 IPC 뒤에서 처리된다). CAS 없이 못 닫는 **get↔set 동종의 TOCTOU 잔여**다.
 - 부류 이동: 실행 대상 정합의 **시간 축**(await 뒤·ABA·게이트 근간)은 닫혔고, 이번에 남은 것은 **공간 축의 값싼 입력 검증 하나**(origin의 절반인 스킴)와 **잔여의 정직한 서술**이었다.
 
-### R12 — 워킹트리(미커밋, base `00aa732`) · 항목 18
+### R12 — `7187115`+`04f00ef` (Codex 판정: 차단) · 항목 18
 
 - 범위: Codex R11 차단의 P1 1건(`http://` 스킴)과 잔여 서술 정정 1건(게이트∼native 원자성). §9 aggregate quota는 이미 조항 2·4에 v2 몫으로 있어 코드 변경 없음. R10 2건은 재검증에서 통과했으므로 건드리지 않았다.
 - 자리: `defaults.js:240`(`pageTargetOfUrl`의 `protocol !== 'https:'`), `content.js:86`·`:341`·`:361`·`:375`(페이지 판정 4곳을 `pageTargetOfUrl(location.href)`로), `background.js:250-256`(원자성 주석 정정).
@@ -770,4 +783,31 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - 실측: `node --test` **153/0**(R11 152 → 신규 1), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다.
 - **잔여**: (1) `get`↔`set` 창. (2) **게이트∼native TOCTOU**(위에서 처음으로 명시). (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 여전히 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
 - **미검증**: 브라우저가 없어 실동작은 여전히 순수 술어까지만이다. 이번 것은 특히 확인이 쉬운 축에 속한다 — http GitHub 페이지에서 아이콘을 누르는 것뿐이라 수기 검사 2항목으로 남겼다. `activeTab`이 http 탭에 실제로 `executeScript`를 허용하는지도 **이 환경에서 확인하지 못했다**(드라이버 실측으로 스킴 미검사 자체는 확인됨).
+- **Codex 판정: 차단(no).** R11의 `http://` 스킴은 **닫힘 확인** → 항목 17 agreed. 원자성 서술 정정도 **수용**. 판단 1 **부분 수용** — "스킴은 닫았으나 origin이 아직 불완전하다(**port 누락**)", 2 수용, 3 **반박**("스킴이 마지막 축이었다는 판단은 틀렸다").
+- 신규 P2 **비표준 HTTPS 포트가 같은 target으로 접힌다**(드라이버 실측). `pageTargetOfUrl("https://github.com:8443/o/r/pull/1")` → `{kind:'pr',…}`로 통과한다. `pageTargetOf`와 게이트의 `current`는 pathname만 남기므로 **port를 볼 수 없고**, `clicked`(github.com) · `source`(github.com:8443) · `current`(`/o/r/pull/1`) 셋이 같은 target으로 정규화돼 게이트가 스스로와 일치한다. Chrome의 match pattern은 **포트를 생략하면 전 포트에 매칭**되므로 매니페스트의 `https://github.com/*`도 이 경로를 허용한다 — `github.com:8443`을 프록시나 로컬 리다이렉트로 다른 서버에 띄우면 http와 같은 부류의 변조 응답이 된다.
+- 부류 이동: 실행 대상 정합의 **공간 축**이 `origin`으로 좁혀졌다 — R12가 scheme을, R13이 port를 닫는다. 한 축씩 닫는 방식 자체가 문제라는 점이 R13의 요지가 된다.
+
+### R13 — 워킹트리(미커밋, base `04f00ef`) · 항목 19
+
+- 범위: Codex R12 차단의 P2 1건(비표준 HTTPS 포트). R11의 http 스킴은 재검증에서 닫힘 확인, 원자성 서술도 수용됐으므로 건드리지 않았다. **이번 라운드는 한 줄짜리 수정이고, 요지는 그 한 줄이 무엇을 끝내는가에 있다.**
+- 자리: `defaults.js:246`(`GITHUB_ORIGIN`)·`:255`(`parsed.origin !== GITHUB_ORIGIN`), `background.js:5-11`(낡은 주석 정정 — "host를 정확히 검사한다" → "origin을 통째로 비교한다").
+- **부분 검사를 그만두고 origin을 통째로 비교한다.** 이 부류는 **한 축씩** 닫혀 왔다: 처음엔 host만 봤고(scheme 누락 → R12), 다음엔 scheme+host를 봤고(port 누락 → R13). 축을 하나 더 추가하는 것은 세 번째 같은 실수를 기다리는 일이다. `URL.origin`은 **scheme·host·port 셋 전부**이고 origin에는 넷째가 없으므로, `parsed.origin !== 'https://github.com'` 한 비교가 부류를 종결한다.
+- **실측 근거**(`node -e "new URL(u).origin"`):
+
+  | URL | origin | 판정 |
+  |:--|:--|:--|
+  | `https://github.com/x` | `https://github.com` | 통과 |
+  | `https://github.com:443/x` | `https://github.com` | 통과 — 기본 포트는 파서가 **정규화해 지운다**(명시적으로 적힌 링크도 깨지지 않는다) |
+  | `https://github.com:8443/x` | `https://github.com:8443` | 거부 |
+  | `http://github.com/x` | `http://github.com` | 거부(R12가 닫은 축이 같은 비교에 흡수됐다) |
+  | `http://github.com:80/x` | `http://github.com` | 거부 |
+  | `https://github.com.evil.com/x` | `https://github.com.evil.com` | 거부 |
+
+- **왜 port가 실제로 위험했나**: `pageTargetOf`와 게이트의 `current`는 **pathname만** 남기므로 port를 볼 수 없다. 그래서 `clicked`(github.com) · `source`(github.com:8443) · `current`(`/o/r/pull/1`) 셋이 같은 target으로 접혀 **게이트가 스스로와 일치**했다. 매니페스트도 막지 못한다 — Chrome match pattern은 포트를 생략하면 전 포트에 매칭되므로 `https://github.com/*`가 `:8443`을 포함한다.
+- **전수 확인(부류 종결 조건)**: `grep -n 'hostname\|protocol\|\.origin\|github\.com' extension/*.js` → 확장 전체에서 URL을 검사하는 코드는 **`defaults.js`의 이 한 줄뿐**이고 나머지 히트는 전부 주석이다. background의 `parseGitHubUrl`은 이 함수의 별칭이고(R11), content의 페이지 판정 4곳은 R12에서 이미 같은 함수로 모였다. **부분 검사 지점 0건 — origin 검증 부류를 닫힌 것으로 판단한다.**
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 → **0건**. `{success:false}` → 거부 경로가 늘지 않아 변경 없음. `clicked`가 출처 아님 → 변경 없음.
+- red 기록: `not ok 49 - a GitHub page on a non-standard port is not a page of ours`(AssertionError — `https://github.com:8443/o/r/pull/1`이 정상 target을 돌려줬다). 확인 후 구현.
+- 실측: `node --test` **154/0**(R12 153 → 신규 1), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과. 삭제·갱신한 기존 테스트는 없다(R12의 http 테스트는 그대로 통과한다 — 같은 비교가 두 축을 함께 덮는다는 증거이기도 하다).
+- **잔여**: (1) `get`↔`set` 창. (2) 게이트∼native TOCTOU. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
+- **미검증**: 이번 수정은 순수 함수 한 줄이라 **순수 술어로 완전히 고정된다**(DOM·브라우저 불필요) — 이 루프에서 드물게 미검증 잔여가 없는 항목이다. 다만 `:8443` 프록시를 실제로 띄워 아이콘 경로가 거부되는지는 수기 검사 1항목으로 남겼고, `activeTab`이 그런 탭에 `executeScript`를 허용하는지는 여전히 **이 환경에서 확인 불가**다.
 - 판정: 미요청.

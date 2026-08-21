@@ -487,6 +487,25 @@ test('a page message without a target is not a request we can check', () => {
   assert.equal(isPageTarget([{ kind: 'pr', owner: 'o', repo: 'r', number: '7' }]), false);
 });
 
+test('a GitHub page on a non-standard port is not a page of ours', () => {
+  // scheme and host were checked one at a time and the port was the axis left over. `pageTargetOf`
+  // keeps only the pathname, so `clicked` on github.com, `source` on github.com:8443 and `current`
+  // from the live location all normalized to the same target and the gate agreed with itself.
+  // Chrome's match patterns do not help: a pattern with no port matches every port, so the
+  // manifest's `https://github.com/*` covers `:8443` too.
+  const { pageTargetOfUrl } = vm.runInThisContext('({ pageTargetOfUrl })');
+  assert.equal(pageTargetOfUrl('https://github.com:8443/o/r/pull/1'), null);
+  // The default port is written out by some links and normalizes away — it is the same origin
+  assert.deepEqual(pageTargetOfUrl('https://github.com:443/o/r/pull/1'),
+    { kind: 'pr', owner: 'o', repo: 'r', number: '1' });
+  assert.deepEqual(pageTargetOfUrl('https://github.com/o/r/pull/1'),
+    { kind: 'pr', owner: 'o', repo: 'r', number: '1' });
+  assert.equal(pageTargetOfUrl('http://github.com:80/o/r/pull/1'), null);
+  assert.equal(pageTargetOfUrl('https://evil.com/o/r/pull/1'), null);
+  // A host that merely starts with ours is a different host, and always was
+  assert.equal(pageTargetOfUrl('https://github.com.evil.com/o/r/pull/1'), null);
+});
+
 test('an http:// GitHub page is not a page of ours', () => {
   // The host was checked and the scheme was not, so `http://github.com/o/r/pull/1` came back as a
   // perfectly good target. The manifest only injects the content script over https, but the icon

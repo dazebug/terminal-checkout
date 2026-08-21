@@ -3,11 +3,12 @@ importScripts('defaults.js'); // defaults.js is the single source of truth for b
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
 // Pull owner/repo — and the number, on PR and issue pages — out of a GitHub URL. The extension icon
-// can be clicked on any tab, so check the host exactly (a string match would let
-// `example.com/github.com/foo/bar` through) and leave "is this a repository page?" to the same
-// decision content.js makes (pageTypeOf)
+// can be clicked on any tab, so the origin is compared whole rather than matched as a string
+// (`example.com/github.com/foo/bar` would pass a string match), and "is this a repository page?" is
+// left to the same decision content.js makes.
 // One reader for the four parts a request is built from (defaults.js), shared with the content
-// script and with the final gate below, so every side describes a page the same way
+// script and with the final gate below, so every side describes a page the same way — including
+// what counts as our origin.
 function parseGitHubUrl(url) {
   return pageTargetOfUrl(url);
 }
