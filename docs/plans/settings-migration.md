@@ -2,8 +2,9 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R14 커밋(항목 20 — 주입 함수 셋이 href 반환·게이트 current·assertSamePage가 pageTargetOfUrl로, 네 관측 전부 origin 검사 통과·소스 오라클로 pageTargetOf 직접호출 0 고정, verified) · 게이트 그린(드라이버 재실행 — node 157/0, swift 210/0, e2e 9 PASS; red 독립 재현 1건; pageTargetOf 직접호출 0·clicked 출처 0·version 무지 0) · Codex 재검증 대기(종료 질의 재제출 예정)
-- 최근 검증자 판정: **차단(no) ×13** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: **합의 도달 — Codex R14 판정 yes** (R14 커밋 `61a4299`). 항목 1∼20 전부 `agreed`. 게이트 그린(node 157/0, swift 210/0, e2e 9 PASS). 다음: `/gh-pr-drive auto`
+- 최근 검증자 판정: **합의(yes)** — 13회 차단 뒤 R14에서 합의. 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- **명시적 잔여**(합의에 포함 — 코드로 못 닫음/미래/수기): ⓐ 게이트~native TOCTOU(sendNativeMessage 이후, get↔set 동종, CAS 없는 IPC) · ⓑ get↔set 창(CAS 없는 storage.sync) · ⓒ 아이콘 vs 보이는 첫 버튼 동일성(별도 열린 항목, 현 결함 아님) · ⓓ §9 6조항(v2 구현 전 **사용자 확정 대기**, 현행 코드 무영향) · ⓔ 브라우저 통합 실동작(순수 술어+소스 오라클로 고정, 나머지 수기 검사 목록)
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -138,7 +139,7 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 19 | **R13 — Codex R12 차단(no)의 P2 1건, origin 부류 종결.** `pageTargetOfUrl`이 `protocol`+`hostname`을 따로 보던 것을 **`parsed.origin !== 'https://github.com'` 한 비교**로 바꿨다. origin은 scheme·host·**port** 셋 전부이므로 한 축씩 닫아 온 방식이 끝난다 — 다음에 잊을 넷째 축이 없다. `:443`은 파서가 정규화해 통과, `:8443`은 거부(실측). 전수 확인: 확장 전체에 URL을 **부분 검사**하는 지점이 더 없음(`grep -n 'hostname\|protocol\|\.origin\|github\.com' extension/*.js` → 이 한 곳 + 주석뿐), 낡은 주석 1곳 정정 | verified | 아래 R13 로그 | R13 |
 
-| 20 | **R14 — Codex R13 차단(no)의 P1 1건: 관측도 origin을 지나야 한다.** 주입 함수 셋이 `location.pathname` 대신 **`location.href`**를 돌려주고, 게이트의 `current`와 내부 정합 `assertSamePage`가 **`pageTargetOfUrl`**로 판정한다 — 이제 `clicked`·`source`·`current`·내부 정합 **네 관측 전부**가 같은 origin 검사를 지난다. 주입 함수는 바깥 참조가 불가능하므로 **href 문자열만 반환**하고 origin 검증은 주입 밖에서 한다(경계 유지). 부류 종결 조건을 **소스 수준 오라클**로 고정: 실행 경로에서 `pageTargetOf` 직접 호출 **0건** | verified | 아래 R14 로그 | R14 |
+| 20 | **R14 — Codex R13 차단(no)의 P1 1건: 관측도 origin을 지나야 한다.** 주입 함수 셋이 `location.pathname` 대신 **`location.href`**를 돌려주고, 게이트의 `current`와 내부 정합 `assertSamePage`가 **`pageTargetOfUrl`**로 판정한다 — 이제 `clicked`·`source`·`current`·내부 정합 **네 관측 전부**가 같은 origin 검사를 지난다. 주입 함수는 바깥 참조가 불가능하므로 **href 문자열만 반환**하고 origin 검증은 주입 밖에서 한다(경계 유지). 부류 종결 조건을 **소스 수준 오라클**로 고정: 실행 경로에서 `pageTargetOf` 직접 호출 **0건** | agreed | 아래 R14 로그 · Codex R14: "이 구현에 합의합니다: yes" | R14 |
 
 의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤; 16은 R9 판정 뒤; 17은 R10 판정 뒤; 18은 R11 판정 뒤; 19는 R12 판정 뒤; 20은 R13 판정 뒤.
 
@@ -836,4 +837,4 @@ R9는 await 지점마다 검사를 달았고 **다음 지점을 놓쳤다**(P1 �
 - **부류 판단**: origin 검증이 **입력과 관측 양쪽에서** 닫혔다고 본다 — 다만 R13에서 같은 판단을 하고 틀렸으므로, 이번 근거는 grep이 아니라 **테스트로 고정된 불변식**(직접 호출 0건)이라는 점을 근거로 든다. 그 불변식이 유지되는 한 origin 없는 판정이 실행 경로에 다시 생길 수 없다.
 - **잔여**: (1) `get`↔`set` 창. (2) 게이트∼native TOCTOU. (3) 아이콘 클릭이 **보이는 첫 버튼**과 같아야 하는가 — 열린 별도 항목. (4) §9는 문서뿐이고 조항 6건은 **사용자 확정 대기**.
 - **미검증**: `chrome.scripting`·브라우저가 없어 게이트의 실동작은 여전히 순수 술어와 소스 오라클까지다. `:8443` 프록시로 이동 중 클릭을 거부하는지는 수기 검사 1항목으로 추가했다.
-- 판정: 미요청.
+- **판정: 합의(yes)** — Codex R14: "이 구현에 합의합니다: yes." R13 P1 재현 거부 확인, 새 P0∼P3 없음, 판단 1∼3 전부 수용, 잔여 ⓐ∼ⓔ를 명시된 설계상 잔여로 수용. **13회 차단(R1∼R13) 뒤 R14에서 종료 조건 도달.** 부류 이동: 옵션 페이지 비동기·검증(R1∼R7) → 실행 경로 화면=실행(R8) → 신뢰 클릭(R9) → 대상 정합(R9∼R11) → origin 검증 입력(R12·R13) → origin 검증 관측(R14).
