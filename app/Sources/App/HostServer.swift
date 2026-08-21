@@ -115,11 +115,6 @@ final class HostServer {
                                 deliverClaudeInputs(prepared.claudeInputs, to: handle)
                             }
                         }
-                    } catch {
-                        // 명령이 터미널에 닿지 못했으면 그 스크립트를 실행할 셸이 없다 —
-                        // 남겨 두면 회수 스윕이 돌 때까지 임시 디렉토리에 쌓인다
-                        prepared.discardTemporaryFiles()
-                        throw error
                     }
                 }
             }

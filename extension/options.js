@@ -107,9 +107,9 @@ function renderButtons(kind) {
       </div>
       <div class="claude-queue">
         <div class="claude-queue-head"><span class="ret">⏎</span> claude inputs
-          <span class="help-inline">— merged into claude's opening message, in order; <code>!</code> lines run in the shell first</span>
+          <span class="help-inline">— delivered in order; <code>!</code> lines run in claude's shell mode</span>
         </div>
-        <div class="claude-hint" hidden>Merged inputs arrive as one message and get one response. It's all or nothing: a slash command or <code>#</code> line anywhere, or a <code>!</code> line following a plain-text line, sends <em>every</em> input to be typed into the session instead — which on Warp needs the Accessibility permission. Merging also needs the command to end in a bare <code>claude</code>, and it then runs <code>command claude</code>, past any wrapper of that name.</div>
+        <div class="claude-hint" hidden><code>!</code> lines are typed into claude's shell mode so they really run as commands — consecutive ones go in as a single line joined with <code>;</code>, each behind a banner. On Warp that typing needs the Accessibility permission. A list that is <em>only</em> plain text skips typing entirely and becomes claude's opening message, which additionally needs the command to end in a bare <code>claude</code>.</div>
         <div class="claude-warn" hidden>⚠ The command doesn't start claude, so these inputs won't be delivered</div>
         <div class="claude-rows"></div>
         <button class="add-input-btn">+ Add Input</button>

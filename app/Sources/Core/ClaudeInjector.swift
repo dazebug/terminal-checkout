@@ -288,7 +288,9 @@ public func submitClaudeInputs(
 
     var sent = 0
     delivery: for (index, input) in inputs.enumerated() {
-        if index > 0 { tracked.wait(0.4) }
+        // 입력 사이의 고정 대기(0.4s)는 없앴다 — 다음 입력의 표식 실험이 "지금 입력창이 어떤
+        // 상태인가"를 **관찰**하므로, 자고 나서 가정하는 것보다 빠르고 강하다. 표식이 아직
+        // 안 뜨면 그 실험이 마감까지 기다린다
         guard tracked.confirmSession(betweenInputTimeout) else {
             checkoutLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
             break
@@ -380,8 +382,8 @@ private func typeAndSubmit(
         }
         var reflected: String?
         var failure = "입력이 화면에 반영되지 않음"
-        for _ in 0..<5 {
-            io.wait(0.4)
+        for attempt in 0..<13 { // 0.15s × 13 ≈ 2s, the same deadline as before
+            if attempt > 0 { io.wait(screenPollInterval) }
             guard let screen = io.screenText() else {
                 failure = "화면 조회 실패"
                 break
@@ -471,8 +473,7 @@ enum InputBoxAfterSubmit: Equatable {
 /// direction here: the safety of the next input rests on the clear we send **before typing**, not
 /// on this look, so a slow answer costs nothing, while a hasty "it is stuck" drops the inputs that
 /// were still to come (reviewer reproduction R3).
-private let inputBoxLookSamples = 9
-private let inputBoxLookInterval: TimeInterval = 0.4
+private let inputBoxLookDeadline: TimeInterval = 3.6
 
 func inputBoxAfterSubmit(
     io: ClaudeSessionIO, whenTyped: String, text: String
@@ -492,17 +493,20 @@ func inputBoxAfterSubmit(
     guard probeOccurrences(of: probe, in: whenTyped) == 1,
           let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
     var last = InputBoxAfterSubmit.unknown
-    for _ in 0..<inputBoxLookSamples {
-        io.wait(inputBoxLookInterval)
+    _ = poll(io: io, within: inputBoxLookDeadline) {
         // A read we could not make says nothing. It used to end the look, which threw away what
         // the earlier reads had already established (reviewer reproduction R5)
-        guard let screen = io.screenText() else { continue }
+        guard let screen = io.screenText() else { return false }
         guard let tail = screenTail(from: probe, in: screen) else {
             last = .ourInputIsGone
-            continue
+            return false
         }
-        if tail != typedTail { return .unknown }
+        if tail != typedTail {
+            last = .unknown
+            return true // 움직였다 — 더 볼 것이 없다
+        }
         last = .stillHoldsOurInput
+        return false
     }
     return last
 }
@@ -539,16 +543,11 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
         checkoutLog("표식 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
         return false
     }
-    // 폴링이 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고, 그건 기다리면
-    // 풀리는 상태이기 때문이다 (Warp 실측)
-    var appeared = false
-    for _ in 0..<10 {
-        io.wait(0.5)
-        guard let after = io.screenText() else { continue }
-        if screenReflectsNewInput(before: before, after: after, input: marker) {
-            appeared = true
-            break
-        }
+    // 마감이 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고, 그건 기다리면
+    // 풀리는 상태이기 때문이다 (Warp 실측). 대신 **먼저 읽는다** — 이미 그려져 있으면 즉시 통과
+    let appeared = poll(io: io, within: 5.0) {
+        guard let after = io.screenText() else { return false }
+        return screenReflectsNewInput(before: before, after: after, input: marker)
     }
     guard appeared else {
         checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
@@ -568,15 +567,39 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
     return true
 }
 
-private func waitUntilProbeCount(
-    _ wanted: Int, of text: String, io: ClaudeSessionIO, samples: Int = 5
-) -> Bool {
-    for _ in 0..<samples {
-        io.wait(0.4)
-        guard let screen = io.screenText() else { continue }
-        if probeCount(of: text, in: screen) == wanted { return true }
+/// How long to leave between two screen reads while waiting for something.
+///
+/// Bounded below by what one read costs — spend less and the polling is mostly reader startup.
+/// Measured on this machine, 20 calls each: **osascript 59ms** (iTerm2's screen read), **wezterm
+/// cli 14ms**, **ps+stty 9ms** (the session gate). Warp's Accessibility read could not be measured
+/// without launching Warp, so it is assumed no cheaper than osascript. 0.15s keeps every known
+/// reader under half the interval.
+let screenPollInterval: TimeInterval = 0.15
+
+/// Waits for `ready`, **reading before it sleeps**.
+///
+/// The old shape slept a fixed interval before every read, so a screen that was already drawn
+/// still cost the full interval — and there are four such waits per input (marker appears, marker
+/// gone, body reflected, post-CR look), which was 1.7s of pure sleeping on the happy path.
+/// Deadlines are unchanged or longer; only the sampling moved. Nothing was dropped from what gets
+/// checked: the same reads, the same conditions, just asked sooner.
+private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: () -> Bool) -> Bool {
+    // Counted rather than clock-driven so the fake, whose `wait` is a no-op, still terminates
+    let attempts = max(1, Int((deadline / screenPollInterval).rounded()))
+    for attempt in 0..<attempts {
+        if attempt > 0 { io.wait(screenPollInterval) }
+        if ready() { return true }
     }
     return false
+}
+
+private func waitUntilProbeCount(
+    _ wanted: Int, of text: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
+) -> Bool {
+    poll(io: io, within: deadline) {
+        guard let screen = io.screenText() else { return false }
+        return probeCount(of: text, in: screen) == wanted
+    }
 }
 
 /// How many times the input's probe appears on the screen, whitespace removed on both sides —
@@ -718,18 +741,30 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
 /// `expecting`을 주면 그 PID일 때만 인정한다 — 원래 세션이 죽은 뒤 같은 tty에 새로 뜬
 /// claude에 남은 입력을 흘리지 않기 위해서다. 새 세션이 자리를 차지했으면 영영 만족하지
 /// 않으므로 타임아웃까지 기다렸다 nil로 끝난다(입력은 보내지 않는다).
+/// How long the fast phase of the startup poll lasts, and how often it looks.
+///
+/// claude reaches raw mode 0.1∼0.19s after the shell execs it (measured), so a 1s tick threw away
+/// most of a second before the first input every single time. One probe is `ps` + `stty` ≈ 9ms
+/// (measured, 20 calls each), so 0.15s is ~6% duty — cheap enough to keep up for the first ten
+/// seconds, which covers a normal start with room to spare. After that the tab is either slow
+/// (a big repository, a first-run trust prompt) or never coming, and the old 1s tick is right.
+private let claudeStartupFastPhase: TimeInterval = 10
+private let claudeStartupFastInterval: TimeInterval = 0.15
+
 private func waitUntilClaudeAcceptsInput(
     ttyName: String, ttyPath: String, pollInterval: TimeInterval, timeout: TimeInterval,
     expecting: Int? = nil
 ) -> Int? {
-    let deadline = Date().addingTimeInterval(timeout)
+    let started = Date()
+    let deadline = started.addingTimeInterval(timeout)
     while true {
         if let pid = probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath),
            expecting == nil || pid == expecting {
             return pid
         }
         if Date() >= deadline { return nil }
-        Thread.sleep(forTimeInterval: pollInterval)
+        let fast = Date().timeIntervalSince(started) < claudeStartupFastPhase
+        Thread.sleep(forTimeInterval: fast ? min(claudeStartupFastInterval, pollInterval) : pollInterval)
     }
 }
 

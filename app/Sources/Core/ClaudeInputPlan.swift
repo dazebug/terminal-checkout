@@ -1,26 +1,27 @@
 import Foundation
 
-// Decides how the scheduled claude inputs reach claude. **All of them ride along in the argv of
-// the command that starts claude, as one opening message, or all of them are typed into the
-// session by `ClaudeInjector` — never a mix** (see `prepareRequest`).
+// Decides how the scheduled claude inputs reach claude.
 //
-// Why argv: injection has to read the screen to confirm delivery, which makes the Accessibility
-// permission mandatory on Warp and drags in pane proofs, reflection checks and retries — slow and
-// fragile. argv needs none of it, because claude already holds the prompt when it starts. Every
-// claude input in the shipped presets is a `!` line and all of them merge, so neither the helper
-// nor the permission is needed at all.
+// **A `!` input is typed into claude's own shell mode — never pre-run and pasted.** The app used
+// to run those lines in the pane's shell and hand claude the captured output as its opening
+// message; that is gone (user decision, round 10). Measured on 2.1.238 in a pty: `claude --
+// '!echo x'` does **not** enter shell mode. The line arrives as an ordinary message and claude
+// then runs it through its Bash tool — which can stop for a permission prompt, is a model
+// judgement rather than a shell fact, and spends a turn. Typing it means the command really runs
+// in that session and stays in its history as a command.
 //
-// The cost: N inputs become one message and therefore one response. The user chose that change in
-// meaning (each `!` already triggers a response today — measured in session transcripts).
+// What is left to optimise is **cycles, not routes**: a run of consecutive `!` inputs is typed as
+// one line joined with `;`, so three inputs cost one type/submit cycle instead of three. And a
+// list that is nothing but plain text still rides in argv, because plain text is just a message.
 
-// MARK: - Boundary
+// MARK: - What the inputs turn into
 
-/// What one input is. Used only to find the boundary.
+/// What one input is.
 private enum ClaudeInputKind {
-    /// Starts with `!` — claude's shell mode. Run ahead of time so its output joins the prompt
+    /// Starts with `!` — claude's shell mode. Typed, and merged with its neighbours
     case shellCommand
     /// A line the **input box** reads specially: `/` dispatches a slash command, `#` files the
-    /// line into memory. Neither meaning exists in argv, where the text is just text
+    /// line into memory. Neither meaning exists anywhere but the box, so it is typed alone
     case inputBoxDirective
     /// Anything else: free text
     case interactive
@@ -36,45 +37,63 @@ private enum ClaudeInputKind {
     }
 }
 
-/// The inputs split at the first boundary. `prefix + tail` is always the input.
-///
-/// **An empty `tail` is what "this configuration can be merged" means** — `prepareRequest` merges
-/// only then. The split is still computed as a split (rather than a single Bool) because the
-/// boundary rule is what defines mergeability, and because it is the thing worth pinning with a
-/// property test: no input may be lost or duplicated on the way to that answer.
-public struct ClaudeInputPlan: Equatable {
-    /// Inputs before the first boundary (order preserved)
-    public let prefix: [String]
-    /// The first boundary onwards. Non-empty means **nothing merges** and everything is typed
-    public let tail: [String]
-}
+/// Attribution a merged `!` line prints before each command. With several outputs running
+/// together, claude cannot otherwise tell which command produced what — and a lone `!` needs none,
+/// because claude's shell mode already shows the command it ran.
+func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
 
-/// Finds the **longest prefix** that could be merged. There are only two boundaries:
+/// Everything that gets typed, in order, with **consecutive `!` inputs merged into one line**.
 ///
-/// 1. **A line the input box reads specially** — a slash command or a `#` memory line. Both only
-///    mean what they mean when they are the whole message, typed into the box. Only a leading `/`
-///    reaches the slash dispatcher; put a banner in front and it becomes inert text
-///    (`claude -p "/help"` → recognised as a command, `claude -p $'banner\n/help\n…'` → handled as
-///    ordinary text; both measured). Merging one would silently discard what it meant.
-/// 2. **A `!` that follows an interactive input** — its output was meant as context for the
-///    instruction *after* it. Hoisting it into the opening message changes what the earlier
-///    instruction sees.
+/// The merged shape is `!echo '<banner>'; body; echo '<banner>'; body`. Two things about it are
+/// deliberate:
+///  - **`;`, not `&&`.** Separate `!` inputs each ran on their own, so a failure never stopped the
+///    next one; `;` is what keeps the merged line equivalent to what the user had.
+///  - **The bodies are the user's own shell text**, single-quoted nowhere — that is what `!` means.
+///    Only the banner, which is ours, is quoted (`shellSingleQuoted`), so nothing we add can be
+///    read as syntax.
 ///
-/// Every other transition (command→command, text→text, command→text) merges.
-public func claudeInputPlan(_ inputs: [String]) -> ClaudeInputPlan {
-    var sawInteractive = false
-    for (index, input) in inputs.enumerated() {
-        func split() -> ClaudeInputPlan {
-            ClaudeInputPlan(prefix: Array(inputs[..<index]), tail: Array(inputs[index...]))
+/// No length cap: this is typed into a TUI, so `ARG_MAX` does not apply, the reflection check
+/// looks at a 24-character prefix, and truncating would silently change a command the user wrote.
+public func claudeTypedInputs(_ inputs: [String]) -> [String] {
+    var typed: [String] = []
+    var run: [String] = []
+
+    func flushRun() {
+        defer { run = [] }
+        guard !run.isEmpty else { return }
+        guard run.count > 1 else { return typed.append(run[0]) }
+        let parts = run.flatMap { input -> [String] in
+            let body = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
+            return ["echo \(shellSingleQuoted(claudePromptBanner(for: input)))", body]
         }
+        typed.append("!" + parts.joined(separator: "; "))
+    }
+
+    for input in inputs {
         switch ClaudeInputKind(input) {
-        case .inputBoxDirective: return split()
-        case .shellCommand where sawInteractive: return split()
-        case .shellCommand: continue
-        case .interactive: sawInteractive = true
+        case .shellCommand:
+            run.append(input)
+        default:
+            flushRun()
+            typed.append(input)
         }
     }
-    return ClaudeInputPlan(prefix: inputs, tail: [])
+    flushRun()
+    return typed
+}
+
+/// The opening message for claude's argv, or nil when there is none.
+///
+/// Only when **every** input is plain text. Plain text is just a message, so argv is exactly right
+/// for it and saves the whole typing dance — but mixing argv with typing in one session is the
+/// combination round 4 removed on a measurement: submitting the argv message clears the input box,
+/// and it renders 2.06∼3.41s after start while "claude accepts input" is true from 0.1s, so
+/// anything typed in between is wiped (3/3). No gate over that race survived review. Until one
+/// does, argv is used only when nothing has to be typed alongside it.
+public func claudeArgvOpeningMessage(_ inputs: [String]) -> String? {
+    guard !inputs.isEmpty,
+          inputs.allSatisfy({ ClaudeInputKind($0) == .interactive }) else { return nil }
+    return inputs.joined(separator: "\n\n")
 }
 
 // MARK: - Can a prompt be appended to the command?
@@ -321,13 +340,7 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
     return last[0].text == claudeExecutableName
 }
 
-// MARK: - Prompt assembly script
-
-/// The shell that pre-runs the `!` bodies and assembles the message. claude's own `!` runs in its
-/// Bash tool, so `sh` is closer to today's semantics than the user's interactive shell (zsh and
-/// friends) would be — with the same consequence that shell functions like zoxide's `z` are
-/// unavailable here, exactly as they are unavailable to claude's `!`.
-let claudePromptShell = "/bin/sh"
+// MARK: - Where the append may go
 
 /// Shells that can run the appended text. **csh and tcsh have no `$( )`**: the append is a parse
 /// error there and the shell throws away the whole line, so even the part in front of `&&` — the
@@ -349,162 +362,17 @@ public func shellCanRunAppendedPrompt(_ shellPath: String) -> Bool {
     posixFamilyShellNames.contains((shellPath as NSString).lastPathComponent)
 }
 
-/// Slack subtracted from the argv budget. ARG_MAX covers argv **and** the environment together,
-/// and our own command line, the other arguments and any growth in the environment all live in
-/// there too. Against the measured baseline (ARG_MAX 1,048,576 / env 6,193 bytes) 64 KiB is ample.
-public let claudeArgvBudgetSlack = 65536
-
-/// **Absolute paths** for the utilities the script calls. Going through PATH runs whatever
-/// same-named program sits in a directory the user controls — reproduced: with the command
-/// `PATH="$PWD/bin:$PATH" && claude` and a `bin/getconf` in the repository, that program ran even
-/// though the claude input was a single line of plain text. An absolute path also bypasses shell
-/// **functions and aliases**, whose names cannot contain `/`.
-enum ShellUtility {
-    static let getconf = "/usr/bin/getconf"
-    static let env = "/usr/bin/env"
-    static let wc = "/usr/bin/wc"
-    static let tr = "/usr/bin/tr"
-    static let cat = "/bin/cat"
-    static let printf = "/usr/bin/printf"
-    static let rm = "/bin/rm"
-}
-
-/// One request owns **one directory**. Scattering two files across the temp directory makes their
-/// names predictable enough for someone to pre-place a symlink (reproduced), and reclaiming
-/// per-file leaves no way to ask "is this context still needed". The directory is claimed
-/// atomically with `mkdir`, which fails if it already exists.
+/// **Legacy names.** Until round 10 a request owned a directory here: a script that pre-ran the
+/// `!` inputs and the context file it assembled. Nothing creates those any more — `!` is typed
+/// into claude's shell mode instead — but installations that ran the older build left directories
+/// behind, so the sweep below (and `uninstall.sh`) still recognises and clears them.
 let claudePromptDirectoryPrefix = "tc-prompt-"
 let claudePromptTokenLength = 8
 let claudePromptScriptName = "prompt.sh"
 let claudePromptContextName = "context.txt"
-/// Left behind by the over-budget branch. Its presence means claude was told to read the context
-/// during the session, so the reclaim sweep gives that directory a much longer grace period
+/// Marked a context an older build had told claude to read during the session, which is why such
+/// a directory gets a much longer grace period from the sweep
 let claudePromptHandoffName = "handed-to-claude"
-
-/// Bytes one environment entry costs in the argv budget (pointer plus alignment slack).
-/// `env | wc -c` counts only the strings, so without subtracting this as well `execve` fails with
-/// E2BIG in an environment with many entries (reproduced).
-public let claudeArgvEnvEntryOverhead = 32
-
-func claudePromptHandoffPath(forContext contextPath: String) -> String {
-    ((contextPath as NSString).deletingLastPathComponent as NSString)
-        .appendingPathComponent(claudePromptHandoffName)
-}
-
-/// What goes into argv when the assembled message is over budget. Nothing is truncated — the whole
-/// context stays in a file and claude is told to read it. In the default permission mode that may
-/// cost one Read approval prompt (a rare edge, accepted).
-let claudeContextPointerInstruction =
-    "The context for this task was too large to pass on the command line, "
-    + "so it was written to a file. Read this file in full before doing anything else:"
-
-/// Keeps argv from being an empty string when the command runs after the script is already gone
-/// (a race with the reclaim sweep) — an empty prompt can submit an empty message to claude.
-let claudePromptLostInstruction =
-    "Terminal Checkout: the prepared context was lost before claude started. "
-    + "Ask the user what they wanted to do."
-
-/// Attribution a `!` input leaves in the prompt. With only the output, claude cannot tell which
-/// command produced it.
-func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
-
-/// The text of the script that assembles the opening message inside the pane.
-///
-/// **Nowhere in this script does user text become syntax.** Banners and interactive inputs are
-/// single-quoted by the app and passed as **arguments** to `printf`; a `!` body is single-quoted
-/// too and handed to `sh -c`, so a syntax error in it stays trapped inside that `sh -c` instead of
-/// failing to parse the whole script. Nothing is truncated (the user's decision); going over
-/// budget is routed around with a file pointer.
-///
-/// Assembly running at the moment claude is invoked is the whole point — in
-/// `z {repo} && … && cd ../worktree && claude` the cwd `!gh` sees is the one after the last `cd`,
-/// and the app does not know that path.
-public func claudePromptScriptBody(
-    prefix: [String], contextPath: String,
-    argvSlack: Int = claudeArgvBudgetSlack
-) -> String {
-    let printf = ShellUtility.printf
-    let handoff = claudePromptHandoffPath(forContext: contextPath)
-    var lines = [
-        "#!/bin/sh",
-        "# Generated by \(appDisplayName) — assembles claude's opening message.",
-        "# Every utility we call is an absolute path. Going through PATH runs whatever the user's",
-        "# repository has at e.g. bin/getconf (reproduced) — one line of plain text was enough to",
-        "# execute an arbitrary program. PATH itself is left alone: the ! bodies need to find gh.",
-        "TC_CTX=\(shellSingleQuoted(contextPath))",
-        // Makes the create an `O_EXCL` open, which **does not follow a symlink** — if one has
-        // been planted the open fails instead (reproduced: a bare `>` overwrote the user file the
-        // link pointed at)
-        "set -C",
-        "{",
-    ]
-    for input in prefix {
-        if input.hasPrefix("!") {
-            let body = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
-            lines.append("\(printf) '%s\\n' \(shellSingleQuoted(claudePromptBanner(for: input)))")
-            // A failing command does not stop the next one — joining with `&&` would let the
-            // first failure swallow the rest. `2>&1` keeps failure output in the prompt, the way
-            // `!` does
-            lines.append("\(claudePromptShell) -c \(shellSingleQuoted(body)) 2>&1")
-        } else {
-            lines.append("\(printf) '%s\\n' \(shellSingleQuoted(input))")
-        }
-        lines.append("\(printf) '\\n'") // block separator: run together, the inputs read as one lump
-    }
-    lines += [
-        "} > \"$TC_CTX\" || exit 1",
-        // **`set -C` stays on for the whole script.** It used to be switched off right here, and
-        // the hand-off marker written further down was a bare `>` again — which followed a
-        // planted symlink and truncated the file behind it (reproduced). Nothing below needs
-        // clobbering: every other redirect is a read
-        //
-        // Two layers: even in a shell where `set -C` does not stop it, a symlink stops here.
-        // Testing `-s` first would pass on the grounds that **someone else's file** behind the
-        // link is non-empty, and that content would go out as the prompt. And since a failed
-        // redirect still lets the shell continue to the next line (measured), leaving 0 bytes
-        // alone would **submit an empty string as claude's opening message** — failing instead
-        // lets the `|| printf <claudePromptLostInstruction>` on the append side speak
-        "if [ -L \"$TC_CTX\" ] || [ ! -f \"$TC_CTX\" ] || [ ! -s \"$TC_CTX\" ]; then exit 1; fi",
-    ]
-    lines += [
-        // Through arithmetic expansion to get a plain integer — `wc` pads with spaces and
-        // `test -le` dislikes that
-        "TC_SIZE=$(( $(\(ShellUtility.wc) -c < \"$TC_CTX\") + 0 ))",
-        // Size with NULs removed. A difference means NULs are present, and command substitution
-        // drops those silently (`pre<NUL>post` → `prepost`, reproduced) — hand the file over
-        // rather than send something distorted
-        "TC_CLEAN=$(( $(\(ShellUtility.tr) -d '\\000' < \"$TC_CTX\" | \(ShellUtility.wc) -c) + 0 ))",
-        // ARG_MAX covers the **pointer array and alignment** too, not just the string bytes.
-        // Subtracting only the strings makes `execve` fail with E2BIG in a large environment
-        // (reproduced: 9,000 entries / 81,000 bytes)
-        "TC_ENV_BYTES=$(( $(\(ShellUtility.env) | \(ShellUtility.wc) -c) + 0 ))",
-        "TC_ENV_COUNT=$(( $(\(ShellUtility.env) | \(ShellUtility.wc) -l) + 0 ))",
-        "TC_BUDGET=$(( $(\(ShellUtility.getconf) ARG_MAX) - TC_ENV_BYTES"
-            + " - TC_ENV_COUNT * \(claudeArgvEnvEntryOverhead) - \(argvSlack) ))",
-        "if [ \"$TC_SIZE\" -le \"$TC_BUDGET\" ] && [ \"$TC_SIZE\" -eq \"$TC_CLEAN\" ]; then",
-        // **Not deleted.** `execve` can still fail after the budget check passes, and if we had
-        // already deleted it the assembled content would be gone for good. The reclaim sweep
-        // clears it by age instead
-        "\(ShellUtility.cat) \"$TC_CTX\"",
-        "else",
-        "\(printf) '%s\\n%s\\n' \(shellSingleQuoted(claudeContextPointerInstruction)) \"$TC_CTX\"",
-        // On this branch claude reads the context **during the session** — if the sweep removed
-        // it on the short age the session would find the file it was told to read missing. The
-        // marker makes the sweep wait much longer.
-        //
-        // The same two layers as the context file, for the same reason: this used to be a bare
-        // `>` after `set +C` and it **followed a planted symlink and truncated the file behind
-        // it** (reproduced). `-L` first, and the redirect itself is `O_EXCL` because `set -C` is
-        // still on. `|| :` because failing to leave a marker must not fail the script — the
-        // pointer text is already on stdout, and swallowing the status here keeps the append
-        // side's `|| printf <lost>` from firing on top of a prompt that is perfectly fine
-        "if [ ! -L \(shellSingleQuoted(handoff)) ]; then : > \(shellSingleQuoted(handoff))"
-            + " 2>/dev/null || :; fi",
-        "fi",
-        "",
-    ]
-    return lines.joined(separator: "\n")
-}
 
 /// Rewrites a trailing `claude` into `command claude`, or nil when the command does not end in
 /// that word.
@@ -530,63 +398,30 @@ private func invokingClaudeDirectly(_ trimmed: String) -> String? {
     return head + "command " + claudeExecutableName
 }
 
-/// Appends the prompt substitution to the command. The script deletes itself once its work is
-/// done, **inside the same substitution** (the way spawn-claude does it) — if the chain never
-/// reaches claude the substitution never runs at all, so there is no window in which a later
-/// claude picks up a stale prompt.
+/// Appends the opening message to the command as claude's first positional argument.
 ///
-/// This string is evaluated by the **user's interactive shell**, further outside our control than
-/// our own script, so `printf` and `rm` are called by absolute path too: `command rm` only
-/// bypasses functions and aliases, it still goes through PATH. The context file is not deleted
-/// here (that is the reclaim sweep's job) — only the script is.
-///
-/// **`--` comes first.** Measured (claude 2.1.238, 2 runs per combination, all agreeing): a flag
-/// that takes a value claims the following argument as its own instead of leaving it as the
-/// prompt — and so do **variadic flags** (`claude -p --allowed-tools Bash 'P'` → the prompt is
-/// swallowed and it exits 1), which means "a flag that already has its value is safe" is false.
-/// `--` closes that whole class (`--allowed-tools Bash -- 'P'` is delivered). Today it is
-/// harmless because only a bare `claude` is ever appended to, and it also covers the day the
-/// prompt starts with `-` (a reworded file pointer or banner).
-///
-/// What `--` **cannot** fix: if the command already has a positional prompt, ours becomes the
-/// second one and is **discarded silently, exit 0 and no stderr** (`claude -p 'first' 'second'`
-/// records only first). That is why the judgement stays narrowed to "the last simple command is a
-/// bare `claude`".
-public func appendedPromptCommand(_ command: String, scriptPath: String) -> String {
-    let quoted = shellSingleQuoted(scriptPath)
+/// There is no command substitution and no temporary file any more: the message is plain text the
+/// user wrote, so it goes in single-quoted and nothing in it is ever evaluated by the shell
+/// (`shellSingleQuoted` escapes the quotes themselves). What survives from the earlier design is
+/// the invocation: **`command claude`** so a wrapper of that name cannot receive the message, and
+/// the **`--`** so no flag can swallow it (measured: variadic flags do).
+public func appendedPromptCommand(_ command: String, message: String) -> String {
     let trimmed = command.replacingOccurrences(
         of: "[ \t]+$", with: "", options: .regularExpression
     )
-    // `prepareRequest` only ever passes a command whose last word is a bare `claude`
-    // (`commandAcceptsAppendedClaudePrompt`); anything else keeps its own last word, so a
-    // stand-in used in a test still runs and simply does not get the wrapper bypass
-    let invocation = invokingClaudeDirectly(trimmed) ?? trimmed
-    return invocation + " -- \"$(\(claudePromptShell) \(quoted)"
-        + " || \(ShellUtility.printf) '%s' \(shellSingleQuoted(claudePromptLostInstruction));"
-        + " \(ShellUtility.rm) -f -- \(quoted))\""
+    return (invokingClaudeDirectly(trimmed) ?? trimmed) + " -- " + shellSingleQuoted(message)
 }
 
 // MARK: - Request preparation
 
 /// A request prepared up to the moment of execution.
 public struct PreparedRequest {
-    /// The final command for the terminal (the merged prefix may be appended to its argv)
+    /// The final command for the terminal (an all-plain-text input list may be appended to it)
     public let command: String
-    /// Inputs for the injection path. **Empty means neither the Warp helper nor the
-    /// Accessibility permission is needed**
+    /// Inputs for the typing path, `!` runs already merged. **Empty means neither the Warp helper
+    /// nor the Accessibility permission is needed** — which, since round 10, is only true for
+    /// buttons whose inputs are all plain text or have none at all
     public let claudeInputs: [String]
-    /// The directory this request alone owns. Removed whole if the command never reached the terminal
-    public let temporaryDirectory: String?
-
-    /// Path of the assembly script. Nil when there is no directory (the fallback)
-    public var scriptPath: String? {
-        temporaryDirectory.map { ($0 as NSString).appendingPathComponent(claudePromptScriptName) }
-    }
-
-    public func discardTemporaryFiles() {
-        guard let temporaryDirectory else { return }
-        try? FileManager.default.removeItem(atPath: temporaryDirectory)
-    }
 }
 
 /// Is this a name we may reclaim — our prefix plus an **exactly 8 character** hex token? Without
@@ -599,27 +434,6 @@ func claudePromptDirectoryIsOurs(name: String) -> Bool {
     // `Character.isNumber`/`isHexDigit` are Unicode-wide, which let a token of Arabic-Indic digits
     // pass as hex (reproduced: `tc-prompt-١٢٣٤abcd` was reclaimable)
     return token.count == claudePromptTokenLength && token.allSatisfy(\.isASCIIHexLower)
-}
-
-/// A different hex token per request, from the same generator the helper socket and the Tab
-/// Config use — however many places need a request-unique string, they all draw from one.
-func claudePromptToken() -> String { warpHelperToken() }
-
-/// Creates only (`O_EXCL`) — a colliding token might be someone else's file, so it is never
-/// overwritten. 0600 because the script carries the `!` bodies and instructions from the user's
-/// settings. The context file, which holds the assembled result (PR and issue bodies), is created
-/// by the pane's shell under its own umask, but the temp directory itself is `drwx------` so no
-/// other user can walk in — and the same uid is inside this repository's declared trust boundary
-/// (`SECURITY.md`).
-private func writeNewPrivateFile(path: String, contents: String) -> Bool {
-    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-    guard descriptor >= 0 else { return false }
-    defer { close(descriptor) }
-    guard writeAll(fd: descriptor, data: Data(contents.utf8)) else {
-        unlink(path)
-        return false
-    }
-    return true
 }
 
 /// The script deletes itself inside the substitution, but **nobody deletes the context** —
@@ -678,85 +492,34 @@ func reclaimStaleClaudePromptDirectories(
     }
 }
 
-/// Claims the request's own directory, `drwx------`, with **one `mkdir(2)`**. `FileManager`'s
-/// `attributes:` is a `mkdir` followed by a `chmod`, so only the name is atomic and the directory
-/// exists at the process umask for the moment in between. Harmless while `$TMPDIR` is itself
-/// 0700, but the script and the assembled context live here and the guarantee should not lean on
-/// that. umask can only take bits away, never add them, so this is never *wider* than 0700 —
-/// which is the property that matters (`testRequestGetsItsOwnFreshDirectory` pins the exact mode
-/// for the ordinary umasks; an owner-masking umask would break far more than this).
-private func claimPrivateDirectory(_ path: String) -> Bool {
-    mkdir(path, 0o700) == 0
-}
-
-/// Turns a request into the form that will actually run. Either **every** scheduled input merges
-/// into claude's opening message (argv), or **none** does and they are all typed — today's
-/// behaviour. There is no third state.
+/// Turns a request into the form that will actually run: what the terminal is asked to execute,
+/// and what will be typed into the session afterwards.
 ///
-/// **Why not merge the longest prefix and type the rest** (round 4). Doing both in one session
-/// means racing claude's own startup: submitting the argv message clears the input box, so a tail
-/// typed before that message renders is wiped (measured), and the only signals available from
-/// outside are ones the user's shell can forge — a zsh with `set -x` prints the substituted argv,
-/// including any marker we put in it, right before the exec, and it can print it more than once.
-/// Two independent reviewers drove the production path into recording a wiped input as delivered.
-/// A gate cannot be made sound without either typing bytes before we know claude owns the input
-/// box (a new hazard: those keystrokes reach the trust dialog) or reading claude's internal
-/// session files. Removing the combination removes the race, and it costs nothing that exists
-/// today: a mixed configuration simply behaves the way it did before the argv track existed.
-/// (Design candidates and their failure modes are recorded in the plan file.)
+/// `!` inputs are always typed (see the top of this file). A list that is **nothing but plain
+/// text** can instead ride in claude's argv, and then there is nothing left to type — the two are
+/// never mixed, because the argv message's own submission clears the input box seconds after
+/// claude starts and would wipe whatever we typed in the meantime (measured; round 4 removed the
+/// combination and no gate over it survived review).
 ///
-/// It does not throw: this conversion cannot fail a request. Not being able to write the temp
-/// files is a fallback, not a rejection — throwing here would make a request that works today
-/// fail because of the state of the disk.
-///
-/// That fallback does reach a rejection **on Warp without the Accessibility permission**, because
-/// everything then has to be typed and the precondition gate refuses to open a tab it cannot
-/// deliver into. Kept deliberately: the alternative is running the command with the context
-/// silently missing, which is the symptom this whole route exists to remove. The user sees ❌ and
-/// the log line above says the cause was the temp file, not the permission.
+/// It does not throw: this conversion cannot fail a request.
 public func prepareRequest(
     _ resolved: ResolvedRequest, loginShell: String = loginShellPath(),
     claudeIsExecutable: Bool = true
 ) -> PreparedRequest {
-    func injectEverything() -> PreparedRequest {
-        PreparedRequest(
-            command: resolved.command, claudeInputs: resolved.claudeInputs,
-            temporaryDirectory: nil
-        )
-    }
-    // Reclaim leftovers from earlier runs the app died in the middle of (age decides, so nothing
-    // still in use is touched). **Before the guard, not after**: the sweep used to run only for
-    // requests that were about to merge, so a user who never sends another mergeable request kept
-    // `context.txt` — PR and issue bodies, and `!` output — forever. Every request sweeps now
+    // Clear out directories an **older build** left in the temp directory (it pre-ran `!` inputs
+    // into files there). Nothing creates them now; this is the last thing that cleans them up
     reclaimStaleClaudePromptDirectories()
 
-    let plan = claudeInputPlan(resolved.claudeInputs)
-    guard !plan.prefix.isEmpty, plan.tail.isEmpty, claudeIsExecutable,
+    let typed = claudeTypedInputs(resolved.claudeInputs)
+    guard let message = claudeArgvOpeningMessage(resolved.claudeInputs), claudeIsExecutable,
           commandAcceptsAppendedClaudePrompt(resolved.command),
-          shellCanRunAppendedPrompt(loginShell) else {
-        return injectEverything()
-    }
-
-    let token = claudePromptToken()
-    let directory = (NSTemporaryDirectory() as NSString)
-        .appendingPathComponent("\(claudePromptDirectoryPrefix)\(token)")
-    // `mkdir` fails if the name is taken — that is what makes the claim atomic, and it means a
-    // link or directory someone else left under that name is never adopted as ours
-    guard claimPrivateDirectory(directory) else {
-        checkoutLog("프롬프트 작업 디렉토리를 만들지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
-        return injectEverything()
-    }
-    let scriptPath = (directory as NSString).appendingPathComponent(claudePromptScriptName)
-    let contextPath = (directory as NSString).appendingPathComponent(claudePromptContextName)
-    let body = claudePromptScriptBody(prefix: plan.prefix, contextPath: contextPath)
-    guard writeNewPrivateFile(path: scriptPath, contents: body) else {
-        checkoutLog("프롬프트 조립 스크립트를 쓰지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
-        try? FileManager.default.removeItem(atPath: directory)
-        return injectEverything()
+          shellCanRunAppendedPrompt(loginShell),
+          // A newline would end the command line early: iTerm2 writes it with `write text` and
+          // WezTerm with `send-text`, and both treat a newline as "run this now"
+          !message.contains("\n") else {
+        return PreparedRequest(command: resolved.command, claudeInputs: typed)
     }
     return PreparedRequest(
-        command: appendedPromptCommand(resolved.command, scriptPath: scriptPath),
-        claudeInputs: [],
-        temporaryDirectory: directory
+        command: appendedPromptCommand(resolved.command, message: message), claudeInputs: []
     )
 }
