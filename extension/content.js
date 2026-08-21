@@ -39,15 +39,13 @@ function createRepoButton(buttonConfig, index) {
     button.style.backgroundColor = '#238636';
   });
 
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  // onUserClick refuses anything the browser did not mark as a real click, before the body runs
+  onUserClick(button, async () => {
     button.textContent = phases.busy;
     button.disabled = true;
 
     try {
-      await runButtonCommand('execute_repo_command', index);
+      await runButtonCommand('execute_repo_command', index, buttonConfig);
       button.textContent = phases.done;
       setTimeout(() => {
         button.textContent = face;
@@ -67,22 +65,50 @@ function createRepoButton(buttonConfig, index) {
 }
 
 // Run a single button. sendMessage does not reject when the background returns {success:false}, so
-// without inspecting the response a rejected command would still show up as success on the button
-async function runButtonCommand(action, index) {
-  const response = await chrome.runtime.sendMessage({ action, buttonIndex: index });
+// without inspecting the response a rejected command would still show up as success on the button.
+//
+// The index says which button; the fingerprint says which button it *was* when it was drawn; the
+// target says which page it was clicked on. The service worker reads storage again for the command
+// and the page again for the branch, and refuses if either disagrees — so what runs is what was on
+// screen, for the page it was on screen for.
+//
+// Both are comparison keys, never sources. The command still comes from storage, and the repository,
+// number and branch still come from the tab and its DOM; these two only decide whether to refuse.
+// Sending them as sources would let a message name its own repository.
+async function runButtonCommand(action, index, config) {
+  const response = await chrome.runtime.sendMessage({
+    action,
+    buttonIndex: index,
+    shown: buttonFingerprint(config),
+    // Read now, not when the button was drawn: the button is drawn once and the page moves under it.
+    // From the full href rather than the pathname, so this goes through the same origin check the
+    // service worker uses — one validator, one answer to "is this a page of ours".
+    target: pageTargetOfUrl(location.href),
+  });
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
 // Button configs per page type (BUTTON_KINDS in defaults.js is the single source of truth for the
 // storage keys).
-// If storage is empty or unreadable, draw the defaults — the buttons should never vanish entirely
+//
+// Returns null when storage could not be read at all. Drawing the defaults there looked harmless
+// and was not: the service worker does its own read when the button is clicked, so a page showing
+// our presets would have run whatever the user actually had saved. Nothing is drawn instead, and the
+// one-second poll retries — a read that fails now usually succeeds a moment later, and until it does
+// the honest answer is that we do not know what this user's buttons are.
+//
+// A read that *succeeds* still falls back to the defaults for a value it cannot use (readStoredButtons):
+// there both sides read the same storage and reach the same verdict, so what is drawn is what runs.
 async function loadButtonConfigs(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   try {
     const data = await chrome.storage.sync.get([storageKey]);
-    return data[storageKey] || defaults;
-  } catch {
-    return defaults;
+    // Stored buttons are validated here too, not only on the options page: an entry another device
+    // wrote as null would otherwise throw while drawing and take the whole button row with it
+    return readStoredButtons(data[storageKey], defaults);
+  } catch (error) {
+    console.warn('Terminal Checkout: could not read your buttons, will retry —', error);
+    return null;
   }
 }
 
@@ -135,16 +161,13 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.style.backgroundColor = 'transparent';
   });
 
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  onUserClick(button, async () => {
     const originalText = button.textContent;
     button.textContent = '⏳';
     button.disabled = true;
 
     try {
-      await runButtonCommand(action, index);
+      await runButtonCommand(action, index, buttonConfig);
       button.textContent = '✅';
       setTimeout(() => {
         button.textContent = originalText;
@@ -211,6 +234,7 @@ async function tryInsertPRButtons() {
   if (!headBranchLink) return false;
 
   const buttons = await loadButtonConfigs('pr');
+  if (!buttons) return false; // read failed; the poll retries rather than drawing something that would refuse
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -263,6 +287,7 @@ async function tryInsertIssueButtons() {
   if (!row) return false;
 
   const buttons = await loadButtonConfigs('issue');
+  if (!buttons) return false;
 
   // While awaiting, another trigger (the poll, the MutationObserver, a turbo event) may have
   // inserted them first
@@ -296,6 +321,7 @@ async function tryInsertRepoButtons() {
   if (!anchor) return false;
 
   const buttons = await loadButtonConfigs('repo');
+  if (!buttons) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -307,10 +333,13 @@ async function tryInsertRepoButtons() {
   return true;
 }
 
-// Insert the buttons according to the page type
+// Insert the buttons according to the page type.
+//
+// The same reading the click and the service worker use, so a page we would refuse to run anything
+// on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
-  const pageType = pageTypeOf(location.pathname);
-  if (!pageType) return false;
+  const target = pageTargetOfUrl(location.href);
+  if (!target) return false;
 
   let result = false;
 
@@ -318,9 +347,9 @@ async function tryInsertButton() {
   result = await tryInsertRepoButtons() || result;
 
   // PR and issue pages also get their own custom command buttons (configured separately)
-  if (pageType === 'pr') {
+  if (target.kind === 'pr') {
     result = await tryInsertPRButtons() || result;
-  } else if (pageType === 'issue') {
+  } else if (target.kind === 'issue') {
     result = await tryInsertIssueButtons() || result;
   }
 
@@ -329,13 +358,27 @@ async function tryInsertButton() {
 
 // Wrap the History API to detect URL changes
 let lastUrl = location.href;
+let lastTarget = pageTargetOfUrl(location.href);
+
+// Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
+// insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
+// could survive onto PR #2, where their position and the header around them mean something else.
+// Removing them makes the next insert redraw for the page that is actually showing.
+function removeInsertedButtons() {
+  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn')
+    .forEach(button => button.remove());
+}
 
 function onUrlChange() {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    // On a URL change, wait a moment before trying to insert the buttons
-    setTimeout(tryInsertButton, 300);
-  }
+  if (location.href === lastUrl) return;
+  lastUrl = location.href;
+  const target = pageTargetOfUrl(location.href);
+  // Only when the *target* changed. Moving between a repository's tabs (/issues → /pulls) leaves the
+  // buttons meaning exactly what they meant, and redrawing there would flicker for nothing.
+  if (!sameTarget(target, lastTarget)) removeInsertedButtons();
+  lastTarget = target;
+  // On a URL change, wait a moment before trying to insert the buttons
+  setTimeout(tryInsertButton, 300);
 }
 
 // Detect History API events

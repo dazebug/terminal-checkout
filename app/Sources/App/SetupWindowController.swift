@@ -252,12 +252,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             row,
             baseDirStatusLabel,
             // Saved button commands are never rewritten for the user, so someone upgrading from an
-            // earlier version gets no fallback from setting the folder alone — say what the missing
-            // step is, since nothing else in this window can
+            // earlier version gets no fallback from setting the folder alone. The options page now
+            // offers that rewrite itself (issue #31), so point at the notice rather than asking for
+            // the old by-hand re-apply
             helpLabel(
                 "이전 버전부터 쓰던 버튼은 저장해 둔 command를 그대로 유지합니다 — 폴더만 지정해서는 "
-                    + "폴백이 걸리지 않습니다. 확장 옵션 페이지에서 그 버튼에 프리셋을 다시 적용하고 "
-                    + "저장하세요."
+                    + "폴백이 걸리지 않습니다. 확장 옵션 페이지를 열면 위쪽에 업데이트 표시가 뜨고, "
+                    + "버튼별로 확인한 뒤 저장하면 반영됩니다."
             ),
         ])
     }

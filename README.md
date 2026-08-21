@@ -109,7 +109,7 @@ git pull --ff-only
 
 Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
 
-> **Updating from a version without the base directory?** Your saved buttons keep the exact command you already had — nothing rewrites them. The presets now open with `{cd}` instead of `z {repo}`; to move a button onto it, open the extension options page, apply the preset again on that button, and press **Save**.
+> **Presets improved since you last saved?** Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When the presets move on, the options page shows an update notice listing each affected button as `old → new`, saying what the change does, with a checkbox per item. Rewrites of presets we shipped are pre-checked; a command you customized is offered unchecked and marked as a behavior change, because the rest of it will now run wherever the new entry clause lands. Applying only fills the form; the write goes through the same **Save** as any other edit, and declining ("Keep mine") is recorded too, so the notice doesn't come back. If another device changed your settings while this page was open, Save is refused rather than overwriting them — reload to see them, exporting first if you have unsaved edits. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
 
 ## Usage
 
@@ -158,7 +158,7 @@ Installation, terminal selection, and permissions live in the app's setup window
 
 - Reorder button cards by dragging the `⠿` handle, or focus the handle and press `↑` `↓`. [Duplicate] creates a copy right after the original (its tooltip gets a `(1)`-style suffix). This order is the order buttons appear on GitHub, and the first button is what the extension icon runs.
 - Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
-- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply.
+- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply. The file records which generation of the presets it was written against: an older backup gets the same update notice, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
 
 ### Getting into the repository
 

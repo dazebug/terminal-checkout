@@ -1,0 +1,20 @@
+{
+  "_source": "git show 294c46a:extension/defaults.js",
+  "_note": "The v0 preset commands, captured before issue #30 replaced the leading `z {repo}` with {cd}. This is history: it records what users actually have saved, so it must never be edited to make a test pass. If a command here no longer reaches a current preset through the registry, the registry is what is wrong.",
+  "commands": [
+    "z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }",
+    "z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude",
+    "z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude",
+    "z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}",
+    "z {repo} && claude",
+    "z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }",
+    "z {repo} && claude",
+    "z {repo} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude",
+    "z {repo}",
+    "z {repo} && claude",
+    "z {repo}",
+    "z {repo} && claude",
+    "z {repo} && git checkout {main} && git pull --ff-only",
+    "z {repo}"
+  ]
+}

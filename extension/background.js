@@ -3,32 +3,23 @@ importScripts('defaults.js'); // defaults.js is the single source of truth for b
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
 // Pull owner/repo — and the number, on PR and issue pages — out of a GitHub URL. The extension icon
-// can be clicked on any tab, so check the host exactly (a string match would let
-// `example.com/github.com/foo/bar` through) and leave "is this a repository page?" to the same
-// decision content.js makes (pageTypeOf)
+// can be clicked on any tab, so the origin is compared whole rather than matched as a string
+// (`example.com/github.com/foo/bar` would pass a string match), and "is this a repository page?" is
+// left to the same decision content.js makes.
+// One reader for the four parts a request is built from (defaults.js), shared with the content
+// script and with the final gate below, so every side describes a page the same way — including
+// what counts as our origin.
 function parseGitHubUrl(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null; // tabs we have no host permission for don't hand us a url
-  }
-  if (parsed.hostname !== 'github.com') return null;
-
-  const kind = pageTypeOf(parsed.pathname);
-  if (!kind) return null;
-
-  const [, owner, repo] = parsed.pathname.split('/');
-  return {
-    owner,
-    repo,
-    kind,
-    number: parsed.pathname.match(/\/(?:pull|issues)\/(\d+)/)?.[1] || null,
-  };
+  return pageTargetOfUrl(url);
 }
 
 // Extract the branch name and the base branch from the DOM
 function getBranchAndMainFromDOM() {
+  // The location is read here, in the same synchronous pass as the branch, so the two cannot come
+  // from different pages: the caller compares it against the page the click came from.
+  // The whole href, not just the path — a path cannot say which origin served it, and the caller's
+  // check is only as good as what it is given (`pageTargetOfUrl` in defaults.js).
+  const href = location.href;
   const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return null;
 
@@ -53,7 +44,7 @@ function getBranchAndMainFromDOM() {
     }
   }
 
-  if (headBranch) return { branch: headBranch, detectedMain: baseBranch };
+  if (headBranch) return { branch: headBranch, detectedMain: baseBranch, href };
 
   // Legacy UI fallback 1: head-ref element
   const headRef = document.querySelector('.head-ref a, .head-ref span');
@@ -61,7 +52,8 @@ function getBranchAndMainFromDOM() {
     const baseRef = document.querySelector('.base-ref a, .base-ref span');
     return {
       branch: headRef.textContent.trim(),
-      detectedMain: baseRef ? baseRef.textContent.trim() : null
+      detectedMain: baseRef ? baseRef.textContent.trim() : null,
+      href,
     };
   }
 
@@ -71,7 +63,8 @@ function getBranchAndMainFromDOM() {
     const baseElement = document.querySelector('.commit-ref.base-ref');
     return {
       branch: branchElement.textContent.trim(),
-      detectedMain: baseElement ? baseElement.textContent.trim() : null
+      detectedMain: baseElement ? baseElement.textContent.trim() : null,
+      href,
     };
   }
 
@@ -91,53 +84,146 @@ function getBranchAndMainFromDOM() {
 // chrome.scripting injects this function on its own, so it cannot reference outer constants or helpers.
 async function getDefaultBranchFromPage(owner, repo) {
   const pattern = /"defaultBranch"\s*:\s*"([^"]+)"/;
+  // Read alongside the answer, every time. Capturing the location once at the top was exactly
+  // backwards: if the page moved while the fetch below was in flight, the answer came back stamped
+  // with the page we had left, and the caller's check agreed with it and let the command through.
+  // The location has to describe the page that exists when the answer does — and it is the whole
+  // href, because a path cannot say which origin served it.
   for (const script of document.querySelectorAll('script[type="application/json"]')) {
     const match = script.textContent.match(pattern);
-    if (match) return match[1];
+    if (match) return { branch: match[1], href: location.href }; // synchronous: same page
   }
   try {
     const html = await (await fetch(`/${owner}/${repo}`)).text();
-    return html.match(pattern)?.[1] || null;
+    return { branch: html.match(pattern)?.[1] || null, href: location.href };
   } catch {
-    return null;
+    return { branch: null, href: location.href };
   }
 }
 
 // null when it can't be read — the caller falls back to the override or the global default
-async function detectDefaultBranch(tab, owner, repo) {
+async function detectDefaultBranch(tab, owner, repo, clicked) {
+  let read;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: getDefaultBranchFromPage,
       args: [owner, repo],
     });
-    return results[0]?.result || null;
+    read = results[0]?.result;
   } catch (error) {
     console.error('Could not detect default branch:', error);
     return null;
   }
+  // Outside the catch: a page that moved is a refusal, not a detection failure to shrug off
+  assertSamePage(clicked, read?.href);
+  return read?.branch || null;
 }
 
 // Resolving the main branch: storage override → detected from the page → global default
 async function resolveMainBranch(repo, detectedMain) {
   const data = await chrome.storage.sync.get(['repoMainBranch', 'defaultMain']);
+  // Storage is not our data here either. The same validator the options page uses (defaults.js)
+  // decides what counts as a branch: `{widget: 42}` used to send `main=42` to the app, and a stored
+  // string "abc" answered `Object.hasOwn("abc", "0")` — making "a" the branch of a repository
+  // called `0`. One shape verdict for every reader.
+  const { defaultMain, overrides } = readStoredMainBranch(data);
 
-  // 1. Per-repository override
-  const repoOverride = data.repoMainBranch?.[repo];
-  if (repoOverride) return repoOverride;
+  // 1. Per-repository override. `repo` comes out of the page URL, so it reaches this lookup as an
+  // arbitrary string — and a plain object answers `overrides['constructor']` with an inherited
+  // member, which would then be passed on as if it were a branch name. Only an own property counts.
+  if (overrides && Object.hasOwn(overrides, repo) && overrides[repo]) return overrides[repo];
 
   // 2. Value read off the page — the base ref on a PR, the repository's default branch on
   //    repository and issue pages
   if (detectedMain) return detectedMain;
 
   // 3. Global default
-  return data.defaultMain || DEFAULT_MAIN;
+  return defaultMain || DEFAULT_MAIN;
 }
 
 async function loadButtons(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   const data = await chrome.storage.sync.get([storageKey]);
-  return data[storageKey] || defaults;
+  // Same validation as the content script and the options page — a stored entry that is not a
+  // button would otherwise throw here, and the click would fail with nothing explaining why
+  return readStoredButtons(data[storageKey], defaults);
+}
+
+// The page a request is built for has to be the page the click came from — at the moment the tab is
+// asked, and again at the moment its DOM is read.
+//
+// Those two used to be different instants. The PR number was parsed from `sender.tab.url` when the
+// message arrived, while the branch was read out of the DOM some milliseconds later; a navigation in
+// between produced a request carrying one PR's number and another PR's branch. The button
+// fingerprint cannot catch that — a button is drawn for a section, not for a page — so the page is
+// its own check.
+//
+// `clicked` is a comparison key and never a source: every value still comes from the tab and its
+// DOM, so a message can cause a refusal but cannot name its own repository. The extension-icon path
+// sends no *fingerprint* — nothing was drawn for it to disagree with — but it does send a target,
+// read from the tab when the icon was pressed, so it takes this same gate.
+const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
+
+// Internal coherence: the values a single read produced describe one page. This is what the final
+// gate below cannot answer — that the number and the branch belong together — so the two are not
+// alternatives.
+function assertSamePage(clicked, href) {
+  if (!sameTarget(clicked, pageTargetOfUrl(href))) throw new Error(PAGE_CHANGED_ERROR);
+}
+
+// Read the page's own idea of where it is. `chrome.scripting` injects this on its own, so it cannot
+// reference anything outside itself.
+function readCurrentHref() {
+  return location.href;
+}
+
+// The final gate. Asked once, immediately before the command leaves, so every await behind it is
+// covered together and there is no next await to forget.
+//
+// It asks the *document*, not `chrome.tabs.get`. A `Tab`'s url is documented as the last **committed**
+// URL, and GitHub navigates with `pushState`, which commits nothing — Chrome exposes those separately
+// as `webNavigation.onHistoryStateUpdated`. So a tab record can honestly report the page we left, and
+// a gate built on it would agree with the click and let the command through. `location` inside the
+// page is the page's own answer and cannot lag behind itself. (This is the mechanism the DOM reads
+// already use, so it brings no new permission.)
+//
+// A failure to inject is a refusal, not a shrug: the usual reason is that the page is no longer there.
+//
+// The caller must send with no await in between, or this becomes another check with a gap after it.
+async function assertRequestIsCoherent(tab, { clicked, source }) {
+  let current;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: readCurrentHref,
+    });
+    current = pageTargetOfUrl(results[0]?.result ?? '');
+  } catch {
+    throw new Error(PAGE_CHANGED_ERROR); // the tab is gone, or we can no longer reach it
+  }
+  if (!requestIsCoherent({ clicked, source, current })) throw new Error(PAGE_CHANGED_ERROR);
+}
+
+// The button a click meant, or a refusal.
+//
+// This is a *second* read: the page did its own when it drew the button, and the settings can have
+// moved in between — another device saved, someone reordered the list — or the page may be showing
+// something its own read never returned. Running whatever now sits at that index would run a command
+// the user never saw, so a click brings a fingerprint of what was drawn and it has to match.
+//
+// The command still comes from here, from storage, never from the message: the fingerprint can only
+// cause a refusal, not introduce a command of its own.
+//
+// `shown` is absent only on the extension-icon path, which draws nothing — there is no rendered
+// button for it to disagree with, and "the first button for this page" is the whole of the request.
+async function clickedButton(kind, index, shown) {
+  const button = (await loadButtons(kind))[index];
+  if (!button) throw new Error(`Button index ${index} not found`);
+  if (shown !== undefined && buttonFingerprint(button) !== shown) {
+    throw new Error(BUTTON_CHANGED_ERROR);
+  }
+  return button;
 }
 
 // Send a message to the native host. The app reports variable validation failures and terminal
@@ -158,7 +244,19 @@ async function sendToNativeHost(message) {
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
 // only send the raw material
-async function runButton(button, variables) {
+async function runButton(button, variables, page) {
+  // The one place every command passes through, and therefore the only place this check has to be.
+  // Everything from here to the send is synchronous **on purpose**: an await in between would make
+  // this one more check with a gap behind it, which is the shape of every defect this loop has been
+  // closing. sendToNativeHost hands the message to Chrome as its own first statement.
+  //
+  // That closes the window **inside this script** and nothing more. Handing the message to Chrome is
+  // not the command running: it crosses a native-messaging IPC, and the page can move between the
+  // hand-off and the moment the app acts on it. So the check and the execution are **not atomic** —
+  // this is the same TOCTOU residual as the get↔set window on the options page, accepted for the
+  // same reason: closing it would need a compare-and-set the boundary does not offer. The app cannot
+  // supply one either; it has no view of the browser's pages to re-check against.
+  await assertRequestIsCoherent(page.tab, page);
   const message = { command_template: button.command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
@@ -168,12 +266,11 @@ async function runButton(button, variables) {
 }
 
 // Run a custom command (PR page)
-async function executeCommand(tab, buttonIndex) {
+async function executeCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'pr') throw new Error('Not a GitHub PR page');
 
-  const button = (await loadButtons('pr'))[buttonIndex];
-  if (!button) throw new Error(`Button index ${buttonIndex} not found`);
+  const button = await clickedButton('pr', buttonIndex, shown);
 
   // Extract the branch and the base branch from the DOM
   const results = await chrome.scripting.executeScript({
@@ -183,6 +280,9 @@ async function executeCommand(tab, buttonIndex) {
 
   const domResult = results[0]?.result;
   if (!domResult?.branch) throw new Error('Could not extract branch name');
+  // The authoritative check: the branch below and the number above have to describe one page, and
+  // this is the page the branch was actually read from, origin included
+  assertSamePage(clicked, domResult.href);
 
   const main = await resolveMainBranch(target.repo, domResult.detectedMain);
 
@@ -201,42 +301,45 @@ async function executeCommand(tab, buttonIndex) {
   // don't pass it at all, so the app rejects it as not provided (silently substituting another
   // branch would mean merging or rebasing onto the wrong one)
   if (domResult.detectedMain) variables.base = domResult.detectedMain;
-  await runButton(button, variables);
+  // `target` is where these variables were read from — the third axis of the gate
+  await runButton(button, variables, { tab, clicked, source: target });
 }
 
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
 // variables isn't passed — if a template uses one, the app rejects it with
 // "Variable {branch} not provided"
-async function executeIssueCommand(tab, buttonIndex) {
+async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'issue') throw new Error('Not a GitHub issue page');
 
-  const button = (await loadButtons('issue'))[buttonIndex];
-  if (!button) throw new Error(`Issue button index ${buttonIndex} not found`);
+  const button = await clickedButton('issue', buttonIndex, shown);
 
-  const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
+  // detectDefaultBranch checks the page it read from against the click as well — the default branch
+  // it finds is embedded in whatever page is showing, which need not be this repository's
+  const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
+  const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing issue command: repo=${target.repo}, number=${target.number}, main=${main}`);
   await runButton(button, {
     repo: target.repo,
     owner: target.owner,
     number: target.number,
     main,
-  });
+  }, { tab, clicked, source: target });
 }
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
 // number, so only {repo}, {owner}, and {main} are passed
-async function executeRepoCommand(tab, buttonIndex) {
+async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
   // Repository buttons are also attached to the header of PR and issue pages, so don't check kind
   const target = parseGitHubUrl(tab.url);
   if (!target) throw new Error('Not a GitHub repo page');
 
-  const button = (await loadButtons('repo'))[buttonIndex];
-  if (!button) throw new Error(`Repo button index ${buttonIndex} not found`);
+  const button = await clickedButton('repo', buttonIndex, shown);
 
-  const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
+  const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
+  const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
-  await runButton(button, { repo: target.repo, owner: target.owner, main });
+  await runButton(button, { repo: target.repo, owner: target.owner, main }, { tab, clicked, source: target });
 }
 
 // Check whether this page really rendered as a repository. Only pages GitHub drew as a repository
@@ -280,7 +383,15 @@ chrome.action.onClicked.addListener(async (tab) => {
     return;
   }
   try {
-    await RUN_BY_KIND[target.kind](tab, 0);
+    // No fingerprint: nothing was drawn for this click, so there is no rendered button that could
+    // disagree with what is stored. "The first button for this page" is the whole of the request.
+    //
+    // The page, though, still has to hold still. `target` was read from the tab when the icon was
+    // pressed, so it is the same kind of comparison key a page click sends — and it makes the icon
+    // take the same final gate. It is not a source: every value still comes from the tab and its
+    // DOM. (Whether the icon ought to run the button the user can *see* is a separate question,
+    // still open — this is only about the tab moving underneath the one it does run.)
+    await RUN_BY_KIND[target.kind](tab, 0, undefined, target);
   } catch (error) {
     console.error('Error executing command:', error); // an icon click has no button to show the failure on
   }
@@ -288,10 +399,23 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 // Receive messages from content.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const kind = ACTION_KIND[message.action];
+  // A message is an arbitrary value — `null` reaches here, and reading `.action` off it throws
+  // before any check below can run. Establish that there is a string to look up, then look it up as
+  // an own property: an inherited member ("constructor", "toString") would otherwise pass the
+  // truthiness check and fail as "not a function" one line later.
+  if (typeof message?.action !== 'string') return;
+  const kind = Object.hasOwn(ACTION_KIND, message.action) ? ACTION_KIND[message.action] : null;
   if (!kind) return;
+  // The index picks a button out of an array; anything that is not one is not a request we can serve
+  if (!Number.isInteger(message.buttonIndex)) return;
+  // A click from a page always says which button it drew. Only the extension-icon path may omit it,
+  // and that one never comes through here.
+  if (typeof message.shown !== 'string') return;
+  // And which page it was clicked on. A message without one cannot be checked against anything —
+  // which is not the same as passing the check, and used to be treated as if it were.
+  if (!isPageTarget(message.target)) return;
 
-  RUN_BY_KIND[kind](sender.tab, message.buttonIndex).then(() => {
+  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown, message.target).then(() => {
     sendResponse({ success: true });
   }).catch((error) => {
     sendResponse({ success: false, error: error.message });
