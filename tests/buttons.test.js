@@ -13,6 +13,7 @@ vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
 const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
   vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf, APP_VARIABLES })');
+const { adoptStoredButtons } = vm.runInThisContext('({ adoptStoredButtons })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -161,4 +162,37 @@ test('pageTypeOf: reserved paths in the owner position are not repositories', ()
 test('pageTypeOf: no verdict without a repository name', () => {
   assert.equal(pageTypeOf('/'), null);
   assert.equal(pageTypeOf('/dazebug'), null);
+});
+
+// --- Reading a stored button array ---
+// Storage was written by another device, another version of this extension, or by hand. Every
+// reader has to survive it — the content script and the service worker included, which is why this
+// lives in defaults.js: those two do not load migrations.js and must not have to.
+
+test('adoptStoredButtons: nothing stored is not a problem', () => {
+  assert.deepEqual(adoptStoredButtons(undefined), { buttons: [], skipped: 0 });
+});
+
+test('adoptStoredButtons: a value that is not an array is dropped whole', () => {
+  // `{"buttons": {"length": 1}}` used to reach .map and throw
+  for (const value of [{ length: 1 }, 'z {repo}', 42, null]) {
+    assert.deepEqual(adoptStoredButtons(value), { buttons: [], skipped: 1 }, JSON.stringify(value));
+  }
+});
+
+test('adoptStoredButtons: entries that are not buttons are dropped and counted', () => {
+  const { buttons, skipped } = adoptStoredButtons([null, 'x', 42, ['nested'], undefined]);
+  assert.equal(buttons.length, 0);
+  assert.equal(skipped, 5);
+});
+
+test('adoptStoredButtons: the readable ones survive next to the broken ones', () => {
+  const { buttons, skipped } = adoptStoredButtons([
+    null,
+    { face: '🤖', label: 'keep', command: '{cd} && claude', claudeInputs: ['/review'] },
+  ]);
+  assert.equal(skipped, 1);
+  assert.deepEqual(buttons, [
+    { face: '🤖', label: 'keep', command: '{cd} && claude', claudeInputs: ['/review'] },
+  ]);
 });

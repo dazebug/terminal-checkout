@@ -224,6 +224,44 @@ function reshapeButton(button, uid) {
   return { ...buttonFields(button), uid };
 }
 
+// Reads a stored button array, keeping only the entries whose shape we understand and saying how
+// many it had to drop.
+//
+// Storage is not our data: another device wrote it, or another version of this extension, or a hand
+// edit. `[null]` and `{"length": 1}` both arrive here and both used to throw — the options page hung
+// with no settings and nothing to retry it. **Every** reader goes through this, the content script
+// and the service worker included, which is why it lives in defaults.js: those two deliberately do
+// not load migrations.js, and surviving a stored value must not depend on which files you loaded.
+function adoptStoredButtons(value) {
+  if (value === undefined) return { buttons: [], skipped: 0 }; // nothing stored is not a problem
+  if (!Array.isArray(value)) return { buttons: [], skipped: 1 };
+
+  const buttons = [];
+  let skipped = 0;
+  for (const entry of value) {
+    // A button is an object. null, a string, a number, an array — none of those can be read as one,
+    // and guessing at them is how a typo in someone's backup becomes a command.
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { skipped += 1; continue; }
+    buttons.push(buttonFields(entry));
+  }
+  return { buttons, skipped };
+}
+
+// What the content script and the service worker read through: validate, say out loud what was
+// dropped, and fall back to the defaults only when nothing usable is left. The warning goes to the
+// console because that is where those two report anything at all (README troubleshooting says so);
+// the options page has a status line and says it there instead.
+function readStoredButtons(value, defaults) {
+  const { buttons, skipped } = adoptStoredButtons(value);
+  if (skipped) {
+    console.warn(
+      `Terminal Checkout: ${skipped} stored button${skipped === 1 ? ' was' : 's were'} unreadable `
+        + 'and skipped — open the options page to repair.'
+    );
+  }
+  return buttons.length ? buttons : defaults;
+}
+
 // The exact shape a button takes in storage, and the only place that shape is decided. The runtime
 // uid is dropped here rather than at each call site — leaked into storage it would ride storage.sync
 // to other machines and into export files, where it would collide with the uids minted there.

@@ -40,6 +40,10 @@ const state = {
   // Set when a change arrives from another device while editing — the banner warns before the save
   // is attempted, but the re-read at save time is what decides
   staleSinceLoad: false,
+  // Set the moment the user engages with the migration preview. Checking boxes is not a "dirty"
+  // edit — nothing has been typed — but it is unsaved work all the same, and re-planning underneath
+  // it silently restores the choices they just made.
+  reviewTouched: false,
   reviewed: false,
   plan: null,
   // Ids of the checked candidates — they start checked, so this starts as all of them.
@@ -65,8 +69,8 @@ const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
 
 // Until the first load answers, this page holds no settings — only the empty shell of the edit
 // state. Every entry point that would write, or that would change what a later write contains, asks
-// here first. The buttons are disabled too (updateLoadedGate); the guard is the one that matters,
-// since a disabled button is a hint and not a rule.
+// here first. The page is also inert until then (updateLoadedGate), but that is the fence; this is
+// the rule, and code paths that do not come from a click still have to pass it.
 const LOADING_MESSAGE = 'Still loading your settings — one moment.';
 
 function requireLoaded() {
@@ -75,13 +79,15 @@ function requireLoaded() {
   return false;
 }
 
-// Buttons that act on settings stay disabled until there are settings to act on.
+// Nothing on the page is interactive until there are settings to interact with.
+//
+// One switch on the root, not a list of controls. The list was wrong the moment it was written: it
+// named the buttons and forgot the `default-main` field and [+ Add Override], and typing in that
+// field bumped the revision — which made the first load throw away its own answer and stop, leaving
+// the page unloaded with nothing to retry it. A control added later is covered here without anyone
+// having to remember.
 function updateLoadedGate() {
-  const ids = ['save-btn', 'reset-btn', 'export-btn', 'import-btn', ...SECTIONS.map(s => s.addButton)];
-  for (const id of ids) {
-    const element = document.getElementById(id);
-    if (element) element.disabled = !state.loaded;
-  }
+  document.body.inert = !state.loaded;
 }
 
 // Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
@@ -369,27 +375,42 @@ async function loadSettings() {
   // overtaken is dropped instead of landing on top of newer settings.
   const revisionAtStart = state.revision;
   const generation = ++state.loadGeneration;
+  // Before the first answer there is nothing on screen to protect, so this one is applied whatever
+  // the user did meanwhile — dropping it left the page unloaded with nothing to retry it.
+  const initial = !state.loaded;
   const data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
 
   if (!shouldApplyLoadedSnapshot({
     revisionAtStart, revisionNow: state.revision, dirty: state.dirty,
-    generation, latestGeneration: state.loadGeneration,
+    generation, latestGeneration: state.loadGeneration, initial,
   })) return;
 
+  // Storage is as untrusted as an imported file: another device, another version of this extension,
+  // or a hand edit wrote it. Anything unreadable is dropped and counted, never guessed at.
+  const { settings, skipped } = adoptStoredSettings(data);
+
   for (const { kind, storageKey, defaults } of SECTIONS) {
-    const saved = data[storageKey];
+    const saved = settings[storageKey];
     state.buttons[kind] = (saved?.length ? saved : defaults).map(adoptButton);
   }
-  state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
-  document.getElementById('default-main').value = data.defaultMain || 'main';
+  state.overrides = Object.entries(settings.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
+  document.getElementById('default-main').value = settings.defaultMain || 'main';
 
   state.loadedVersion = storedSchemaVersion(data);
-  // Exactly what was read, kept for the comparison at save time
+  // Exactly what was read — the raw object, not the cleaned one, because that is what a later save
+  // has to find unchanged in storage
   state.loadedSnapshot = data;
   state.staleSinceLoad = false;
+  state.reviewTouched = false;
   state.reviewed = false;
   state.loaded = true;
   updateLoadedGate();
+  renderStaleBanner();
+  if (skipped) {
+    // Said out loud. Quietly falling back to defaults would read as "you have no buttons", which is
+    // a lie about the user's own data — and would hide whatever wrote the broken value.
+    showStatus('error', `${skipped} stored ${skipped === 1 ? 'entry was' : 'entries were'} unreadable and skipped.`);
+  }
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderOverrides();
@@ -430,8 +451,12 @@ async function saveSettings() {
   // This page may have been open a long time, and another device on the account can have saved in
   // the meantime — a migration, say. Writing our payload over that would erase their decision with
   // no trace. There is no compare-and-set in storage.sync, so we read once more, right here, and
-  // refuse if anything moved. The window between this read and the write below is the narrowest we
-  // can make without a transaction; it is recorded as a known residual.
+  // refuse if anything moved.
+  //
+  // The window between this read and the write below cannot be closed without a transaction. What
+  // lands in it is a last-write-wins overwrite, and if what it overwrites was a migration decision
+  // the loss is permanent: the version we write is ours, so the notice does not come back to offer
+  // it again. That is the residual, stated as it is — it is not "the notice appears once more".
   const liveSnapshot = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
   const outcome = planSave({ loadedSnapshot: state.loadedSnapshot, liveSnapshot, payload });
   if (outcome.refused) {
@@ -451,6 +476,7 @@ async function saveSettings() {
   // change event a no-op instead of a conflict with ourselves.
   state.loadedSnapshot = payload;
   state.staleSinceLoad = false;
+  state.reviewTouched = false;
   renderStaleBanner();
   const version = payload[VERSION_KEY];
 
@@ -668,10 +694,11 @@ function parseImportedSettings(raw) {
   // it is an import that must not happen.
   const version = importedSchemaVersion(data);
 
-  // Values from a file can't be trusted to have the right type. Non-string fields are dropped to
-  // an empty value so the required-field check catches them on save (left as they are, saving
-  // would blow up in .trim()).
-  const text = v => (typeof v === 'string' ? v : '');
+  // Shape checking is shared with the load path (adoptStoredSettings): a file and a stored object
+  // are the same kind of stranger, and a shape one path survives must not be one the other dies on.
+  // What is specific to a file is layered on top — the per-button caps, and "an empty array is not
+  // a setting".
+  const adopted = adoptStoredSettings(data);
   const settings = {};
   const skipped = [];
 
@@ -679,37 +706,18 @@ function parseImportedSettings(raw) {
     if (data[key] === undefined) continue;
     // An empty array means "no setting", not "no buttons" — the background logic doesn't fall back
     // to the defaults for an empty array, so the buttons would disappear entirely.
-    const buttons = (Array.isArray(data[key]) ? data[key] : [])
-      .filter(b => b && typeof b === 'object' && !Array.isArray(b))
-      .slice(0, MAX_BUTTONS)
-      .map(b => {
-        const btn = buttonFields(b);
-        return {
-          face: text(btn.face),
-          label: text(btn.label),
-          command: text(btn.command),
-          claudeInputs: btn.claudeInputs.slice(0, MAX_CLAUDE_INPUTS),
-        };
-      });
+    const buttons = (adopted.settings[key] || []).slice(0, MAX_BUTTONS).map(button => ({
+      ...button,
+      claudeInputs: button.claudeInputs.slice(0, MAX_CLAUDE_INPUTS),
+    }));
     if (buttons.length) settings[key] = buttons;
     else skipped.push(key);
   }
 
-  if (data.defaultMain !== undefined) {
-    if (typeof data.defaultMain === 'string') settings.defaultMain = data.defaultMain;
-    else skipped.push('defaultMain');
-  }
-
-  if (data.repoMainBranch !== undefined) {
-    const map = data.repoMainBranch;
-    if (map && typeof map === 'object' && !Array.isArray(map)) {
-      // An empty object is a valid setting meaning "no overrides", so take it as is
-      settings.repoMainBranch = Object.fromEntries(
-        Object.entries(map).filter(([, branch]) => typeof branch === 'string')
-      );
-    } else {
-      skipped.push('repoMainBranch');
-    }
+  for (const key of ['defaultMain', 'repoMainBranch']) {
+    if (data[key] === undefined) continue;
+    if (adopted.settings[key] !== undefined) settings[key] = adopted.settings[key];
+    else skipped.push(key);
   }
 
   if (Object.keys(settings).length === 0) {
@@ -1048,6 +1056,7 @@ document.getElementById('reset-btn').addEventListener('click', resetSettings);
 // --- Update notice ---
 
 document.getElementById('migration-badge').addEventListener('click', () => {
+  state.reviewTouched = true; // opening the review is the start of deciding about it
   const panel = document.getElementById('migration-section');
   panel.hidden = !panel.hidden;
   if (!panel.hidden) panel.scrollIntoView({ block: 'nearest' });
@@ -1060,8 +1069,9 @@ document.getElementById('migration-actionable').addEventListener('change', (e) =
   else state.selection.delete(id);
   // Choosing which candidates to accept is not a "dirty" edit — nothing to save yet — but it is the
   // user speaking about this plan, so a snapshot that arrives from sync afterwards must not silently
-  // reset their choices back to all-checked.
+  // reset their choices back to the defaults.
   state.revision++;
+  state.reviewTouched = true;
   renderMigration();
   // Re-opening after a redraw would be surprising: the panel was open, keep it open
   document.getElementById('migration-section').hidden = false;
@@ -1085,12 +1095,18 @@ document.getElementById('migration-keep').addEventListener('click', () => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
   if (!state.loaded) return; // nothing to compare against yet; the load in flight will pick it up
-  // Mark first, adopt second. A change we are not going to adopt right now — because the user is
-  // mid-edit — still means the settings moved, and the save must warn rather than march on. The
+  if (!ownedChangedKeys(changes).length) return; // someone else's key; not our business to warn about
+  // Our own save arrives here as a change event too. Treating it as another device would warn about
+  // a conflict with ourselves and throw away a review in progress.
+  if (isOwnEcho(changes, state.loadedSnapshot)) return;
+
+  // Mark first, adopt second. A change we are not going to adopt right now — because there is
+  // unsaved work — still means the settings moved, and the save must warn rather than march on. The
   // check at save time is the authority; this only gets the warning on screen sooner.
   state.staleSinceLoad = true;
   renderStaleBanner();
-  if (!shouldAdoptSyncedChange(state.dirty, changes)) return;
+  // A review being decided counts as unsaved work, exactly like text being typed
+  if (!shouldAdoptSyncedChange(state.dirty || state.reviewTouched, changes)) return;
   // loadSettings checks again, after its await, whether the page moved on in the meantime
   loadSettings();
 });

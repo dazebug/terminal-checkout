@@ -80,7 +80,9 @@ async function loadButtonConfigs(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   try {
     const data = await chrome.storage.sync.get([storageKey]);
-    return data[storageKey] || defaults;
+    // Stored buttons are validated here too, not only on the options page: an entry another device
+    // wrote as null would otherwise throw while drawing and take the whole button row with it
+    return readStoredButtons(data[storageKey], defaults);
   } catch {
     return defaults;
   }

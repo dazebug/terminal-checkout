@@ -620,3 +620,104 @@ test('a save onto the settings we loaded goes through unchanged', () => {
   assert.equal(outcome.refused, false);
   assert.equal(outcome.write, payload);
 });
+
+// --- Nothing to protect before the first load (class (a)-1) ---
+
+test('the first load applies even if the page moved while it was in flight', () => {
+  const { shouldApplyLoadedSnapshot } = vm.runInThisContext('({ shouldApplyLoadedSnapshot })');
+  // There are no settings on screen yet, so there is nothing a late arrival could overwrite.
+  // Discarding it left the page with loaded=false forever, and nothing retried.
+  assert.equal(shouldApplyLoadedSnapshot({
+    initial: true, revisionAtStart: 0, revisionNow: 3, dirty: true, generation: 1, latestGeneration: 1,
+  }), true);
+  // Being overtaken by a newer request still wins over "initial"
+  assert.equal(shouldApplyLoadedSnapshot({
+    initial: true, revisionAtStart: 0, revisionNow: 0, dirty: false, generation: 1, latestGeneration: 2,
+  }), false);
+  // Once loaded, the edit state is real and the old rules apply again
+  assert.equal(shouldApplyLoadedSnapshot({
+    initial: false, revisionAtStart: 0, revisionNow: 3, dirty: false, generation: 1, latestGeneration: 1,
+  }), false);
+});
+
+// --- A review in progress is unsaved work (class (a)-2) ---
+
+test('only our own keys raise the stale banner', () => {
+  const { ownedChangedKeys } = vm.runInThisContext('({ ownedChangedKeys })');
+  assert.deepEqual(ownedChangedKeys({ buttons: {}, somethingElse: {} }), ['buttons']);
+  assert.deepEqual(ownedChangedKeys({ somethingElse: {} }), []);
+  assert.deepEqual(ownedChangedKeys({}), []);
+});
+
+test('our own write coming back is not another device changing things', () => {
+  const { isOwnEcho } = vm.runInThisContext('({ isOwnEcho })');
+  const written = { buttons: [{ command: '{cd}' }], version: 1 };
+  assert.equal(isOwnEcho({ buttons: { newValue: [{ command: '{cd}' }] }, version: { newValue: 1 } }, written), true);
+  assert.equal(isOwnEcho({ buttons: { newValue: [{ command: 'z {repo}' }] } }, written), false);
+  assert.equal(isOwnEcho({}, written), false, 'nothing of ours changed is not an echo');
+});
+
+test('a review the user has touched blocks a remote change from resetting it', () => {
+  // Codex's order exactly: uncheck a candidate, another device saves defaultMain, the change
+  // arrives. Adopting it re-planned and re-selected everything, so Apply then rewrote the very
+  // button the user had just declined.
+  const { shouldAdoptSyncedChange, defaultSelection } = vm.runInThisContext('({ shouldAdoptSyncedChange, defaultSelection })');
+  const data = stored('buttons', V0.claude);
+  const plan = plan0(data);
+  const selection = new Set(defaultSelection(plan));
+  assert.equal(selection.size, 1);
+
+  selection.delete('buttons#0'); // the user unchecks it
+  const reviewTouched = true;
+  assert.equal(shouldAdoptSyncedChange(false || reviewTouched, { defaultMain: {} }), false);
+
+  // The selection therefore still says "no", and applying honours it
+  assert.equal(applyMigrationPlan(data, plan, selection).buttons[0].command, V0.claude);
+});
+
+// --- Stored settings are as untrusted as an imported file (class (b)) ---
+
+test('unreadable stored entries are skipped, counted, and never crash the page', () => {
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  // Every one of these used to throw before the page finished loading, leaving it stuck
+  const cases = [
+    { buttons: [null] },
+    { buttons: { length: 1 } },
+    { buttons: 'z {repo}' },
+    { buttons: [['nested']] },
+    { buttons: [undefined, 42, 'x'] },
+  ];
+  for (const raw of cases) {
+    const adopted = adoptStoredSettings(raw);
+    assert.ok(adopted.skipped > 0, `must report what it dropped: ${JSON.stringify(raw)}`);
+    assert.ok(!adopted.settings.buttons?.length, JSON.stringify(raw));
+  }
+});
+
+test('good stored entries survive alongside bad ones', () => {
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  const adopted = adoptStoredSettings({
+    buttons: [null, { face: 'x', label: 'keep', command: V0.claude, claudeInputs: [] }],
+    defaultMain: 'master',
+  });
+  assert.equal(adopted.skipped, 1);
+  assert.equal(adopted.settings.buttons.length, 1);
+  assert.equal(adopted.settings.buttons[0].command, V0.claude);
+  assert.equal(adopted.settings.defaultMain, 'master');
+});
+
+test('the non-button keys are shape-checked too', () => {
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  // Object.entries('abc') would have produced override rows named 0, 1, 2
+  const adopted = adoptStoredSettings({ defaultMain: 42, repoMainBranch: 'abc' });
+  assert.equal(adopted.settings.defaultMain, undefined);
+  assert.equal(adopted.settings.repoMainBranch, undefined);
+  assert.equal(adopted.skipped, 2);
+  assert.deepEqual(adoptStoredSettings({ repoMainBranch: { a: 'main', b: 7 } }).settings.repoMainBranch, { a: 'main' });
+});
+
+test('a sparse or padded array is not the same stored value', () => {
+  const loaded = { buttons: [] };
+  assert.equal(saveConflict(loaded, { buttons: new Array(1) }), true, 'holes still make it longer');
+  assert.equal(saveConflict({ buttons: [1] }, { buttons: [1, undefined] }), true);
+});

@@ -139,7 +139,9 @@ async function resolveMainBranch(repo, detectedMain) {
 async function loadButtons(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   const data = await chrome.storage.sync.get([storageKey]);
-  return data[storageKey] || defaults;
+  // Same validation as the content script and the options page — a stored entry that is not a
+  // button would otherwise throw here, and the click would fail with nothing explaining why
+  return readStoredButtons(data[storageKey], defaults);
 }
 
 // Send a message to the native host. The app reports variable validation failures and terminal

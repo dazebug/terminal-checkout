@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R3 커밋(항목 9 — floor 폐기·낙관적 동시성·loaded 게이트·uid 경계·prefix=behavior-change·역사 오라클, verified) · 게이트 그린(드라이버 재실행 — node 81/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×2** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R4 커밋(항목 10 — 루트 inert 게이트·첫 로드 비폐기·리뷰 중 adoption 차단·echo 판정·공용 모양 검증기(3 reader)·length·소유 키 필터, verified) · 게이트 그린(드라이버 재실행 — node 93/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×3** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -30,7 +30,7 @@
 
 ## 불변 원칙
 
-- **`effect`의 정의(R2 명문화).** `effect`는 딱 한 가지만 묻는다: **"어떤 앱 설정에서도 이 rewrite가 사용자를 더 나쁘게 만드는가?"** 아니면 `unconditional`, 그렇다면 `behavior-change`이고 프리뷰가 항목별로 저울질하게 만들어야 한다. 이 정의로 v0→v1은 `unconditional`이다 — base dir 미설정이면 렌더가 바이트 동일이고, 설정했다면 붙는 폴백은 **사용자가 앱에서 직접 켠 설정**의 결과이며 `{cd}`는 그 설정이 명령에 닿는 배선일 뿐이다. 정의를 적어 두지 않으면 "예전보다 더 한다"가 곧 behavior-change로 읽히므로, 이 문장이 분류의 근거다(Codex 반박 대상 — 드라이버가 다음 검증 요청에 싣는다).
+- **`effect`의 정의(R2 명문화, R4 정정).** `effect`는 딱 한 가지만 묻는다: **"base dir의 계약 안에서 — `<base>/<repo>`가 그 이름의 저장소일 때 — 어떤 앱 설정에서도 이 rewrite가 사용자를 더 나쁘게 만드는가?"** 계약을 명시해야 하는 이유는 그 밖에서는 무엇도 무조건이 아니기 때문이다: 같은 이름의 **다른 저장소**가 거기 있으면 `{cd}`는 그 저장소에서 명령을 돌린다. 그것은 #32가 알고 수용한 잔여(`z`의 퍼지 점프와 같은 부류이자 사용자 자신의 레이아웃)이고 이 페이지의 모든 판정으로 전파된다 — "어떤 설정에서도"라는 절대 문구는 그냥 거짓이다.
 - **계획은 저장된 것이 아니라 "저장될 것"(편집 상태) 위에서 세운다.** import는 파일에 있는 키만 채우므로 나머지 섹션은 옛 command를 든 채 남고, 저장소 스냅샷으로 계획하면 그 절반이 검토 없이 승격된다. 후보의 이름은 **런타임 uid**이지 인덱스가 아니다 — 계획과 적용 사이에 타이핑·순서 변경이 일어나고, 인덱스는 그 순간 다른 버튼을 가리킨다. uid는 `toStoredButton`이 떼어 내 저장·내보내기에 절대 실리지 않는다.
 - ~~version은 이 페이지가 관찰한 바닥 아래로 내려가지 않는다~~ → **R3 개정(이 설계가 틀렸다)**: **version은 쓰는 내용의 세대이고, 로드 이후 바뀐 저장소 위에는 쓰지 않는다.** 바닥은 version 표식만 지키고 그것이 서술하는 command는 지키지 않아서, v0 내용에 v1 표식을 씌워 다른 기기의 마이그레이션을 조용히 지웠다. version은 `versionToSave(loadedVersion, reviewed)`만으로 정하고, 저장은 쓰기 직전에 **소유한 키 전부**를 다시 읽어 로드 스냅샷과 대조해 하나라도 다르면 **거부**한다. `storage.sync`에 CAS가 없으므로 병합은 둘 중 누구의 의도를 버릴지 고르는 추측이 된다 — 덮어쓰기 버튼도 만들지 않는다(트리거: 사용자가 실제로 요구하면 별도 이슈).
 - **페이지는 첫 로드가 끝나기 전에는 설정을 갖지 않는다.** `loaded=false`·`loadedVersion=null`로 시작하고 저장·적용·거절·리셋·가져오기가 전부 `requireLoaded()`를 통과해야 한다(버튼 disabled는 힌트, 가드가 규칙). 로드 응답은 **세대 카운터**로 걸러 추월당한 응답을 버린다 — 두 로드가 겹치면 늦게 답한 쪽이 최신이 아닐 수 있다.
@@ -103,7 +103,10 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 8 | **R2 — Codex R1 차단(no)의 세 부류를 근본 수정.** 증상 7개를 따로 패치하지 않는다. **⒜ 계획은 항상 "저장될 것"(편집 상태) 위에서, 버튼 identity로**: 런타임 전용 `uid`(저장·내보내기에 절대 미포함), `planMigration`은 편집 상태 스냅샷에서 계산하고 후보 id는 uid, `loadedVersion`은 편집 상태를 구성한 출처 중 **가장 낮은 세대**. **⒝ 신뢰 경계**: 레지스트리를 `Map`으로(프로토타입 키 차단) + 확장 JS의 `obj[사용자문자열]` 조회 전수 소탕, version은 **음이 아닌 정수만** 신뢰하고 판정 함수 하나를 stored·imported가 공유, step 선택은 `step.to > fromVersion`. **⒞ version 바닥·동시성**: `versionFloor`(dirty여도 항상 기록), save는 `set` 직전 재조회해 `max(floor, 현재값, versionToSave)`, `loadSettings`는 await 전후 revision 대조로 스냅샷 폐기, 체크박스는 revision만 올린다. 부수: P3 커버리지 유도 테스트, 빈 suffix 제외, `effect` 정의 명문화, 잔여 3건(describe 합산·"바꿀 것 없음" 문구·echo) | verified | 아래 R2 로그 | R2 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤.
+| 9 | **R3 — Codex R2 차단(no)의 다섯 부류.** ⒜ 쓰기는 로드한 것 위에서만(floor 폐기, 낙관적 동시성 — 다르면 거부) ⒝ 로드 전에는 설정이 없다(`loaded` 게이트 + 로드 세대) ⒞ uid는 우리 것(`adoptButton`/`reshapeButton` 분리) ⒟ prefix 후보는 `behavior-change`(기본 해제) ⒠ 신뢰 경계 마무리(`onMessage` 가드, 역사 픽스처) | verified | 커밋 `856bf03`, 아래 R3 로그. Codex 재검증에서 이 7건은 전부 통과했고 신규 5건으로 차단됐다 — 상태 갱신은 드라이버 몫 | R3 |
+| 10 | **R4 — Codex R3 차단(no)의 두 부류.** **⒜ 상태 보호의 경계**: 로드 전 조작 차단을 컨트롤 열거에서 **루트 `inert`** 하나로 바꾸고(열거는 `default-main`·[+ Add Override]를 놓쳐 첫 로드를 영구 중단시켰다), 첫 로드는 revision으로 폐기하지 않으며(`initial`), 진행 중인 리뷰(`reviewTouched`)를 미저장 편집과 같은 급으로 보호하고 자기 저장 echo를 `loadedSnapshot`으로 걸러낸다. **⒝ 저장값 모양의 신뢰 경계**: `adoptStoredSettings` 하나를 load와 import가 공유하고 버린 항목을 보이게 보고한다. 부수: `sameStoredValue`의 배열 length, 소유 키에서만 stale 배너, `effect` 정의를 base dir 계약 안으로 좁힘, 잔여 창 서술 정정. **⒝는 옵션 페이지에서 끝나지 않는다** — `content.js`·`background.js`의 읽기 지점도 같은 검증기를 거치고, 그래서 검증기는 `migrations.js`가 아니라 `defaults.js`에 있다(그 둘은 migrations.js를 로드하지 않는다) | verified | 아래 R4 로그 | R4 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -113,6 +116,7 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] 편집 중(dirty)에 다른 기계의 저장이 동기화돼도 입력이 날아가지 않는다
 - [ ] 옛 백업 JSON을 가져오면 같은 프리뷰가 뜨고, 역시 [Save] 전에는 아무것도 저장되지 않는다
 - [ ] 커스터마이즈된 command는 나열만 되고 값이 바뀌지 않는다
+- [ ] `storage.sync`의 버튼 배열에 `null` 항목을 넣어도 GitHub 페이지에 버튼이 그려지고(나머지 항목으로), 페이지·서비스 워커 콘솔에 "N stored buttons were unreadable and skipped" 경고가 남는다
 
 ## 전수 소탕 표
 
@@ -185,6 +189,34 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | `duplicateButton`의 사본 | 편집 상태(복제) | 닫음(R3): 사본에 `nextButtonUid()` — spread가 uid까지 복제한다 |
 | `parseImportedSettings`의 형태 정규화 | 파일 | 닫음(R3): `buttonFields`(uid 없음) — 신원은 `adoptButton`이 나중에 붙인다 |
 | `toStoredButton` | 편집 상태 → 저장 | 안전 — uid를 떼어 낸다(테스트로 고정) |
+
+### 소탕 표 5 — 로드 전 조작 가능한 컨트롤 (R4, 부류 ⒜-1)
+
+열거로는 막을 수 없다는 것이 R3에서 증명됐다(버튼만 막고 `default-main`·[+ Add Override]를 놓쳐 첫 로드가 영구 중단). **루트 하나에 `inert`**를 걸어 전수를 덮는다.
+
+| 컨트롤 | R3(열거) | R4(루트 게이트) |
+|:--|:--|:--|
+| [Save] · [Reset to Defaults] · [Export] · [Import…] · [+ Add Button] ×3 | disabled | 덮임 |
+| `#default-main` 입력 | **살아 있었다 — revision을 올려 첫 로드를 폐기시켰다** | 덮임 |
+| [+ Add Override] · 오버라이드 행의 입력·[✕] | **살아 있었다** | 덮임 |
+| 버튼 카드 내부(입력·드래그 핸들·프리셋 select·팔레트·claude 입력 행) | 로드 후에만 그려져 사실상 안전 | 덮임 |
+| 마이그레이션 배지·체크박스·[Apply]·[Keep mine] | 로드 후에만 보임 | 덮임 |
+| 앞으로 추가될 컨트롤 | 누락 위험 | 덮임(등록 불필요) |
+
+`requireLoaded()` 가드는 그대로 둔다 — `inert`는 클릭 경로만 막고, 클릭에서 오지 않는 호출(이벤트, 타이머, 향후 코드)은 규칙이 따로 필요하다.
+
+### 소탕 표 6 — 저장값을 읽는 지점 (R4, 부류 ⒝)
+
+`storage.sync`의 내용은 다른 기기·다른 확장 버전·손편집이 쓴 것이라 import 파일과 같은 신뢰 등급이다.
+
+| 지점 | 읽는 것 | 판정 |
+|:--|:--|:--|
+| `options.js` `loadSettings` | 버튼 배열·`defaultMain`·`repoMainBranch` | **구멍 → 닫음(R4)**: `adoptStoredSettings`(버튼 부분은 `defaults.js`의 `adoptStoredButtons`를 부른다) 공유. `[null]`·`{length:1}`·문자열·중첩 배열이 전부 TypeError였고 페이지가 `loaded=false`로 굳었다 |
+| `options.js` `parseImportedSettings` | 같은 모양(파일) | 닫음(R4): 같은 검증기를 쓰고 파일 고유 규칙(개수 상한, "빈 배열은 설정 아님")만 위에 얹는다 |
+| `options.js` `exportSettings` | 저장값을 그대로 파일로 | 안전 — 해석하지 않고 직렬화만 한다 |
+| `background.js` `loadButtons` | 버튼 배열 | **닫음(R4)**: `readStoredButtons` 경유 — 같은 검증기에 `console.warn` 한 줄. 검증기를 `defaults.js`에 둬 content/background가 `migrations.js`를 로드하지 않는 경계를 지켰다 |
+| `content.js` `loadButtonConfigs` | 버튼 배열(그리기) | **닫음(R4)**: 같은 `readStoredButtons` |
+| `background.js:123` `repoMainBranch`·`defaultMain` | 오버라이드 맵 | 닫음(R2·R3): `Object.hasOwn` 가드 + 문자열만 통과 |
 
 ## 라운드 로그
 
@@ -262,6 +294,28 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - red 기록(3배치): ⒟+⒠ → `not ok 10·49·50`; ⒞ → `not ok 52·53·54`; ⒜+⒝ → `ReferenceError: saveConflict is not defined`. 각 배치 red 확인 후 구현.
 - R2 테스트 2건(`the floor only ever rises`, `a save never writes below anything it has already seen`)은 **삭제**했다 — 틀린 설계를 고정하고 있었다. 삭제 자리에 왜 지웠는지 남겼다.
 - 실측: `node --test` **81/0**(R2 72 → 신규 9, 삭제 2). `swift test`·`app/e2e.sh`는 회귀 확인.
-- **잔여(설계상)**: 저장의 `get`↔`set` 사이 창은 `storage.sync`에 CAS가 없어 닫히지 않는다 — 그 틈에 다른 기기가 쓰면 LWW로 1회 덮인다. 창을 최소화하고 **덮어쓰기 대신 거부**를 택했으며, 덮어쓰기 버튼은 만들지 않았다(트리거: 사용자가 실제로 요구하면 별도 이슈).
+- **잔여(설계상, R4 정정)**: 저장의 `get`↔`set` 사이 창은 `storage.sync`에 CAS가 없어 닫히지 않는다 — 그 틈에 다른 기기가 쓰면 LWW로 1회 덮인다. **그 덮인 것이 마이그레이션 결정이었다면 손실은 영구적이다**: 우리가 쓴 version이 우리 것이라 알림이 다시 뜨지 않아 같은 제안을 받을 기회가 없다. 이전에 적었던 "피해는 알림 한 번 더"는 틀렸다. 창을 최소화하고 **덮어쓰기 대신 거부**를 택했으며, 덮어쓰기 버튼은 만들지 않았다(트리거: 사용자가 실제로 요구하면 별도 이슈).
 - **미검증**: DOM·클릭 경로(배지·체크박스·배너·실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다.
+- 판정: 미요청.
+
+### R3 — `856bf03` (Codex 판정: 차단)
+
+- 기존 7건 재현: **전부 통과**(부분 import / 중복·reorder / prototype key / 미래 version 강등은 `planSave.refused` / 순서 역전 / fractional / 픽스처 14개 전부 현재 프리셋 도달). 불변 원칙 ②③④ 통과, ①은 "조건부 통과 — get↔set 창을 동시 기기까지 포함한 절대 원칙으로 읽으면 실패".
+- 신규 P1 ×2: (1) **초기 load 중 `default-main` 입력·`add-override` 클릭이 load를 영구 중단** — `updateLoadedGate`가 일부 컨트롤만 막아 revision이 올라가고, 첫 응답이 폐기된 뒤 재시도가 없어 `loaded=false`로 굳는다 (2) **체크 해제 뒤 원격 변경이 selection을 되돌린다** — 체크 후 새로 시작된 `loadSettings()`는 체크 이후 revision을 시작값으로 잡아 통과하고 `setPlan`이 기본 선택으로 재설정 → Apply가 **사용자가 거부한 항목을 적용**. 자기 저장 echo도 같은 경로(`loadedSnapshot`이 echo 판정에 쓰이지 않음).
+- 신규 P2: `{"buttons":[null]}`·`{"buttons":{"length":1}}` 같은 저장값이 `adoptButton`/`.map`에서 TypeError → 옵션 페이지가 `loaded=false`로 멈춤(import 경로는 파서가 거르지만 storage 경로는 무방비). P3 ×2: `sameStoredValue`가 배열 length를 안 봐 sparse array를 동일 취급 / 소유하지 않은 키 변경에도 stale 배너.
+- 판단: (a)(c)(d) 수용, 거부 정책 수용. (b) "어떤 설정에서도"라는 절대 문구 반박 — 동명 타저장소면 `{cd}`가 옛 command가 중단했을 작업을 다른 저장소에서 돌린다(#32의 수용 잔여가 전파됨). 잔여 창 설명 반박: "Keep mine 시나리오에서는 command가 사라지고 version도 1이라 알림이 재생성되지 않는다" — 수용, 서술을 정정한다.
+- 부류 이동: 동시성 모델 자체(R3)는 서고, 남은 것은 **상태 보호의 경계**(로드 전·리뷰 중)와 **저장값 모양의 신뢰 경계**다.
+
+### R4 — 워킹트리(미커밋, base `856bf03`) · 항목 10
+
+- 범위: Codex R3 차단의 신규 5건을 두 부류로 묶어 근본 수정. 기존 7건은 재현에서 전부 통과했고 동시성 모델(R3)은 그대로 둔다.
+- **⒜-1 로드 전에는 조작이 불가능하다.** 컨트롤 열거를 버리고 **`document.body.inert`** 하나로 바꿨다(소탕 표 5). `updateLoadedGate`가 한 줄이 됐고, 앞으로 추가되는 컨트롤도 등록 없이 덮인다. 그리고 **첫 로드는 revision으로 폐기하지 않는다** — 보호할 편집이 화면에 없으므로 `shouldApplyLoadedSnapshot({initial})`이 generation만 본다. 폐기는 "추월당했을 때"만 남는다.
+- **⒜-2 진행 중인 리뷰는 미저장 편집이다.** `state.reviewTouched`(체크박스 변경·배지 클릭에서 true, 저장·적용된 로드에서 false)를 도입하고 `shouldAdoptSyncedChange(dirty || reviewTouched, changes)`로 원격 adoption을 막는다(배너는 그대로 뜬다). 자기 저장 echo는 `isOwnEcho(changes, loadedSnapshot)`로 걸러 — `loadedSnapshot`을 conflict 판정뿐 아니라 echo 판정에도 쓴다.
+- **⒝ 저장값 모양은 import와 같은 신뢰 경계.** `adoptStoredSettings` 하나를 load와 import가 **공유**한다. 버린 항목은 `skipped`로 세어 상태 줄에 "N stored entries were unreadable and skipped"로 **보이게** 알린다 — 조용히 기본값으로 접으면 "버튼이 없다"는 거짓말이 되고 무엇이 그 값을 썼는지도 숨긴다. `defaultMain`·`repoMainBranch`의 모양도 같은 자리에서 검사한다(`Object.entries('abc')`가 0·1·2 오버라이드 행을 만들던 경로).
+- P3 2건: `sameStoredValue`가 배열 `length`를 먼저 본다(`new Array(1)` vs `[]`), stale 배너는 `ownedChangedKeys`가 비지 않을 때만 — 같은 필터를 adopt·배너·echo 세 판정이 공유한다.
+- 문구 정정 2건: `effect` 정의를 **base dir 계약 안으로** 좁혔다(동명 타저장소는 #32의 수용 잔여이고 여기로 전파된다 — "어떤 설정에서도"는 거짓), 잔여 창 서술에서 "알림 한 번 더"를 지우고 **"덮인 것이 마이그레이션 결정이면 version이 우리 것이라 알림이 돌아오지 않아 손실이 영구적"**으로 고쳤다. `migrations.js`·`options.js` 주석과 계획서 양쪽.
+- red 기록: `not ok 58·59·60·62·63·64·65`(7건) — 첫 로드 initial / 소유 키 필터 / echo 판정 / 비정상 저장값 4형태 / 비버튼 키 모양 / sparse 배열. 확인 후 구현.
+- 실측: `node --test` **93/0**(R3 81 → 신규 12: `migration.test.js` 8건 + `buttons.test.js` 4건). `swift test`·`app/e2e.sh`는 회귀 확인.
+- **⒝는 세 reader 전부.** 처음에는 `background.js`·`content.js`를 잔여로 남겼지만, Codex가 방금 차단한 부류 그대로를 두 곳 남기는 것이므로 같은 라운드에서 닫았다. 검증기(`adoptStoredButtons`)는 **`defaults.js`**에 둔다 — 설정 모양은 마이그레이션이 아니라 설정의 관심사이고, content/background는 `migrations.js`를 로드하지 않는다(그 경계는 유지). 두 reader는 `readStoredButtons`로 검증 + `console.warn`("N stored buttons were unreadable and skipped — open the options page to repair") + 남은 것이 없을 때만 기본값. 옵션 페이지의 `adoptStoredSettings`도 같은 함수를 부른다. red는 `tests/buttons.test.js`(defaults.js만 로드) 4건 — `ReferenceError: adoptStoredButtons is not defined` 확인 후 구현. 실동작은 수기 검사 목록에 1항목 추가.
+- **미검증**: DOM·클릭 경로(inert 게이트의 실제 동작, 배지·체크박스·배너, 실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다.
 - 판정: 미요청.

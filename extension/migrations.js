@@ -45,11 +45,18 @@ const MIGRATIONS = [
   {
     from: 0,
     to: 1,
-    // `effect` answers one question and only that one: **is there any app configuration under
-    // which this rewrite leaves the user worse off?** 'unconditional' means no; 'behavior-change'
-    // means yes, and the preview then makes the user weigh it per item, unchecked by default.
+    // `effect` answers one question and only that one: **within the base directory's own contract —
+    // that `<base>/<repo>` is the repository it is named after — does this rewrite leave the user
+    // worse off under any app configuration?** 'unconditional' means no; 'behavior-change' means
+    // yes, and the preview then makes the user weigh it per item, unchecked by default.
     //
-    // It is declared per *candidate kind*, because the two make very different promises.
+    // The contract has to be named, because outside it nothing here is unconditional: if
+    // `<base>/<repo>` is a *different* repository that happens to share the name, `{cd}` runs the
+    // command there. That is a residual #32 accepted knowingly (it is the same class as `z`'s fuzzy
+    // jump, and it is the user's own directory layout), and it propagates into every judgment on
+    // this page. Saying "under any configuration whatsoever" would simply be false.
+    //
+    // The effect is declared per *candidate kind*, because the two make very different promises.
     //
     // Replacing a preset we shipped, byte for byte, is unconditional: we know the entire command.
     // With no base directory the render is identical; with one, the fallbacks come from a setting
@@ -281,10 +288,30 @@ function importedSchemaVersion(data) {
 // Unsaved edits always win: the whole point of the single write path is that nothing lands without
 // a Save, and silently replacing what someone is typing would be the worst possible reading of
 // "keep it in sync".
-function shouldAdoptSyncedChange(dirty, changes) {
-  if (dirty) return false;
+// Which of the changed keys are ours. One filter, used for three decisions — whether to adopt,
+// whether to warn, and whether a change is our own write coming back — so they cannot disagree
+// about what counts as a change to this page's settings.
+function ownedChangedKeys(changes) {
   const ours = new Set([...SETTINGS_KEYS, VERSION_KEY]);
-  return Object.keys(changes || {}).some(key => ours.has(key));
+  return Object.keys(changes || {}).filter(key => ours.has(key));
+}
+
+// `busy` covers both kinds of unsaved work: text being edited, and a review being decided. Checking
+// boxes is not "dirty" — nothing has been typed — but it is the user answering a question, and
+// re-planning underneath them silently restores the choices they just made. Applying then rewrote
+// the very button they had declined.
+function shouldAdoptSyncedChange(busy, changes) {
+  if (busy) return false;
+  return ownedChangedKeys(changes).length > 0;
+}
+
+// Our own save comes back to us as a change event. It is not another device, and treating it as one
+// warns about a conflict with ourselves and throws away a review in progress. The snapshot we
+// recorded when writing is what tells the two apart.
+function isOwnEcho(changes, loadedSnapshot) {
+  const owned = ownedChangedKeys(changes);
+  if (!owned.length) return false;
+  return owned.every(key => sameStoredValue(changes[key]?.newValue, loadedSnapshot?.[key]));
 }
 
 // storage.sync has no compare-and-set, so two pages editing one account can only be told apart by
@@ -304,6 +331,10 @@ function sameStoredValue(a, b) {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
+  // Length before keys: `new Array(1)` and `[]` have the same (empty) key set, so comparing keys
+  // alone calls two different arrays identical — and a save would then land on a store that had in
+  // fact changed.
+  if (Array.isArray(a) && a.length !== b.length) return false;
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
   if (keysA.length !== keysB.length) return false;
@@ -340,7 +371,61 @@ function planSave({ loadedSnapshot, liveSnapshot, payload }) {
 // while the first is still running — and the one that answers last is not necessarily the one that
 // asked last. Only the newest request may apply its answer, or an older view of the settings lands
 // on top of a newer one.
-function shouldApplyLoadedSnapshot({ revisionAtStart, revisionNow, dirty, generation, latestGeneration }) {
+// `initial` is the first load: there is nothing on screen yet, so there is nothing a late arrival
+// could overwrite and no reason to refuse it. Refusing it was worse than useless — a keystroke in a
+// field that was still live bumped the revision, the answer was dropped, and nothing ever retried,
+// so the page sat unloaded forever. Being overtaken by a newer request still wins.
+function shouldApplyLoadedSnapshot({
+  revisionAtStart, revisionNow, dirty, generation, latestGeneration, initial,
+}) {
   if (generation !== latestGeneration) return false;
+  if (initial) return true;
   return !dirty && revisionAtStart === revisionNow;
+}
+
+// Reads a settings object that came from outside this page — storage or an imported file — and
+// keeps only what has a shape we understand, reporting how much it had to drop.
+//
+// Storage is exactly as untrusted as a file here. Its contents were written by another device, or
+// by another version of this extension, or by hand; `{"buttons": [null]}` and
+// `{"buttons": {"length": 1}}` both threw during load and left the page stuck with no settings and
+// no way to retry. The two paths share this one validator so that a shape one of them survives
+// cannot be a shape the other one dies on.
+//
+// Dropping is never silent: `skipped` counts what went, and the caller says so. Folding quietly
+// back to defaults would look exactly like "you have no buttons", which is a lie about the user's
+// own data.
+function adoptStoredSettings(raw) {
+  const settings = {};
+  let skipped = 0;
+
+  for (const { storageKey } of Object.values(BUTTON_KINDS)) {
+    const value = raw?.[storageKey];
+    if (value === undefined) continue;
+    // The same validator the content script and the service worker use (defaults.js) — one shape
+    // verdict for every reader
+    const adopted = adoptStoredButtons(value);
+    skipped += adopted.skipped;
+    settings[storageKey] = adopted.buttons;
+  }
+
+  if (raw?.defaultMain !== undefined) {
+    if (typeof raw.defaultMain === 'string') settings.defaultMain = raw.defaultMain;
+    else skipped += 1;
+  }
+
+  if (raw?.repoMainBranch !== undefined) {
+    const map = raw.repoMainBranch;
+    if (map && typeof map === 'object' && !Array.isArray(map)) {
+      // Only string branches. A non-string value would reach the app as a branch name.
+      const entries = Object.entries(map).filter(([, branch]) => typeof branch === 'string');
+      skipped += Object.keys(map).length - entries.length;
+      settings.repoMainBranch = Object.fromEntries(entries);
+    } else {
+      // `Object.entries('abc')` would otherwise have produced override rows named 0, 1 and 2
+      skipped += 1;
+    }
+  }
+
+  return { settings, skipped };
 }
