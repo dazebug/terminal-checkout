@@ -375,7 +375,11 @@ private func typeAndSubmit(
     boxObservedEmpty: () -> Void = {},
     timeline: DeliveryTimeline? = nil, label: String = ""
 ) -> SubmitOutcome {
-    let maxAttempts = 5
+    // 12 attempts × a ~2s appearance window ≈ the same total patience the old 5 × 5s gave for
+    // "the user has not looked at the tab yet" (attempts are what carry that waiting now — see
+    // the appearance deadline's comment). More, shorter attempts answer a swallowed marker in
+    // ~2s instead of 5 without giving up on a slow watcher any earlier
+    let maxAttempts = 12
     for attempt in 1...maxAttempts {
         guard io.canConfirmScreen() else {
             checkoutLog("화면을 확인할 수단이 사라져 더 치지 않음 — 남은 조각은 정리한다")
@@ -584,7 +588,12 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
     }
     // 마감이 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고, 그건 기다리면
     // 풀리는 상태이기 때문이다 (Warp 실측). 대신 **먼저 읽는다** — 이미 그려져 있으면 즉시 통과
-    let appeared = poll(io: io, within: 5.0) {
+    // 2s, not longer: both field timelines show the same shape — a marker typed right after raw
+    // mode gets swallowed by claude's initialisation and will NEVER appear, so every extra second
+    // here is spent waiting on a dead marker (5s cost the first message ~4s in both runs). The
+    // patience for "the user is not looking at the tab yet" lives in the attempt count, not in
+    // this deadline — a fresh marker every ~2s answers faster in both cases
+    let appeared = poll(io: io, within: 2.0) {
         guard let after = io.screenText() else { return false }
         return screenReflectsNewInput(before: before, after: after, input: marker)
     }

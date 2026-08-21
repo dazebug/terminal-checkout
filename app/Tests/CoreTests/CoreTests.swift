@@ -1678,7 +1678,7 @@ final class DeliveryTimelineTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline), 1)
         XCTAssertEqual(lines, [
-            "입력 1/1 pane 증명 통과 (시도 1/5) (+0.0s, 총 0.0s)",
+            "입력 1/1 pane 증명 통과 (시도 1/12) (+0.0s, 총 0.0s)",
             "입력 1/1 본문 반영 확인 (+0.0s, 총 0.0s)",
             // The "총" on this line is the number the user is complaining about: press to submit
             "입력 1/1 제출(CR) 전송 (+0.0s, 총 0.0s)",
@@ -1699,7 +1699,7 @@ final class DeliveryTimelineTests: XCTestCase {
         )
         _ = submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline)
         XCTAssertTrue(
-            lines.contains { $0.hasPrefix("입력 1/1 pane 증명 통과 (시도 2/5)") }, "\(lines)"
+            lines.contains { $0.hasPrefix("입력 1/1 pane 증명 통과 (시도 2/12)") }, "\(lines)"
         )
     }
 
