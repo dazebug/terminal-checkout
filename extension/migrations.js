@@ -130,10 +130,38 @@ const BACKUP_FROM_FUTURE_MESSAGE =
     + 'Update the extension (`git pull` + refresh at chrome://extensions), '
     + 'or use Reset to Defaults to start from the current presets.';
 
+// Read yes, write no. This page can show settings from a newer generation and export them; anything
+// it writes would be its own older shape recorded on top of theirs. One message serves both the
+// import refusal and the save refusal, because the reason is the same in both.
+//
+// Under decision 9 this should be unreachable — a version that raises SETTINGS_VERSION writes its
+// own namespace and never touches this one. It is the insurance against that contract being broken.
 const STORED_FROM_FUTURE_MESSAGE =
-  'Your stored settings were written by a newer version of the extension, so an older backup '
-    + 'cannot be merged into them. Update the extension (`git pull` + refresh at '
-    + 'chrome://extensions) before importing.';
+  'Your stored settings were written by a newer version of the extension, so this page can show '
+    + 'them but must not write over them. Update the extension (`git pull` + refresh at '
+    + 'chrome://extensions).';
+
+// Every report of something skipped carries this. Skipping is only honest if the consequence is
+// stated: the entries are not in the edit state, so the next Save writes them out of existence, and
+// the copy the user can still take is an export of what is stored right now.
+const SKIP_CONSEQUENCE =
+  'Saving will remove them — use Export (JSON) first if you want a copy of what is stored.';
+
+// What a section of the edit state starts from.
+//
+// "Nothing was stored under this key" and "something was stored and none of it could be used" are
+// different answers, and answering the second one with our presets is a rewrite: the presets are
+// then what the next ordinary Save records, over a command the user wrote. So defaults are for the
+// first case only. A key that held something keeps whatever survived, even if that is nothing —
+// the report says what went and what saving will do about it.
+//
+// This is not a guard against the user's own hand edits, which are theirs to make and theirs to
+// own; it is a guard against *our* filter being wrong, so that a bug on our side ends in a visible
+// empty section rather than a silent substitution.
+function seedFromStorage(read, defaults, skippedForKey) {
+  if (read?.length) return read;
+  return skippedForKey ? [] : defaults;
+}
 
 // The generation of an edit state assembled from more than one source — what was on screen plus an
 // imported file. It answers for the **oldest** thing in it: reviewing the merged state has to cover
@@ -373,34 +401,84 @@ const SAVE_RELOADED_MESSAGE =
   'This page reloaded its settings while the save was in flight, so the form no longer holds what '
     + 'was about to be written. Check it and press Save again.';
 
-// Whether a save may start at all. Two saves in flight would each have captured the same world and
-// checked it independently, and the later write would land with information from before the earlier
-// one — one writer at a time is the only way that stays decidable.
-function shouldStartSave({ loaded, saving }) {
-  return loaded === true && saving !== true;
+// A load is out and its answer may replace the form at any moment. Starting a save into that window
+// means building a payload from a form that is about to be someone else's.
+const SAVE_LOADING_MESSAGE = 'Settings are being re-read — press Save again in a moment.';
+
+// Whether a save may start at all.
+//
+// Two saves in flight would each have captured the same world and checked it independently, and the
+// later write would land with information from before the earlier one. A save started while a load
+// is in flight is the same problem one step removed: the answer arrives, the form is replaced, and
+// the payload now describes a form nobody is looking at. One page-changing task at a time.
+function shouldStartSave({ loaded, saving, loading }) {
+  return loaded === true && saving !== true && loading !== true;
 }
 
 // The save as a decision, kept apart from the act of writing so it can be reasoned about on its own.
 // A refusal carries the message and writes nothing; there is no repair attempted behind the user's
 // back, because any repair here would be a guess about which of two intentions to keep.
 //
-// `capturedSnapshot` is what the store held when *this save* started, taken once and never re-read
-// from the page. That distinction is the whole fix: adoption of a remote change is not a user action
-// and bumps no revision, so a change arriving mid-save used to be pulled into `loadedSnapshot` and
-// the comparison below became S1 against S1 — no conflict, and the payload built from S0 went over
-// the top of it.
-// `changedWhileInFlight` is the same fact from the other direction. The live read can be answered
-// from before a remote write committed while the change event says it committed; the event is the
-// stronger fact, so it refuses on its own.
+// Three questions, none of which the others can answer.
+//
+// `storeMovedSinceLoad` — a change event for one of our keys has arrived that this page has not
+// caught up with, whether it landed just before this save or during it. It is the only check here
+// that does not depend on a read, and that is why it exists: the live read can be answered from
+// before a remote write committed, so "the read agrees with my capture" is not proof that nothing
+// moved. An event is proof that something did.
+//
+// `appliedGeneration` — did a load *apply* under this save? The counter that used to be compared
+// here counted load *requests*, which cannot answer that: a load requested before the save started
+// and applied halfway through never moved it, and the write went out describing a form that had
+// already been replaced.
+//
+// `capturedSnapshot` versus the live read — the original optimistic check. `capturedSnapshot` is
+// what the store held when *this save* started, taken once and never re-read from the page, because
+// adoption is not a user action and bumps no revision: a change adopted mid-save used to be pulled
+// into `loadedSnapshot` and the comparison became S1 against S1.
+//
+// `stale` says whether the banner should be up afterwards. A conflict means the page is behind the
+// store; a reload means it has just caught up, and warning there would be a lie.
 function planSave({
-  capturedSnapshot, liveSnapshot, payload, generationAtStart, generationNow, changedWhileInFlight,
+  capturedSnapshot, liveSnapshot, payload,
+  appliedGenerationAtStart, appliedGenerationNow, storeMovedSinceLoad, loadedVersion,
 }) {
-  if (changedWhileInFlight) return { refused: true, message: SAVE_CONFLICT_MESSAGE };
-  if (generationAtStart !== generationNow) return { refused: true, message: SAVE_RELOADED_MESSAGE };
+  // First, because no retry and no reload changes it: settings from a generation this extension does
+  // not understand may be read, shown and exported, but never written over.
+  if (loadedVersion > SETTINGS_VERSION) {
+    return { refused: true, message: STORED_FROM_FUTURE_MESSAGE, stale: false };
+  }
+  if (storeMovedSinceLoad) return { refused: true, message: SAVE_CONFLICT_MESSAGE, stale: true };
+  if (appliedGenerationAtStart !== appliedGenerationNow) {
+    return { refused: true, message: SAVE_RELOADED_MESSAGE, stale: false };
+  }
   if (saveConflict(capturedSnapshot, liveSnapshot)) {
-    return { refused: true, message: SAVE_CONFLICT_MESSAGE };
+    return { refused: true, message: SAVE_CONFLICT_MESSAGE, stale: true };
   }
   return { refused: false, write: payload };
+}
+
+// What to do with a change event from storage.sync, as one decision rather than a chain of early
+// returns that each had to remember to raise the banner.
+//
+//   'ignore' — not ours, or our own write coming back: the store did not move under us.
+//   'defer'  — it moved, but this page cannot act on it yet. Held, not dropped, and asked again
+//              later. Before the first load there is nothing to compare it against; during a save
+//              the payload was captured before it.
+//   'banner' — it moved and there is unsaved work, which wins. The user has to be told.
+//   'adopt'  — it moved and nothing is in the way: re-read.
+//
+// 'defer' before the first load is the fix for a comment that was simply wrong: dropping the event
+// on the grounds that "the load in flight will pick it up" assumed the read that was already out
+// would see a write that landed after it went.
+function classifyStorageChange({ changes, loaded, saving, busy, isOwnWrite }) {
+  if (!ownedChangedKeys(changes).length) return 'ignore';
+  if (isOwnWrite) return 'ignore';
+  if (!loaded) return 'defer';
+  if (saving) return 'defer';
+  // The "may we adopt?" rule itself is unchanged and still lives in one place; this function only
+  // decides which changes get as far as asking it.
+  return shouldAdoptSyncedChange(busy, changes) ? 'adopt' : 'banner';
 }
 
 // Reading a file is asynchronous, and the form stays live while it happens. A file applied over
@@ -494,11 +572,13 @@ function adoptStoredSettings(raw) {
   return { settings, skipped, skippedByKey };
 }
 
-// One sentence per key that lost something, so the report names what went and where.
+// One sentence per key that lost something, so the report names what went and where. "Could not be
+// used" rather than "unreadable" because there are now two ways to earn it — a shape we cannot read,
+// and more entries than this page can hold — and both end the same way.
 function describeSkipped(skippedByKey) {
   return Object.entries(skippedByKey).map(([key, count]) => (count === 1
-    ? `1 entry in ${key} was unreadable and skipped`
-    : `${count} entries in ${key} were unreadable and skipped`));
+    ? `1 entry in ${key} could not be used and was skipped`
+    : `${count} entries in ${key} could not be used and were skipped`));
 }
 
 // --- One signal for "the user said something" ---

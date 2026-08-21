@@ -807,9 +807,12 @@ test('a save writes against the world it started in, not the one adoption left b
 test('a change that arrived during the save refuses it even if the live read raced', () => {
   // The live get can be answered from before the remote write landed, while the change event says
   // it landed. The event is the stronger fact: the store moved, so this payload is stale.
+  // (R7 renamed this input to `storeMovedSinceLoad`: an event that arrived just *before* the save
+  // disqualifies it exactly as much as one that arrives during it, and the narrower name was the
+  // reason the earlier arrival was not being checked at all.)
   const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
   const outcome = planSave({
-    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, changedWhileInFlight: true,
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
   });
   assert.equal(outcome.refused, true);
   assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
@@ -818,10 +821,12 @@ test('a change that arrived during the save refuses it even if the live read rac
 test('a save whose page reloaded under it is refused rather than written', () => {
   // A load that landed mid-save replaced the edit state on screen; the payload describes what was
   // there before it. Writing it would store something the user is no longer looking at.
+  // (R7: compared against the *applied* generation. The request counter this used to read could not
+  // see a load that was requested before the save started.)
   const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
   const outcome = planSave({
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0,
-    generationAtStart: 1, generationNow: 2,
+    appliedGenerationAtStart: 1, appliedGenerationNow: 2,
   });
   assert.equal(outcome.refused, true);
   assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
@@ -945,7 +950,158 @@ test('a bad entry inside a good key is counted per key, not silently dropped', (
   });
   assert.equal(adopted.settings.buttons.length, 1);
   assert.deepEqual(adopted.skippedByKey, { buttons: 1 });
-  assert.deepEqual(describeSkipped({ buttons: 1 }), ['1 entry in buttons was unreadable and skipped']);
-  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['2 entries in issueButtons were unreadable and skipped']);
+  assert.deepEqual(describeSkipped({ buttons: 1 }), ['1 entry in buttons could not be used and was skipped']);
+  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['2 entries in issueButtons could not be used and were skipped']);
   assert.deepEqual(describeSkipped({}), []);
+});
+
+// --- A signal that arrived is never dropped (R7, class (a)) ---
+// "The store moved" reaches this page as a change event or as a read, and both can arrive at a
+// moment when the page cannot act on them. Not acting is fine; forgetting is not — every arrival
+// ends either adopted or on the banner.
+
+const { classifyStorageChange, SAVE_LOADING_MESSAGE } =
+  vm.runInThisContext('({ classifyStorageChange, SAVE_LOADING_MESSAGE })');
+
+test('a save refuses while this page has not caught up with a change it already saw', () => {
+  // Codex R6 P1-A, the half that does not lean on read ordering. Another device saved S1, the event
+  // arrived, and the re-read is still in flight — so the page knows it is behind the store and its
+  // payload describes the world before that change. The live read agreeing with the capture proves
+  // nothing here: that read can be answered from before the remote write committed.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const outcome = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
+  });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.stale, true, 'and the banner has to stay up');
+});
+
+test('a load that applied under a save refuses it — the form is not what the payload describes', () => {
+  // The generation used to count load *requests*, which cannot answer "was the form replaced?".
+  // A load requested before the save started and applied during it never moved that counter.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const outcome = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0,
+    appliedGenerationAtStart: 1, appliedGenerationNow: 2,
+  });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
+  assert.equal(outcome.stale, false, 'the page just caught up — it is not behind the store');
+});
+
+test('a save does not start while a load is in flight', () => {
+  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: false }), true);
+  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: true }), false);
+  assert.match(SAVE_LOADING_MESSAGE, /again/i);
+});
+
+test("Codex's P1-A combination cannot happen: a load applies, or the save is allowed, never both", () => {
+  // The reported measurement was `loadApplies:true, saveRefused:false`. Two independent locks make
+  // that pair unreachable: the save never starts while the load is in flight, and if one applies
+  // anyway the applied-generation check refuses the write.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: true }), false, 'lock 1');
+  const ifItHadStarted = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0,
+    appliedGenerationAtStart: 1, appliedGenerationNow: 2, storeMovedSinceLoad: true,
+  });
+  assert.equal(ifItHadStarted.refused, true, 'lock 2');
+});
+
+test('every arrival of a remote change ends adopted or on the banner, never nowhere', () => {
+  const ours = { buttons: {} };
+  const base = { changes: ours, loaded: true, saving: false, busy: false, isOwnWrite: false };
+  assert.equal(classifyStorageChange(base), 'adopt');
+  assert.equal(classifyStorageChange({ ...base, busy: true }), 'banner');
+  assert.equal(classifyStorageChange({ ...base, saving: true }), 'defer');
+  // Codex R6 P1-B: dropped outright before the first load, with a comment claiming the load in
+  // flight would pick it up — it cannot, because its read may predate the change.
+  assert.equal(classifyStorageChange({ ...base, loaded: false }), 'defer');
+  assert.equal(classifyStorageChange({ ...base, isOwnWrite: true }), 'ignore');
+  assert.equal(classifyStorageChange({ ...base, changes: { somethingElse: {} } }), 'ignore');
+  assert.equal(classifyStorageChange({ ...base, changes: {} }), 'ignore');
+});
+
+test('a load answer that had to be discarded still reports that the store moved', () => {
+  // shouldApplyLoadedSnapshot says "do not apply this"; it does not say "forget what you read".
+  // The answer is the evidence, so it is what decides the banner.
+  const loaded = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  assert.equal(saveConflict(loaded, { buttons: [{ command: '{cd}' }], version: 1 }), true);
+  assert.equal(saveConflict(loaded, { ...loaded }), false, 'an unchanged store raises no banner');
+});
+
+// --- What a filtered-out stored value costs, and who may write over it (R7, class (b)) ---
+// The quarantine panel that was drafted here is gone (decision 9): the only realistic producer of
+// entries this page cannot read was version skew between machines, and the storage-namespace
+// contract removes that at the source. What is left — a hand edit, or a bug of ours — is served by
+// skipping loudly, refusing to invent replacements, and saying what Save will do.
+
+const { seedFromStorage, STORED_FROM_FUTURE_MESSAGE, SKIP_CONSEQUENCE } =
+  vm.runInThisContext('({ seedFromStorage, STORED_FROM_FUTURE_MESSAGE, SKIP_CONSEQUENCE })');
+
+test('settings written by a newer generation may be read but never written over', () => {
+  // Insurance against a breach of decision 9: a future version is supposed to write its own
+  // namespace and leave this one alone. If one did not, this page must not answer by recording its
+  // own older shape on top.
+  const S0 = { buttons: [], version: SETTINGS_VERSION + 1 };
+  const outcome = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION + 1,
+  });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.message, STORED_FROM_FUTURE_MESSAGE);
+  assert.equal(outcome.write, undefined);
+  assert.match(STORED_FROM_FUTURE_MESSAGE, /newer version of the extension/i);
+  assert.match(STORED_FROM_FUTURE_MESSAGE, /chrome:\/\/extensions/);
+  // The current generation is not the future, and neither is one we have already caught up to
+  assert.equal(planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION,
+  }).refused, false);
+  assert.equal(planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: 0,
+  }).refused, false);
+});
+
+test('a key that lost entries is not refilled with our defaults', () => {
+  // Codex R6 P1-C: `claudeInputs: "!secret"` made the entry unreadable, the section fell back to the
+  // shipped preset, and an ordinary Save then recorded that preset over a command the user had
+  // written. "Nothing stored" and "stored something we could not use" are different answers.
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  const adopted = adoptStoredSettings({
+    buttons: [{ face: 'x', label: 'mine', command: 'z {repo} && git clean -fdx', claudeInputs: '!secret' }],
+  });
+  assert.equal(adopted.settings.buttons.length, 0);
+  assert.equal(adopted.skippedByKey.buttons, 1);
+
+  const defaults = [{ command: '{cd} && claude' }];
+  assert.deepEqual(seedFromStorage(adopted.settings.buttons, defaults, 1), [], 'read nothing usable: stay empty');
+  assert.equal(seedFromStorage(undefined, defaults, 0), defaults, 'a key that was never saved still gets presets');
+  assert.equal(seedFromStorage([], defaults, 0), defaults, 'a clean empty array keeps its old meaning');
+});
+
+test('entries beyond the button limit are skipped and counted, never silently trimmed', () => {
+  // The limits used to be enforced only on the import path, so storage readers passed a fourth
+  // button through to the app while import quietly dropped it — and a quiet drop is the same defect
+  // as P1-C, because the next Save records the trimmed list.
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  const button = n => ({ face: 'x', label: `b${n}`, command: `{cd} && echo ${n}`, claudeInputs: [] });
+  const adopted = adoptStoredSettings({ buttons: [button(1), button(2), button(3), button(4)] });
+  assert.equal(adopted.settings.buttons.length, 3);
+  assert.equal(adopted.skippedByKey.buttons, 1);
+  assert.equal(adopted.settings.buttons[2].command, '{cd} && echo 3', 'the ones kept are the first ones');
+});
+
+test('claude inputs beyond the limit make the whole entry unusable rather than being trimmed', () => {
+  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  const claudeInputs = ['1', '2', '3', '4', '5', '6'];
+  const adopted = adoptStoredSettings({ buttons: [{ face: 'x', label: 'b', command: '{cd}', claudeInputs }] });
+  assert.equal(adopted.settings.buttons.length, 0);
+  assert.equal(adopted.skippedByKey.buttons, 1);
+});
+
+test('the report says what Save is going to do about what it skipped', () => {
+  // Skipping is only honest if the consequence is stated: the entries are not in the edit state, so
+  // the next Save writes them out of existence.
+  assert.match(SKIP_CONSEQUENCE, /saving will remove/i);
+  assert.match(SKIP_CONSEQUENCE, /export/i);
 });

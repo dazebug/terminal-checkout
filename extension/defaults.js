@@ -232,6 +232,12 @@ function reshapeButton(button, uid) {
 // with no settings and nothing to retry it. **Every** reader goes through this, the content script
 // and the service worker included, which is why it lives in defaults.js: those two deliberately do
 // not load migrations.js, and surviving a stored value must not depend on which files you loaded.
+//
+// The limits belong here for the same reason the shape rules do. They used to be applied on the
+// import path alone, so a stored fourth button reached the app while the same file arriving through
+// import lost it without a word — two readers, two verdicts. And a limit applied quietly inside a
+// reader is the same defect as inventing a default: the next Save records the trimmed list. Over the
+// limit is therefore not "trim to fit" but "cannot be used", counted and reported like any other skip.
 function adoptStoredButtons(value) {
   if (value === undefined) return { buttons: [], skipped: 0 }; // nothing stored is not a problem
   if (!Array.isArray(value)) return { buttons: [], skipped: 1 };
@@ -243,6 +249,10 @@ function adoptStoredButtons(value) {
     // and guessing at them is how a typo in someone's backup becomes a command.
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { skipped += 1; continue; }
     if (!readableButtonFields(entry)) { skipped += 1; continue; }
+    // Cutting the surplus inputs off an otherwise fine button would keep the button and lose the
+    // inputs — the very silent loss the field rules above exist to prevent.
+    if ((entry.claudeInputs?.length ?? 0) > MAX_CLAUDE_INPUTS) { skipped += 1; continue; }
+    if (buttons.length >= MAX_BUTTONS) { skipped += 1; continue; }
     buttons.push(buttonFields(entry));
   }
   return { buttons, skipped };
@@ -320,12 +330,19 @@ function readStoredMainBranch(raw) {
 // dropped, and fall back to the defaults only when nothing usable is left. The warning goes to the
 // console because that is where those two report anything at all (README troubleshooting says so);
 // the options page has a status line and says it there instead.
+//
+// These two keep the fallback that the options page deliberately gives up. The options page must not
+// invent buttons, because whatever it shows is what the next Save records — inventing there rewrites
+// storage. Neither of these can write anything, so nothing is at stake in showing a default: what is
+// at stake is the opposite, a GitHub page with no button at all, which tells the user nothing is
+// wrong while their settings are unreadable. The face and tooltip drawn are the ones that will run,
+// so the page stays honest about what clicking it does.
 function readStoredButtons(value, defaults) {
   const { buttons, skipped } = adoptStoredButtons(value);
   if (skipped) {
     console.warn(
-      `Terminal Checkout: ${skipped} stored button${skipped === 1 ? ' was' : 's were'} unreadable `
-        + 'and skipped — open the options page to repair.'
+      `Terminal Checkout: ${skipped} stored button${skipped === 1 ? ' was' : 's were'} `
+        + 'unusable and skipped — open the options page to repair.'
     );
   }
   return buttons.length ? buttons : defaults;

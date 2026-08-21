@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R6 커밋(항목 12 — Save·import 시작 시점 캡처+직렬화+adoption 보류·`userAction` 가드-변이 순서·main-branch 검증기 공유·`skippedByKey`, verified) · 게이트 그린(드라이버 재실행 — node 118/0, swift 210/0, e2e 9 PASS; red 재현 — pre-R6 코드에 신규 테스트를 걸어 `not ok` 4건 확인) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×5** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R7 커밋(항목 13 — 신호 처분 단일화·load⟂save 상호 배제·applied generation·결정 9 반영 축소 ⒝·storage 실패 소탕, verified) · 게이트 그린(드라이버 재실행 — node 131/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×6** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -87,6 +87,14 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 7. **[Reset to Defaults]는 동의다(질문 7).** 내용이 CURRENT 세대가 되는 가장 명시적인 채택 행위 — 승격 지점 표에 4행째로 추가한다(신규 설치 / 마이그레이션 적용 / 검토 확인 / 리셋 — 전부 명시적 행위).
 8. **동의는 항목별이다(질문 8 — 이슈 스펙 그대로).** ~~verbatim 후보는 기본 체크된 체크박스~~ → **R3 개정**: **`unconditional` 후보만** 기본 체크이고 `behavior-change`(= prefix) 후보는 기본 해제다(결정 4 개정과 같은 근거 — 읽고 켜는 것이지 놓쳐서 켜지는 것이 아니다). 체크박스, [적용]은 체크된 것만 편집 상태에 반영. 부분 적용 후 [Save]는 version을 CURRENT로 올리고(검토 완료) 체크 해제분은 다시 묻지 않는다 — 프리뷰가 그 사실을 말한다.
 
+9. **세대별 저장 네임스페이스 계약 + 격리 UI 폐기 (사용자, 2026-08-22 — R7 중).** 계기는 "버전별 저장해놓고 쓰면 되겠네", "A가 나중에 업데이트하고 그 버전이 이미 있으면 그걸 쓰면 되잖아". 계약:
+   - `SETTINGS_VERSION`을 올리는 **미래 버전은 새 storage 키 네임스페이스에 쓰고, 옛 네임스페이스는 절대 만지지 않는다**(수정·삭제 금지, 영구 보존 — 세대당 몇 KB라 `storage.sync` quota 대비 무시 가능). 지금의 flat 키(버튼 3키 + `defaultMain` + `repoMainBranch` + `version`)가 곧 현행 세대의 네임스페이스다.
+   - 업데이트한 기기는 **자기 버전의 네임스페이스가 이미 있으면 그것을 쓴다** — 재마이그레이션으로 다른 기기의 편집을 덮지 않는다. 없으면 직전 세대에서 **동의 마이그레이션**으로 시드하고, **시드 시점의 원본 스냅샷을 함께 저장**한다.
+   - 시드 이후 옛 네임스페이스가 더 편집됐으면(스냅샷과 상이) 채택 시 **기존 동의 패널 방식**으로 차이를 보여 주고 반영/유지를 고르게 한다. 반영하지 않아도 그 편집은 옛 네임스페이스에 그대로 남는다 — 가시적 잔존 > 조용한 삭제.
+   - 효과: 구버전 기기는 스큐 중에도 **자기 세대 데이터로 완전 동작**한다. 모양뿐 아니라 **command 문법도** 그렇다 — 옛 앱이 모르는 새 문법이 옛 기기에서 실행되는 일이 없다.
+   - **지금 구현할 코드는 없다.** 우리가 최신 세대라 채택 로직의 상대가 없다 — v2를 만드는 미래 버전이 구현한다. 계약의 정본은 이 계획 파일이고, 항목 7에서 `CLAUDE.md`/`README.md`로 승계한다.
+   - **따름정리 — 격리(quarantine) UI·[Discard] 폐기.** "못 읽는 entry"의 유일한 현실적 생성기는 **기기 간 버전 갈림**인데 위 계약이 그것을 구조적으로 없앤다. 남는 것은 손 편집과 우리 자신의 버그뿐이고, 거기에는 skip + 경고면 충분하다는 사용자 판단. 손 편집에 대해서는 **"자기가 덮어써서 생긴 일은 자기 책임으로 인지할거야"**(사용자, 2026-08-22) — devtools 등으로 사용자 자신이 저장값을 덮어 생긴 손상은 사용자 책임 영역이고, 확장이 그로부터 사용자를 보호할 의무는 없다. 따라서 R7의 축소된 ⒝ 4건 중 **기본값 미충전과 경고 문구는 사용자 보호 장치가 아니라 ① 우리 자신의 필터 버그 대비와 ② "조용한 삭제 대신 가시적 결과"를 위한 최소 장치**로 남긴다.
+
 계획서 언어는 한국어 유지(선례 준수 — 라인 42의 근거 그대로).
 
 ## 작업 항목
@@ -101,16 +109,18 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | 6 | **다른 기계에서 아이콘 끄기.** `chrome.storage.onChanged` 리스너가 없다(`grep storage.onChanged extension/` → 0건) — 새로 만든다. **편집 중(dirty)이면 편집 상태를 덮지 않는다**가 핵심 제약. **red**: `shouldAdoptSyncedChange(dirty, changed)` 같은 순수 판정 함수 | claimed | `options.js:662-670`(`storage.onChanged` 리스너 신설 — 기존 0건), `migrations.js:141-149`(`shouldAdoptSyncedChange`). dirty면 채택하지 않는다(편집 중 입력 보호)를 red로 고정 | R1 |
 | 7 | **문구·문서 동기화.** `README.md:112`(수기 재적용 안내 → 아이콘 안내)·backup 절(`options.html:366`)에 version 언급, 옵션 페이지 도움말, 앱 설정 창 카드(`SetupWindowController.swift:255-261`, 한국어), `CLAUDE.md`에 불변 원칙 한 줄(버전은 명시적 행위로만 승격) | verified | `README.md:112`(수기 재적용 → 업데이트 표시 안내), `extension/options.html:401`(백업 절에 version·거부 규칙), `CLAUDE.md:42-43`(단일 쓰기 경로에 마이그레이션 추가 + 버전 승격 불변 원칙 신설), `app/Sources/App/SetupWindowController.swift:254-262`(한국어 카드 문구 → 업데이트 표시 안내) | R1 |
 
-| 8 | **R2 — Codex R1 차단(no)의 세 부류를 근본 수정.** 증상 7개를 따로 패치하지 않는다. **⒜ 계획은 항상 "저장될 것"(편집 상태) 위에서, 버튼 identity로**: 런타임 전용 `uid`(저장·내보내기에 절대 미포함), `planMigration`은 편집 상태 스냅샷에서 계산하고 후보 id는 uid, `loadedVersion`은 편집 상태를 구성한 출처 중 **가장 낮은 세대**. **⒝ 신뢰 경계**: 레지스트리를 `Map`으로(프로토타입 키 차단) + 확장 JS의 `obj[사용자문자열]` 조회 전수 소탕, version은 **음이 아닌 정수만** 신뢰하고 판정 함수 하나를 stored·imported가 공유, step 선택은 `step.to > fromVersion`. **⒞ version 바닥·동시성**: `versionFloor`(dirty여도 항상 기록), save는 `set` 직전 재조회해 `max(floor, 현재값, versionToSave)`, `loadSettings`는 await 전후 revision 대조로 스냅샷 폐기, 체크박스는 revision만 올린다. 부수: P3 커버리지 유도 테스트, 빈 suffix 제외, `effect` 정의 명문화, 잔여 3건(describe 합산·"바꿀 것 없음" 문구·echo) | verified | 아래 R2 로그 | R2 |
+| 8 | **R2 — Codex R1 차단(no)의 세 부류를 근본 수정.** 증상 7개를 따로 패치하지 않는다. **⒜ 계획은 항상 "저장될 것"(편집 상태) 위에서, 버튼 identity로**: 런타임 전용 `uid`(저장·내보내기에 절대 미포함), `planMigration`은 편집 상태 스냅샷에서 계산하고 후보 id는 uid, `loadedVersion`은 편집 상태를 구성한 출처 중 **가장 낮은 세대**. **⒝ 신뢰 경계**: 레지스트리를 `Map`으로(프로토타입 키 차단) + 확장 JS의 `obj[사용자문자열]` 조회 전수 소탕, version은 **음이 아닌 정수만** 신뢰하고 판정 함수 하나를 stored·imported가 공유, step 선택은 `step.to > fromVersion`. **⒞ version 바닥·동시성**: `versionFloor`(dirty여도 항상 기록), save는 `set` 직전 재조회해 `max(floor, 현재값, versionToSave)`, `loadSettings`는 await 전후 revision 대조로 스냅샷 폐기, 체크박스는 revision만 올린다. 부수: P3 커버리지 유도 테스트, 빈 suffix 제외, `effect` 정의 명문화, 잔여 3건(describe 합산·"바꿀 것 없음" 문구·echo) | agreed | 아래 R2 로그 · Codex R2: R1 7건 닫힘 확인 | R2 |
 
-| 9 | **R3 — Codex R2 차단(no)의 다섯 부류.** ⒜ 쓰기는 로드한 것 위에서만(floor 폐기, 낙관적 동시성 — 다르면 거부) ⒝ 로드 전에는 설정이 없다(`loaded` 게이트 + 로드 세대) ⒞ uid는 우리 것(`adoptButton`/`reshapeButton` 분리) ⒟ prefix 후보는 `behavior-change`(기본 해제) ⒠ 신뢰 경계 마무리(`onMessage` 가드, 역사 픽스처) | verified | 커밋 `856bf03`, 아래 R3 로그. Codex 재검증에서 이 7건은 전부 통과했고 신규 5건으로 차단됐다 — 상태 갱신은 드라이버 몫 | R3 |
-| 10 | **R4 — Codex R3 차단(no)의 두 부류.** **⒜ 상태 보호의 경계**: 로드 전 조작 차단을 컨트롤 열거에서 **루트 `inert`** 하나로 바꾸고(열거는 `default-main`·[+ Add Override]를 놓쳐 첫 로드를 영구 중단시켰다), 첫 로드는 revision으로 폐기하지 않으며(`initial`), 진행 중인 리뷰(`reviewTouched`)를 미저장 편집과 같은 급으로 보호하고 자기 저장 echo를 `loadedSnapshot`으로 걸러낸다. **⒝ 저장값 모양의 신뢰 경계**: `adoptStoredSettings` 하나를 load와 import가 공유하고 버린 항목을 보이게 보고한다. 부수: `sameStoredValue`의 배열 length, 소유 키에서만 stale 배너, `effect` 정의를 base dir 계약 안으로 좁힘, 잔여 창 서술 정정. **⒝는 옵션 페이지에서 끝나지 않는다** — `content.js`·`background.js`의 읽기 지점도 같은 검증기를 거치고, 그래서 검증기는 `migrations.js`가 아니라 `defaults.js`에 있다(그 둘은 migrations.js를 로드하지 않는다) | verified | 아래 R4 로그 | R4 |
+| 9 | **R3 — Codex R2 차단(no)의 다섯 부류.** ⒜ 쓰기는 로드한 것 위에서만(floor 폐기, 낙관적 동시성 — 다르면 거부) ⒝ 로드 전에는 설정이 없다(`loaded` 게이트 + 로드 세대) ⒞ uid는 우리 것(`adoptButton`/`reshapeButton` 분리) ⒟ prefix 후보는 `behavior-change`(기본 해제) ⒠ 신뢰 경계 마무리(`onMessage` 가드, 역사 픽스처) | agreed | 커밋 `856bf03`, 아래 R3 로그 · Codex R3: "856bf03은 기존 7건을 모두 막았지만" | R3 |
+| 10 | **R4 — Codex R3 차단(no)의 두 부류.** **⒜ 상태 보호의 경계**: 로드 전 조작 차단을 컨트롤 열거에서 **루트 `inert`** 하나로 바꾸고(열거는 `default-main`·[+ Add Override]를 놓쳐 첫 로드를 영구 중단시켰다), 첫 로드는 revision으로 폐기하지 않으며(`initial`), 진행 중인 리뷰(`reviewTouched`)를 미저장 편집과 같은 급으로 보호하고 자기 저장 echo를 `loadedSnapshot`으로 걸러낸다. **⒝ 저장값 모양의 신뢰 경계**: `adoptStoredSettings` 하나를 load와 import가 공유하고 버린 항목을 보이게 보고한다. 부수: `sameStoredValue`의 배열 length, 소유 키에서만 stale 배너, `effect` 정의를 base dir 계약 안으로 좁힘, 잔여 창 서술 정정. **⒝는 옵션 페이지에서 끝나지 않는다** — `content.js`·`background.js`의 읽기 지점도 같은 검증기를 거치고, 그래서 검증기는 `migrations.js`가 아니라 `defaults.js`에 있다(그 둘은 migrations.js를 로드하지 않는다) | agreed | 아래 R4 로그 · Codex R4: "모두 재현 입력에서 차단됐다" | R4 |
 
-| 11 | **R5 — Codex R4 차단(no)의 세 부류.** **⒜ "사용자가 말했다"는 신호를 하나로**: `revision`이 유일한 1차 신호이고 모든 상호작용이 `touch()` 하나를 거친다. `dirty`·`reviewTouched`는 그 안에서만 갱신되고, 비동기 작업의 상태 전이는 전부 `nothingHappenedSince(revisionAtStart)` 하나로 판단한다(저장 성공 후 해제도, 로드 응답 적용도). `shouldApplyLoadedSnapshot`은 `reviewTouched`도 함께 본다. **⒝ 외부 입력 검증을 필드까지**: `readableButtonFields`가 `face`·`emoji`·`label`·`command`는 문자열, `claudeInputs`는 문자열 배열임을 요구하고 하나라도 어긋나면 **entry 전체**를 불량으로 세며, import도 같은 함수를 쓴다. **⒞ 로드 실패는 복구 가능**: inert의 루트를 `body`에서 `#app`으로 내리고 상태 줄·[Retry]를 그 밖에 둔다. **⒟ inert는 코드 규칙이 아니다**: `touch()`가 `loaded`가 아니면 무시하므로 프로그램적 이벤트도 상태를 못 바꾼다 | verified | 아래 R5 로그 | R5 |
+| 11 | **R5 — Codex R4 차단(no)의 세 부류.** **⒜ "사용자가 말했다"는 신호를 하나로**: `revision`이 유일한 1차 신호이고 모든 상호작용이 `touch()` 하나를 거친다. `dirty`·`reviewTouched`는 그 안에서만 갱신되고, 비동기 작업의 상태 전이는 전부 `nothingHappenedSince(revisionAtStart)` 하나로 판단한다(저장 성공 후 해제도, 로드 응답 적용도). `shouldApplyLoadedSnapshot`은 `reviewTouched`도 함께 본다. **⒝ 외부 입력 검증을 필드까지**: `readableButtonFields`가 `face`·`emoji`·`label`·`command`는 문자열, `claudeInputs`는 문자열 배열임을 요구하고 하나라도 어긋나면 **entry 전체**를 불량으로 세며, import도 같은 함수를 쓴다. **⒞ 로드 실패는 복구 가능**: inert의 루트를 `body`에서 `#app`으로 내리고 상태 줄·[Retry]를 그 밖에 둔다. **⒟ inert는 코드 규칙이 아니다**: `touch()`가 `loaded`가 아니면 무시하므로 프로그램적 이벤트도 상태를 못 바꾼다 | agreed | 아래 R5 로그 · Codex R5: 4건 중 3건 통과, 프로그램적 입력은 R6에서 닫혀 Codex R6 "로드 전 프로그램적 Add … `buttons` 불변" | R5 |
 
-| 12 | **R6 — Codex R5 차단(no)의 세 부류.** **⒜ 비동기 작업은 시작 시점의 세계 위에서만 정산한다**: Save가 `loadedSnapshot`·`loadGeneration`·`revision`을 불변 캡처하고 `planSave`가 캡처본·세대·"인플라이트 중 변경 도착" 셋으로 판정, Save 직렬화(`shouldStartSave` + 버튼 disabled)와 **Save 중 adoption 보류**(stale 표시만 하고 정산 뒤 재평가), import는 `planImport`로 같은 술어를 통과, `mergedSourceVersion`이 전제(양쪽 ≤ CURRENT)를 스스로 검사해 미래 저장 version + 구버전 백업을 거부. **⒝ 가드가 변이보다 먼저다**: `userAction(accept, change)` 하나로 순서를 구조화하고 진입점 전부를 `edit`/`review`/`editAndReview`로 감쌌다 — [+ Add Button]의 본문은 `appendButton`(순수)로 갈라 테스트가 닿는다. **⒞ 검증기 공유 범위**: `adoptStoredMainBranch`/`readStoredMainBranch`를 `defaults.js`에 두고 options·background가 공유, `skippedByKey`로 entry 단위 유실을 import·load 메시지까지 전파, `claudeInputs`의 hole을 불량으로 | verified | 아래 R6 로그 | R6 |
+| 12 | **R6 — Codex R5 차단(no)의 세 부류.** **⒜ 비동기 작업은 시작 시점의 세계 위에서만 정산한다**: Save가 `loadedSnapshot`·`loadGeneration`·`revision`을 불변 캡처하고 `planSave`가 캡처본·세대·"인플라이트 중 변경 도착" 셋으로 판정, Save 직렬화(`shouldStartSave` + 버튼 disabled)와 **Save 중 adoption 보류**(stale 표시만 하고 정산 뒤 재평가), import는 `planImport`로 같은 술어를 통과, `mergedSourceVersion`이 전제(양쪽 ≤ CURRENT)를 스스로 검사해 미래 저장 version + 구버전 백업을 거부. **⒝ 가드가 변이보다 먼저다**: `userAction(accept, change)` 하나로 순서를 구조화하고 진입점 전부를 `edit`/`review`/`editAndReview`로 감쌌다 — [+ Add Button]의 본문은 `appendButton`(순수)로 갈라 테스트가 닿는다. **⒞ 검증기 공유 범위**: `adoptStoredMainBranch`/`readStoredMainBranch`를 `defaults.js`에 두고 options·background가 공유, `skippedByKey`로 entry 단위 유실을 import·load 메시지까지 전파, `claudeInputs`의 hole을 불량으로 | agreed | 아래 R6 로그 · Codex R6: "7건은 모두 막혔습니다" | R6 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤.
+| 13 | **R7 — Codex R6 차단(no)의 세 부류.** **⒜ 도착한 신호는 버리지 않는다**: `classifyStorageChange` 하나가 `onChanged`의 분기를 대신해 `ignore`/`defer`/`banner`/`adopt`를 정하고, `ignore`가 아닌 모든 경로가 `markStale()`을 거친다. 로드 전 도착분은 **보류**(P1-B), Save는 `staleAtStart`를 latch해 **이미 도착한 변경**을 알고(P1-A 자물쇠 2), `appliedGeneration`이 **적용된** load를 센다(자물쇠 3), `shouldStartSave`에 `loading` 축을 더해 load in-flight 중에는 Save가 **시작조차 하지 않는다**(자물쇠 1). 폐기된 load 응답과 `settleSave`의 stale 해제도 신호를 잃지 않는다(P3-B). **⒝ 읽을 수 없는 저장값**(결정 9로 격리 UI 폐기 후 축소): 미래 version 보유 시 **Save 거부**(`planSave`), 걸러진 entry가 있는 키는 **기본값으로 채우지 않음**(`seedFromStorage`), 경고에 **결과 명시**(`SKIP_CONSEQUENCE`), 상한(`MAX_BUTTONS`/`MAX_CLAUDE_INPUTS`) 판정을 **공유 검증기 한 곳**으로 옮기고 import의 조용한 자르기 제거. **⒞ storage 호출 실패**: Save의 live get·Export의 get에 catch 신설, 나머지 5개 호출의 처분을 소탕 표 12로 고정 | verified | 아래 R7 로그 | R7 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -120,12 +130,20 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] 편집 중(dirty)에 다른 기계의 저장이 동기화돼도 입력이 날아가지 않는다
 - [ ] 옛 백업 JSON을 가져오면 같은 프리뷰가 뜨고, 역시 [Save] 전에는 아무것도 저장되지 않는다
 - [ ] 커스터마이즈된 command는 나열만 되고 값이 바뀌지 않는다
-- [ ] `storage.sync`의 버튼 배열에 `null` 항목을 넣어도 GitHub 페이지에 버튼이 그려지고(나머지 항목으로), 페이지·서비스 워커 콘솔에 "N stored buttons were unreadable and skipped" 경고가 남는다
+- [ ] `storage.sync`의 버튼 배열에 `null` 항목을 넣어도 GitHub 페이지에 버튼이 그려지고(나머지 항목으로), 페이지·서비스 워커 콘솔에 "N stored buttons … unusable and skipped" 경고가 남는다
 - [ ] `storage.sync.get`이 실패하도록 흉내 내면(오프라인·throw 주입) 상태 줄에 사유가 뜨고 [Retry]가 보이며, 누르면 정상 로드된다 — 실패 중에도 `#app`은 inert라 저장이 열리지 않는다
 - [ ] Save를 누른 직후 다시 누르면 두 번째는 무시되고(버튼 disabled + "Already saving") 저장은 한 번만 나간다
 - [ ] Save 대기 중 다른 기기가 저장하면 이 저장이 거부되고(충돌 메시지), 정산 뒤 편집이 없으면 그 변경이 화면에 반영된다
 - [ ] 파일 선택 뒤 읽는 동안 카드에 타이핑하면 import가 거부되고("import again") 폼이 그대로 남는다
-- [ ] 불량 항목이 섞인 백업을 가져오면 상태 줄에 "1 entry in buttons was unreadable and skipped"가 함께 뜬다
+- [ ] 불량 항목이 섞인 백업을 가져오면 상태 줄에 "1 entry in buttons could not be used and was skipped"가 함께 뜬다
+- [ ] `buttons`의 유일한 항목을 `claudeInputs: "!secret"`로 손 편집한 뒤 옵션 페이지를 열면 **기본 버튼이 그려지지 않고** PR 섹션이 빈 채로 남으며, 상태 줄에 사유 + "Saving will remove them — use Export (JSON) first…"가 뜬다
+- [ ] `version`을 미래 값(2)으로 손 편집하면 로드·표시·Export는 되고 [Save]만 거부된다("… must not write over them")
+- [ ] 버튼 4개짜리 백업을 가져오면 3개만 들어오는 것이 아니라 "1 entry in buttons could not be used and was skipped"가 함께 뜬다
+- [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
+- [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
+- [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
+- [ ] Save 중 두 번째 `storage.sync.get`이 실패하도록 흉내 내면 "Could not save: …"가 뜨고 아무것도 기록되지 않는다
+- [ ] `storage.sync.get`이 실패하는 상태에서 [Export (JSON)]을 누르면 "Could not export: …"가 뜬다(조용히 아무 일도 없지 않다)
 
 ## 전수 소탕 표
 
@@ -261,12 +279,61 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 경로 | 시작 시 캡처 | 쓰기·적용 게이트 | 정산(사용자에 대한 주장) |
 |:--|:--|:--|:--|
-| **Save** | `loadedSnapshot`·`loadGeneration`·`revision`·payload | `planSave`: ① 인플라이트 중 소유 키 변경 도착 ② `generationAtStart !== generationNow` ③ `saveConflict(캡처본, 라이브)` — 하나라도 걸리면 **거부** | `nothingHappenedSince(revisionAtStart, now)` — 거짓이면 `reviewTouched` 해제·뷰 정리·재계획을 전부 보류 |
-| **load** | `revision`·`loadGeneration`·`initial` | `shouldApplyLoadedSnapshot`: 세대가 최신 + (첫 로드가 아니면) `nothingHappenedSince` ∧ `!dirty` ∧ `!reviewTouched` | 적용이 곧 정산 |
+| **Save** | `loadedSnapshot`·**`appliedGeneration`**·`revision`·**`staleSinceLoad`**·payload | 시작 조건 `shouldStartSave({loaded, saving, loading})` — load in-flight면 시작하지 않는다(R7). `planSave`: ① `storeMovedSinceLoad`(= 캡처한 stale ∨ 인플라이트 중 도착) ② `appliedGenerationAtStart !== appliedGenerationNow` ③ `saveConflict(캡처본, 라이브)` — 하나라도 걸리면 **거부** | `nothingHappenedSince(revisionAtStart, now)` — 거짓이면 `reviewTouched` 해제·뷰 정리·재계획을 전부 보류. stale 해제는 `changedDuringSave`가 거짓일 때만 |
+| **load** | `revision`·`loadGeneration`·`initial` | `shouldApplyLoadedSnapshot`: 세대가 최신 + (첫 로드가 아니면) `nothingHappenedSince` ∧ `!dirty` ∧ `!reviewTouched` | 적용이 곧 정산 — 적용 시 `appliedGeneration++`. 폐기할 때도 읽은 값을 버리지 않고 `saveConflict`로 배너 판정(R7) |
 | **import** | `revision`·`loadGeneration` | `planImport`: `nothingHappenedSince` ∧ 세대 동일 — 아니면 **거부**(`IMPORT_STALE_MESSAGE`) | 적용은 `edit(…)`을 거쳐 revision을 올린다 |
-| **adoption**(`storage.onChanged`) | 이벤트 자체(동기) | `shouldAdoptSyncedChange(unsavedWork(), changes)` — `unsavedWork` = `dirty ∥ reviewTouched ∥ saving` | Save 중이면 **보류**(`deferredChange`)했다가 정산 뒤 같은 질문을 다시 묻는다 |
+| **adoption**(`storage.onChanged`) | 이벤트 자체(동기) | `classifyStorageChange` → `ignore`/`defer`/`banner`/`adopt`(R7). 채택 판정 자체는 여전히 `shouldAdoptSyncedChange(busy, changes)` 하나 | `ignore`가 아닌 전부가 `markStale()`을 거친다. `defer`는 `deferredChange`에 **병합**돼 첫 로드 직후·Save 정산 뒤 다시 질의된다 |
 
-Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나**다(adoption은 그 술어를 쓰는 load에 위임). 세대 비교는 그 옆에 붙는 두 번째 축이고, 뜻이 다르다 — revision은 "사용자가 말했다", generation은 "페이지가 자기 내용을 갈아 끼웠다".
+Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나**다(adoption은 그 술어를 쓰는 load에 위임). 세대 비교는 그 옆에 붙는 두 번째 축이고, 뜻이 다르다 — revision은 "사용자가 말했다", appliedGeneration은 "페이지가 자기 내용을 실제로 갈아 끼웠다". **R7 정정**: 이 자리를 `loadGeneration`(요청 카운터)이 맡고 있었는데, 요청 수는 "폼이 교체됐는가"에 답할 수 없다 — Save보다 먼저 요청돼 Save 도중에 적용된 load는 그 카운터를 움직이지 않는다.
+
+### 소탕 표 10 — "저장소가 움직였다"는 신호가 들어오는 지점 (R7, 부류 ⒜)
+
+조용히 사라지는 분기가 **0**이어야 한다. 각 지점은 **adoption**(재조회)이나 **stale 배너** 중 하나로 끝난다 — "지금은 처리할 수 없다"는 버리는 이유가 아니라 보류하는 이유다.
+
+| 신호가 들어오는 지점 | 상황 | 처분 | R6까지 |
+|:--|:--|:--|:--|
+| `onChanged` — 소유 키 없음 | 남의 키 | `ignore` — 저장소가 움직인 것이 아니다 | 같음 |
+| `onChanged` — 자기 write echo | `loadedSnapshot` 또는 `pendingWrite`와 동일 | `ignore` | 같음(+R7: 로드 전에는 비교 대상이 없으므로 echo로 보지 않는다 — 원격 **키 삭제**가 echo로 오인되던 구멍) |
+| `onChanged` — **첫 로드 전** | `loaded=false` | **`defer` + `markStale()`**, 첫 로드 적용 직후 재질의 | **버렸다(P1-B)** — "진행 중인 load가 가져온다"는 주석은 그 load의 read가 변경보다 먼저일 수 있음을 무시했다 |
+| `onChanged` — Save 중 | `saving=true` | `defer` + `markStale()` + `changedDuringSave=true`, 정산 뒤 재질의 | 같음 |
+| `onChanged` — 편집/리뷰 중 | `dirty ∥ reviewTouched` | `banner` (`markStale()`) | 같음 |
+| `onChanged` — 그 밖 | clean | `adopt` (`loadSettings()`) | 같음 |
+| `shouldApplyLoadedSnapshot` **거짓** — 세대 추월 | 더 새 요청이 있다 | 읽은 값을 `saveConflict`로 대조해 다르면 `markStale()` | **조용히 return** |
+| `shouldApplyLoadedSnapshot` **거짓** — dirty·reviewTouched·revision 이동 | 편집이 있다 | 위와 같다 | **조용히 return** |
+| `loadSettings`의 get 실패 | reject | `showLoadFailure` + [Retry]. `staleSinceLoad`는 성공했을 때만 해제되므로 배너는 그대로 남는다 | 같음(확인) |
+| `adoptDeferredChange` — 채택 못 함 | 여전히 편집 중 | `markStale()` 후 종료 | **버렸다(P3-B)** |
+| `adoptDeferredChange` — 아직 때가 아님 | 여전히 Save 중 | 보류 유지(다시 담지 않아도 남아 있다) | 해당 없음 |
+| `settleSave` | 쓰기 성공 | `changedDuringSave`가 거짓일 때만 stale 해제 | **무조건 해제(P3-B)** |
+| Save 거부 — conflict | 저장소가 앞서 있다 | `markStale()` + 메시지 | 같음 |
+| Save 거부 — reload | 페이지가 방금 따라잡았다 | 배너 **올리지 않음**(`stale:false`) + 메시지 | 무조건 올렸다 — 없는 격차를 알리는 거짓말 |
+| Save 거부 — loading | 재조회 중 | 메시지만(저장소 상태에 대한 새 정보 없음) | 해당 없음 |
+
+### 소탕 표 11 — 편집 상태가 씨앗을 받는 자리 × 걸러진 것의 처분 (R7, 부류 ⒝)
+
+격리(quarantine) 전제는 결정 9로 폐기됐다. 남은 규칙은 하나 — **읽지 못한 것을 우리 것으로 대체하지 않는다**. "저장된 것이 없다"와 "저장된 것이 있었는데 쓸 수 없었다"는 다른 답이고, 두 번째를 프리셋으로 답하면 다음 Save가 그 프리셋을 사용자의 command 위에 기록한다.
+
+| 자리 | 씨앗 출처 | 걸러진 것의 처분 |
+|:--|:--|:--|
+| `loadSettings`(options) | storage | skip + **키별 보고**(상태 줄) + **결과 명시**(`SKIP_CONSEQUENCE`) + **기본값 미충전**(`seedFromStorage` — 그 섹션은 읽힌 것만, 0개여도). 키가 아예 없었을 때만 프리셋 |
+| `applyImportedSettings`(options) | 파일 | 같은 검증기·같은 키별 보고(상태 메시지). **미충전 규칙은 없다** — 파일이 언급하지 않은 키는 화면의 값을 그대로 두는 것이 import의 원래 계약이고, 파일의 불량분은 파일에 그대로 남아 있다 |
+| `resetSettings` | 우리 프리셋 | 해당 없음 — 외부 입력이 아니다 |
+| `applyMigration` | 편집 상태 | 해당 없음 — 이미 읽힌 버튼만 다룬다 |
+| `readStoredButtons`(content·background) | storage | skip + `console.warn`(결과 문구는 붙이지 않는다 — 거기엔 Save가 없다) + **기본값 폴백 유지**. 근거: 이 둘은 **쓰기 경로가 없어** 미충전이 보호할 것이 없고, 반대로 버튼이 통째로 사라지면 사용자가 이상을 알아챌 길이 없다. 그려지는 face·tooltip이 곧 실행될 버튼이므로 화면은 거짓말하지 않는다 |
+| `resolveMainBranch`(background) | storage | 비문자열 값은 항목별로 버림(소탕 표 8) + `console.warn`. 폴백은 `DEFAULT_MAIN` — 여기서 미충전은 "브랜치 없음"이라 실행이 불가능하다 |
+
+미래 세대가 쓴 저장값은 **읽고 보여주고 export까지 허용하되 Save만 거부**한다(`planSave`의 첫 문). 결정 9대로라면 도달 불가능한 경로이고, 계약이 깨졌을 때의 보험이다.
+
+### 소탕 표 12 — `chrome.storage.*` 호출의 실패 처리 (R7, 부류 ⒞)
+
+| 호출 | 실패하면 | 판정 |
+|:--|:--|:--|
+| `options.js` `loadSettings`의 get | 페이지에 설정이 없다 | 닫음(R5): try/catch → `showLoadFailure` + [Retry], 게이트는 닫힌 채 |
+| `options.js` `saveSettings`의 live get | 쓰기가 안전한지 판정할 수 없다 | **구멍 → 닫음(R7)**: catch → `Could not save: …` + **쓰지 않음**. R6까지 unhandled rejection이라 상태 줄도 거부도 없이 저장이 증발했다 |
+| `options.js` `saveSettings`의 set | 쓰지 못했다 | 닫음(R3): try/catch → `Could not save: …` |
+| `options.js` `exportSettings`의 get | 백업을 못 만든다 | **구멍 → 닫음(R7)**: catch → `Could not export: …`. 하필 "설정을 잃지 않으려고" 누르는 경로였다 |
+| `background.js` `resolveMainBranch`의 get | 오버라이드를 못 읽는다 | 안전(의도) — 잡지 않고 전파해 버튼/콘솔에 실패로 뜬다. 여기서 `DEFAULT_MAIN`으로 폴백하면 `master` 저장소에서 `main`을 체크아웃하는, 보이지 않는 **틀린 브랜치**가 된다 |
+| `background.js` `loadButtons`의 get | 버튼을 못 읽는다 | 안전(의도) — 전파. 폴백하면 사용자의 커스텀 command 대신 **기본 command가 실행**된다 |
+| `content.js` `loadButtonConfigs`의 get | 그릴 설정을 못 읽는다 | 안전 — try/catch → 기본값으로 **그리기만** 한다. 클릭은 background가 저장소를 다시 읽으므로 틀린 command가 실행되지는 않는다 |
 
 ### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
 
@@ -418,9 +485,9 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 잔여 창: "교차 기기의 get↔set 사이 LWW 창은 현재 서술대로 받아들인다 … post-write 재조회는 탐지만 가능하고 예방하지 못한다." Codex가 제시한 CAS 없이 닫을 수 있는 것: Save 시작 시 loadedSnapshot·load generation **불변 캡처** 후 set 직전 재검사 / Save 직렬화(mutex·disabled) / import 완료 직전 `nothingHappenedSince` / 모든 편집 handler에서 **변이 전** `touch()` 성공 확인 / 미래 storage version 보유 시 구버전 import 거부.
 - 부류 이동: 동시성 모델·신호·검증은 섰고, 남은 것은 **비동기 작업의 캡처 시점**(Save·import가 시작 시점의 세계를 붙들지 않음)과 **변이-가드 순서**, 그리고 검증기 **공유 범위**(background의 overrides)다.
 
-### R6 — 워킹트리(미커밋, base `0b60b52`) · 항목 12
+### R6 — `ff1184a` (Codex 판정: 차단) · 항목 12
 
-- 범위: Codex R5 차단의 신규 6건(P1 ×2·P2 ×3·P3 ×1)과 미해결 1건(프로그램적 입력)을 부류 셋으로 묶어 근본 수정. R5의 4건 중 통과 3건은 손대지 않았다.
+- 범위: Codex R5 차단의 신규 6건(P1 ×2·P2 ×3·P3 ×1)과 미해결 1건(프로그램적 입력)을 부류 셋으로 묶어 근본 수정(base `0b60b52`). R5의 4건 중 통과 3건은 손대지 않았다.
 - 자리: `migrations.js:372-419`(`SAVE_RELOADED_MESSAGE`·`shouldStartSave`·`planSave`·`IMPORT_STALE_MESSAGE`·`planImport`)·`:133-160`(미래 version 메시지 2개 + `mergedSourceVersion` 전제)·`:463-503`(`adoptStoredSettings`의 `skippedByKey` + `describeSkipped`)·`:532`(`userAction`), `defaults.js:261`(`readableButtonFields`의 hole 규칙)·`:280-317`(`adoptStoredMainBranch`/`readStoredMainBranch`)·`:357`(`appendButton`), `options.js:122-148`(`updateSavingGate`·`unsavedWork`·`isOurOwnWrite`·`adoptDeferredChange`)·`:354-367`(`edit`/`review`/`editAndReview`)·`:526-620`(Save 캡처·직렬화·`finally`)·`:622`(`settleSave`)·`:952-975`(import 정산), `background.js:128`(`readStoredMainBranch`).
 - **⒜ 비동기 작업은 시작 시점의 세계 위에서만 정산한다**(소탕 표 9).
   - **Save 캡처.** `savedRevision`·`generationAtStart`·`capturedSnapshot`을 시작 시 한 번 잡고, `planSave`가 `state`가 아니라 그 캡처본을 본다. Codex P1-1의 핵심은 **adoption이 사용자 행위가 아니라 revision을 올리지 않는다**는 것이었다 — 그래서 기존 신호는 전부 통과했고 `loadedSnapshot`만 S1로 갈아 끼워져 대조가 S1 vs S1이 됐다.
@@ -435,4 +502,31 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 실측: `node --test` **118/0**(R5 102 → 신규 16: `migration.test.js` 13 + `buttons.test.js` 3), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건(확장만 고쳤으므로 불변이어야 하고 실제로 불변). `node --check` 확장 스크립트 5개, `git diff --check` 통과.
 - **잔여**: get↔set 창 자체는 그대로다 — CAS가 없으니 **탐지**만 늘렸다(캡처본 대조 + change 이벤트 + 세대). 두 신호 중 어느 것도 도착하지 않는 창(원격 쓰기가 커밋됐는데 `get`도 옛 값을 주고 이벤트도 아직 안 온 순간)은 남고, 거기서는 R3부터의 서술 그대로 LWW로 1회 덮이며 그것이 마이그레이션 결정이었으면 손실은 영구적이다.
 - **미검증**: DOM·클릭 경로(Save 직렬화의 실제 버튼 disabled, 보류된 adoption의 실제 수신, import 중 타이핑, 배지·체크박스·배너·Retry)는 여전히 자동 게이트가 없다 — 수기 검사 목록에 4항목을 더했다.
+- **Codex 판정: 차단(no).** R5 7건 **전부 차단 확인**("7건은 모두 막혔습니다") → 항목 12 agreed. 불변 원칙 2·3·4 통과, **1(version) 실패** — 아래 P1 두 건의 race 때문. P0 없음.
+- 신규 P1 ×3: **(A) adoption load가 Save보다 먼저 시작되고 Save 중에 적용된다** — `loadGeneration`은 요청 시작만 세고 적용을 표시하지 않는다. A가 S0(v0) clean → B가 S1(v1) 저장 → A `onChanged` → `loadSettings()` 시작(gen 2) → 응답 전 A가 Save(캡처 gen 2·S0) → load 응답 S1 적용(gen 여전히 2, 폼은 S1) → Save의 live get이 S0 → `planSave` 통과 → **S0/v0 기록**. 실측 `loadApplies:true, saveRefused:false`. **(B) 첫 load 중 도착한 원격 change를 `onChanged`의 `if (!state.loaded) return`이 버린다** — initial get pending 중 S1 이벤트 도착 → 무시 → initial get이 S0 → `initial=true`로 S0 적용 → stale 표시도 재조회도 없음. **(C) 읽을 수 없는 저장값이 동의 없이 기본값으로 덮인다** — `claudeInputs: "!secret"`인 entry가 통째로 skip돼 buttons가 비고, 그 자리를 기본 PR 버튼이 채워, 일반 Save가 유효했던 커스텀 command를 기본 command로 기록한다.
+- 신규 P2: Save의 live `chrome.storage.sync.get`에 catch가 없어 unhandled rejection — 상태 줄도 거부도 없이 저장이 증발한다.
+- 신규 P3: **(A) 저장 reader가 상한(`MAX_BUTTONS`·`MAX_CLAUDE_INPUTS`)을 검사하지 않는다** — import만 3/5로 자르므로 두 reader의 상한이 다르고, 초과분이 앱까지 간다. **(B) `set` 이후 원격 event 도착 + 그 사이 사용자 편집** → `settleSave`가 `staleSinceLoad=false`로 만들고 dirty라 deferred change를 버려 배너가 사라진다(다음 Save의 conflict가 막아 손실은 없음).
+- 판단 6건 중 2·5·6 수용, 3·4 조건부 수용(위 P3-B), **1 반박**: "최종 get∼set LWW 창 자체는 CAS 없이는 제거할 수 없습니다 … 다만 현재 코드는 그 창 외에도 **이미 도착한 event와 완료된 load를 Save가 모르는** P1 경계를 갖습니다. load 적용 세대·원격 변경 latch·초기 event 보류가 필요합니다."
+- 부류 이동: 캡처·가드 순서·검증기 공유는 섰고, 남은 것은 **도착한 신호의 유실**(이벤트를 버리거나 배너를 지우는 분기), **읽을 수 없는 저장값의 무동의 덮어쓰기**, **storage 호출 실패 처리**다.
+
+### R7 — 워킹트리(미커밋, base `ff1184a`) · 항목 13
+
+- 범위: Codex R6 차단 6건 전부 — **⒜(도착 신호 불유실) P1-A·P1-B·P3-B**, **⒝(읽을 수 없는 저장값) P1-C·P3-A**, **⒞(storage 실패 처리) P2**. R5 7건은 재검증에서 전부 통과했으므로 건드리지 않았다.
+- **⒝의 설계가 라운드 중 두 번 바뀌었다.** 초안은 격리(quarantine) 패널 + [Discard] 동의였고 red 5건까지 썼다가, 드라이버 보류 지시로 테스트 파일을 R6 상태로 절단했으며(코드는 그때까지 한 줄도 쓰지 않았다), 이어 **결정 9**로 격리 자체가 폐기되고 축소된 4건으로 확정됐다. 그 근거는 결정 9에 있다 — 요지는 "못 읽는 entry"의 유일한 현실적 생성기가 기기 간 버전 갈림이고 그것을 네임스페이스 계약이 구조적으로 없앤다는 것, 그리고 손 편집은 사용자 책임 영역이라는 것. 그래서 남은 장치는 **사용자 보호가 아니라 우리 자신의 필터 버그 대비**이고, 목표는 "조용한 삭제 대신 가시적 결과"다.
+- 자리: `migrations.js:378`(`SAVE_LOADING_MESSAGE`)·`:386`(`shouldStartSave`에 `loading` 축)·`:414`(`planSave` 3문·`stale` 반환)·`:441`(`classifyStorageChange`), `options.js:41-46`(`appliedGeneration`·`loadsInFlight`)·`:135`(`editsInProgress`)·`:143`(`isOurOwnWrite`의 로드 전 가드)·`:155`(`adoptDeferredChange`)·`:171`(`markStale`)·`:507-516`(in-flight 카운터)·`:527-535`(폐기된 응답의 배너 판정)·`:553`(`appliedGeneration++`)·`:565`(첫 로드 뒤 재질의)·`:586`(시작 게이트)·`:615`(`staleAtStart` latch)·`:641-650`(live get catch)·`:672`(`settleSave`의 조건부 stale 해제)·`:960-967`(export catch).
+- **⒜-1 P1-A는 자물쇠 셋으로 닫았다.** 드라이버 지시대로 상위 고도 대안 둘을 먼저 검토했고 **둘 다 채택**했다. 근거: ①`loading` 축(**Save를 시작하지 않는다**)은 흔한 경우를 거절이 아니라 "잠시 후 다시"로 만들고, 그 창을 없앤다. ②`appliedGeneration`(**적용을 센다**)은 ①이 놓칠 수 있는 나머지를 구조적으로 막는다 — ①은 "`loadSettings()`를 부르는 곳이 전부 어디인가"라는 열거에 기대는데, 그 열거는 R4에서 이미 한 번 썩었다(컨트롤 열거 → 루트 `inert`). 그리고 ③ `staleAtStart` latch: 이벤트는 이미 도착했으므로 read 순서와 무관하게 참이다. Codex가 지적한 대로 **불변 원칙이 저장소 read 순서에 기대면 안 되기 때문에** ③이 정본이고 ①②는 그 위의 구조다.
+  - **드라이버 판단 기록**: 같은 프로세스에서 나중에 낸 `get`이 먼저 낸 `get`보다 옛 값을 주는 것은 Chrome 구현상 비현실적이라고 본다. 그래도 닫은 이유는 위 그대로 — 불변 원칙의 성립 근거가 문서화되지 않은 read 순서 보장이어서는 안 된다.
+- **⒜-2 P1-B**: `onChanged`의 이른 return 체인을 `classifyStorageChange` 하나로 바꿨다. `ignore`가 아닌 **모든** 경로가 `markStale()`을 거치고, 로드 전 도착분은 `deferredChange`에 **병합**돼 첫 로드 적용 직후 `adoptDeferredChange()`가 다시 묻는다(= 재조회). 로드 전에는 `loadedSnapshot`도 `pendingWrite`도 없으므로 echo 판정의 비교 대상이 없다 — 그래서 전부 보류이고, 덤으로 "원격 키 삭제가 자기 echo로 오인되던" 구멍도 `isOurOwnWrite`의 `state.loadedSnapshot &&` 가드로 닫혔다.
+- **⒜-3 P3-B**: `settleSave`의 stale 해제를 `!state.changedDuringSave`로 좁혔고, `adoptDeferredChange`의 미채택 경로가 `markStale()`로 끝난다. 소탕 표 10에 신호 진입 지점 14개를 열거해 **조용히 사라지는 분기가 0**임을 고정했다.
+- **⒝-1 미래 세대는 읽되 쓰지 않는다**(`migrations.js:448` — `planSave`의 **첫 문**). 재시도로도 재로드로도 바뀌지 않는 조건이라 다른 세 판정보다 앞에 둔다. 로드·표시·Export는 그대로 허용한다. `STORED_FROM_FUTURE_MESSAGE`(`:139`)를 import 전용 문구에서 **읽기/쓰기 구분 문구**로 고쳐 import 거부와 Save 거부가 같은 이유를 같은 말로 설명하게 했다. 결정 9대로면 도달 불가능한 경로 — 계약이 깨졌을 때의 보험이다.
+- **⒝-2 기본값 미충전**(`migrations.js:161` `seedFromStorage` → `options.js:540`). "키가 없었다"와 "키가 있었는데 하나도 못 썼다"는 다른 답이고, 두 번째를 프리셋으로 답하는 순간 다음 **일반 Save가 그 프리셋을 사용자의 command 위에 기록**한다(Codex P1-C). 이제 그 섹션은 빈 채로 남고 상태 줄이 이유를 말한다. 깨끗한 빈 배열의 기존 의미(→ 프리셋)는 건드리지 않았고 테스트로 고정했다.
+- **⒝-3 경고에 결과 명시**(`SKIP_CONSEQUENCE`, `migrations.js:147` → `options.js:565`): "Saving will remove them — use Export (JSON) first if you want a copy of what is stored." 옵션 페이지에만 붙인다 — content/background의 `console.warn`에는 Save가 없으므로 결과 문구가 오히려 거짓이 된다. `describeSkipped`의 표현은 "unreadable"에서 **"could not be used"**로 바꿨다: 이제 불량 모양과 상한 초과 두 경로가 같은 카운터로 들어온다.
+- **⒝-4 상한 판정 공유**(`defaults.js:254-255`). `MAX_BUTTONS`·`MAX_CLAUDE_INPUTS`가 import 경로에만 있어 **두 reader의 판정이 달랐다**(저장 reader는 네 번째 버튼을 앱까지 통과시키고, 같은 배열이 파일로 오면 조용히 잘렸다). 이제 공유 검증기 `adoptStoredButtons`가 판정하고, 초과분은 **불량과 같은 처분**(skip + 키별 보고)이다 — reader 안에서 조용히 자르는 것은 기본값을 지어내는 것과 같은 부류이기 때문이다(다음 Save가 잘린 목록을 기록한다). `options.js`의 `slice(0, MAX_BUTTONS)`·`slice(0, MAX_CLAUDE_INPUTS)`는 제거했다(`grep -n 'slice(0, MAX' extension/*.js` → 0건). 남은 `MAX_*` 참조는 전부 편집기 UI의 상한 안내(추가 버튼 disable)이고 데이터를 버리지 않는다.
+- **`readStoredButtons`의 기본값 폴백은 유지**(판단 근거를 `defaults.js`의 주석과 소탕 표 11에 남겼다). content·background는 **쓰기 경로가 없어** 미충전이 보호할 것이 없고, 반대로 버튼이 통째로 사라지면 사용자가 이상을 알아챌 길이 없다. 그려지는 face·tooltip이 곧 실행될 command이므로 화면이 거짓말하지도 않는다. 옵션 페이지에서 미충전이 필요한 이유는 정확히 그 반대다 — 거기서는 화면에 있는 것이 곧 다음 Save의 내용이다.
+- **⒞ storage 실패**: Save의 live get과 Export의 get에 catch를 넣었다. 나머지 5개 호출은 소탕 표 12에 처분을 적었다 — `background.js`의 두 get은 **의도적으로 잡지 않는다**(폴백이 곧 틀린 브랜치·틀린 command다).
+- red 기록(2배치): ⒜ → `# ReferenceError: classifyStorageChange is not defined` → `not ok 3 - tests/migration.test.js`(파일 전체 로드 실패). ⒝ → `# ReferenceError: seedFromStorage is not defined` → `not ok 3`. 상한 2건은 파일 전체 실패에 묻히므로 **토글로 따로 증명**했다: `defaults.js`의 상한 두 줄만 지우고 실행 → `not ok 33 - adoptStoredButtons: entries past the button limit are skipped and counted` · `not ok 34 - adoptStoredButtons: claude inputs past the limit make the whole entry unusable` · `not ok 129` · `not ok 130`, 복구 후 131/0.
+- 기존 테스트 3건 갱신: `planSave`의 인자 이름 2건(`changedWhileInFlight` → `storeMovedSinceLoad`, `generationAtStart/Now` → `appliedGenerationAtStart/Now`) — 이름이 좁았던 것이 결함의 원인이었다 — 과 `describeSkipped`의 문구 1건. 삭제한 테스트는 없다.
+- 실측: `node --test` **131/0**(R6 118 → 신규 13: `migration.test.js` 11 + `buttons.test.js` 2), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
+- **잔여**: get↔set 창은 그대로다 — 이번에도 **탐지**만 늘렸다(latch + 적용 세대 + 시작 게이트). 이벤트도 안 오고 read도 옛 값을 주는 순간은 남는다. 그리고 결정 9의 네임스페이스 계약은 **문서만 있고 코드는 없다**(구현 주체는 v2를 만드는 미래 버전) — 지금 코드에 있는 것은 계약 위반에 대한 보험 한 줄뿐이다.
+- **미검증**: DOM·비동기 실동작에 자동 게이트가 없다 — 순수 술어만 red로 고정했고, 실제 `onChanged` 수신·`loadsInFlight` 타이밍·두 get의 실패 주입·빈 섹션 렌더는 수기 검사 8항목으로 남겼다. Codex의 P1-A 하니스(`loadApplies:true, saveRefused:false`)를 그대로 재현하는 통합 테스트는 **만들지 않았다**(chrome API 스텁이 없다).
 - 판정: 미요청.

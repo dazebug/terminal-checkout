@@ -280,3 +280,29 @@ test('appendButton: leaves the original array alone and stops at the cap', () =>
   for (let i = 0; i < MAX_BUTTONS; i++) list = appendButton(list, kind);
   assert.equal(appendButton(list, kind), list, 'at the cap it hands the same array back');
 });
+
+// --- The limits are part of the shape verdict, not an import-only afterthought ---
+// They used to live on the import path alone, so a stored fourth button reached the app while the
+// same array arriving as a file lost it silently. Every reader shares this decision now — the
+// content script and the service worker included, which is why it is here and not in migrations.js.
+
+test('adoptStoredButtons: entries past the button limit are skipped and counted', () => {
+  const { MAX_BUTTONS } = vm.runInThisContext('({ MAX_BUTTONS })');
+  const button = n => ({ face: 'x', label: `b${n}`, command: `{cd} && echo ${n}`, claudeInputs: [] });
+  const stored = Array.from({ length: MAX_BUTTONS + 2 }, (_, i) => button(i + 1));
+  const { buttons, skipped } = adoptStoredButtons(stored);
+  assert.equal(buttons.length, MAX_BUTTONS);
+  assert.equal(skipped, 2);
+  assert.equal(buttons[0].command, '{cd} && echo 1', 'the ones kept are the first ones');
+});
+
+test('adoptStoredButtons: claude inputs past the limit make the whole entry unusable', () => {
+  const { MAX_CLAUDE_INPUTS } = vm.runInThisContext('({ MAX_CLAUDE_INPUTS })');
+  const claudeInputs = Array.from({ length: MAX_CLAUDE_INPUTS + 1 }, (_, i) => `input ${i}`);
+  // Trimming the surplus would keep the button and lose the inputs — the same silent loss the field
+  // rules exist to prevent, and it would be recorded by the next Save.
+  const { buttons, skipped } = adoptStoredButtons([{ face: 'x', label: 'b', command: '{cd}', claudeInputs }]);
+  assert.deepEqual(buttons, []);
+  assert.equal(skipped, 1);
+  assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: claudeInputs.slice(0, MAX_CLAUDE_INPUTS) }]).skipped, 0);
+});

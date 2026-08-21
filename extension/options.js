@@ -37,6 +37,13 @@ const state = {
   loadedSnapshot: null,
   // Counts load requests, so an answer from an overtaken one can be dropped
   loadGeneration: 0,
+  // Counts the loads that actually **applied**. The request counter above cannot stand in for this:
+  // a load requested before a save started and applied halfway through it never moves the request
+  // counter, so the save read "nothing reloaded" while the form had already been replaced.
+  appliedGeneration: 0,
+  // How many load requests are outstanding. Any of them may replace the form the moment it answers,
+  // so a save must not start into that window.
+  loadsInFlight: 0,
   // Set when a change arrives from another device while editing — the banner warns before the save
   // is attempted, but the re-read at save time is what decides
   staleSinceLoad: false,
@@ -123,27 +130,47 @@ function updateSavingGate() {
   document.getElementById('save-btn').disabled = state.saving;
 }
 
-// Every kind of unsaved work in one expression: text typed, a review being decided, and a write in
-// flight. A remote change is never adopted over any of them.
-function unsavedWork() {
-  return state.dirty || state.reviewTouched || state.saving;
+// Unsaved work that a remote change must never overwrite: text typed, and a review being decided.
+// A save in flight is handled on its own axis — it does not overwrite anything, it defers.
+function editsInProgress() {
+  return state.dirty || state.reviewTouched;
 }
 
 // Our own write, whether or not it has been recorded as the loaded snapshot yet — the change event
 // for a save can arrive before `set` has even resolved.
+// Before the first load there is no write of ours to compare against, and "nothing versus nothing"
+// must not read as a match: a remote key *removal* would otherwise look exactly like our own echo.
 function isOurOwnWrite(changes) {
-  if (isOwnEcho(changes, state.loadedSnapshot)) return true;
+  if (state.loadedSnapshot && isOwnEcho(changes, state.loadedSnapshot)) return true;
   return !!state.pendingWrite && isOwnEcho(changes, state.pendingWrite);
 }
 
-// A remote change that arrived while a save was in flight was held rather than acted on. Once the
-// save has settled, the ordinary question gets asked again.
+// A remote change that could not be acted on when it arrived — the first load had not answered yet,
+// or a save was in flight — was held rather than dropped. Once that moment has passed, the same
+// question is asked again through the same classifier.
+//
+// Every branch here ends somewhere visible: adopted, still held, or on the banner. A change we
+// decide not to adopt is still a change, and dropping it silently is how the warning disappeared
+// while the page was in fact still behind the store.
 function adoptDeferredChange() {
   const changes = state.deferredChange;
-  state.deferredChange = null;
   if (!changes) return;
-  if (!shouldAdoptSyncedChange(unsavedWork(), changes)) return;
-  loadSettings();
+  const outcome = classifyStorageChange({
+    changes, loaded: state.loaded, saving: state.saving,
+    busy: editsInProgress(), isOwnWrite: false,
+  });
+  if (outcome === 'defer') return; // still not a moment to act; it stays held
+  state.deferredChange = null;
+  if (outcome === 'ignore') return;
+  markStale(); // true until a load actually lands, which is what clears it
+  if (outcome === 'adopt') loadSettings();
+}
+
+// The one way "this page is behind the store" gets recorded. Every branch that learns it and cannot
+// act on it ends here, so there is no route where the fact is known and nothing shows it.
+function markStale() {
+  state.staleSinceLoad = true;
+  renderStaleBanner();
 }
 
 // Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
@@ -472,27 +499,46 @@ async function loadSettings() {
   // storage.sync can reject. It used to do so silently: the page stayed unloaded and inert with
   // nothing on screen and no way back. The gate stays shut — opening it would let a Save write an
   // empty settings object over real ones — so the way out is a retry the user can actually reach.
+  //
+  // While this is outstanding the form may be replaced at any moment, so a save must not start.
+  // Counted rather than flagged, because two loads can overlap and the first to answer must not
+  // declare the window closed for the second.
   let data;
+  state.loadsInFlight += 1;
   try {
     data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
   } catch (error) {
     if (generation === state.loadGeneration) showLoadFailure(error);
+    // The change that asked for this re-read is not adopted, and `staleSinceLoad` was never cleared,
+    // so the banner it raised is still up — which is the whole point of not clearing it early.
     return;
+  } finally {
+    state.loadsInFlight -= 1;
   }
 
   if (!shouldApplyLoadedSnapshot({
     revisionAtStart, revisionNow: state.revision, dirty: state.dirty,
     reviewTouched: state.reviewTouched,
     generation, latestGeneration: state.loadGeneration, initial,
-  })) return;
+  })) {
+    // Not applying is not the same as not having read. This answer is evidence about the store, and
+    // if it differs from what the page holds, the page is behind — say so rather than discarding
+    // both the snapshot and the fact that it existed. Only once there is a snapshot to compare
+    // against: before that, "everything differs from nothing" would be a banner about nothing.
+    if (state.loaded && saveConflict(state.loadedSnapshot, data)) markStale();
+    return;
+  }
 
   // Storage is as untrusted as an imported file: another device, another version of this extension,
   // or a hand edit wrote it. Anything unreadable is dropped and counted, never guessed at.
   const { settings, skippedByKey } = adoptStoredSettings(data);
 
   for (const { kind, storageKey, defaults } of SECTIONS) {
-    const saved = settings[storageKey];
-    state.buttons[kind] = (saved?.length ? saved : defaults).map(adoptButton);
+    // Presets only where the key said nothing at all. A key that held something we could not use is
+    // answered with whatever survived — even if that is nothing — because what lands here is what
+    // the next Save records, and filling it from our presets makes that Save a rewrite.
+    state.buttons[kind] = seedFromStorage(settings[storageKey], defaults, skippedByKey[storageKey])
+      .map(adoptButton);
   }
   state.overrides = Object.entries(settings.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   document.getElementById('default-main').value = settings.defaultMain || 'main';
@@ -505,15 +551,18 @@ async function loadSettings() {
   state.reviewTouched = false;
   state.reviewed = false;
   state.loaded = true;
+  // The form has been replaced. This is what a save in flight compares against — counting requests
+  // instead of applications is what let a load applied mid-save go unnoticed.
+  state.appliedGeneration += 1;
   hideLoadFailure();
   updateLoadedGate();
   renderStaleBanner();
   const dropped = describeSkipped(skippedByKey);
   if (dropped.length) {
-    // Said out loud, and named per key. Quietly falling back to defaults would read as "you have no
-    // buttons", which is a lie about the user's own data — and would hide whatever wrote the broken
-    // value.
-    showStatus('error', `${dropped.join('; ')}.`);
+    // Said out loud, named per key, and with the consequence attached. The section above is now
+    // empty rather than quietly full of presets, so the user can see that something is missing —
+    // and this says what pressing Save would do to it, and how to keep a copy first.
+    showStatus('error', `${dropped.join('; ')}. ${SKIP_CONSEQUENCE}`);
   }
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
@@ -521,16 +570,24 @@ async function loadSettings() {
   // Planned from the edit state that was just built, not from `data` — those are the same thing
   // here, and keeping one path means they cannot fall out of step later.
   setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
+
+  // A change that arrived before this page had settings was held rather than dropped, because the
+  // read that was already outstanding may have been answered from before that write landed. Now
+  // there is something to compare against, so ask again — which re-reads, this time knowing the
+  // store moved.
+  adoptDeferredChange();
 }
 
 async function saveSettings() {
   // Nothing may be written before the first load answers: the edit state is empty until then, and
   // writing it would delete every command and mark the migration as reviewed in the same breath.
   if (!requireLoaded()) return;
-  // One at a time. Two saves would each capture the same world, each find it unchanged, and the
-  // later write would land carrying what was true before the earlier one.
-  if (!shouldStartSave({ loaded: state.loaded, saving: state.saving })) {
-    showStatus('info', 'Already saving — one moment.');
+  // One page-changing task at a time. Two saves would each capture the same world, each find it
+  // unchanged, and the later write would land carrying what was true before the earlier one; a save
+  // started while a load is outstanding builds its payload from a form that answer is about to
+  // replace.
+  if (!shouldStartSave({ loaded: state.loaded, saving: state.saving, loading: state.loadsInFlight > 0 })) {
+    showStatus('info', state.saving ? 'Already saving — one moment.' : SAVE_LOADING_MESSAGE);
     return;
   }
 
@@ -552,8 +609,13 @@ async function saveSettings() {
   // became "the remote settings against the remote settings" — no conflict, and this payload went
   // over the top of them.
   const savedRevision = state.revision;
-  const generationAtStart = state.loadGeneration;
+  const appliedGenerationAtStart = state.appliedGeneration;
   const capturedSnapshot = state.loadedSnapshot;
+  // A change event that arrived *before* this save is exactly as disqualifying as one that arrives
+  // during it: either way the store moved and this page has not caught up, so the payload describes
+  // the world before it. Latching it at the start is what makes the refusal independent of what the
+  // live read happens to return.
+  const staleAtStart = state.staleSinceLoad;
 
   // The version moves only when the user decided something (applied, declined, acknowledged, or
   // reset). Stamping the current version on every save would clear the notice for someone who only
@@ -579,20 +641,33 @@ async function saveSettings() {
     // lands in it is a last-write-wins overwrite, and if what it overwrites was a migration decision
     // the loss is permanent: the version we write is ours, so the notice does not come back to offer
     // it again. That is the residual, stated as it is — it is not "the notice appears once more".
-    const liveSnapshot = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+    let liveSnapshot;
+    try {
+      liveSnapshot = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+    } catch (error) {
+      // The read that decides whether writing is safe failed, so writing is not safe. It used to
+      // reject unhandled: no status, no refusal, and the save simply evaporated.
+      showStatus('error', `Could not save: ${error.message}`);
+      return;
+    }
     const outcome = planSave({
       capturedSnapshot,
       liveSnapshot,
       payload,
-      generationAtStart,
-      generationNow: state.loadGeneration,
-      // A change event that arrived while we were reading is a stronger fact than the read itself:
-      // the read can be answered from before the remote write committed.
-      changedWhileInFlight: state.changedDuringSave,
+      appliedGenerationAtStart,
+      appliedGenerationNow: state.appliedGeneration,
+      // Before or during — either way an owned change arrived that this page has not adopted. A
+      // change event is a stronger fact than the live read, which can be answered from before the
+      // remote write committed.
+      storeMovedSinceLoad: staleAtStart || state.changedDuringSave,
+      // Settings from a generation we do not understand are readable and exportable, never
+      // writable. Decision 9 should keep this unreachable; it is the insurance if it is not.
+      loadedVersion: state.loadedVersion,
     });
     if (outcome.refused) {
-      state.staleSinceLoad = true;
-      renderStaleBanner();
+      // Only a conflict means the page is behind the store. After a reload it has just caught up,
+      // and a banner there would be telling the user about a gap that no longer exists.
+      if (outcome.stale) markStale();
       showStatus('error', outcome.message);
       return;
     }
@@ -624,7 +699,11 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // so that is what a later save must find there, and our own change event is no longer a conflict
   // with ourselves.
   state.loadedSnapshot = payload;
-  state.staleSinceLoad = false;
+  // …but only if nothing arrived while we were writing. A remote change that landed after the
+  // pre-write read is still unadopted, so clearing the banner here would erase a warning that is
+  // still true — and if the user had also been typing, the held change was then dropped as well and
+  // nothing at all showed it.
+  if (!state.changedDuringSave) state.staleSinceLoad = false;
   renderStaleBanner();
   const version = payload[VERSION_KEY];
 
@@ -847,15 +926,17 @@ function parseImportedSettings(raw) {
   // it is an import that must not happen.
   const version = importedSchemaVersion(data);
 
-  // Shape checking is shared with the load path (adoptStoredSettings): a file and a stored object
-  // are the same kind of stranger, and a shape one path survives must not be one the other dies on.
-  // What is specific to a file is layered on top — the per-button caps, and "an empty array is not
-  // a setting".
+  // Shape checking — and the limits — are shared with the load path (adoptStoredSettings): a file
+  // and a stored object are the same kind of stranger, and a shape one path survives must not be one
+  // the other dies on. The limits used to be applied only here, as a silent `slice`, so the same
+  // four-button array was three buttons through import and four through storage; and the entry this
+  // trimmed away vanished with nothing said. All that is left specific to a file is "an empty array
+  // is not a setting".
   const adopted = adoptStoredSettings(data);
   const settings = {};
   const skipped = [];
   // What was dropped from *inside* a key the file did carry. A file with one good button and one
-  // unreadable one used to import the good one in silence: the key was present in the result, so it
+  // unusable one used to import the good one in silence: the key was present in the result, so it
   // never reached the "skipped keys" list below and nothing said an entry had gone.
   const unreadable = describeSkipped(adopted.skippedByKey);
 
@@ -863,10 +944,7 @@ function parseImportedSettings(raw) {
     if (data[key] === undefined) continue;
     // An empty array means "no setting", not "no buttons" — the background logic doesn't fall back
     // to the defaults for an empty array, so the buttons would disappear entirely.
-    const buttons = (adopted.settings[key] || []).slice(0, MAX_BUTTONS).map(button => ({
-      ...button,
-      claudeInputs: button.claudeInputs.slice(0, MAX_CLAUDE_INPUTS),
-    }));
+    const buttons = adopted.settings[key] || [];
     if (buttons.length) settings[key] = buttons;
     else skipped.push(key);
   }
@@ -884,7 +962,15 @@ function parseImportedSettings(raw) {
 }
 
 async function exportSettings() {
-  const data = await chrome.storage.sync.get(BACKUP_KEYS);
+  let data;
+  try {
+    data = await chrome.storage.sync.get(BACKUP_KEYS);
+  } catch (error) {
+    // An unhandled rejection here produced a button that did nothing and said nothing — and this is
+    // the path a user takes precisely when they are trying not to lose their settings.
+    showStatus('error', `Could not export: ${error.message}`);
+    return;
+  }
   // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
@@ -1295,30 +1381,36 @@ document.getElementById('migration-keep').addEventListener('click', () => {
 // what someone is typing right now.
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
-  if (!state.loaded) return; // nothing to compare against yet; the load in flight will pick it up
-  if (!ownedChangedKeys(changes).length) return; // someone else's key; not our business to warn about
-  // Our own save arrives here as a change event too. Treating it as another device would warn about
-  // a conflict with ourselves and throw away a review in progress.
-  if (isOurOwnWrite(changes)) return;
 
-  // Mark first, adopt second. A change we are not going to adopt right now — because there is
-  // unsaved work — still means the settings moved, and the save must warn rather than march on. The
-  // check at save time is the authority; this only gets the warning on screen sooner.
-  state.staleSinceLoad = true;
-  renderStaleBanner();
+  // One decision instead of a chain of early returns, because each of those returns had to remember
+  // to raise the banner and one of them did not: a change arriving before the first load was dropped
+  // on the theory that the read already in flight would see it, which it need not.
+  const outcome = classifyStorageChange({
+    changes,
+    loaded: state.loaded,
+    saving: state.saving,
+    // Unsaved work — text typed, or a review being decided — wins over a remote change
+    busy: editsInProgress(),
+    // Our own save arrives here as a change event too. Treating it as another device would warn
+    // about a conflict with ourselves and throw away a review in progress.
+    isOwnWrite: isOurOwnWrite(changes),
+  });
+  if (outcome === 'ignore') return;
+
+  // From here the store has moved under us, and that fact is recorded before anything else is
+  // decided — the save is the authority, but the warning belongs on screen sooner.
+  markStale();
   // A save in flight captured the store as it was before this change; it cannot be written now,
   // whatever its own live read comes back with.
   if (state.saving) state.changedDuringSave = true;
 
-  // Unsaved work of any kind — text typed, a review being decided, a save in flight — wins over a
-  // remote change. Adopting during a save was the hole: it replaced the snapshot the save was about
-  // to compare against, so the comparison found no conflict and the older payload was written.
-  if (!shouldAdoptSyncedChange(unsavedWork(), changes)) {
-    // Held, not dropped, when the only reason was the save: once it settles the page is clean again
-    // and this change should land.
-    if (state.saving) state.deferredChange = changes;
+  if (outcome === 'defer') {
+    // Held, not dropped. Merged rather than replaced: two changes arriving before we can act are
+    // two keys that moved, and the adoption that follows has to cover both.
+    state.deferredChange = { ...state.deferredChange, ...changes };
     return;
   }
+  if (outcome === 'banner') return; // the mark above is the whole action
   // loadSettings checks again, after its await, whether the page moved on in the meantime
   loadSettings();
 });
