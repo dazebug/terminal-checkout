@@ -12,8 +12,8 @@ Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository 
 - **Buttons where you work** — up to 3 buttons each on PR, issue, and repository pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
 - **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
 - **Claude Code hand-off** — if your command starts `claude`, up to 5 scheduled inputs are typed and submitted for you once claude is actually ready — slash commands and `!` shell-mode lines included.
-- **Opens where you are** — new tabs are created in the terminal window you're currently looking at.
-- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm and Warp need no TCC permission at all.
+- **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
+- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission only for the optional claude-input feature.
 - **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
 
 ## How it works
@@ -27,7 +27,7 @@ flowchart LR
     APP -->|"AppleScript / wezterm cli / Warp Tab Config"| TERM["iTerm2 / WezTerm / Warp"]
 ```
 
-- The relay Chrome spawns executes nothing — it only forwards bytes to the app's unix socket. If the app isn't running, the relay launches it in the background, so you don't need to keep the app open.
+- The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
 - **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
 - Warp has one extra piece: it has no API for sending text to a pane, so a button with scheduled claude input first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the input to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why claude input on Warp needs the Accessibility permission.
 
@@ -77,7 +77,7 @@ When the app opens, walk through the setup window in order. Native Host registra
    - Click **Load unpacked** (top left)
    - In the file picker: **⇧⌘G → ⌘V (paste) → Enter → [Select]**
    - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
-   - This step is marked complete when a request actually arrives — i.e. the first time you press a button on a GitHub PR page
+   - This step is marked complete when the app first receives a request from the extension — press any Terminal Checkout button on GitHub once
 2. **Terminal** — choose iTerm2, WezTerm, or Warp
 3. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
    - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received the input; without it, commands still run but scheduled claude input is not delivered. Keep the tab visible during delivery.
@@ -87,9 +87,18 @@ Once setup completes, the window keeps only the terminal selection, Run Test, [O
 
 > Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
-> Once distribution moves to the Chrome Web Store (unlisted), this whole process will shrink to a single store-link click.
+> Once distribution moves to the Chrome Web Store (unlisted), the unpacked-extension steps above will shrink to a store install; the app install and permission steps stay.
 
 The app is invisible in daily use — no menu-bar icon, and it appears in the Dock only while the setup window is open. Reopen the window any time by launching **Terminal Checkout** from Spotlight (⌘Space) or Launchpad. Pressing an extension button starts the app automatically if it's off.
+
+## Updating
+
+```bash
+git pull --ff-only
+./install.sh
+```
+
+Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
 
 ## Usage
 
@@ -100,6 +109,8 @@ A button appears next to the branch name in the PR header. The default command c
 ```bash
 z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
 ```
+
+The default command assumes the PR branch exists on `origin` — i.e. a same-repository PR. It doesn't fetch branches that live on a fork; a fork-safe preset (via `gh pr checkout {number}`) is planned.
 
 ### Issue pages
 
@@ -120,7 +131,7 @@ A button appears next to the repository name in the header. The default **Open i
 
 ### claude input
 
-If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `/review` followed by `Summarize the changes in PR {branch}`. The app types them in order only after confirming the new tab's foreground process has become claude, so nothing leaks into the shell; if claude doesn't appear within 2 minutes, the inputs are quietly dropped. Each input is submitted only after it's confirmed as actually typed on screen, so delivery holds while claude's trust prompt for a first-time folder is up — accept within 15 seconds and it continues; take longer and delivery is abandoned from that input on.
+If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `/review` followed by `Summarize the changes in PR {branch}`. The app types them in order only after confirming the new tab's foreground process has become claude — the delivery gates are designed to fail closed, dropping input rather than typing into a shell; if claude doesn't appear within 2 minutes, the inputs are quietly dropped. Each input is submitted only after it's confirmed as actually typed on screen, so delivery holds while claude's trust prompt for a first-time folder is up — accept within 15 seconds and it continues; take longer and delivery is abandoned from that input on.
 
 Known limits:
 
@@ -167,10 +178,10 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 ## Security
 
-- The Native Host relay only accepts calls from whitelisted extension IDs (`allowed_origins`)
+- Chrome launches the Native Host relay only for whitelisted extension IDs (`allowed_origins`) — enforced by Chrome, not by the relay itself
 - Variable values pass an alphanumeric + `-_./` whitelist, preventing command injection
-- The app socket is restricted to same-user processes (mode 0600 + peer verification)
-- The extension runs only on GitHub domains
+- The app socket and the Warp injection helper deliberately trust processes of the same user (uid): mode 0600 + peer verification on the socket, and the helper is killed the moment delivery ends — see [SECURITY.md](SECURITY.md) for the full trust model
+- The extension runs only on `https://github.com`
 
 ## Troubleshooting
 
@@ -184,7 +195,7 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`).
 
-**Buttons don't appear** — GitHub UI updates can move button anchors. The extension icon always works.
+**Buttons don't appear** — GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
 
 ## Uninstall
 
