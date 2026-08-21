@@ -594,10 +594,11 @@ public struct PreparedRequest {
 func claudePromptDirectoryIsOurs(name: String) -> Bool {
     guard name.hasPrefix(claudePromptDirectoryPrefix) else { return false }
     let token = name.dropFirst(claudePromptDirectoryPrefix.count)
-    // Lower case only. The app formats tokens with `%08x` and `uninstall.sh` matches
-    // `[0-9a-f]{8}` — a name neither of them writes is somebody else's directory
-    return token.count == claudePromptTokenLength
-        && token.allSatisfy { $0.isNumber || ("a"..."f").contains($0) }
+    // **ASCII** lower-case hex only. The app formats tokens with `%08x` and `uninstall.sh` matches
+    // `[0-9a-f]{8}`, so a name neither of them writes is somebody else's directory — and
+    // `Character.isNumber`/`isHexDigit` are Unicode-wide, which let a token of Arabic-Indic digits
+    // pass as hex (reproduced: `tc-prompt-١٢٣٤abcd` was reclaimable)
+    return token.count == claudePromptTokenLength && token.allSatisfy(\.isASCIIHexLower)
 }
 
 /// A different hex token per request, from the same generator the helper socket and the Tab
@@ -635,9 +636,13 @@ private func writeNewPrivateFile(path: String, contents: String) -> Bool {
 ///    the script; the assembled context is written by the script itself
 ///  - **Hand-off marker present** ⇒ the over-budget branch told claude to read that file *during*
 ///    the session, so it has to outlive the six hours as well
+///
+/// `justBeforeRemoving` is a **test seam**: the race this narrows cannot be exercised from outside
+/// the process, and a race with no test is a race that comes back.
 func reclaimStaleClaudePromptDirectories(
     in directory: String = NSTemporaryDirectory(),
-    consumedAge: TimeInterval = 6 * 3600, unfinishedAge: TimeInterval = 7 * 24 * 3600
+    consumedAge: TimeInterval = 6 * 3600, unfinishedAge: TimeInterval = 7 * 24 * 3600,
+    justBeforeRemoving: (String) -> Void = { _ in }
 ) {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
     for name in names where claudePromptDirectoryIsOurs(name: name) {
@@ -657,11 +662,18 @@ func reclaimStaleClaudePromptDirectories(
         // pane can start consuming the directory, and **every way of consuming it changes the
         // directory's own mtime**: creating `context.txt`, dropping the hand-off marker, the
         // script deleting itself. So an unchanged mtime is a cheap "nothing has happened since I
-        // looked", and it narrows the window from the whole sweep to one syscall. It cannot be
-        // closed from here — the consumer is a shell we do not control
+        // looked", and it narrows the window from the whole sweep to one syscall.
+        //
+        // **Nanoseconds, not seconds** — a consumer that started inside the same second was
+        // invisible to a `tv_sec` comparison (reproduced through `justBeforeRemoving`). The inode
+        // is compared too: a directory replaced by another one is not the one we judged.
+        // The window cannot be closed from here; the consumer is a shell we do not control
+        justBeforeRemoving(path)
         var current = stat()
         guard lstat(path, &current) == 0,
-              current.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec else { continue }
+              current.st_ino == info.st_ino,
+              current.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec,
+              current.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec else { continue }
         try? FileManager.default.removeItem(atPath: path)
     }
 }

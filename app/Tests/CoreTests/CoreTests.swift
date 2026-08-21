@@ -1847,6 +1847,41 @@ final class ClaudePromptReclaimTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: path))
     }
 
+    /// **Reproduction (round 7, Codex)**: `Character.isNumber` is Unicode-wide, so a token of
+    /// Arabic-Indic digits passed as "hex" and the sweep would have deleted a directory we never
+    /// wrote. Ours are ASCII `[0-9a-f]`, because that is what `%08x` and `uninstall.sh` produce
+    func testUnicodeDigitsAreNotHexAndNotOurNames() throws {
+        // Measured (`Character` predicates): `١` is `isNumber` but not `isHexDigit` — that is the
+        // one the old `isNumber ||` test let through — while the fullwidth `０` and `ｆ` **are**
+        // `isHexDigit`, which is why the ASCII test is the one doing the work now
+        for name in ["tc-prompt-١٢٣٤abcd", "tc-prompt-０１２３abcd"] {
+            let path = try makeDirectory(name, ageHours: 100)
+            reclaimStaleClaudePromptDirectories(in: root)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path), name)
+        }
+        // The same class, same fix, in the helper socket names
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-０１２３abcd.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-١٢٣٤abcd.sock"))
+        XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-a1b2c3d4.sock"))
+    }
+
+    /// **Reproduction (round 7, Codex)**: the re-check before removal compared whole seconds, so a
+    /// pane that started consuming the directory inside the same second was missed. Every form of
+    /// consumption bumps the directory's mtime — the comparison has to see sub-second changes
+    func testADirectoryConsumedWithinTheSameSecondIsLeftAlone() throws {
+        let path = try makeDirectory("tc-prompt-c0ffee01", ageHours: 7)
+        var sampled = stat()
+        XCTAssertEqual(lstat(path, &sampled), 0)
+        let sameSecond = Date(timeIntervalSince1970: TimeInterval(sampled.st_mtimespec.tv_sec))
+            .addingTimeInterval(0.4)
+        reclaimStaleClaudePromptDirectories(in: root, justBeforeRemoving: { consumed in
+            try? FileManager.default.setAttributes(
+                [.modificationDate: sameSecond], ofItemAtPath: consumed
+            )
+        })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
     /// Someone else's entries are never touched, whatever their age, and symlinks are never
     /// followed — following one would delete the whole directory it points at
     func testForeignEntriesAndSymlinksAreNeverTouched() throws {
@@ -1881,6 +1916,15 @@ private final class FakeClaudeSession {
     var presetBox = "" { didSet { box = presetBox } }
     /// 화면에 이미 떠 있는 텍스트 (다른 pane을 읽고 있는 상황을 만들 때 쓴다)
     var screenPrefix = ""
+    /// 입력창 **아래**에 claude TUI가 그리는 것들 — 힌트 줄, 권한 표시, 컨텍스트 %, 시계.
+    /// 이것이 없으면 `screenTail`이 보는 영역(우리 입력부터 화면 끝까지)이 표현되지 않아,
+    /// "프로브가 하단 chrome에도 있으면 tail이 고정된다" 같은 결함이 fake에서는 보이지 않는다
+    /// (독립 검증자 지적)
+    var bottomChrome = "? for shortcuts"
+    /// Something below the box that changes on every read — a context meter, a clock. Then the
+    /// tail differs every time and the look can never say "stuck" (reviewer's R6), which is why
+    /// the safety of the next input cannot rest on that look
+    var tickingChrome = false
     /// Text that newly appears from the nth `screenText` call onwards
     var screenGains: [Int: String] = [:]
     /// What was already on screen when the first byte went out — pins "what did it see before typing"
@@ -1939,7 +1983,8 @@ private final class FakeClaudeSession {
                 if let gained = screenGains[screenCalls] { screenPrefix += " " + gained }
                 if failScreenAt.contains(screenCalls) { return nil }
                 if screenIsForeign { return foreignScreen }
-                return screenPrefix + " " + history + "❯ " + box
+                let ticker = tickingChrome ? " \(screenCalls)% context left" : ""
+                return screenPrefix + " " + history + "❯ " + box + "\n" + bottomChrome + ticker
             },
             confirmSession: { [unowned self] _ in sessionAlive },
             sessionIsUnchanged: { [unowned self] in
@@ -2055,15 +2100,93 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         )
     }
 
+    /// **Reproduction (round 7, Codex — the blocking one).** Two questions had been squashed into
+    /// one: *(i) did claude receive it* (not proven, by decision) and *(ii) is the input box empty
+    /// before we type the next thing* (a safety property). Treating "unknown" as "empty" merged our
+    /// leftover with the next input: the first CR is written but the box keeps `/review`, the
+    /// post-CR look cannot read the screen, and the next input is typed straight onto it —
+    /// `"/review!git status"` goes in as one line
+    func testResidueIsClearedBeforeTheNextInputIsTyped() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true // the first CR writes but the TUI does not act on it
+        // …and something below the box ticks (context meter, clock), so the tail differs on every
+        // read and the look can never answer "stuck" — the common case, not a corner (R6)
+        session.tickingChrome = true
+        let base = session.io
+        var io = base
+        io.sendKeys = { keys in
+            let result = base.sendKeys(keys)
+            if keys == claudeSubmitKey { session.submitDoesNothing = false } // only the first
+            return result
+        }
+        _ = submitClaudeInputs(["/review", "!git status"], io: io)
+        XCTAssertEqual(session.submitted, ["!git status"], "잔여와 다음 입력이 한 줄로 합쳐졌다")
+    }
+
+    /// The same property where the screen can never answer: on Warp the post-CR look is skipped
+    /// entirely, so **even a single input** must not be left in the box for the user's next Enter
+    /// (with a `!` input that Enter runs their shell command)
+    func testWarpDeliveryDoesNotLeaveOurInputInTheBox() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        session.submitDoesNothing = true
+        _ = submitClaudeInputs(["!git status"], io: session.io)
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+    }
+
+    /// …and the rule is **one rule**, not a per-branch judgement: delivery ends with the box
+    /// cleared whenever we cannot see that it is free of ours — including the path where
+    /// everything looked fine. The cost (a draft the user started during delivery is erased) is
+    /// accepted deliberately; the alternative is our `!` line waiting for their Enter
+    func testDeliveryEndsWithTheBoxCleared() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+        XCTAssertEqual(session.submitted, inputs)
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+    }
+
+    /// **Reproduction (round 7, independent reviewer — F1, deterministic).** `screenTail` takes the
+    /// **last** occurrence of the probe, and claude draws things *below* the input box: hint lines,
+    /// a permission mode indicator, a context meter. If the probe also appears down there, that
+    /// occurrence wins, the tail never moves, and a submission that went through is read as "still
+    /// in the box" — delivery stops and the rest of the inputs are dropped. A one-character input
+    /// hits it immediately (`y` is in "bypass permissions on")
+    func testAProbeThatAlsoAppearsBelowTheBoxIsNotJudged() {
+        let session = FakeClaudeSession()
+        session.bottomChrome = "? for shortcuts · ⏵⏵ bypass permissions on"
+        XCTAssertEqual(submitClaudeInputs(["y", "!git status"], io: session.io), 2)
+        XCTAssertEqual(session.submitted, ["y", "!git status"])
+    }
+
+    /// The same with a whole slash command echoed in the chrome (`try /review`)
+    func testAProbeEchoedInAHintLineIsNotJudged() {
+        let session = FakeClaudeSession()
+        session.bottomChrome = "try /review for a code review"
+        XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: session.io), 2)
+        XCTAssertEqual(session.submitted, ["/review", "!git status"])
+    }
+
+    /// **Reproduction (round 7, independent reviewer — R5)**: one failed read in the middle of the
+    /// look wiped out what the earlier reads had already established. A read we could not make says
+    /// nothing; it must not turn "the box is still holding it" into "carry on"
+    func testAFailedReadDoesNotEraseWhatTheEarlierReadsShowed() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        session.failScreenAt = [4] // 1: snapshot · 2: reflection · 3,4,5…: the post-CR look
+        _ = submitClaudeInputs(["/review", "!git status"], io: session.io)
+        XCTAssertFalse(session.keystrokes.contains("!git status"), "박혀 있는 것을 보고도 이어 쳤다")
+    }
+
     /// Cleanup is one Ctrl+U through the same gate, and the terminal CLI does fail one call now and
     /// then — a single attempt with no retry and no record leaves our text in the box silently
     func testCleanupIsRetriedWhenTheSendFails() {
         let session = FakeClaudeSession()
         session.submitDoesNothing = true
-        session.failSendAt = [3, 4] // 1: typing · 2: CR · 3–5: the cleanup attempts
+        // 1: the clear we send before typing · 2: typing · 3: CR · 4–6: the cleanup attempts
+        session.failSendAt = [4, 5]
         _ = submitClaudeInputs(inputs, io: session.io)
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
-        XCTAssertEqual(session.sendCallCount, 5)
+        XCTAssertEqual(session.sendCallCount, 6)
     }
 
     /// …and it is not retyped either, for the same reason a wiped one is not
@@ -2100,11 +2223,15 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다
+    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다.
+    /// 앞뒤의 Ctrl+U는 라운드 7의 규칙 (ii)다: 치기 전에 비우고, 끝나며 비운다
     func testSubmitsOnlyAfterScreenShowsTypedText() {
         let session = FakeClaudeSession()
         _ = submitClaudeInputs([inputs[0]], io: session.io)
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeSubmitKey])
+        XCTAssertEqual(
+            session.keystrokes,
+            [claudeClearInputKey, inputs[0], claudeSubmitKey, claudeClearInputKey]
+        )
     }
 
     /// 회귀 방지(실측): 입력 #1 제출 직후 wezterm cli 호출 한 번이 실패해 남은 입력 2개가
@@ -2112,7 +2239,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 것이므로, 재타이핑으로 복구하고 남은 입력을 계속 보내야 한다.
     func testTransientSendFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failSendAt = [3] // #1 타이핑·CR 다음 = #2의 첫 타이핑
+        session.failSendAt = [5] // #1 클리어·타이핑·CR 다음 = #2의 클리어
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
@@ -2120,7 +2247,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 화면 조회 실패도 마찬가지다 — 반영을 확인하지 못했을 뿐이라 재타이핑으로 복구한다
     func testTransientScreenReadFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failScreenAt = [2]
+        session.failScreenAt = [2] // #1의 반영 확인 조회
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
@@ -2128,7 +2255,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 재시도는 남은 입력을 무한정 붙들지 않는다 — 계속 실패하면 그 입력에서 멈춘다
     func testPersistentFailureStopsAtThatInput() {
         let session = FakeClaudeSession()
-        session.failSendAt = Set(3...100)
+        session.failSendAt = Set(4...100) // #1은 통과, #2의 클리어부터 전부 실패
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
@@ -2179,7 +2306,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 끝났다면, 같은 tty의 셸이나 새 claude에 CR이 들어가 사용자가 치던 것을 제출·실행시킨다
     func testCarriageReturnResendStopsWhenSessionChanged() {
         let session = FakeClaudeSession()
-        session.failSendAt = [2] // 타이핑은 성공, 첫 CR 실패
+        session.failSendAt = [3] // 클리어·타이핑은 성공, 첫 CR 실패
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
@@ -2189,16 +2316,18 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        // 타이핑 1 + CR 1 + 포기 후 정리 1 — CR 재전송을 더 시도하면 안 된다
-        XCTAssertEqual(session.sendCallCount, 3)
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
+        // 클리어 1 + 타이핑 1 + CR 1 + 포기 후 정리 1 — CR 재전송을 더 시도하면 안 된다
+        XCTAssertEqual(session.sendCallCount, 4)
+        XCTAssertEqual(
+            session.keystrokes, [claudeClearInputKey, inputs[0], claudeClearInputKey]
+        )
     }
 
     /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도
     /// 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번 제출된다
     func testFailedSubmitResendsCarriageReturnWithoutRetyping() {
         let session = FakeClaudeSession()
-        session.failSendAt = [2] // #1 타이핑 성공, #2 = CR 실패
+        session.failSendAt = [3] // 클리어·타이핑 성공, #3 = CR 실패
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
@@ -2211,8 +2340,9 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// command twice
     func testAnInputWhoseCarriageReturnMayHaveLandedIsNeverRetyped() {
         let session = FakeClaudeSession()
-        // #1 is the typing; #2–#4 are the three CR attempts, each landing but reporting failure
-        session.deliverButReportFailureAt = [2, 3, 4]
+        // 1: the clear · 2: the typing · 3–5: the three CR attempts, each landing but reporting
+        // failure
+        session.deliverButReportFailureAt = [3, 4, 5]
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertEqual(session.submitted, [inputs[0]]) // it did go through — exactly once
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
@@ -2222,7 +2352,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 아직 그리지 못하는 순간이 있다. 화면은 읽히는데 입력만 안 보이므로 재타이핑으로 복구한다
     func testUnreflectedInputRetypesUntilScreenShowsIt() {
         let session = FakeClaudeSession()
-        session.dropTypingAt = [1] // 첫 타이핑을 claude가 버린다
+        session.dropTypingAt = [2] // 첫 타이핑(클리어 다음)을 claude가 버린다
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]]) // 빈 줄이 아니라 실제 입력이 제출됐다
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2)
@@ -2393,22 +2523,21 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertFalse(ownership.mayHoldOurs, "아무것도 보내기 전에는 지울 우리 조각이 없다")
         ownership.recordSend(keys: "!gh pr view", sent: false) // 전송은 실패했지만 바이트는 이미 들어갔을 수 있다
         XCTAssertTrue(ownership.mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
-        ownership.recordSend(keys: claudeSubmitKey, sent: true)
-        XCTAssertFalse(ownership.mayHoldOurs, "제출로 입력창이 비었는데 정리를 보내면 사용자 초안을 지운다")
-        ownership.recordSend(keys: claudeSubmitKey, sent: false) // 제출 실패 — 본문은 입력창에 그대로 남아 있다
+        ownership.recordSend(keys: claudeSubmitKey, sent: false) // 제출 실패 — 본문은 그대로 남아 있다
         XCTAssertTrue(ownership.mayHoldOurs)
         // 클리어 갈래도 같다: 성공한 Ctrl+U는 입력창을 비우므로 내려가고, 실패면 남는다
         ownership.recordSend(keys: claudeClearInputKey, sent: true)
         XCTAssertFalse(ownership.mayHoldOurs)
         ownership.recordSend(keys: claudeClearInputKey, sent: false)
         XCTAssertTrue(ownership.mayHoldOurs)
-        // 그리고 **화면이 반증하면 다시 올라간다**(라운드 6, 독립 검증자 차단 항목): CR을 썼다는
-        // 것은 TUI가 그것을 제출로 처리했다는 뜻이 아니고, 처리되지 않았으면 본문은 입력창에
-        // 그대로 있다. 키 입력만 보면 그 상태에서 정리가 통째로 건너뛰어졌다
+        // 그리고 **CR은 내리지 않는다**(라운드 7): tty에 CR을 썼다는 것과 TUI가 그것을 제출로
+        // 처리했다는 것은 다른 일이고, 처리되지 않았으면 본문은 입력창에 그대로다. "모르면 비었다"로
+        // 두는 바람에 잔여가 다음 입력과 한 줄로 붙었다. 내려가는 것은 **증거**뿐이다 —
+        // 우리가 성공적으로 비웠거나, 화면이 우리 것이 거기 없다고 보여 줬을 때
         ownership.recordSend(keys: claudeSubmitKey, sent: true)
+        XCTAssertTrue(ownership.mayHoldOurs, "CR을 썼다는 것은 입력창이 비었다는 증거가 아니다")
+        ownership.recordInputBoxIsFreeOfOurs()
         XCTAssertFalse(ownership.mayHoldOurs)
-        ownership.recordInputBoxStillHoldsOurs()
-        XCTAssertTrue(ownership.mayHoldOurs)
     }
 
     /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
@@ -2433,7 +2562,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.screenNeedsPaneProof = true
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.gateChecks, session.sendCallCount)
-        XCTAssertEqual(session.sendCallCount, 4) // 표식 · Ctrl+U · 본문 · CR
+        XCTAssertEqual(session.sendCallCount, 5) // 표식 · Ctrl+U · 본문 · CR · 끝내며 정리
     }
 
     /// 회귀 방지(P0-2): 첫 CR도 세션 확인을 통과해야 한다. 화면 반영을 확인한 직후라도 그
@@ -2452,7 +2581,9 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         // 타이핑만 나가고 CR은 막혔다. 그 타이핑은 입력창에 남으므로 포기하면서 지운다
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
+        XCTAssertEqual(
+            session.keystrokes, [claudeClearInputKey, inputs[0], claudeClearInputKey]
+        )
     }
 
     /// 같은 입력을 두 번 예약했을 때, 앞의 것이 화면(대화 기록)에 남아 있어도 뒤의 것이
@@ -2541,6 +2672,17 @@ final class ToolCheckTests: XCTestCase {
         XCTAssertTrue(loginShellPath().hasPrefix("/"))
     }
 
+    /// **Round 7 (independent reviewer, F3)**: the check ran `-i -c`, which reads the rc but
+    /// **not** the profile — and Homebrew's `shellenv` goes into `.zprofile`/`.bash_profile`. A
+    /// user whose PATH is set there got "claude is not an executable" while their terminal tab
+    /// (a login shell) resolves it fine. A login shell is what the tab actually is, so ask that
+    /// first; `-l` is not universal (dash has no such flag), hence the plain fallback
+    func testToolCheckAsksALoginShellFirstAndFallsBack() {
+        let candidates = toolCheckShellArgumentCandidates("SCRIPT")
+        XCTAssertEqual(candidates.first, ["-l", "-i", "-c", "SCRIPT"])
+        XCTAssertEqual(candidates.last, ["-i", "-c", "SCRIPT"])
+    }
+
     /// `command -v` answers for **functions and aliases** too, so "the user can type claude" and
     /// "the merge can launch claude" are different facts: the merged command runs `command claude`,
     /// which skips exactly those. Measured (both zsh and bash): with `zzclaude(){ :; }` defined,
@@ -2561,29 +2703,43 @@ final class ToolCheckTests: XCTestCase {
         )
     }
 
-    /// The classification has to come out of a **real shell**, not out of our reading of one: a
-    /// function and an executable of the same shape, asked by the generated script
-    func testGeneratedScriptSeparatesAFunctionFromAnExecutableInARealShell() throws {
+    /// The classification has to come out of a **real shell**, not out of our reading of one.
+    ///
+    /// Three cases, all measured before they were coded (round 7, Codex's reproduction):
+    ///  - `tcfunc` — a function with no file behind it. `command claude` would fail, so no merge
+    ///  - `tcwrapped` — a function **wrapping a real file**. `command -v` answers `tcwrapped`, but
+    ///    `command tcwrapped` runs the file, which is exactly what the merged command does. The old
+    ///    probe said "not executable" here and refused to merge, contradicting the documented
+    ///    "the merge bypasses your wrapper"
+    ///  - `tcnoexec` — a file on PATH **without the executable bit**. bash and dash hand back its
+    ///    absolute path from `command -v` (measured), so a `/*` test alone called it executable and
+    ///    the merged `command claude` then failed
+    func testExecutableProbeSeesPastWrappersAndRejectsUnrunnableFiles() throws {
         let directory = NSTemporaryDirectory() + "tc-toolcheck-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        let executable = directory + "/tcreal"
-        try "#!/bin/sh\nexit 0\n".write(toFile: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable)
+        for name in ["tcreal", "tcwrapped", "tcnoexec"] {
+            try "#!/bin/sh\nexit 0\n".write(toFile: directory + "/" + name, atomically: true, encoding: .utf8)
+        }
+        for name in ["tcreal", "tcwrapped"] {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory + "/" + name
+            )
+        }
 
-        let tools = ["tcfunc", "tcreal"]
+        let tools = ["tcfunc", "tcreal", "tcwrapped", "tcnoexec"]
         let result = try runProcess(
-            "/bin/sh", ["-c", "tcfunc() { :; }\n" + toolCheckScript(tools)],
+            "/bin/sh",
+            ["-c", "tcfunc() { :; }\ntcwrapped() { command tcwrapped; }\n" + toolCheckScript(tools)],
             env: ["PATH": directory + ":/usr/bin:/bin"], timeout: 10
         )
         XCTAssertEqual(
-            try XCTUnwrap(parseToolCheck(output: result.stdout, tools: tools)),
-            ["tcfunc": true, "tcreal": true]
-        )
-        XCTAssertEqual(
             try XCTUnwrap(parseToolExecutables(output: result.stdout, tools: tools)),
-            ["tcfunc": false, "tcreal": true]
+            ["tcfunc": false, "tcreal": true, "tcwrapped": true, "tcnoexec": false]
         )
+        // The `-x` guard is what covers the shells that answer with a path for a file they could
+        // not run (measured: bash and dash do, /bin/sh and zsh do not), so it must not be dropped
+        XCTAssertTrue(toolCheckScript(["claude"]).contains("[ -x "), toolCheckScript(["claude"]))
     }
 }
 

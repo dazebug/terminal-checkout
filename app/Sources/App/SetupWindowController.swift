@@ -685,15 +685,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         let missing = toolAdvice.filter { availability[$0.name] == false }
-        toolsCard.isHidden = missing.isEmpty
+        let wrapperAdvice = claudeWrapperAdvice(
+            available: availability, executable: Settings.toolExecutables
+        )
+        toolsCard.isHidden = missing.isEmpty && wrapperAdvice == nil
         toolsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for tool in missing {
-            let label = NSTextField(wrappingLabelWithString: "● \(tool.name) \(tool.advice)")
-            label.font = Theme.mono(11.5)
-            label.textColor = tool.critical ? Theme.err : Theme.warn
-            label.preferredMaxLayoutWidth = setupContentWidth - 28
-            toolsList.addArrangedSubview(label)
+            addToolLine("● \(tool.name) \(tool.advice)", critical: tool.critical)
         }
+        if let wrapperAdvice { addToolLine("● \(wrapperAdvice)", critical: false) }
+    }
+
+    private func addToolLine(_ text: String, critical: Bool) {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = Theme.mono(11.5)
+        label.textColor = critical ? Theme.err : Theme.warn
+        label.preferredMaxLayoutWidth = setupContentWidth - 28
+        toolsList.addArrangedSubview(label)
     }
 
     private func pipelineNodes(
@@ -873,4 +881,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             alert.runModal()
         }
     }
+}
+
+/// What to say when claude can be called but does **not** resolve to an executable — an install
+/// that is only a shell function or an alias.
+///
+/// The merge path launches `command claude`, which skips functions and aliases, so those setups
+/// take the typed route instead. All the user sees otherwise is that delivery got slower, or — on
+/// Warp without the Accessibility permission — that the button now refuses outright, with the
+/// reason nowhere on screen (independent reviewer, round 7).
+///
+/// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
+/// line already says that one, and saying it twice reads as two different problems.
+func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
+    guard available?["claude"] == true, executable?["claude"] == false else { return nil }
+    return "claude가 실행 파일이 아니라 함수·별칭으로 설치돼 있어 claude 입력을 병합하지 못합니다"
+        + " — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다."
 }

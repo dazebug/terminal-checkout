@@ -45,9 +45,12 @@ done
 KEPT_CONTEXTS=()
 for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
     if [ -d "$dir" ] && [ ! -L "$dir" ] && [[ "${dir##*/}" =~ ^tc-prompt-[0-9a-f]{8}$ ]]; then
+        # Checked twice, with the removal between the two as tightly as a shell allows: the
+        # marker is dropped by a running pane, so it can appear right after the first test. The
+        # window cannot be closed from a script — the second test only narrows it
         if [ -e "$dir/handed-to-claude" ]; then
             KEPT_CONTEXTS+=("$dir")
-        else
+        elif [ ! -e "$dir/handed-to-claude" ]; then
             rm -rf "$dir"
         fi
     fi

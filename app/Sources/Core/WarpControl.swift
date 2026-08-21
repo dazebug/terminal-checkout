@@ -127,6 +127,14 @@ public func warpInjectionHelperIsReady() -> Bool {
 
 /// 실행마다 새로 뽑는다 — 고정 이름이면 이전 실행이 남긴 죽은 소켓 파일에 붙거나,
 /// 아직 살아 있는 이전 헬퍼(다른 pane)에 입력을 보내게 된다.
+extension Character {
+    /// A character our own `%08x` tokens can contain. `isHexDigit` and `isNumber` are **Unicode**
+    /// predicates — Arabic-Indic digits and full-width forms satisfy them — and every place that
+    /// decides "is this name one we wrote, and may we delete it" needs the ASCII answer instead
+    /// (reproduced: `tc-prompt-١٢٣٤abcd` counted as ours).
+    var isASCIIHexLower: Bool { isASCII && isHexDigit && !isUppercase }
+}
+
 public func warpHelperToken() -> String {
     String(format: "%08x", UInt32.random(in: .min ... .max))
 }
@@ -135,7 +143,7 @@ public func warpHelperToken() -> String {
 public func warpHelperSocketFileIsOurs(name: String) -> Bool {
     guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(".sock") else { return false }
     let token = name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count)
-    return !token.isEmpty && token.allSatisfy(\.isHexDigit)
+    return !token.isEmpty && token.allSatisfy(\.isASCIIHexLower)
 }
 
 public let warpHelperSocketPrefix = "tcw-"

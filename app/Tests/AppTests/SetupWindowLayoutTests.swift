@@ -124,3 +124,19 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 }
+
+
+/// The merge path needs `claude` to resolve to an executable, and when it does not the only thing
+/// the user notices is that delivery got slower — or, on Warp without the Accessibility
+/// permission, that the button now refuses outright. That reason has to be visible somewhere
+/// (independent reviewer, round 7).
+final class ClaudeWrapperAdviceTests: XCTestCase {
+    func testAdviceAppearsOnlyForAReachableClaudeThatIsNotAnExecutable() {
+        XCTAssertNotNil(claudeWrapperAdvice(available: ["claude": true], executable: ["claude": false]))
+        XCTAssertNil(claudeWrapperAdvice(available: ["claude": true], executable: ["claude": true]))
+        // claude 자체가 없으면 그건 "없음" 줄이 말한다 — 두 번 말하지 않는다
+        XCTAssertNil(claudeWrapperAdvice(available: ["claude": false], executable: ["claude": false]))
+        // 확인 전에는 아무 말도 하지 않는다
+        XCTAssertNil(claudeWrapperAdvice(available: nil, executable: nil))
+    }
+}

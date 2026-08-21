@@ -226,26 +226,31 @@ func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: I
 }
 
 /// **지금 claude 입력창에 우리 조각이 남아 있을 수 있는가** — 정리(Ctrl+U)를 보낼지 가르는 상태.
-/// "과거에 성공한 적 있는가"가 아니다:
+///
+/// 두 질문을 **섞지 않는다**(라운드 7):
+///  - **(i) claude가 그 메시지를 받았는가** — 증명하지 않는다. TUI 밖에서 성립시킬 수 없고,
+///    안전 속성도 아니다. 그래서 로그도 "전달"이 아니라 "보냄"이다.
+///  - **(ii) 입력창이 비어 있는가** — **안전 속성이다.** 다음 바이트를 어디에 쓰는지와 정리를
+///    보낼지가 여기에 달렸다. 모르면 "비었다"고 가정하지 않는다.
+///
+/// 이 타입은 (ii)만 다룬다:
 ///  - 전송이 실패로 돌아와도 바이트는 이미 들어갔을 수 있다(헬퍼가 일부만 넣고 err).
-///    그래서 결과가 아니라 **시도**로 세운다 — 아니면 남은 조각을 못 지운다
-///  - CR·클리어가 나갔으면 입력창은 비었다. 거기서 내리지 않으면, 다음 입력을 시작도 못 한 채
-///    끝났을 때 정리가 **사용자 초안**을 지운다
+///    그래서 결과가 아니라 **시도**로 올린다 — 아니면 남은 조각을 못 지운다
+///  - **CR은 내리지 않는다.** tty에 CR을 쓴 것과 TUI가 그것을 제출로 처리한 것은 다른 일이고,
+///    처리되지 않았으면 본문은 입력창에 그대로 있다. 여기서 내렸던 탓에 잔여가 다음 입력과
+///    한 줄로 붙어 제출됐다(검증자 재현: `"/review!git status"`)
+///  - 내려가는 것은 **증거**뿐이다: 우리가 성공적으로 비웠거나(Ctrl+U), 화면이 우리 것이
+///    거기 없다고 보여 줬을 때
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
 
     mutating func recordSend(keys: String, sent: Bool) {
         mayHoldOurs = true
-        if sent, keys == claudeSubmitKey || keys == claudeClearInputKey { mayHoldOurs = false }
+        if sent, keys == claudeClearInputKey { mayHoldOurs = false }
     }
 
-    /// 화면이 **우리 텍스트가 입력창에 그대로 있다**를 보여 줬다. 키 입력만 보면 이 상태가
-    /// 보이지 않는다 — CR을 tty에 썼다는 것과 TUI가 그것을 제출로 처리했다는 것은 다른 일이고,
-    /// 처리되지 않았으면 본문은 입력창에 남는다. 그 구분이 없어서 정리가 통째로 건너뛰어졌고
-    /// (독립 검증자 재현), 남은 `!git status`는 사용자가 누른 Enter로 실행될 수 있었다.
-    /// 반대 방향으로는 올리지 않는다 — "확인 못 했다"에 Ctrl+U를 보내면 그 사이 사용자가
-    /// 치기 시작한 초안을 지운다(이슈 #16).
-    mutating func recordInputBoxStillHoldsOurs() { mayHoldOurs = true }
+    /// 화면이 **우리 입력이 어디에도 없다**를 보여 줬다 — 입력창이 그것을 들고 있지 않다.
+    mutating func recordInputBoxIsFreeOfOurs() { mayHoldOurs = false }
 }
 
 /// 준비된 claude 세션에 입력을 순서대로 보내고, **CR까지 내보낸 개수**를 돌려준다 —
@@ -287,12 +292,14 @@ public func submitClaudeInputs(
             break
         }
         switch typeAndSubmit(input, io: tracked, retryConfirmTimeout: retryConfirmTimeout) {
-        case .sent:
+        case .sentAndBoxIsFreeOfOurs:
+            sent += 1
+            ownership.recordInputBoxIsFreeOfOurs()
+        case .sentButBoxUnknown:
             sent += 1
         case .leftInTheInputBox:
             // 이어서 다음 입력을 치면 두 입력이 한 줄로 붙어 제출된다 — 이것이 계속 갈 때의
-            // 실제 피해다. 그리고 잔여가 **확실한** 상태이므로 정리 판단에도 그대로 넘긴다
-            ownership.recordInputBoxStillHoldsOurs()
+            // 실제 피해다. 잔여는 아래 정리가 지운다(소유권은 CR로 내려가지 않는다)
             checkoutLog("CR을 보냈는데 입력이 입력창에 그대로 남아 있음 — 남은 \(inputs.count - index - 1)개를 보내지 않음")
             break delivery
         case .gaveUp:
@@ -300,12 +307,15 @@ public func submitClaudeInputs(
             break delivery
         }
     }
-    // 입력창에 우리 조각이 남아 있을 수 있으면 지운다. **화면으로 확인하지 못했을 뿐 바이트는
-    // 이미 우리 tty에 들어가 있다** — 주입은 포커스와 무관하기 때문이다. 지우지 않으면 사용자가
-    // 나중에 누른 Enter가 그것을 제출한다(`!…`면 셸 명령까지 실행된다).
-    // 조건이 개수("다 끝냈는가")가 아니라 소유권인 이유: 성공적으로 쓴 CR이 제출로 이어졌는지
-    // 우리는 모르고, 이어지지 않았으면 본문은 입력창에 그대로 있다. 반대로 소유권이 내려간
-    // 상태에서 굳이 Ctrl+U를 보내면 그 사이 사용자가 친 초안을 지운다(이슈 #16)
+    // **규칙의 나머지 절반**: 마지막 입력 뒤에는 "다음 입력 전에 비우기"가 없으므로 여기서
+    // 비운다. 화면으로 확인하지 못했을 뿐 바이트는 이미 우리 tty에 들어가 있고(주입은 포커스와
+    // 무관하다), 지우지 않으면 사용자가 나중에 누른 Enter가 그것을 제출한다(`!…`면 셸 명령까지
+    // 실행된다). 정상적으로 끝난 전달에서도 나가는 이유는 (i)과 (ii)를 섞지 않기 때문이다 —
+    // CR을 썼다는 것은 입력창이 비었다는 증거가 아니다.
+    // **그 대가**(수용, 이슈 #16): 전달 도중·직후에 사용자가 치기 시작한 초안이 지워질 수 있다.
+    // 반대쪽 손실은 우리 `!` 한 줄이 입력창에 남아 사용자의 Enter로 **실행**되는 것이라 대칭이
+    // 아니다. 지우지 않고 남기려면 "입력창이 비었다"를 증명해야 하는데 그것이 (ii)이고,
+    // 우리가 가진 신호로는 성립하지 않는다
     if clearAbandonedInput(io: tracked, weSentSomething: ownership.mayHoldOurs) {
         checkoutLog("claude 입력창에 남았을 우리 조각을 지움")
     } else if ownership.mayHoldOurs {
@@ -351,17 +361,18 @@ private func typeAndSubmit(
                 checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
             }
         }
-        // 입력창을 비운다. pane 증명을 했으면 표식이 남아 있고, 재시도면 이전 조각이 남아
-        // 있다 — 남은 것 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은 입력이 제출된다.
-        // 증명이 실패했을 때도 반드시 지운다: 표식을 남기면 사용자가 그것을 제출하게 된다
-        if io.screenNeedsPaneProof || attempt > 1 {
-            guard send(claudeClearInputKey, io: io) else {
-                checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
-                io.wait(1.0)
-                continue
-            }
+        // **항상 비우고 친다** — 이것이 규칙 (ii)의 절반이다. 입력창에 무엇이 들어 있는지
+        // 우리는 알 수 없고("모름"을 "비었음"으로 놓았다가 잔여와 다음 입력이 한 줄로 붙어
+        // 제출됐다 — 검증자 재현), 남은 것 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은
+        // 입력이 제출된다. 비울 것이 실제로 있는 갈래도 여럿이다: pane 증명이 남긴 표식,
+        // 재시도 전 조각, 앞 입력이 제출되지 않고 남은 본문.
+        // 대가는 사용자가 그 순간 치고 있던 초안이 지워지는 것이다(이슈 #16, 수용)
+        guard send(claudeClearInputKey, io: io) else {
+            checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             io.wait(1.0)
+            continue
         }
+        io.wait(1.0)
         guard proved else { continue }
         // 타이핑 직전 화면을 찍어 둔다 — "이미 떠 있던 텍스트"와 "우리가 방금 친 것"을
         // 가르는 유일한 수단이다(`screenReflectsNewInput`)
@@ -399,13 +410,11 @@ private func typeAndSubmit(
             case .stillHoldsOurInput:
                 return .leftInTheInputBox
             case .ourInputIsGone:
-                // Nothing to append to and nothing left of ours to clear. Whether claude took the
-                // message or the transcript merely scrolled it out of view is not something we
-                // can tell apart, and nothing we do next depends on the difference
-                checkoutLog("CR 뒤 우리 입력이 화면에서 사라짐 — 입력창에 남은 것은 없다")
-                return .sent
+                // The box is not holding ours. Whether claude took the message or the transcript
+                // merely scrolled it out of view is question (i), which we do not ask
+                return .sentAndBoxIsFreeOfOurs
             case .unknown:
-                return .sent
+                return .sentButBoxUnknown
             }
         }
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
@@ -413,10 +422,14 @@ private func typeAndSubmit(
     return .gaveUp
 }
 
-/// 한 입력을 처리한 결과. 세 갈래인 이유는 **정리 판단이 갈리기 때문**이다.
+/// 한 입력을 처리한 결과. 갈래가 나뉘는 축은 **(ii) 입력창이 비었는가**이지 (i) claude가
+/// 받았는가가 아니다 — 후자는 확인하지 않는다.
 private enum SubmitOutcome {
-    /// CR을 썼다. claude가 그것을 메시지로 만들었는지는 **확인하지 않는다**
-    case sent
+    /// CR을 썼고, 화면이 **우리 입력이 어디에도 없다**를 보여 줬다 — 입력창에 우리 것은 없다
+    case sentAndBoxIsFreeOfOurs
+    /// CR을 썼지만 입력창 상태를 볼 수 없었다(못 읽음·우리 pane이 아님·해석 불가).
+    /// 다음 입력 전 클리어와 마지막 정리가 이 상태를 덮는다
+    case sentButBoxUnknown
     /// 화면이 "우리 텍스트가 입력창에 그대로 있다"를 보여 줬다 — 잔여가 확실하다
     case leftInTheInputBox
     /// CR을 내보내지 못했다
@@ -451,6 +464,15 @@ enum InputBoxAfterSubmit: Equatable {
     case unknown
 }
 
+/// How long the box may look frozen before we believe it. **Not measured for a CR redraw** — the
+/// only adjacent measurement in this repository is claude's first-message render, 2.06∼3.41s
+/// (`docs/new-terminal-checklist.md`), so anything shorter is a guess. Being generous is the safe
+/// direction here: the safety of the next input rests on the clear we send **before typing**, not
+/// on this look, so a slow answer costs nothing, while a hasty "it is stuck" drops the inputs that
+/// were still to come (reviewer reproduction R3).
+private let inputBoxLookSamples = 9
+private let inputBoxLookInterval: TimeInterval = 0.4
+
 func inputBoxAfterSubmit(
     io: ClaudeSessionIO, whenTyped: String, text: String
 ) -> InputBoxAfterSubmit {
@@ -459,13 +481,21 @@ func inputBoxAfterSubmit(
     // typing bytes into a box a submission may have just emptied
     guard !io.screenNeedsPaneProof else { return .unknown }
     let probe = claudeInputProbe(text).filter { !$0.isWhitespace }
-    guard !probe.isEmpty, let typedTail = screenTail(from: probe, in: whenTyped) else {
-        return .unknown
-    }
+    guard !probe.isEmpty else { return .unknown }
+    // **The probe has to identify our copy, and only ours.** claude draws hint lines, a permission
+    // indicator and a context meter *below* the box, and `screenTail` takes the last occurrence —
+    // so a probe that also appears down there pins the tail forever and a submission that went
+    // through reads as "still in the box" (reproduced: input `y` against "bypass permissions on",
+    // and `/review` against a "try /review" hint; both dropped every later input). When the probe
+    // is not unique we cannot tell the copies apart, so we do not judge
+    guard probeOccurrences(of: probe, in: whenTyped) == 1,
+          let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
     var last = InputBoxAfterSubmit.unknown
-    for _ in 0..<3 {
-        io.wait(0.4)
-        guard let screen = io.screenText() else { return .unknown }
+    for _ in 0..<inputBoxLookSamples {
+        io.wait(inputBoxLookInterval)
+        // A read we could not make says nothing. It used to end the look, which threw away what
+        // the earlier reads had already established (reviewer reproduction R5)
+        guard let screen = io.screenText() else { continue }
         guard let tail = screenTail(from: probe, in: screen) else {
             last = .ourInputIsGone
             continue
@@ -474,6 +504,16 @@ func inputBoxAfterSubmit(
         last = .stillHoldsOurInput
     }
     return last
+}
+
+private func probeOccurrences(of probe: String, in screen: String) -> Int {
+    var count = 0
+    var rest = Substring(screen.filter { !$0.isWhitespace })
+    while let found = rest.range(of: probe) {
+        count += 1
+        rest = rest[found.upperBound...]
+    }
+    return count
 }
 
 /// The screen from the **last** occurrence of the probe to the end, whitespace removed. The last
