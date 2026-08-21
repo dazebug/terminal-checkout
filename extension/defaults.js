@@ -186,6 +186,67 @@ function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
 
+// --- Who pressed it, and what page they were on ---
+
+// A command runs because a person clicked something they could see. `dispatchEvent(new
+// MouseEvent('click'))` from any script running on the GitHub page — an XSS, another extension —
+// reached the same handler and ran the stored command with nobody touching the mouse. `isTrusted` is
+// the browser's own word for "a user did this", and it is the only thing that can answer it.
+function isUserGesture(event) {
+  return event?.isTrusted === true;
+}
+
+// Binds a click handler with that guard ahead of it, once, instead of at each call site. The same
+// lesson as `userAction` on the options page: an order kept by convention at two call sites is an
+// order that gets reversed at the third.
+function onUserClick(element, run) {
+  element.addEventListener('click', (event) => {
+    if (!isUserGesture(event)) {
+      console.warn('Terminal Checkout: ignoring a click that did not come from the user.');
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    run(event);
+  });
+}
+
+// Everything a request is built from that comes out of the URL, read off one pathname in one go.
+// The page the user clicked on is a fact with four parts, and taking them from two different reads
+// is how a request went out carrying one PR's number and another PR's branch.
+function pageTargetOf(pathname) {
+  const kind = pageTypeOf(pathname);
+  if (!kind) return null;
+  const [, owner, repo] = pathname.split('/');
+  return { kind, owner, repo, number: pathname.match(/\/(?:pull|issues)\/(\d+)/)?.[1] || null };
+}
+
+// Whether two reads landed on the same page. `null` never matches, including against itself: an
+// absent target is not agreement, it is the absence of an answer.
+function sameTarget(a, b) {
+  if (!a || !b) return false;
+  return a.kind === b.kind && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
+}
+
+// --- What storage will accept ---
+// storage.sync measures an item as its key length plus the JSON of its value and refuses anything
+// over 8,192 bytes. Nothing capped the length of a command, so a 9,000-character one made `buttons`
+// 9,159 bytes: the save failed with the raw quota error and nothing had warned or prevented it.
+const SYNC_QUOTA_BYTES_PER_ITEM = 8192;
+
+// The budget a single settings key may occupy, a quarter under the hard limit. The spare quarter is
+// not decoration: a measured real profile (the presets plus two overrides) is 1,978 bytes across all
+// keys, so this refuses nothing anyone has, while leaving room for whatever framing a future
+// generation puts around the same content (decision 9 clause 2 — if that clause packs a generation
+// and its seed snapshot into one item, this budget has to be revisited with it).
+const MAX_STORED_ITEM_BYTES = 6144;
+
+// Bytes, not characters. A face is often an emoji: one JS character, four UTF-8 bytes, and counting
+// characters would let a payload past the limit it is being measured against.
+function storedItemBytes(key, value) {
+  return key.length + new TextEncoder().encode(JSON.stringify(value ?? null)).length;
+}
+
 // --- Button identity in the edit state ---
 // While buttons are being edited they need names: they get typed over, reordered and duplicated, and
 // an index stops meaning the same button the moment any of that happens. That name is a `uid` this

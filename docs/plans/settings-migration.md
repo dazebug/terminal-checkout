@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R8 커밋(항목 14 — 화면=실행 지문 대조·import 직렬화·이탈 경고 단일 술어·결정 9 하위 조항 초안, verified) · 게이트 그린(드라이버 재실행 — node 139/0, swift 210/0, e2e 9 PASS) · 현행 세대 실측 1,978B(프리셋 전체 + 오버라이드 2건 기준, 드라이버 — 조항 2·4 병기용) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×7** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R9 커밋(항목 15 — 신뢰 클릭·실행 대상 정합·페이지 작업 배제 전수화·payload 크기 상한·§9 조항 보완, verified) · 게이트 그린(드라이버 재실행 — node 148/0, swift 210/0, e2e 9 PASS; red 독립 재현 — pre-R9 코드에 신규 테스트 not ok 6건) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×8** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -94,11 +94,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
    - 효과: 구버전 기기는 스큐 중에도 **자기 세대 데이터로 완전 동작**한다. 모양뿐 아니라 **command 문법도** 그렇다 — 옛 앱이 모르는 새 문법이 옛 기기에서 실행되는 일이 없다.
    - **지금 구현할 코드는 없다.** 우리가 최신 세대라 채택 로직의 상대가 없다 — v2를 만드는 미래 버전이 구현한다. 계약의 정본은 이 계획 파일이고, 항목 7에서 `CLAUDE.md`/`README.md`로 승계한다.
    - **하위 조항 (R8 초안 — ⚠ 사용자 확정 대기, v2 구현 전에 확정돼야 한다).** Codex R7: "결정 9 자체를 철회하라는 뜻은 아닙니다. 다만 v2 구현 전에 다음은 명문화되어야 합니다." 아래는 우리 쪽 제안이고, **채택 여부는 사용자 몫**이다.
-     1. **seed 경쟁.** 두 기기가 동시에 "v2 없음"을 보고 각각 seed하면 나중 `set`이 상대의 동의 선택을 덮는다. *제안*: seed는 동의 직후 **존재를 한 번 더 확인하고** 쓴다(있으면 그것을 채택으로 전환). 그래도 남는 창은 `storage.sync`에 CAS가 없는 한 닫히지 않으므로, 이 계획서가 이미 서술한 **잔여 LWW와 같은 부류**로 명시한다 — 없앤 척하지 않는다.
-     2. **부분 존재 오인.** 여러 키가 따로 sync되면 `v2.buttons`만 먼저 도착해 "v2가 있다"로 오인될 수 있다. *제안*: **세대당 단일 storage 키**(한 세대 = 한 객체). `set`이 키 단위로 원자적이므로 부분 존재가 구조적으로 불가능해지고, 1의 창도 함께 좁아진다. 한도는 `QUOTA_BYTES_PER_ITEM` 8KB — **현행 세대 실측 병기 필요**(버튼 3키 + `defaultMain` + `repoMainBranch` + `version`의 JSON 크기).
-     3. **pre-consent 런타임.** 새 기기에서 동의 전 content/background가 무엇을 읽는가. *제안*: **직전 세대 네임스페이스를 read-only로 계속 읽는다** — 그것이 결정 9의 목적 그대로다(동의 전까지 기존대로 동작). 기본값 폴백은 배제한다: 커스텀이 사라진 것처럼 보이고, 그 화면으로 실행하면 R8 ⒜가 막 닫은 "보인 것 ≠ 실행되는 것"이 세대 축으로 재발한다.
-     4. **quota.** 영구 보존 + 세대 무한 증가. *제안*: 세대당 단일 키 몇 KB × `QUOTA_BYTES` 100KB이면 수십 세대까지 여유 — **실측 병기 필요**. 압박이 실제로 생기면 "가장 오래된 세대를 Export 안내 후 **동의 삭제**"를 트리거로만 기록하고, 지금은 만들지 않는다.
-     5. **세대 건너뛰기·백업 범위.** v1 기기가 v3로 직행하면 시드 출처가 모호하다. *제안*: **존재하는 가장 새로운 옛 세대**에서 `stepsFrom` 체인으로 시드한다(레지스트리가 0→CURRENT 전 구간을 덮는다는 기존 red가 그대로 보증한다). Export/import는 **현행 세대만** 다룬다고 명시한다 — 백업 파일에 세대를 섞으면 "미래 백업 거부"(결정 5)의 판정 대상이 무엇인지 흐려진다.
+     1. **seed 경쟁, 그리고 seed 원본이 다중 키라는 것(R9 보완).** 두 기기가 동시에 "v2 없음"을 보고 각각 seed하면 나중 `set`이 상대의 동의 선택을 덮는다. *제안*: seed는 동의 직후 **존재를 한 번 더 확인하고** 쓴다(있으면 그것을 채택으로 전환). 그래도 남는 창은 CAS가 없는 한 닫히지 않으므로 **잔여 LWW와 같은 부류**로 명시한다 — 없앤 척하지 않는다. **여기에 더해**: 존재 재확인은 *목적지*의 문제만 다루고 **출처**의 문제는 다루지 않는다. 현행 flat 네임스페이스는 `buttons`·`version`·`defaultMain`이 **각기 sync되므로**, v2 seed가 찢어진 스냅샷(buttons는 옛 값, version은 새 값)을 읽을 수 있다. *제안*: seed는 **source를 두 번 읽어 deep-equal일 때만** 진행하고 다르면 재시도한다(`sameStoredValue`가 이미 그 비교를 한다), 또는 세대 안에 revision을 두어 한 번의 읽기로 정합을 판정한다. 어느 쪽이든 **조항 2의 단일 키가 이 문제를 대신 풀어 주지는 않는다** — 그것은 새 네임스페이스의 부분 존재만 막는다.
+     2. **부분 존재 오인.** 여러 키가 따로 sync되면 `v2.buttons`만 먼저 도착해 "v2가 있다"로 오인될 수 있다. *제안*: **세대당 단일 storage 키**(한 세대 = 한 객체). `set`이 키 단위로 원자적이므로 **새 네임스페이스의** 부분 존재가 구조적으로 불가능해지고, 1의 목적지 쪽 창도 좁아진다. **적용 범위 명시(R9)**: 이 조항은 새 네임스페이스만 다루고, **seed 원본(옛 flat 키들)의 다중 키 문제는 조항 1이 맡는다** — 둘을 한 조항으로 묶으면 해결되지 않은 절반이 해결된 것처럼 보인다. 크기(R9 실측): 현행 전체가 **1,978B**, seed 스냅샷을 같은 객체에 넣으면 그 2배 남짓이라 8,192B 안에 든다. 그리고 **⒟의 command 상한(`MAX_STORED_ITEM_BYTES` 6,144B, 소탕 표 15)이 서면서 세대 크기에 상계가 생겨** quota 안전이 추정이 아니라 보장이 됐다 — 다만 단일 키 포장이 실제로 채택되면 그 상한은 "세대 + 스냅샷이 한 항목에 든다"는 기준으로 **다시 계산해야 한다**.
+     3. **pre-consent 런타임과 정본 우선순위(R9 보완).** 새 기기에서 동의 전 content/background가 무엇을 읽는가. "현재 세대가 있으면 그것을 쓴다"와 "동의 전에는 직전 세대를 쓴다"는 그대로 두면 충돌하므로, **우선순위로 명문화한다**: (a) 현재 세대 네임스페이스가 **온전하면** 그것, (b) 없거나 손상이면 **직전 세대를 read-only로**, (c) 둘 다 없으면 기본값. "온전"의 판정은 단일 키 객체의 **전체 파싱 성공 + 완전성 marker**(세대 번호와 필수 키가 모두 있음)로 정의한다 — 부분 파싱은 조항 2가 막으려는 상태를 다시 허용한다. 기본값 폴백을 (c)로만 두는 이유: 커스텀이 사라진 것처럼 보이고, 그 화면으로 실행하면 R8 ⒜가 막 닫은 "보인 것 ≠ 실행되는 것"이 세대 축으로 재발한다.
+     4. **quota — 그리고 삭제와 영구 보존의 충돌(R9 보완).** 세대당 **1,978B 남짓**(실측) × `QUOTA_BYTES` 102,400B이면 **수십 세대**까지 여유고, ⒟의 상한이 세대 크기 상계를 주므로 이 계산이 유지된다. 충돌 해소: **영구 보존이 기본이고, 삭제는 "그 세대를 쓰는 기기가 더 이상 없음이 확인될 때"만** 한다. 확인할 수 없으면 **삭제하지 않는다** — 살아 있는 v1 기기의 v1을 지우면 그 기기가 기본값으로 동작하고, 이는 조항 3의 (c)로 떨어지는 참사다. 게다가 Export/import는 **현행 세대만** 다루므로(조항 5) 옛 세대를 단독으로 내보내는 경로가 없다 — 즉 "Export 안내 후 삭제"는 지금 형태로는 성립하지 않는다. 결론: 삭제 트리거는 **수동, 확인된 경우만**으로 축소하고 지금은 만들지 않는다.
+     5. **세대 건너뛰기·백업 범위, 그리고 그 검증의 주체(R9 보완).** v1 기기가 v3로 직행하면 시드 출처가 모호하다. *제안*: **존재하는 가장 새로운 옛 세대**에서 `stepsFrom` 체인으로 시드한다. Export/import는 **현행 세대만** 다룬다고 명시한다 — 백업 파일에 세대를 섞으면 "미래 백업 거부"(결정 5)의 판정 대상이 무엇인지 흐려진다. **검증의 주체(중요)**: 지금 레지스트리가 보증하는 것은 **0→CURRENT의 연속성뿐**이다(기존 red "레지스트리가 0→CURRENT 전 구간을 덮는다"). v1→v3 합성이 옳은가 — 중간 command를 거치는 체인, prefix 규칙의 단계별 적용, 단계별 동의, 원본 보존 — 는 **세대별 역사 fixture 없이는 지금 세울 수 없고**, `tests/fixtures/presets-v0.json`에 해당하는 v1·v2 fixture는 그 세대를 만드는 라운드에서만 생긴다. 따라서 이 항목은 **v2/v3를 만드는 라운드의 필수 red**로 명기한다: 세대별 fixture + `stepsFrom` 합성 테스트가 없으면 그 세대는 출시하지 않는다.
    - **따름정리 — 격리(quarantine) UI·[Discard] 폐기.** "못 읽는 entry"의 유일한 현실적 생성기는 **기기 간 버전 갈림**인데 위 계약이 그것을 구조적으로 없앤다. 남는 것은 손 편집과 우리 자신의 버그뿐이고, 거기에는 skip + 경고면 충분하다는 사용자 판단. 손 편집에 대해서는 **"자기가 덮어써서 생긴 일은 자기 책임으로 인지할거야"**(사용자, 2026-08-22) — devtools 등으로 사용자 자신이 저장값을 덮어 생긴 손상은 사용자 책임 영역이고, 확장이 그로부터 사용자를 보호할 의무는 없다. 따라서 R7의 축소된 ⒝ 4건 중 **기본값 미충전과 경고 문구는 사용자 보호 장치가 아니라 ① 우리 자신의 필터 버그 대비와 ② "조용한 삭제 대신 가시적 결과"를 위한 최소 장치**로 남긴다.
 
 계획서 언어는 한국어 유지(선례 준수 — 라인 42의 근거 그대로).
@@ -126,9 +126,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 13 | **R7 — Codex R6 차단(no)의 세 부류.** **⒜ 도착한 신호는 버리지 않는다**: `classifyStorageChange` 하나가 `onChanged`의 분기를 대신해 `ignore`/`defer`/`banner`/`adopt`를 정하고, `ignore`가 아닌 모든 경로가 `markStale()`을 거친다. 로드 전 도착분은 **보류**(P1-B), Save는 `staleAtStart`를 latch해 **이미 도착한 변경**을 알고(P1-A 자물쇠 2), `appliedGeneration`이 **적용된** load를 센다(자물쇠 3), `shouldStartSave`에 `loading` 축을 더해 load in-flight 중에는 Save가 **시작조차 하지 않는다**(자물쇠 1). 폐기된 load 응답과 `settleSave`의 stale 해제도 신호를 잃지 않는다(P3-B). **⒝ 읽을 수 없는 저장값**(결정 9로 격리 UI 폐기 후 축소): 미래 version 보유 시 **Save 거부**(`planSave`), 걸러진 entry가 있는 키는 **기본값으로 채우지 않음**(`seedFromStorage`), 경고에 **결과 명시**(`SKIP_CONSEQUENCE`), 상한(`MAX_BUTTONS`/`MAX_CLAUDE_INPUTS`) 판정을 **공유 검증기 한 곳**으로 옮기고 import의 조용한 자르기 제거. **⒞ storage 호출 실패**: Save의 live get·Export의 get에 catch 신설, 나머지 5개 호출의 처분을 소탕 표 12로 고정 | agreed | 아래 R7 로그 · Codex R7: "R7의 R6 잔여 6건은 모두 현재 코드에서 차단됩니다" | R7 |
 
-| 14 | **R8 — Codex R7 차단(no)의 세 부류.** **⒜ 클릭된 것은 화면에 보인 그것이다**: 클릭이 index만 보내고 background가 storage를 다시 읽어 실행하던 것을, content가 **그린 버튼의 지문**(`buttonFingerprint`)을 함께 보내고 background가 재조회 값과 대조해 불일치면 `{success:false, error}`로 거부하도록 했다(대안 ② 채택 — 근거는 R8 로그). content의 "get 실패 → 기본값 그리기" 폴백은 **아무것도 그리지 않고 폴링 재시도**로 바꿨다. **⒝ 페이지 단위 비동기 작업은 하나씩**: `shouldStartImport`로 import 직렬화 + 사유 표시. **⒞ 이탈 경고도 단일 술어**: `hasUnsavedWork`가 `dirty`·`reviewTouched`·`saving`을 함께 보고 `beforeunload`가 그것을 쓴다. 부수: `claudeInputs`의 hole 판정을 인덱스 실재 검사로, `applyMigrationPlan`이 **실제 적용 건수**를 반환하고 메시지가 그것을 쓴다. 문서: 결정 9 하위 조항 5건(**사용자 확정 대기**) | verified | 아래 R8 로그 | R8 |
+| 14 | **R8 — Codex R7 차단(no)의 세 부류.** **⒜ 클릭된 것은 화면에 보인 그것이다**: 클릭이 index만 보내고 background가 storage를 다시 읽어 실행하던 것을, content가 **그린 버튼의 지문**(`buttonFingerprint`)을 함께 보내고 background가 재조회 값과 대조해 불일치면 `{success:false, error}`로 거부하도록 했다(대안 ② 채택 — 근거는 R8 로그). content의 "get 실패 → 기본값 그리기" 폴백은 **아무것도 그리지 않고 폴링 재시도**로 바꿨다. **⒝ 페이지 단위 비동기 작업은 하나씩**: `shouldStartImport`로 import 직렬화 + 사유 표시. **⒞ 이탈 경고도 단일 술어**: `hasUnsavedWork`가 `dirty`·`reviewTouched`·`saving`을 함께 보고 `beforeunload`가 그것을 쓴다. 부수: `claudeInputs`의 hole 판정을 인덱스 실재 검사로, `applyMigrationPlan`이 **실제 적용 건수**를 반환하고 메시지가 그것을 쓴다. 문서: 결정 9 하위 조항 5건(**사용자 확정 대기**) | agreed | 아래 R8 로그 · Codex R8: "R7의 기존 5건은 모두 막혔지만" | R8 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤.
+| 15 | **R9 — Codex R8 차단(no)의 세 부류 + 현행 결함 1.** **⒜ 실행은 신뢰된 클릭만**: `onUserClick`(defaults.js)이 `isTrusted`를 핸들러 본체보다 **먼저** 보고, content의 두 클릭 경로가 그것을 통과한다. **⒝ 실행 대상 정합**: `pageTargetOf`/`sameTarget`을 공유하고, content가 **클릭 시점 대상**을 실어 보내며, background가 tab URL 시점과 **DOM을 실제로 읽은 pathname** 두 곳에서 대조해 불일치면 거부(`PAGE_CHANGED_ERROR`). 주입 함수 둘이 자기 `pathname`을 함께 반환해 **number와 branch가 같은 페이지·같은 시점**에서 온다. 대상이 바뀌면 content가 옛 버튼을 제거하고 다시 그린다. **⒞ 페이지 작업 배제의 전수화**: `shouldStartPageTask`/`pageIsBusy` 하나로 save·import를 함께 막고, adoption의 `taskInFlight`가 import도 포함한다. **⒟ payload 크기 상한**: `planSave`가 키별 직렬화 바이트를 `MAX_STORED_ITEM_BYTES`(6,144)와 대조해 초과면 **어느 키인지 밝히고 거부**. 문서: §9 조항 보완 5건(**여전히 사용자 확정 대기**) | verified | 아래 R9 로그 | R9 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤; 15는 R8 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -153,6 +155,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] 확장 아이콘 클릭은 지문 없이도 계속 동작한다(첫 버튼 실행)
 - [ ] 설정 파일을 고르고 읽는 동안 곧바로 다른 파일을 고르면 "A settings file is already being read — try again in a moment."이 뜨고, 폼에는 **먼저 고른 파일**이 반영된다(두 번째가 조용히 무시되지 않는다)
 - [ ] 업데이트 배지를 열어 체크박스만 해제한 뒤 탭을 닫으면 브라우저가 이탈 경고를 띄운다(타이핑을 한 적이 없어도)
+- [ ] GitHub 페이지 콘솔에서 `document.querySelector('.terminal-cmd-btn').dispatchEvent(new MouseEvent('click',{bubbles:true}))`를 실행하면 **아무 명령도 실행되지 않고** "ignoring a click that did not come from the user" 경고만 남는다
+- [ ] PR #1에서 버튼을 그린 뒤 곧바로 PR #2로 이동하고(같은 탭) 남아 있던 버튼을 누르면 거부되거나(대상 불일치) 새로 그려진 버튼이 #2로 정상 동작한다 — #1의 번호와 #2의 branch가 섞인 요청이 나가지 않는다
+- [ ] PR #1 → PR #2로 이동하면 옛 버튼이 사라지고 다시 그려진다. 같은 저장소 안에서 /issues → /pulls 이동은 깜빡이지 않는다
+- [ ] 설정 파일을 고르고 읽는 동안 [Save]를 누르면 "A settings file is already being read — try again in a moment."이 뜨고 아무것도 기록되지 않는다
+- [ ] command에 9,000자를 붙여 넣고 [Save]를 누르면 "too large … (buttons is over the 6144-byte limit …)"가 뜨고 아무것도 기록되지 않는다
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -349,21 +356,49 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 | `background.js` `loadButtons`의 get | 버튼을 못 읽는다 | 안전(의도) — 전파. 폴백하면 사용자의 커스텀 command 대신 **기본 command가 실행**된다 |
 | `content.js` `loadButtonConfigs`의 get | 그릴 설정을 못 읽는다 | **R7의 판정이 틀렸다 → 고침(R8)**: "background가 다시 읽으니 안전"은 정반대였다 — 다시 읽기 때문에 **화면과 실행이 갈렸다**. 이제 catch는 `null`을 돌려 **아무것도 그리지 않고**, 1초 폴링이 재시도한다(`console.warn` 1줄). 소탕 표 13 |
 
-### 소탕 표 13 — 렌더 → 실행 (R8, 부류 ⒜)
+### 소탕 표 13 — 렌더 → 실행 (R8 부류 ⒜ · R9에서 "누가"·"어느 페이지" 두 열 추가)
 
-원칙: **클릭된 것은 화면에 보인 그것이어야 한다.** 클릭은 index만 실어 보냈고 실행 측은 storage를 **다시 읽었다** — 그 두 read 사이에 원격 저장·reorder가 끼거나 렌더 측 read가 실패하면 화면에 없던 command가 돌았다. 이제 클릭이 **그린 버튼의 지문**(`buttonFingerprint` = 정규화된 `buttonFields`의 JSON)을 함께 보내고, 실행 측은 재조회 값의 지문이 같을 때만 실행한다.
+명령이 실행되기까지는 세 가지가 모두 맞아야 한다: **누가** 눌렀는가(신뢰된 제스처), **무엇을** 눌렀는가(버튼 지문), **어느 페이지에 대해**인가(대상 정합). 셋은 서로를 대신하지 못한다 — 지문은 버튼 설정만 보므로 페이지 이동을 모르고, 대상 정합은 버튼이 바뀐 것을 모르며, 둘 다 클릭이 사람에게서 온 것인지는 모른다.
 
-| 경로 | 렌더 주체 | 실행 시 조회 | 화면 = 실행인가 |
+| 경로 | 누가(R9) | 무엇을(R8) | 어느 페이지에 대해(R9) |
 |:--|:--|:--|:--|
-| PR 버튼(`execute_command`) | `content.js` `tryInsertPRButtons` | `clickedButton('pr', i, shown)` | ✓ 지문 대조 — 다르면 `{success:false, error: BUTTON_CHANGED_ERROR}` |
-| 이슈 버튼(`execute_issue_command`) | `tryInsertIssueButtons` | `clickedButton('issue', …)` | ✓ 같음 |
-| 저장소 헤더 버튼(`execute_repo_command`) | `tryInsertRepoButtons` | `clickedButton('repo', …)` | ✓ 같음 — PR·이슈 페이지 헤더에도 붙지만 같은 경로다 |
-| claude 입력 예약 | 위 세 경로에 실림 | 같은 `button.claudeInputs` | ✓ 지문에 `claudeInputs`가 포함돼 있어, 대조를 통과한 버튼의 예약 입력은 화면에 있던 그것이다 |
-| **확장 아이콘 클릭** | **없음** — content 렌더를 거치지 않는다 | `RUN_BY_KIND[kind](tab, 0)`, `shown` 없음 | **해당 없음(의도)**: 보인 버튼이 없으므로 어긋날 대상도 없다. 요청 자체가 "이 페이지의 첫 버튼"이고, service worker 단독 조회가 그 전부다. `onMessage` 경로는 `shown`을 **필수**로 요구하므로 이 예외가 메시지로 새지 않는다 |
-| 렌더 측 get 실패 | `loadButtonConfigs` → `null` | — | ✓ **아무것도 그리지 않는다**. 기본값을 그리면 실행 측이 사용자의 실제 저장값을 돌린다(P1 재현). 폴링이 재시도하므로 대개 1초 안에 복구된다 |
-| 렌더 측이 읽었으나 **못 쓰는 값**이 있었다 | `readStoredButtons` → 기본값 폴백 | 같은 검증기로 같은 판정 | ✓ 양쪽이 같은 저장소를 같은 규칙으로 읽어 같은 결론에 도달하므로 지문이 일치한다(R7의 폴백 유지 근거는 여기서 성립한다) |
+| PR 버튼(`execute_command`) | `onUserClick` — `isTrusted` 아니면 본체 미실행 | `clickedButton('pr', i, shown)` 지문 대조 → `BUTTON_CHANGED_ERROR` | `assertSamePage`를 **두 번**: tab URL 시점, 그리고 `getBranchAndMainFromDOM`이 **자기 pathname을 함께 반환**하므로 branch를 실제로 읽은 페이지. number와 branch가 같은 페이지에서 온다 |
+| 이슈 버튼(`execute_issue_command`) | 같음 | 같음 | tab URL 시점 + `getDefaultBranchFromPage`가 반환하는 pathname(await 이전에 캡처) |
+| 저장소 헤더 버튼(`execute_repo_command`) | 같음 | 같음 | 같음 — PR·이슈 페이지 헤더에도 붙지만 경로는 하나다 |
+| claude 입력 예약 | 위 세 경로에 실림 | 지문에 `claudeInputs` 포함 | 위와 같음 — 예약 입력은 대조를 통과한 버튼의 것이다 |
+| **확장 아이콘 클릭** | 브라우저 UI의 클릭이라 페이지 스크립트가 만들 수 없다 | `shown` 없음 | `clicked` 없음 → `assertSamePage`가 통과시킨다. **R8의 "아무것도 그리지 않는다"는 서술이 부정확했다**(Codex 반박 수용): PR·이슈 페이지에도 content 버튼은 실제로 그려진다. 정확히는 **아이콘 클릭은 그 버튼들을 거치지 않는다** — 클릭 대상이 브라우저 툴바이지 페이지 요소가 아니고, 요청도 "이 탭의 첫 버튼"이다. 보이는 첫 버튼과 같기를 요구하려면 별도 항목이 필요하고, 이번 범위 밖으로 남긴다(잔여) |
+| 렌더 측 get 실패 | — | `loadButtonConfigs` → `null`, 아무것도 그리지 않음 | — |
+| 렌더 측이 읽었으나 **못 쓰는 값**이 있었다 | — | `readStoredButtons` → 기본값 폴백, 양쪽이 같은 판정이라 지문 일치 | — |
+| **SPA 이동 후 남은 버튼** | — | — | **구멍 → 닫음(R9)**: 중복 방지가 URL 변경을 몰라 옛 PR의 버튼이 새 페이지에 남았다. `onUrlChange`가 `sameTarget`으로 대상 변화를 보고 바뀌었으면 `.terminal-*-btn`을 제거해 다시 그리게 한다(같은 저장소의 탭 이동은 대상이 같으므로 깜빡이지 않는다) |
 
-**신뢰 경계**: 지문은 **비교 키일 뿐 command의 출처가 아니다.** 실행할 문자열은 여전히 storage에서만 나오므로, 메시지는 거부를 유발할 수는 있어도 **없던 command를 들여올 수는 없다**. 덧붙여 `manifest.json`에 `externally_connectable`이 없어(확인: `grep -n externally_connectable extension/` → 0건) 웹 페이지는 `chrome.runtime.sendMessage`에 닿지 못하고, 콘텐츠 스크립트는 격리 월드에서 돌아 페이지 JS가 `chrome.runtime`을 볼 수 없다.
+**신뢰 경계**: 지문도 클릭 대상도 **비교 키일 뿐 값의 출처가 아니다.** 실행할 문자열은 storage에서만, repo·owner·number는 `sender.tab.url`과 DOM에서만 온다 — 메시지가 자기 저장소 이름을 지어낼 수 없다는 뜻이고, 이것이 R8에서 대안 ①을 기각한 근거와 같다. 지문은 실행할 문자열은 여전히 storage에서만 나오므로, 메시지는 거부를 유발할 수는 있어도 **없던 command를 들여올 수는 없다**. 덧붙여 `manifest.json`에 `externally_connectable`이 없어(확인: `grep -n externally_connectable extension/` → 0건) 웹 페이지는 `chrome.runtime.sendMessage`에 닿지 못하고, 콘텐츠 스크립트는 격리 월드에서 돌아 페이지 JS가 `chrome.runtime`을 볼 수 없다.
+
+### 소탕 표 14 — 페이지를 바꾸는 작업의 상호 배제 (R9, 부류 ⒞)
+
+셋 다 **await를 사이에 두고 폼을 붙들거나 폼으로 무언가를 만든다**. 둘이 겹치면 한쪽은 다른 쪽이 곧 갈아 끼울 폼 위에서 일한다. R8은 이 규칙을 import끼리만 세웠다 — 작업별로 배제 대상을 열거했고 그 열거가 틀렸다.
+
+| 시작하려는 작업 | 배제하는 것 | 게이트 | 겹쳤을 때 무슨 일이 났는가 |
+|:--|:--|:--|:--|
+| **Save** | saving · importing · loading | `shouldStartPageTask` + `pageBusyMessage` | importing 중 Save → 파일이 곧 덮을 폼으로 payload를 만들어 기록(**R8 P2 재현**). loading 중 Save는 R7에서 이미 닫음 |
+| **import** | saving · importing · loading | 같은 술어 | Save 중 import → 저장 중인 폼을 파일이 갈아 끼운다. loading 중 import → 로드 응답이 파일을 덮는다(`planImport`의 세대 검사가 사후에 잡지만, 시작하지 않는 편이 낫다) |
+| **load**(초기·Retry) | — 막지 않는다 | — | 로드는 폼을 만드는 것이 아니라 **가져오는** 것이고, 첫 로드는 막을 대상 자체가 없다. 겹친 로드는 세대(`loadGeneration`)로 추월분을 버린다 |
+| **adoption**(`onChanged` → load) | saving · importing | `classifyStorageChange`의 `taskInFlight` | 두 작업 중 어느 쪽이 돌든 **보류**(`defer`)하고, 그 작업의 `finally`에서 다시 묻는다. R8에는 `saving`만 있어 import 중 adoption이 폼을 갈아 끼웠다 |
+
+`shouldStartPageTask`는 호출자를 스스로 빼지 않는다 — 작업은 자기가 도는 동안 다시 시작될 수 없으므로 결과가 같고, 빼는 순간 "누가 자기를 빼야 하는가"라는 열거가 다시 생긴다.
+
+### 소탕 표 15 — 저장 payload의 크기 (R9, 부류 ⒟)
+
+`storage.sync`는 항목 하나를 **키 길이 + 값의 JSON**으로 재고 **8,192B**를 넘으면 거부한다. 상한이 있던 것은 개수(`MAX_BUTTONS` 3 · `MAX_CLAUDE_INPUTS` 5)뿐이고 **길이는 어디에도 없었다**.
+
+| 항목 | 값 | 근거 |
+|:--|:--|:--|
+| 하드 한도 `QUOTA_BYTES_PER_ITEM` | **8,192B** | Chrome 문서 |
+| 실측 기준선(프리셋 + 오버라이드 2) | **1,978B** | 드라이버 실측 — 전체 키를 합한 값이므로 키 하나는 이보다 훨씬 작다 |
+| 실측 결함(9,000자 command 한 세대) | **9,159B** → `set` 실패 | 드라이버 실측 |
+| 우리가 거는 상한 `MAX_STORED_ITEM_BYTES` | **6,144B**(하드 한도의 ¾) | 남는 ¼(2,048B)은 미래 세대가 같은 내용 **주위에** 두를 포장(세대 래퍼·seed marker 등, §9 조항 2)의 몫. 기준선 1,978B의 3배가 넘으므로 현실의 설정을 거절하지 않는다 |
+| 총량 `QUOTA_BYTES` | 102,400B | 키 6개 × 6,144B = 36,864B가 상계라 총량은 여유 |
+
+측정은 **문자가 아니라 바이트**다(`TextEncoder`) — face는 대개 이모지라 한 문자가 4바이트이고, 문자 수로 재면 한도를 넘긴 payload가 통과한다. 검사는 `planSave`의 두 번째 문장이고, 어느 키가 넘었는지 이름을 밝힌다. **편집기 textarea에 실시간 카운터는 두지 않았다**: 한도가 사는 자리가 둘로 늘고(드리프트), 거절 시점에 키 이름과 한도가 함께 나오므로 필요한 정보는 이미 전달된다.
 
 ### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
 
@@ -566,7 +601,7 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 결정 9는 철회 대상이 아니지만 "v2 구현 전에 명문화돼야 할" 5건(seed 경쟁·부분 존재 오인·pre-consent 런타임·quota·세대 건너뛰기)이 지적됐다 — 아래 「결정 9 하위 조항」 초안.
 - 부류 이동: 옵션 페이지의 동시성·신뢰 경계는 섰고, 남은 것은 **렌더와 실행이 서로 다른 스냅샷을 본다**는 것(옵션 페이지 밖, 실행 경로), 그리고 페이지 단위 비동기 작업(import)·이탈 경고의 **단일 술어 미적용**이다.
 
-### R8 — 워킹트리(미커밋, base `2d13019`) · 항목 14
+### R8 — `3e12853` (Codex 판정: 차단) · 항목 14
 
 - 범위: Codex R7 차단 5건 전부 — ⒜ P1(화면≠실행), ⒝ P2(동시 import), ⒞ P2(`beforeunload`), ⒟ P3 ×2(hole 판정·적용 건수) — 과 ⒠ 결정 9 하위 조항 5건(문서). R6 6건은 재검증에서 전부 통과했으므로 건드리지 않았다. **이 라운드에서 처음으로 옵션 페이지 밖(`content.js`·`background.js`)을 고쳤다.**
 - 자리: `defaults.js:282-286`(인덱스 실재 검사)·`:303`(`buttonFingerprint`)·`:309`(`BUTTON_CHANGED_ERROR`), `content.js:75-80`(지문 동봉)·`:93-104`(get 실패 → `null`)·`:231`·`:284`·`:318`(그리지 않고 반환), `background.js:163`(`clickedButton`)·`:200`·`:238`·`:256`(실행자 시그니처)·`:330`(`shown` 필수)·`:308`(아이콘 경로의 예외 주석), `migrations.js:283`(`applied` 카운터)·`:515-518`(`IMPORT_BUSY_MESSAGE`·`shouldStartImport`)·`:528`(`hasUnsavedWork`), `options.js:66`(`importing`)·`:146`(`wouldLoseWork`)·`:903-916`(실제 적용 건수 메시지)·`:1046`(import 직렬화)·`:1441`(`beforeunload`).
@@ -586,4 +621,32 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 실측: `node --test` **139/0**(R7 131 → 신규 8: `buttons.test.js` 5 + `migration.test.js` 3), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
 - **잔여**: `get`↔`set` 창은 그대로. 지문 대조는 **두 read 사이의 어긋남을 탐지**할 뿐 저장소 자체의 원자성을 주지 않는다 — 재조회와 실행 사이의 창(마이크로초 단위)은 남고, 거기서 바뀐 값은 이번에도 잡히지 않는다. 결정 9의 계약은 여전히 문서뿐이고, 하위 조항 5건은 **사용자 확정 대기** 상태다.
 - **미검증**: ⒜의 실동작(실제 원격 변경 후 클릭, content get 실패 주입, 아이콘 클릭 경로)은 자동 게이트가 없다 — 순수 함수(`buttonFingerprint` 일치·불일치)만 red로 고정했고 나머지는 수기 검사 7항목으로 남겼다. `chrome.runtime.sendMessage`/`onMessage` 왕복을 태우는 통합 테스트는 **만들지 않았다**(chrome API 스텁이 없다). ⒝⒞도 순수 술어까지만이다.
+- **Codex 판정: 차단(no).** R7 5건 **전부 차단 확인** → 항목 14 agreed. 판단 6건 중 1(지문 대조)·5(`beforeunload`) 수용, 4(import 비대칭 문서화) 수용, 6(잔여 창) 조건부 수용, **2 반박** — "PR·issue 페이지에도 content 버튼은 **실제로 그려지므로** '아이콘 클릭은 아무것도 그리지 않는다'는 설명은 부정확하다. 아이콘과 **보이는 첫 버튼**의 동일성을 요구한다면 면제할 수 없다", 3 **부분 반박** — "두 import 간 직렬화만 수용, Save/load와의 전면 직렬화라는 설명은 반박"(실제로 코드가 그렇지 않았다).
+- 신규 P1 ×2: **(A) 실행이 명시적 클릭을 요구하지 않는다** — `document.querySelector('.terminal-cmd-btn').dispatchEvent(new MouseEvent('click',{bubbles:true}))`로 저장된 command가 사용자 손 없이 실행된다. 클릭 핸들러가 `event.isTrusted`를 보지 않는다(위협 모델: GitHub 페이지에서 도는 XSS·악성 확장). **(B) 실행 대상이 정합하지 않는다** — PR #1에서 버튼을 그린 뒤 storage read가 pending인 순간 `/owner/repo/pull/2`로 이동하면, `target.number`는 전송 시점 `sender.tab.url`의 #1인데 `getBranchAndMainFromDOM`은 실행 시점 #2 DOM의 branch를 읽는다. 지문은 버튼 설정만 보므로 통과한다. 부수로 `content.js`의 중복 방지가 URL 변경을 감지하지 못해 옛 PR의 버튼이 새 페이지에 남는 경로.
+- 신규 P2: **페이지 작업 상호 배제가 import끼리만 성립** — `file.text()` pending(`importing=true`) 중 [Save]를 누르면 `shouldStartSave`가 `importing`을 보지 않아 저장이 시작된다. 역방향(Save 중 import)·load↔import도 마찬가지.
+- **현행 코드 실결함(결정 9와 무관)**: `MAX_BUTTONS`·`MAX_CLAUDE_INPUTS`는 있는데 **command 문자열 길이 상한이 없다**. 9,000자 command 한 세대가 **9,159B > 8,192B(`QUOTA_BYTES_PER_ITEM`)** — 드라이버 실측. R6의 catch 덕에 "Could not save"는 뜨지만 예방도 안내도 없다. 함께 실측된 기준선: 프리셋 + 오버라이드 2개 = **1,978B**.
+- 드라이버 실측으로 세 지적 모두 확인: `isTrusted` 검사 0건 / command 상한 없음(9,159B) / target 캡처 순서.
+- 결정 9 하위 조항 5건에 구멍이 지적됐다(seed 원본이 다중 키·단일 키의 적용 범위·pre-consent 정본 우선순위·quota 삭제와 영구 보존의 충돌·v1→v3 검증 주체) — §9 조항 보완으로 반영, 확정은 여전히 사용자 몫.
+- 부류 이동: "무엇이 실행되는가"는 R8이 세웠고, 남은 것은 **누가 눌렀는가**(신뢰된 제스처)와 **어느 페이지에 대해 실행되는가**(대상 정합), 그리고 페이지 작업 배제의 **전수성**이다.
+
+### R9 — 워킹트리(미커밋, base `3e12853`) · 항목 15
+
+- 범위: Codex R8 차단 5건 전부 — ⒜ P1(신뢰된 클릭), ⒝ P1(실행 대상 정합 + SPA 잔존 버튼), ⒞ P2(페이지 작업 배제), ⒟ 현행 결함(payload 크기 상한) — 과 ⒠ §9 조항 보완 5건(문서). R7 5건은 재검증에서 전부 통과했으므로 건드리지 않았다.
+- 자리: `defaults.js:195`(`isUserGesture`)·`:202`(`onUserClick`)·`:217`(`pageTargetOf`)·`:226`(`sameTarget`)·`:235-246`(`SYNC_QUOTA_BYTES_PER_ITEM`·`MAX_STORED_ITEM_BYTES`·`storedItemBytes`), `content.js:43`·`:162`(두 클릭 경로)·`:84`(클릭 시점 대상 동봉)·`:362`(`removeInsertedButtons`)·`:370`(`onUrlChange`의 대상 비교), `background.js:167-173`(`PAGE_CHANGED_ERROR`·`assertSamePage`)·`:229`·`:243`(PR 두 지점)·`:271`·`:294`(issue·repo)·`:121`(`detectDefaultBranch`), `migrations.js:419-427`(크기 거부)·`:441-458`(`pageIsBusy`·`shouldStartPageTask`·`pageBusyMessage`), `options.js:171`(`pageTasks`).
+- **⒜ 신뢰된 클릭.** `isTrusted`는 브라우저만 붙일 수 있는 표식이고, 그것이 "사람이 눌렀다"에 답할 수 있는 유일한 근거다. 가드를 두 핸들러에 각각 넣지 않고 `onUserClick` 하나가 **본체보다 먼저** 보게 했다 — 옵션 페이지의 `userAction`과 같은 이유이며, 같은 실패(두 곳에서 지키던 순서가 세 번째에서 뒤집힘)를 피한다. R8이 세운 계약의 완성이다: **지문은 "무엇을", `isTrusted`는 "누가"**.
+- **⒝ 대상 정합 — 두 대안을 모두 채택했고, 각각이 다른 절반을 맡는다.**
+  - 지시가 제시한 상위 고도안(대상을 한 번만 읽어 number·branch가 같은 시점에서 오게)이 **내부 정합**을 준다: `getBranchAndMainFromDOM`·`getDefaultBranchFromPage`가 자기 `pathname`을 **같은 동기 실행 안에서** 캡처해 함께 반환한다(후자는 `await` **이전**에 — 그 뒤의 `location`은 이동한 뒤의 페이지다).
+  - 클릭 시점 대상 동봉이 **외부 정합**을 준다: 그 페이지가 **사용자가 클릭한 그 페이지**인가. 내부 정합만으로는 "일관되게 엉뚱한 페이지"를 막지 못한다.
+  - 그래서 둘 다 필요하고, 검사는 `assertSamePage` 한 함수로 **두 지점**(tab URL 시점 = 이른 거절, DOM을 읽은 pathname = 정본)에서 돈다.
+  - **`clicked`는 비교 키이지 출처가 아니다.** repo·owner·number는 여전히 `sender.tab.url`(브라우저가 주는 값)에서만 나온다 — 메시지 값을 그대로 변수로 쓰면 메시지가 자기 저장소 이름을 지어낼 수 있고, 그것은 R8에서 대안 ①을 기각한 근거와 같은 부류다.
+  - **아이콘 클릭 서술 정정**(Codex 반박 수용): "아이콘 클릭은 content 렌더가 없다"는 부정확했다 — PR·이슈 페이지에도 content 버튼은 그려진다. 정확한 서술은 **아이콘 클릭이 그 버튼들을 거치지 않는다**는 것이고(클릭 대상이 툴바다), "아이콘과 보이는 첫 버튼이 같아야 한다"는 요구는 **별도 항목**으로 남긴다(잔여).
+  - 부수: SPA 이동 후 옛 버튼이 남던 경로를 `onUrlChange`에서 닫았다. 제거 조건을 URL이 아니라 **대상 변화**(`sameTarget`)로 둬서 같은 저장소의 탭 이동은 깜빡이지 않는다.
+- **⒞ 배제의 전수화.** R8은 작업마다 배제 대상을 **열거**했고 그 열거가 틀렸다(import는 import만 봤다). `pageIsBusy` 하나로 바꾸니 save·import가 같은 문장을 쓰고, 새 작업이 생겨도 등록이 필요 없다 — R4의 "컨트롤 열거 → 루트 `inert`"와 같은 교훈이다. adoption 쪽 용어도 `saving` → `taskInFlight`로 넓혀 import 중 채택을 막고, import의 `finally`가 Save와 똑같이 보류분을 다시 묻는다. 소탕 표 14.
+- **⒟ 크기 상한.** 근본안(키별 직렬화 바이트 검사)을 택했다 — 필드마다 길이 규칙을 기르는 대신 command·claude 입력·오버라이드 맵을 **한 자리에서** 덮는다. 상한 6,144B = 하드 한도 8,192B의 ¾이고, 남긴 ¼은 §9 조항 2가 세대 래퍼를 두를 몫이다. 실측 기준선 1,978B의 3배가 넘어 현실의 설정은 거절되지 않는다. 측정은 `TextEncoder` — face가 이모지라 문자 수로 재면 과소 측정된다. 편집기 실시간 카운터는 **두지 않았다**(한도가 사는 자리가 둘로 늘고, 거절 메시지가 키 이름과 한도를 이미 말한다). 소탕 표 15.
+- **CLAUDE.md 실행 경로 규칙 재확인**: version 무지 — `grep 'VERSION_KEY\|SETTINGS_VERSION' extension/content.js extension/background.js` → **0건**. `{success:false}` 검사 — 새 거부 둘(`BUTTON_CHANGED_ERROR`·`PAGE_CHANGED_ERROR`)도 `throw` → `onMessage`의 `.catch` → `{success:false, error}` → `runButtonCommand`의 `response?.success` 검사 → 버튼 ❌ 체인 안에 있다.
+- red 기록(2배치): `buttons.test.js` → `not ok 40∼44`(`isUserGesture`·`onUserClick`·`pageTargetOf`·`sameTarget`·`storedItemBytes` 전부 `ReferenceError`). `migration.test.js` → `# ReferenceError: shouldStartPageTask is not defined` → `not ok 3`(파일 전체 로드 실패). 각 확인 후 구현.
+- 기존 테스트 갱신 6건: `shouldStartSave`·`shouldStartImport` 호출 5곳을 `shouldStartPageTask`로(두 게이트가 같은 규칙임이 이번 라운드의 요지다), `classifyStorageChange`의 `saving` → `taskInFlight` 1곳. 삭제한 테스트는 없다.
+- 실측: `node --test` **148/0**(R8 139 → 신규 9: `buttons.test.js` 5 + `migration.test.js` 4), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
+- **잔여**: (1) `get`↔`set` 창은 그대로. (2) 대상 정합도 **탐지**다 — `assertSamePage`와 네이티브 메시지 전송 사이의 마이크로초 창에서 이동하면 잡히지 않는다. (3) **아이콘 클릭 ↔ 보이는 첫 버튼의 동일성**은 이번 범위 밖(위 참조). (4) §9 계약은 여전히 문서뿐이고 조항 5건은 **사용자 확정 대기**이며, 조항 5는 "v2를 만드는 라운드의 필수 red"로 미뤘다.
+- **미검증**: ⒜⒝의 실동작(synthetic click 거부, 실제 SPA 이동 중 클릭, 아이콘 경로)은 자동 게이트가 없다 — 순수 함수(`isUserGesture`·`onUserClick`의 순서·`pageTargetOf`·`sameTarget`)만 red로 고정했고 나머지는 수기 검사 5항목으로 남겼다. `chrome.scripting.executeScript`가 실제로 `pathname`을 실어 오는지, `sender.tab.url`이 이동 직후 무엇을 주는지는 **실측하지 않았다**. ⒟의 6,144B도 계산된 값이지 실측 상한이 아니다(기준선 1,978B과 하드 한도 8,192B만 실측).
 - 판정: 미요청.

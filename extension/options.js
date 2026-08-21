@@ -165,11 +165,18 @@ function isOurOwnWrite(changes) {
 // Every branch here ends somewhere visible: adopted, still held, or on the banner. A change we
 // decide not to adopt is still a change, and dropping it silently is how the warning disappeared
 // while the page was in fact still behind the store.
+// What is holding the form right now, in the shape every gate asks for. A load counts here too:
+// its answer replaces the form, so a save or an import started into that window builds from
+// something that is about to be gone.
+function pageTasks() {
+  return { saving: state.saving, importing: state.importing, loading: state.loadsInFlight > 0 };
+}
+
 function adoptDeferredChange() {
   const changes = state.deferredChange;
   if (!changes) return;
   const outcome = classifyStorageChange({
-    changes, loaded: state.loaded, saving: state.saving,
+    changes, loaded: state.loaded, taskInFlight: state.saving || state.importing,
     busy: editsInProgress(), isOwnWrite: false,
   });
   if (outcome === 'defer') return; // still not a moment to act; it stays held
@@ -599,8 +606,8 @@ async function saveSettings() {
   // unchanged, and the later write would land carrying what was true before the earlier one; a save
   // started while a load is outstanding builds its payload from a form that answer is about to
   // replace.
-  if (!shouldStartSave({ loaded: state.loaded, saving: state.saving, loading: state.loadsInFlight > 0 })) {
-    showStatus('info', state.saving ? 'Already saving — one moment.' : SAVE_LOADING_MESSAGE);
+  if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
+    showStatus('info', pageBusyMessage(pageTasks()));
     return;
   }
 
@@ -1043,8 +1050,8 @@ async function importSettings(file) {
   if (!requireLoaded()) return;
   // One file at a time. Two in flight both captured the same revision, and whichever finished
   // reading first applied and disqualified the other — so the file chosen *second* lost, silently.
-  if (!shouldStartImport({ loaded: state.loaded, importing: state.importing })) {
-    showStatus('error', IMPORT_BUSY_MESSAGE);
+  if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
+    showStatus('error', pageBusyMessage(pageTasks()));
     return;
   }
   if (file.size > MAX_IMPORT_BYTES) {
@@ -1093,6 +1100,8 @@ async function importSettings(file) {
     showStatus('info', `Settings imported. Press Save to apply.${notes.length ? ` (${notes.join('; ')})` : ''}`);
   } finally {
     state.importing = false;
+    // Same settlement as the save: a change held while this ran gets asked again now
+    adoptDeferredChange();
   }
 }
 
@@ -1420,7 +1429,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   const outcome = classifyStorageChange({
     changes,
     loaded: state.loaded,
-    saving: state.saving,
+    // A save or an import holds the form across an await; adopting underneath either replaces what
+    // it is about to write or fill
+    taskInFlight: state.saving || state.importing,
     // Unsaved work — text typed, or a review being decided — wins over a remote change
     busy: editsInProgress(),
     // Our own save arrives here as a change event too. Treating it as another device would warn

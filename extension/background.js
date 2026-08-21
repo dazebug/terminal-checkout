@@ -14,22 +14,17 @@ function parseGitHubUrl(url) {
     return null; // tabs we have no host permission for don't hand us a url
   }
   if (parsed.hostname !== 'github.com') return null;
-
-  const kind = pageTypeOf(parsed.pathname);
-  if (!kind) return null;
-
-  const [, owner, repo] = parsed.pathname.split('/');
-  return {
-    owner,
-    repo,
-    kind,
-    number: parsed.pathname.match(/\/(?:pull|issues)\/(\d+)/)?.[1] || null,
-  };
+  // One reader for the four parts a request is built from (defaults.js), shared with the content
+  // script so both sides describe a page the same way and can be compared
+  return pageTargetOf(parsed.pathname);
 }
 
 // Extract the branch name and the base branch from the DOM
 function getBranchAndMainFromDOM() {
-  const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
+  // The pathname is read here, in the same synchronous pass as the branch, so the two cannot come
+  // from different pages: the caller compares it against the page the click came from
+  const pathname = location.pathname;
+  const match = pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return null;
 
   // Cross-fork PRs: the head ref link can point at the fork's path, so search every tree link
@@ -53,7 +48,7 @@ function getBranchAndMainFromDOM() {
     }
   }
 
-  if (headBranch) return { branch: headBranch, detectedMain: baseBranch };
+  if (headBranch) return { branch: headBranch, detectedMain: baseBranch, pathname };
 
   // Legacy UI fallback 1: head-ref element
   const headRef = document.querySelector('.head-ref a, .head-ref span');
@@ -61,7 +56,8 @@ function getBranchAndMainFromDOM() {
     const baseRef = document.querySelector('.base-ref a, .base-ref span');
     return {
       branch: headRef.textContent.trim(),
-      detectedMain: baseRef ? baseRef.textContent.trim() : null
+      detectedMain: baseRef ? baseRef.textContent.trim() : null,
+      pathname,
     };
   }
 
@@ -71,7 +67,8 @@ function getBranchAndMainFromDOM() {
     const baseElement = document.querySelector('.commit-ref.base-ref');
     return {
       branch: branchElement.textContent.trim(),
-      detectedMain: baseElement ? baseElement.textContent.trim() : null
+      detectedMain: baseElement ? baseElement.textContent.trim() : null,
+      pathname,
     };
   }
 
@@ -90,32 +87,39 @@ function getBranchAndMainFromDOM() {
 //
 // chrome.scripting injects this function on its own, so it cannot reference outer constants or helpers.
 async function getDefaultBranchFromPage(owner, repo) {
+  // Captured before the await: the caller checks it against the page the click came from, and after
+  // an await `location` would be the page we navigated to rather than the one we read
+  const pathname = location.pathname;
   const pattern = /"defaultBranch"\s*:\s*"([^"]+)"/;
   for (const script of document.querySelectorAll('script[type="application/json"]')) {
     const match = script.textContent.match(pattern);
-    if (match) return match[1];
+    if (match) return { branch: match[1], pathname };
   }
   try {
     const html = await (await fetch(`/${owner}/${repo}`)).text();
-    return html.match(pattern)?.[1] || null;
+    return { branch: html.match(pattern)?.[1] || null, pathname };
   } catch {
-    return null;
+    return { branch: null, pathname };
   }
 }
 
 // null when it can't be read — the caller falls back to the override or the global default
-async function detectDefaultBranch(tab, owner, repo) {
+async function detectDefaultBranch(tab, owner, repo, clicked) {
+  let read;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: getDefaultBranchFromPage,
       args: [owner, repo],
     });
-    return results[0]?.result || null;
+    read = results[0]?.result;
   } catch (error) {
     console.error('Could not detect default branch:', error);
     return null;
   }
+  // Outside the catch: a page that moved is a refusal, not a detection failure to shrug off
+  assertSamePage(clicked, read?.pathname);
+  return read?.branch || null;
 }
 
 // Resolving the main branch: storage override → detected from the page → global default
@@ -146,6 +150,27 @@ async function loadButtons(kind) {
   // Same validation as the content script and the options page — a stored entry that is not a
   // button would otherwise throw here, and the click would fail with nothing explaining why
   return readStoredButtons(data[storageKey], defaults);
+}
+
+// The page a request is built for has to be the page the click came from — at the moment the tab is
+// asked, and again at the moment its DOM is read.
+//
+// Those two used to be different instants. The PR number was parsed from `sender.tab.url` when the
+// message arrived, while the branch was read out of the DOM some milliseconds later; a navigation in
+// between produced a request carrying one PR's number and another PR's branch. The button
+// fingerprint cannot catch that — a button is drawn for a section, not for a page — so the page is
+// its own check.
+//
+// `clicked` is a comparison key and never a source: every value still comes from the tab and its
+// DOM, so a message can cause a refusal but cannot name its own repository. It is absent on the
+// extension-icon path, which has no page-rendered button and no click on a page to be coherent with.
+const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
+
+function assertSamePage(clicked, pathname) {
+  if (!clicked) return;
+  if (!sameTarget(clicked, pathname ? pageTargetOf(pathname) : null)) {
+    throw new Error(PAGE_CHANGED_ERROR);
+  }
 }
 
 // The button a click meant, or a refusal.
@@ -197,9 +222,11 @@ async function runButton(button, variables) {
 }
 
 // Run a custom command (PR page)
-async function executeCommand(tab, buttonIndex, shown) {
+async function executeCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'pr') throw new Error('Not a GitHub PR page');
+  // Early, so a tab that has already moved on is refused before anything is read off it
+  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('pr', buttonIndex, shown);
 
@@ -211,6 +238,9 @@ async function executeCommand(tab, buttonIndex, shown) {
 
   const domResult = results[0]?.result;
   if (!domResult?.branch) throw new Error('Could not extract branch name');
+  // The authoritative check: the branch below and the number above have to describe one page, and
+  // this is the pathname the branch was actually read from
+  assertSamePage(clicked, domResult.pathname);
 
   const main = await resolveMainBranch(target.repo, domResult.detectedMain);
 
@@ -235,13 +265,17 @@ async function executeCommand(tab, buttonIndex, shown) {
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
 // variables isn't passed — if a template uses one, the app rejects it with
 // "Variable {branch} not provided"
-async function executeIssueCommand(tab, buttonIndex, shown) {
+async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'issue') throw new Error('Not a GitHub issue page');
+  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('issue', buttonIndex, shown);
 
-  const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
+  // detectDefaultBranch checks the page it read from against the click as well — the default branch
+  // it finds is embedded in whatever page is showing, which need not be this repository's
+  const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
+  const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing issue command: repo=${target.repo}, number=${target.number}, main=${main}`);
   await runButton(button, {
     repo: target.repo,
@@ -253,14 +287,16 @@ async function executeIssueCommand(tab, buttonIndex, shown) {
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
 // number, so only {repo}, {owner}, and {main} are passed
-async function executeRepoCommand(tab, buttonIndex, shown) {
+async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
   // Repository buttons are also attached to the header of PR and issue pages, so don't check kind
   const target = parseGitHubUrl(tab.url);
   if (!target) throw new Error('Not a GitHub repo page');
+  assertSamePage(clicked, tab.url && new URL(tab.url).pathname);
 
   const button = await clickedButton('repo', buttonIndex, shown);
 
-  const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
+  const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
+  const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
   await runButton(button, { repo: target.repo, owner: target.owner, main });
 }
@@ -329,7 +365,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // and that one never comes through here.
   if (typeof message.shown !== 'string') return;
 
-  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown).then(() => {
+  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown, message.target).then(() => {
     sendResponse({ success: true });
   }).catch((error) => {
     sendResponse({ success: false, error: error.message });

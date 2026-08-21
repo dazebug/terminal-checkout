@@ -784,8 +784,8 @@ test('a failed load leaves the page shut, and says how to reopen it', () => {
 // them therefore captures what it started from and settles against that capture, never against
 // `state` — which is precisely what the adoption underneath a save had rewritten.
 
-const { planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE, shouldStartSave } =
-  vm.runInThisContext('({ planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE, shouldStartSave })');
+const { planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE } =
+  vm.runInThisContext('({ planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE })');
 
 test('a save writes against the world it started in, not the one adoption left behind', () => {
   // Codex R5 P1, exactly. Clean page, Save pressed: the payload is built from S0 and the live read
@@ -836,9 +836,11 @@ test('a save whose page reloaded under it is refused rather than written', () =>
 test('only one save is in flight at a time', () => {
   // Two saves started from the same captured world would both pass their own check and the later
   // write would win with information from before the earlier one landed.
-  assert.equal(shouldStartSave({ loaded: true, saving: false }), true);
-  assert.equal(shouldStartSave({ loaded: true, saving: true }), false);
-  assert.equal(shouldStartSave({ loaded: false, saving: false }), false);
+  // R9 folded the per-task gates into one: the exclusions were enumerated per task and the
+  // enumeration was wrong (an import excluded other imports and nothing else).
+  assert.equal(shouldStartPageTask({ loaded: true, saving: false }), true);
+  assert.equal(shouldStartPageTask({ loaded: true, saving: true }), false);
+  assert.equal(shouldStartPageTask({ loaded: false, saving: false }), false);
 });
 
 test('a synced change is held, not adopted, while a save is in flight', () => {
@@ -991,8 +993,8 @@ test('a load that applied under a save refuses it — the form is not what the p
 });
 
 test('a save does not start while a load is in flight', () => {
-  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: false }), true);
-  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: true }), false);
+  assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: false }), true);
+  assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: true }), false);
   assert.match(SAVE_LOADING_MESSAGE, /again/i);
 });
 
@@ -1001,7 +1003,7 @@ test("Codex's P1-A combination cannot happen: a load applies, or the save is all
   // that pair unreachable: the save never starts while the load is in flight, and if one applies
   // anyway the applied-generation check refuses the write.
   const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
-  assert.equal(shouldStartSave({ loaded: true, saving: false, loading: true }), false, 'lock 1');
+  assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: true }), false, 'lock 1');
   const ifItHadStarted = planSave({
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0,
     appliedGenerationAtStart: 1, appliedGenerationNow: 2, storeMovedSinceLoad: true,
@@ -1011,10 +1013,12 @@ test("Codex's P1-A combination cannot happen: a load applies, or the save is all
 
 test('every arrival of a remote change ends adopted or on the banner, never nowhere', () => {
   const ours = { buttons: {} };
-  const base = { changes: ours, loaded: true, saving: false, busy: false, isOwnWrite: false };
+  // R9 renamed `saving` to `taskInFlight`: an import holds the form across an await exactly as a
+  // save does, and the narrower name was why only one of them was covered.
+  const base = { changes: ours, loaded: true, taskInFlight: false, busy: false, isOwnWrite: false };
   assert.equal(classifyStorageChange(base), 'adopt');
   assert.equal(classifyStorageChange({ ...base, busy: true }), 'banner');
-  assert.equal(classifyStorageChange({ ...base, saving: true }), 'defer');
+  assert.equal(classifyStorageChange({ ...base, taskInFlight: true }), 'defer');
   // Codex R6 P1-B: dropped outright before the first load, with a comment claiming the load in
   // flight would pick it up — it cannot, because its read may predate the change.
   assert.equal(classifyStorageChange({ ...base, loaded: false }), 'defer');
@@ -1108,16 +1112,16 @@ test('the report says what Save is going to do about what it skipped', () => {
 
 // --- One page-changing task at a time, and one definition of "unsaved" (R8) ---
 
-const { shouldStartImport, IMPORT_BUSY_MESSAGE, hasUnsavedWork } =
-  vm.runInThisContext('({ shouldStartImport, IMPORT_BUSY_MESSAGE, hasUnsavedWork })');
+const { IMPORT_BUSY_MESSAGE, hasUnsavedWork } =
+  vm.runInThisContext('({ IMPORT_BUSY_MESSAGE, hasUnsavedWork })');
 
 test('a second import while one is still being read is refused, and says why', () => {
   // Two files chosen in quick succession both captured revision 0. Whichever `file.text()` finished
   // first applied and bumped the revision; the other was then refused by the revision guard — so the
   // file the user picked *second* lost to the one they picked first, silently.
-  assert.equal(shouldStartImport({ loaded: true, importing: false }), true);
-  assert.equal(shouldStartImport({ loaded: true, importing: true }), false);
-  assert.equal(shouldStartImport({ loaded: false, importing: false }), false);
+  assert.equal(shouldStartPageTask({ loaded: true, importing: false }), true);
+  assert.equal(shouldStartPageTask({ loaded: true, importing: true }), false);
+  assert.equal(shouldStartPageTask({ loaded: false, importing: false }), false);
   assert.match(IMPORT_BUSY_MESSAGE, /already being read|in progress/i);
   assert.match(IMPORT_BUSY_MESSAGE, /again/i, 'a refusal has to say what to do next');
 });
@@ -1151,4 +1155,57 @@ test('the applied count is what was actually rewritten, not what was checked', (
 
   assert.equal(applyMigrationPlan({ buttons: [a, b] }, plan, ['A', 'B']).applied, 2);
   assert.equal(applyMigrationPlan({ buttons: [a, b] }, plan, []).applied, 0);
+});
+
+// --- One page-changing task at a time, for real this time (R9) ---
+// R8 serialized imports against each other and stopped there: a Save could still start while a file
+// was being read, and an import while a save was in flight. Each of those builds a payload from a
+// form the other is about to replace.
+
+const { shouldStartPageTask, pageBusyMessage } =
+  vm.runInThisContext('({ shouldStartPageTask, pageBusyMessage })');
+
+test('no page-changing task starts while another is running', () => {
+  const idle = { loaded: true, saving: false, importing: false, loading: false };
+  assert.equal(shouldStartPageTask(idle), true);
+  // The repro: `file.text()` still pending and [Save] pressed
+  assert.equal(shouldStartPageTask({ ...idle, importing: true }), false);
+  assert.equal(shouldStartPageTask({ ...idle, saving: true }), false);
+  assert.equal(shouldStartPageTask({ ...idle, loading: true }), false);
+  assert.equal(shouldStartPageTask({ ...idle, loaded: false }), false);
+});
+
+test('the refusal names the task that is in the way', () => {
+  assert.match(pageBusyMessage({ saving: true }), /saving/i);
+  assert.match(pageBusyMessage({ importing: true }), /file/i);
+  assert.match(pageBusyMessage({ loading: true }), /re-read/i);
+  assert.equal(pageBusyMessage({ saving: false, importing: false, loading: false }), null);
+});
+
+test('a remote change is deferred while any page task holds the form, not only a save', () => {
+  // An adoption landing mid-import replaces the form the file is about to be applied to, exactly as
+  // it would mid-save. `taskInFlight` is the one term both of them raise.
+  const base = { changes: { buttons: {} }, loaded: true, busy: false, isOwnWrite: false };
+  assert.equal(classifyStorageChange({ ...base, taskInFlight: false }), 'adopt');
+  assert.equal(classifyStorageChange({ ...base, taskInFlight: true }), 'defer');
+});
+
+// --- Settings that cannot be stored are refused before they are attempted (R9) ---
+
+test('a payload too large for one sync item is refused, and says which key', () => {
+  // storage.sync caps an item at 8,192 bytes. A 9,000-character command made `buttons` 9,159 bytes,
+  // and the only thing that happened was the raw quota error from set — no prevention, no guidance.
+  const { MAX_STORED_ITEM_BYTES, SETTINGS_TOO_LARGE_MESSAGE } =
+    vm.runInThisContext('({ MAX_STORED_ITEM_BYTES, SETTINGS_TOO_LARGE_MESSAGE })');
+  const huge = { buttons: [{ face: 'x', label: 'b', command: 'e'.repeat(9000), claudeInputs: [] }] };
+  const outcome = planSave({ capturedSnapshot: {}, liveSnapshot: {}, payload: huge });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.write, undefined, 'nothing may be written');
+  assert.match(outcome.message, /too large/i);
+  assert.match(outcome.message, /buttons/, 'the key that is over has to be named');
+  assert.match(SETTINGS_TOO_LARGE_MESSAGE, /shorten/i, 'and what to do about it');
+
+  const fits = { buttons: [{ face: 'x', label: 'b', command: '{cd} && claude', claudeInputs: [] }] };
+  assert.equal(planSave({ capturedSnapshot: {}, liveSnapshot: {}, payload: fits }).refused, false);
+  assert.ok(MAX_STORED_ITEM_BYTES >= 4096, 'and it must not refuse a plausible set of buttons');
 });

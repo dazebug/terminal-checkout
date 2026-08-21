@@ -363,3 +363,70 @@ test('adoptStoredButtons: a hole hidden behind an extra property is still a hole
   assert.equal(claudeInputs.length, Object.keys(claudeInputs).length, 'the coincidence this relies on');
   assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs }]).skipped, 1);
 });
+
+// --- Who pressed it, and on what page (R9) ---
+// The fingerprint answers "which button"; these answer "who pressed it" and "where". A command that
+// runs is the end of a chain that starts with a person clicking something they can see.
+
+test('only a real click runs anything — a dispatched one is not a user', () => {
+  // `document.querySelector('.terminal-cmd-btn').dispatchEvent(new MouseEvent('click'))` from any
+  // script on the page ran the stored command with no one touching the mouse.
+  const { isUserGesture } = vm.runInThisContext('({ isUserGesture })');
+  assert.equal(isUserGesture({ isTrusted: true }), true);
+  assert.equal(isUserGesture({ isTrusted: false }), false);
+  assert.equal(isUserGesture({}), false);
+  assert.equal(isUserGesture(null), false);
+});
+
+test('the click guard runs before the handler body, not inside it', () => {
+  // Same lesson as userAction on the options page: an order kept by convention at each call site is
+  // an order that gets reversed. One wrapper owns it.
+  const { onUserClick } = vm.runInThisContext('({ onUserClick })');
+  let handler = null;
+  let ran = 0;
+  const element = { addEventListener: (type, fn) => { if (type === 'click') handler = fn; } };
+  onUserClick(element, () => { ran += 1; });
+  assert.equal(typeof handler, 'function');
+
+  const event = { isTrusted: false, preventDefault() {}, stopPropagation() {} };
+  handler(event);
+  assert.equal(ran, 0, 'a synthetic click must not reach the body');
+  handler({ ...event, isTrusted: true });
+  assert.equal(ran, 1);
+});
+
+test('pageTargetOf: what a request is built from, read off one pathname', () => {
+  const { pageTargetOf } = vm.runInThisContext('({ pageTargetOf })');
+  assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout/pull/14'),
+    { kind: 'pr', owner: 'dazebug', repo: 'terminal-checkout', number: '14' });
+  assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout/issues/3'),
+    { kind: 'issue', owner: 'dazebug', repo: 'terminal-checkout', number: '3' });
+  assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout'),
+    { kind: 'repo', owner: 'dazebug', repo: 'terminal-checkout', number: null });
+  assert.equal(pageTargetOf('/settings/profile'), null);
+});
+
+test('sameTarget: a navigation between two PRs is not the same target', () => {
+  // The repro: the buttons were drawn on PR #1, the tab moved to PR #2 while storage was being
+  // read, and the request went out with #1's number and #2's branch.
+  const { pageTargetOf, sameTarget } = vm.runInThisContext('({ pageTargetOf, sameTarget })');
+  const one = pageTargetOf('/o/r/pull/1');
+  const two = pageTargetOf('/o/r/pull/2');
+  assert.equal(sameTarget(one, one), true);
+  assert.equal(sameTarget(one, two), false);
+  assert.equal(sameTarget(one, pageTargetOf('/other/r/pull/1')), false);
+  assert.equal(sameTarget(one, null), false);
+  assert.equal(sameTarget(null, null), false, 'no target is not a match, it is an absence');
+  // Moving between tabs of one repository keeps the target, so the drawn buttons stay valid
+  assert.equal(sameTarget(pageTargetOf('/o/r/issues'), pageTargetOf('/o/r/pulls')), true);
+});
+
+test('storedItemBytes: an item is its key plus the UTF-8 bytes of its JSON', () => {
+  const { storedItemBytes, MAX_STORED_ITEM_BYTES, SYNC_QUOTA_BYTES_PER_ITEM } =
+    vm.runInThisContext('({ storedItemBytes, MAX_STORED_ITEM_BYTES, SYNC_QUOTA_BYTES_PER_ITEM })');
+  assert.equal(storedItemBytes('k', 'ab'), 1 + 4); // "ab" is four characters of JSON
+  // An emoji face is one JS character and four bytes — counting characters would under-measure it
+  assert.ok(storedItemBytes('k', '🤖') > storedItemBytes('k', 'ab'));
+  assert.ok(MAX_STORED_ITEM_BYTES < SYNC_QUOTA_BYTES_PER_ITEM, 'the budget has to leave room');
+  assert.equal(SYNC_QUOTA_BYTES_PER_ITEM, 8192);
+});

@@ -39,10 +39,8 @@ function createRepoButton(buttonConfig, index) {
     button.style.backgroundColor = '#238636';
   });
 
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  // onUserClick refuses anything the browser did not mark as a real click, before the body runs
+  onUserClick(button, async () => {
     button.textContent = phases.busy;
     button.disabled = true;
 
@@ -69,12 +67,21 @@ function createRepoButton(buttonConfig, index) {
 // Run a single button. sendMessage does not reject when the background returns {success:false}, so
 // without inspecting the response a rejected command would still show up as success on the button.
 //
-// The index says which button; the fingerprint says which button it *was* when it was drawn. The
-// service worker reads storage again for the command, and refuses if the two disagree — so what
-// runs is always what was on screen (buttonFingerprint in defaults.js).
+// The index says which button; the fingerprint says which button it *was* when it was drawn; the
+// target says which page it was clicked on. The service worker reads storage again for the command
+// and the page again for the branch, and refuses if either disagrees — so what runs is what was on
+// screen, for the page it was on screen for.
+//
+// Both are comparison keys, never sources. The command still comes from storage, and the repository,
+// number and branch still come from the tab and its DOM; these two only decide whether to refuse.
+// Sending them as sources would let a message name its own repository.
 async function runButtonCommand(action, index, config) {
   const response = await chrome.runtime.sendMessage({
-    action, buttonIndex: index, shown: buttonFingerprint(config),
+    action,
+    buttonIndex: index,
+    shown: buttonFingerprint(config),
+    // Read now, not when the button was drawn: the button is drawn once and the page moves under it
+    target: pageTargetOf(location.pathname),
   });
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
@@ -152,10 +159,7 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.style.backgroundColor = 'transparent';
   });
 
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  onUserClick(button, async () => {
     const originalText = button.textContent;
     button.textContent = '⏳';
     button.disabled = true;
@@ -349,13 +353,27 @@ async function tryInsertButton() {
 
 // Wrap the History API to detect URL changes
 let lastUrl = location.href;
+let lastTarget = pageTargetOf(location.pathname);
+
+// Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
+// insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
+// could survive onto PR #2, where their position and the header around them mean something else.
+// Removing them makes the next insert redraw for the page that is actually showing.
+function removeInsertedButtons() {
+  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn')
+    .forEach(button => button.remove());
+}
 
 function onUrlChange() {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    // On a URL change, wait a moment before trying to insert the buttons
-    setTimeout(tryInsertButton, 300);
-  }
+  if (location.href === lastUrl) return;
+  lastUrl = location.href;
+  const target = pageTargetOf(location.pathname);
+  // Only when the *target* changed. Moving between a repository's tabs (/issues → /pulls) leaves the
+  // buttons meaning exactly what they meant, and redrawing there would flicker for nothing.
+  if (!sameTarget(target, lastTarget)) removeInsertedButtons();
+  lastTarget = target;
+  // On a URL change, wait a moment before trying to insert the buttons
+  setTimeout(tryInsertButton, 300);
 }
 
 // Detect History API events

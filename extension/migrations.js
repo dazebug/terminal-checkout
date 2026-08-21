@@ -412,15 +412,50 @@ const SAVE_RELOADED_MESSAGE =
 // means building a payload from a form that is about to be someone else's.
 const SAVE_LOADING_MESSAGE = 'Settings are being re-read — press Save again in a moment.';
 
-// Whether a save may start at all.
-//
-// Two saves in flight would each have captured the same world and checked it independently, and the
-// later write would land with information from before the earlier one. A save started while a load
-// is in flight is the same problem one step removed: the answer arrives, the form is replaced, and
-// the payload now describes a form nobody is looking at. One page-changing task at a time.
-function shouldStartSave({ loaded, saving, loading }) {
-  return loaded === true && saving !== true && loading !== true;
+// Nothing capped the length of a command, so one long enough pushed a key past what storage.sync
+// will hold and the save died on the quota error itself. Checked per key, because that is the unit
+// the limit applies to — and checking it here covers commands, scheduled inputs and the override map
+// in one place rather than growing a length rule per field.
+const SETTINGS_TOO_LARGE_MESSAGE =
+  'These settings are too large for Chrome to sync. Shorten the longest command and try again';
+
+function oversizedSettingsKey(payload) {
+  for (const [key, value] of Object.entries(payload || {})) {
+    if (storedItemBytes(key, value) > MAX_STORED_ITEM_BYTES) return key;
+  }
+  return null;
 }
+
+// Whether a page-changing task — a save, an import, a load — may start.
+//
+// Each of the three builds something out of the form, or puts something into it, across an await.
+// Any two of them overlapping means one is working from a form the other is about to replace: two
+// saves each captured the same world and the later write landed with older information; a save
+// started while a file was being read wrote a payload the file was about to overwrite; a load
+// answering mid-import replaced the form the file was about to be applied to.
+//
+// One rule for all three, rather than one gate per task. The previous version enumerated the
+// exclusions per task and got the enumeration wrong: imports excluded other imports and nothing
+// else, so the save-during-import case simply was not covered. A task cannot start while it is
+// already running either, which is why nothing here subtracts the caller from the check.
+function pageIsBusy({ saving, importing, loading }) {
+  return saving === true || importing === true || loading === true;
+}
+
+function shouldStartPageTask({ loaded, saving, importing, loading }) {
+  return loaded === true && !pageIsBusy({ saving, importing, loading });
+}
+
+// Which task is in the way, so the refusal says something the user can act on rather than a generic
+// "busy". Null when nothing is.
+function pageBusyMessage({ saving, importing, loading }) {
+  if (saving) return SAVE_BUSY_MESSAGE;
+  if (importing) return IMPORT_BUSY_MESSAGE;
+  if (loading) return SAVE_LOADING_MESSAGE;
+  return null;
+}
+
+const SAVE_BUSY_MESSAGE = 'Already saving — one moment.';
 
 // The save as a decision, kept apart from the act of writing so it can be reasoned about on its own.
 // A refusal carries the message and writes nothing; there is no repair attempted behind the user's
@@ -455,6 +490,17 @@ function planSave({
   if (loadedVersion > SETTINGS_VERSION) {
     return { refused: true, message: STORED_FROM_FUTURE_MESSAGE, stale: false };
   }
+  // Second, and for the same reason — a payload storage will not accept is not a payload. Refusing
+  // here names the key and the limit; letting `set` fail produced a raw quota error and no guidance.
+  const oversized = oversizedSettingsKey(payload);
+  if (oversized) {
+    return {
+      refused: true,
+      stale: false,
+      message: `${SETTINGS_TOO_LARGE_MESSAGE} (${oversized} is over the `
+        + `${MAX_STORED_ITEM_BYTES}-byte limit for one synced item).`,
+    };
+  }
   if (storeMovedSinceLoad) return { refused: true, message: SAVE_CONFLICT_MESSAGE, stale: true };
   if (appliedGenerationAtStart !== appliedGenerationNow) {
     return { refused: true, message: SAVE_RELOADED_MESSAGE, stale: false };
@@ -478,11 +524,14 @@ function planSave({
 // 'defer' before the first load is the fix for a comment that was simply wrong: dropping the event
 // on the grounds that "the load in flight will pick it up" assumed the read that was already out
 // would see a write that landed after it went.
-function classifyStorageChange({ changes, loaded, saving, busy, isOwnWrite }) {
+// `taskInFlight` is a save or an import: either one holds the form across an await, and adopting
+// underneath it replaces what that task is about to write or fill. A *load* is not one of them —
+// that is adoption's own mechanism, and a newer load supersedes an older one by generation.
+function classifyStorageChange({ changes, loaded, taskInFlight, busy, isOwnWrite }) {
   if (!ownedChangedKeys(changes).length) return 'ignore';
   if (isOwnWrite) return 'ignore';
   if (!loaded) return 'defer';
-  if (saving) return 'defer';
+  if (taskInFlight) return 'defer';
   // The "may we adopt?" rule itself is unchanged and still lives in one place; this function only
   // decides which changes get as far as asking it.
   return shouldAdoptSyncedChange(busy, changes) ? 'adopt' : 'banner';
@@ -513,10 +562,6 @@ function planImport({
 // ignore. That is a second concurrency model living beside the save's. Refusing the second pick
 // keeps one rule on this page, and unlike the old behaviour it says out loud what happened.
 const IMPORT_BUSY_MESSAGE = 'A settings file is already being read — try again in a moment.';
-
-function shouldStartImport({ loaded, importing }) {
-  return loaded === true && importing !== true;
-}
 
 // Everything that has not reached storage yet, in one definition.
 //
