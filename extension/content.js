@@ -1,4 +1,4 @@
-// 저장소 헤더 버튼 스타일 — GitHub의 초록 액션 버튼과 같은 모양
+// Repository header button style — the same look as GitHub's green action button
 const REPO_BUTTON_STYLE = `
   background-color: #238636;
   color: white;
@@ -14,9 +14,10 @@ const REPO_BUTTON_STYLE = `
   gap: 4px;
 `;
 
-// 저장소 헤더의 커스텀 명령 버튼. PR·이슈의 아이콘 버튼과 달리 채운 버튼으로 그린다 —
-// breadcrumb 옆에서는 아이콘만으로 눈에 띄지 않는다.
-// 진행 표시도 얼굴을 따라간다: 텍스트 얼굴을 ⏳ 하나로 바꾸면 버튼이 확 좁아져 헤더가 흔들린다.
+// The custom command button in the repository header. Unlike the icon buttons on PR and issue
+// pages this is drawn as a filled button — next to the breadcrumb an icon alone doesn't stand out.
+// The progress indicator follows the face too: swapping a text face for a single ⏳ would shrink
+// the button sharply and make the header jump.
 function createRepoButton(buttonConfig, index) {
   const face = buttonFace(buttonConfig);
   const phases = isTextFace(face)
@@ -65,15 +66,16 @@ function createRepoButton(buttonConfig, index) {
   return button;
 }
 
-// 버튼 하나를 실행한다. sendMessage는 background가 {success:false}를 돌려줘도 reject하지
-// 않으므로, 응답을 보지 않으면 명령이 거절돼도 버튼에 성공으로 표시된다
+// Run a single button. sendMessage does not reject when the background returns {success:false}, so
+// without inspecting the response a rejected command would still show up as success on the button
 async function runButtonCommand(action, index) {
   const response = await chrome.runtime.sendMessage({ action, buttonIndex: index });
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
-// 페이지 종류별 버튼 설정 (저장 키는 defaults.js의 BUTTON_KINDS가 단일 출처).
-// storage가 비었거나 읽지 못하면 기본값으로 그린다 — 버튼이 아예 사라지지는 않게
+// Button configs per page type (BUTTON_KINDS in defaults.js is the single source of truth for the
+// storage keys).
+// If storage is empty or unreadable, draw the defaults — the buttons should never vanish entirely
 async function loadButtonConfigs(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   try {
@@ -84,14 +86,15 @@ async function loadButtonConfigs(kind) {
   }
 }
 
-// PR 브랜치·이슈 배지 옆 커스텀 명령 버튼 생성 (이모지 아이콘 또는 텍스트 필)
+// Create the custom command button next to the PR branch or the issue badge (emoji icon or text pill)
 function createCommandIconButton(buttonConfig, index, { action, className }) {
   const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
   button.className = className;
   button.title = buttonConfig.label;
-  // flex-shrink:0 — 자리가 모자랄 때 줄어들 몫은 브랜치 이름(GitHub이 말줄임한다)이지 버튼이
-  // 아니다. 빼면 텍스트 필이 먼저 찌그러져 무슨 버튼인지 읽을 수 없게 된다
+  // flex-shrink:0 — when space runs short, what should give is the branch name (GitHub ellipsizes
+  // it), not the button. Without this the text pill is squeezed first and you can no longer read
+  // which button it is
   button.style.cssText = isTextFace(face) ? `
     background: transparent;
     border: 1px solid rgba(87, 171, 90, 0.45);
@@ -160,10 +163,11 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
   return button;
 }
 
-// 새 GitHub 헤더의 breadcrumb 항목(li, display:block) 안에서 인라인 흐름에 맡기면 버튼이
-// baseline을 따라 12px쯤 아래로 처진다. 항목을 flex로 바꿔 저장소 이름·드롭다운과 같은
-// 선상(교차축 중앙)에 붙인다. 항목 밖(ol의 형제)으로 빼면 breadcrumb 구분자 "/"가 버튼
-// 앞에 새로 나타나므로 안에 두는 쪽이 맞다.
+// Inside a breadcrumb item of the new GitHub header (an li with display:block), leaving the button
+// to the inline flow drops it about 12px below the baseline. Making the item a flex container puts
+// it on the same line (cross-axis centered) as the repository name and the dropdown. Moving it
+// outside the item (as a sibling of the ol) makes a new breadcrumb "/" separator appear in front of
+// the button, so keeping it inside is the right call.
 function attachToRepoCrumb(anchor, buttons) {
   const crumb = anchor.closest('li');
   if (crumb) {
@@ -172,8 +176,8 @@ function attachToRepoCrumb(anchor, buttons) {
     buttons.forEach(button => crumb.appendChild(button));
     return;
   }
-  // 구 UI: breadcrumb가 아닌 헤더. afterend는 바로 뒤에 넣으므로 방금 넣은 버튼을 다음 기준으로
-  // 삼아야 설정한 순서대로 늘어선다
+  // Legacy UI: a header that isn't a breadcrumb. afterend inserts immediately after, so the button
+  // just inserted has to become the next anchor for them to line up in the configured order
   let after = anchor;
   for (const button of buttons) {
     after.insertAdjacentElement('afterend', button);
@@ -181,21 +185,21 @@ function attachToRepoCrumb(anchor, buttons) {
   }
 }
 
-// PR 헤더에 커스텀 명령 버튼들 추가 (성공 시 true 반환)
+// Add the custom command buttons to the PR header (returns true on success)
 async function tryInsertPRButtons() {
-  // 이미 버튼이 있으면 스킵
+  // Skip if the buttons are already there
   if (document.querySelector('.terminal-cmd-btn')) {
     return true;
   }
 
-  // 새로운 GitHub UI: PR 소스 브랜치 링크 찾기
+  // New GitHub UI: find the PR's source branch link
   const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return false;
 
-  // 크로스 포크 PR: head ref 링크가 포크 레포 경로를 가리킬 수 있으므로 모든 tree 링크 검색
+  // Cross-fork PRs: the head ref link can point at the fork's path, so search every tree link
   const branchLinks = document.querySelectorAll('a[href*="/tree/"]');
 
-  // 화면에 보이는 브랜치 링크 찾기
+  // Find the branch link that is visible on screen
   let headBranchLink = null;
   for (const link of branchLinks) {
     const rect = link.getBoundingClientRect();
@@ -208,20 +212,20 @@ async function tryInsertPRButtons() {
 
   const buttons = await loadButtonConfigs('pr');
 
-  // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
-  // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
+  // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
+  // may have inserted them first — without re-checking, the buttons show up twice
   if (document.querySelector('.terminal-cmd-btn')) {
     return true;
   }
 
-  // head-ref span 바깥에 삽입 (브랜치 뱃지 안에 들어가지 않도록)
+  // Insert outside the head-ref span (so the buttons don't land inside the branch badge)
   const headRefSpan = headBranchLink.closest('.head-ref');
-  // clipboard-copy를 감싼 wrapper span (head-ref의 다음 형제)
+  // The wrapper span around clipboard-copy (the next sibling of head-ref)
   const copyWrapper = headRefSpan?.nextElementSibling;
   const hasCopy = copyWrapper?.querySelector('clipboard-copy');
   const insertAfter = (hasCopy ? copyWrapper : null) || headRefSpan || headBranchLink;
 
-  // 버튼들을 역순으로 삽입 (insertAdjacentElement afterend는 바로 뒤에 넣으므로)
+  // Insert the buttons in reverse order (insertAdjacentElement afterend inserts immediately after)
   for (let i = buttons.length - 1; i >= 0; i--) {
     const iconButton = createCommandIconButton(buttons[i], i, {
       action: 'execute_command', className: 'terminal-cmd-btn',
@@ -234,12 +238,13 @@ async function tryInsertPRButtons() {
   return true;
 }
 
-// 이슈 헤더의 상태 배지 줄(Open · 연결된 PR · 라벨). 제목(h1) 안에 넣으면 제목 길이에 따라
-// 다음 줄로 밀리지만, 이 줄은 flex라 배지들과 같은 선상에 안정적으로 붙는다.
+// The status badge row in the issue header (Open, linked PRs, labels). Putting the buttons inside
+// the title (h1) pushes them onto the next line depending on the title's length, but this row is a
+// flex container, so they sit reliably on the same line as the badges.
 function issueBadgeRow() {
   const state = document.querySelector('[data-testid="header-state"]');
   if (!state) return null;
-  // 모듈 CSS 클래스명에는 빌드 해시가 붙어 바뀌므로 레이아웃(flex)으로 행을 찾는다
+  // Module CSS class names carry a build hash and change, so find the row by layout (flex) instead
   let element = state.parentElement;
   for (let depth = 0; depth < 4 && element; depth++) {
     if (getComputedStyle(element).display === 'flex') return element;
@@ -248,7 +253,7 @@ function issueBadgeRow() {
   return state.parentElement;
 }
 
-// 이슈 헤더에 이슈 전용 버튼들 추가 (성공 시 true 반환)
+// Add the issue-specific buttons to the issue header (returns true on success)
 async function tryInsertIssueButtons() {
   if (document.querySelector('.terminal-issue-btn')) {
     return true;
@@ -259,7 +264,8 @@ async function tryInsertIssueButtons() {
 
   const buttons = await loadButtonConfigs('issue');
 
-  // await 동안 다른 트리거(폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을 수 있다
+  // While awaiting, another trigger (the poll, the MutationObserver, a turbo event) may have
+  // inserted them first
   if (document.querySelector('.terminal-issue-btn')) {
     return true;
   }
@@ -273,14 +279,14 @@ async function tryInsertIssueButtons() {
   return true;
 }
 
-// 저장소 헤더에 버튼들 추가 (성공 시 true 반환)
+// Add the buttons to the repository header (returns true on success)
 async function tryInsertRepoButtons() {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
 
   const header = document.querySelector('header[role="banner"]');
-  // Private 저장소: 자물쇠 아이콘이 있는 breadcrumb 항목 / Public: 저장소 이름 링크 뒤
+  // Private repository: the breadcrumb item with the lock icon / public: after the repository name link
   let anchor = header?.querySelector('svg.octicon-lock');
   if (!anchor) {
     const pathMatch = location.pathname.match(/^\/([^/]+\/[^/]+)/);
@@ -291,8 +297,8 @@ async function tryInsertRepoButtons() {
 
   const buttons = await loadButtonConfigs('repo');
 
-  // 위의 await 동안 다른 트리거(1초 폴링·MutationObserver·turbo 이벤트)가 먼저 삽입했을
-  // 수 있다 — 재확인 없이는 버튼이 2개씩 생긴다
+  // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
+  // may have inserted them first — without re-checking, the buttons show up twice
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
@@ -301,17 +307,17 @@ async function tryInsertRepoButtons() {
   return true;
 }
 
-// 페이지 타입에 따라 버튼 삽입
+// Insert the buttons according to the page type
 async function tryInsertButton() {
   const pageType = pageTypeOf(location.pathname);
   if (!pageType) return false;
 
   let result = false;
 
-  // 저장소·PR·이슈 페이지 모두 헤더에 저장소 버튼을 붙인다
+  // Repository, PR, and issue pages all get the repository buttons in the header
   result = await tryInsertRepoButtons() || result;
 
-  // PR·이슈 페이지는 각자의 커스텀 명령 버튼도 삽입 (설정이 서로 다르다)
+  // PR and issue pages also get their own custom command buttons (configured separately)
   if (pageType === 'pr') {
     result = await tryInsertPRButtons() || result;
   } else if (pageType === 'issue') {
@@ -321,18 +327,18 @@ async function tryInsertButton() {
   return result;
 }
 
-// URL 변경 감지를 위한 History API 래핑
+// Wrap the History API to detect URL changes
 let lastUrl = location.href;
 
 function onUrlChange() {
   if (location.href !== lastUrl) {
     lastUrl = location.href;
-    // URL 변경 시 약간의 지연 후 버튼 삽입 시도
+    // On a URL change, wait a moment before trying to insert the buttons
     setTimeout(tryInsertButton, 300);
   }
 }
 
-// History API 이벤트 감지
+// Detect History API events
 const originalPushState = history.pushState;
 history.pushState = function(...args) {
   originalPushState.apply(this, args);
@@ -347,12 +353,12 @@ history.replaceState = function(...args) {
 
 window.addEventListener('popstate', onUrlChange);
 
-// MutationObserver: 헤더 영역이 추가될 때 감지
+// MutationObserver: detect when the header area is added
 const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        // 추가된 노드가 관련 요소이거나 포함하고 있으면 버튼 삽입
+        // Insert the buttons if the added node is, or contains, a relevant element
         if (node.classList?.contains('gh-header-actions') ||
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
@@ -370,13 +376,13 @@ observer.observe(document.body, {
   subtree: true
 });
 
-// 주기적 폴링 (백업) - 1초마다 체크
+// Periodic polling (backup) - check every second
 setInterval(tryInsertButton, 1000);
 
-// GitHub 네비게이션 이벤트
+// GitHub navigation events
 document.addEventListener('turbo:load', tryInsertButton);
 document.addEventListener('turbo:render', tryInsertButton);
 document.addEventListener('pjax:end', tryInsertButton);
 
-// 초기 실행
+// Initial run
 tryInsertButton();

@@ -1,12 +1,14 @@
-// 버튼 기본값·프리셋과 페이지 판정의 단일 출처. content.js(렌더), background.js(실행),
-// options.js(편집) 세 곳이 같은 값을 봐야 하므로 여기 한 곳에만 둔다.
-// content script·service worker·options 페이지 모두 이 파일을 먼저 로드한다.
+// Single source of truth for button defaults, presets, and page-type detection. content.js
+// (rendering), background.js (execution), and options.js (editing) all have to see the same
+// values, so they live here and nowhere else.
+// The content script, the service worker, and the options page all load this file first.
 
-// PR 페이지: 브랜치 옆 버튼. { }는 서브셸이 아니라 그룹핑 — cd가 현재 셸에 남아야 하므로 ( )를 쓰면 안 된다
+// PR pages: buttons next to the branch name. The { } is grouping, not a subshell — cd has to stick
+// in the current shell, so ( ) must not be used
 const PR_PRESETS = [
   {
     name: 'Checkout Branch', face: '⏏️',
-    // checkout 실패(브랜치가 워크트리에 체크아웃됨 등) 시 관례 경로의 워크트리로 이동
+    // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
     command: 'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
   },
   {
@@ -22,39 +24,40 @@ const PR_PRESETS = [
     command: 'z {repo} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}',
   },
   {
-    name: 'PR 리뷰 (claude)', face: '🔍',
+    name: 'Review PR (claude)', face: '🔍',
     command: 'z {repo} && claude',
-    // claude의 `!`는 한 줄을 셸로 넘긴다 — gh 출력이 그대로 claude 컨텍스트에 쌓인다
+    // A leading `!` in claude hands the line to the shell — gh output piles straight into claude's context
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
   },
 ];
 
-// 이슈 페이지: 상태 배지 줄 버튼. head 브랜치가 없으므로 {branch} 계열과 {base}는 쓸 수 없다
+// Issue pages: buttons on the status badge row. There is no head branch, so the {branch} family and {base} are unavailable
 const ISSUE_PRESETS = [
   {
-    name: '이슈 읽기 (claude)', face: '📋',
+    name: 'Read Issue (claude)', face: '📋',
     command: 'z {repo} && claude',
     claudeInputs: [
       '!gh issue view {number}',
       '!gh issue view {number} --comments',
-      // 이 이슈를 언급한 이슈·PR 번호. --json 쪽 필드로는 "닫을 PR"만 나와서 timeline을 쓴다
+      // Numbers of the issues and PRs that mention this issue. The --json fields only surface the "closing PR", so use the timeline
       '!gh api repos/{owner}/{repo}/issues/{number}/timeline --jq \'[.[]|select(.event=="cross-referenced")|.source.issue.number]\'',
     ],
   },
   {
-    name: '이슈 작업 시작', face: '🌳',
+    name: 'Start Work on Issue', face: '🌳',
     command: 'z {repo} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
     claudeInputs: ['!gh issue view {number} --comments'],
   },
   {
-    name: '이슈 열기', face: '📂',
+    name: 'Open Issue', face: '📂',
     command: 'z {repo}',
     claudeInputs: [],
   },
 ];
 
-// 저장소 페이지: 헤더 저장소 이름 옆 버튼. PR·이슈와 달리 GitHub의 초록 액션 버튼 모양이라
-// 표시(face)에 짧은 이모지보다 이름을 넣는 쪽이 자연스럽다
+// Repository pages: buttons next to the repository name in the header. Unlike PR and issue buttons
+// these look like GitHub's green action button, so a name reads more naturally than a short emoji
+// as the face
 const REPO_PRESETS = [
   {
     name: 'Open in Terminal', face: 'Open in Terminal',
@@ -65,7 +68,7 @@ const REPO_PRESETS = [
     command: 'z {repo} && claude',
   },
   {
-    name: 'main 최신화', face: 'main ⤓',
+    name: 'Update main', face: 'main ⤓',
     command: 'z {repo} && git checkout {main} && git pull --ff-only',
   },
 ];
@@ -85,11 +88,13 @@ const DEFAULT_REPO_BUTTONS = [
   { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
 ];
 
-// 페이지 종류별 정의. 저장 키가 content.js(렌더)·background.js(실행)·options.js(편집)에
-// 흩어지면 한 곳만 어긋나도 저장한 설정이 조용히 무시되므로 세 파일이 모두 여기를 본다.
-// variables는 확장이 그 페이지에서 실제로 넘기는 변수다 — 프리셋·기본값이 이 목록을 벗어나지
-// 않는지 테스트로 고정한다 (tests/buttons.test.js). 없는 변수를 쓰면 앱이 거절해 버튼이
-// 아무 일도 하지 않는다. {base}는 PR 페이지에서 읽어야만 전달되므로 항상 오는 것은 아니다.
+// Definitions per page type. If the storage keys were scattered across content.js (rendering),
+// background.js (execution), and options.js (editing), one of them drifting out of sync would be
+// enough to make saved settings silently ignored, so all three files read them from here.
+// `variables` is what the extension actually passes on that page — a test pins presets and
+// defaults to this list (tests/buttons.test.js). Using a variable that isn't passed makes the app
+// reject the request, so the button does nothing. {base} is only passed when it could be read off
+// the PR page, so it does not always arrive.
 const BUTTON_KINDS = {
   pr: {
     storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,
@@ -105,11 +110,13 @@ const BUTTON_KINDS = {
   },
 };
 
-// GitHub 경로 → 페이지 종류. content.js(버튼 삽입)와 background.js(확장 아이콘 라우팅)가
-// 반드시 같은 판정을 써야 한다 — 아이콘 클릭은 content script를 거치지 않으므로, 판정이 갈리면
-// `/settings/profile` 같은 경로가 저장소로 읽혀 `z profile`이 터미널에서 돈다.
-// owner 자리에 올 수 없는 예약 경로는 걸러낸다. 목록에 없는 예약어가 새로 생겨도 최악은 종전과
-// 같은 오판이라 흔한 것만 담는다.
+// GitHub path → page type. content.js (button insertion) and background.js (extension icon
+// routing) must reach the same verdict — an icon click never goes through the content script, so
+// if the two diverge a path like `/settings/profile` reads as a repository and `z profile` runs in
+// the terminal.
+// Reserved paths that can never appear in the owner position are filtered out. If GitHub adds a
+// reserved word that isn't listed here, the worst case is the same misreading as before, so only
+// the common ones are covered.
 const RESERVED_OWNERS = new Set([
   'settings', 'notifications', 'explore', 'marketplace', 'sponsors', 'topics', 'collections',
   'events', 'codespaces', 'organizations', 'orgs', 'account', 'apps', 'users', 'dashboard',
@@ -117,7 +124,7 @@ const RESERVED_OWNERS = new Set([
   'issues', 'pulls', 'discussions', 'sitemap', 'security', 'trending', 'enterprises',
 ]);
 
-// 저장소 페이지로 볼 하위 탭 — 이슈 상세·PR 상세는 위에서 먼저 가려낸다
+// Sub-tabs treated as repository pages — issue and PR detail pages are already filtered out above
 const REPO_TABS = 'tree|blob|issues|actions|settings|releases|tags|wiki|security|pulse|graphs|network|projects|commits|branches|pulls|discussions|compare';
 
 function pageTypeOf(pathname) {
@@ -133,22 +140,24 @@ const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
 
-// 버튼 표시 텍스트. face가 새 키이고 emoji는 구버전 저장값 호환용이다.
+// The button's display text. `face` is the current key; `emoji` is kept for values saved by older versions.
 function buttonFace(config) {
   return (config.face ?? config.emoji ?? '').trim() || '⏏️';
 }
 
-// 글자·숫자가 섞이면 텍스트 필(pill)로, 이모지만이면 아이콘으로 그린다.
-// content.js(GitHub 렌더)와 options.js(미리보기)가 이 판정을 공유한다.
+// Draw as a text pill when letters or digits are mixed in, as an icon when it is emoji only.
+// content.js (rendering on GitHub) and options.js (preview) share this decision.
 function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
 
-// --- 버튼 목록 편집 ---
-// 옵션 페이지만 쓰지만 DOM·chrome API를 모르는 순수 함수라 여기 둔다 (tests/buttons.test.js).
+// --- Button list editing ---
+// Only the options page uses these, but they are pure functions that know nothing about the DOM or
+// the chrome APIs, so they live here (tests/buttons.test.js).
 
-// from번 버튼을 원본 기준 insertBefore번 카드 "앞"으로 옮긴 새 배열.
-// 뺀 다음에 끼우므로 뒤로 옮길 때는 목적지가 한 칸 당겨진다 — 이 보정을 빠뜨리면 한 칸씩 어긋난다.
+// A new array with button `from` moved "before" card `insertBefore`, indexed against the original.
+// The item is removed before it is spliced back in, so moving it later pulls the destination one
+// slot closer — miss that adjustment and everything lands one slot off.
 function moveButton(buttons, from, insertBefore) {
   const next = buttons.slice();
   const [moved] = next.splice(from, 1);
@@ -156,12 +165,13 @@ function moveButton(buttons, from, insertBefore) {
   return next;
 }
 
-// 사본 툴팁: "리뷰" → "리뷰 (1)". 이미 붙어 있는 번호는 떼고 비어 있는 가장 작은 번호를
-// 찾는다 — 원본을 두 번 복제하거나 사본을 다시 복제해도 같은 이름이 겹치지 않는다.
-// 표시(face)는 건드리지 않는다: 이모지 얼굴에 숫자가 섞이면 isTextFace가 텍스트 필로 판정해
-// GitHub에 붙는 버튼 모양이 통째로 바뀐다.
+// Tooltip for a copy: "Review" → "Review (1)". Any number already attached is stripped and the
+// smallest unused number is picked — duplicating the original twice, or duplicating a copy, never
+// produces the same name twice.
+// The face is left alone: mixing a digit into an emoji face makes isTextFace call it a text pill,
+// which changes the shape of the button on GitHub entirely.
 function copyLabel(label, existingLabels) {
-  const base = label.replace(/\s*\(\d+\)$/, '').trim(); // 앞뒤 공백은 떼고 붙인다 (공백만 남은 툴팁이면 번호만)
+  const base = label.replace(/\s*\(\d+\)$/, '').trim(); // trim before appending (a whitespace-only tooltip gets just the number)
   const used = new Set(existingLabels);
   const numbered = n => (base ? `${base} (${n})` : `(${n})`);
   let n = 1;
@@ -169,8 +179,9 @@ function copyLabel(label, existingLabels) {
   return numbered(n);
 }
 
-// index번 버튼의 사본을 바로 뒤에 끼운 새 배열. claudeInputs를 얕게 복사하면 원본과 같은
-// 배열을 가리켜 한쪽 입력을 고치면 다른 쪽도 바뀐다.
+// A new array with a copy of button `index` spliced in right after it. Copying the object alone
+// would leave claudeInputs pointing at the original array, so editing one side's inputs would
+// change the other.
 function duplicateButton(buttons, index) {
   const source = buttons[index];
   const next = buttons.slice();

@@ -1,51 +1,52 @@
 #!/bin/bash
 set -euo pipefail
 
-# Terminal Checkout.app을 빌드해 ~/Applications에 설치하고 실행한다.
-# Native Host 등록·확장 프로그램 설치·터미널 권한은 실행된 앱 안에서 진행한다.
-# sudo 불필요, 멱등, 완전 비대화식.
+# Builds Terminal Checkout.app, installs it into ~/Applications, and launches it.
+# Native Host registration, extension installation, and terminal permissions are all
+# handled from inside the app once it is running.
+# No sudo required, idempotent, fully non-interactive.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="Terminal Checkout.app"
 INSTALL_DIR="$HOME/Applications"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
 
-echo "=== Terminal Checkout 설치 ==="
+echo "=== Installing Terminal Checkout ==="
 echo ""
 
-# [1/3] 의존성 프리플라이트 체크
+# [1/3] Dependency preflight check
 MISSING=()
-command -v swift >/dev/null 2>&1 || MISSING+=("Swift 툴체인 (Xcode 또는 Command Line Tools)")
+command -v swift >/dev/null 2>&1 || MISSING+=("Swift toolchain (Xcode or Command Line Tools)")
 [ -d "/Applications/Google Chrome.app" ] || MISSING+=("Google Chrome (/Applications/Google Chrome.app)")
 
 DETECTED_TERMINALS=()
 [ -d "/Applications/iTerm.app" ] && DETECTED_TERMINALS+=("iTerm2")
 [ -d "/Applications/WezTerm.app" ] && DETECTED_TERMINALS+=("WezTerm")
-# Warp는 앱의 findWarpAppBundle()과 같은 두 위치를 본다 — 감지 기준이 갈리면
-# 설치는 통과하는데 앱이 "미설치"로 표시하거나 그 반대가 된다
+# For Warp, look in the same two locations as the app's findWarpAppBundle() — if the two
+# detection rules diverge, the install passes but the app reports it as "not installed", or vice versa
 { [ -d "/Applications/Warp.app" ] || [ -d "$HOME/Applications/Warp.app" ]; } && DETECTED_TERMINALS+=("Warp")
 if [ ${#DETECTED_TERMINALS[@]} -eq 0 ]; then
-    MISSING+=("iTerm2 · WezTerm · Warp 중 하나 이상")
+    MISSING+=("at least one of iTerm2, WezTerm, or Warp")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "[1/3] 의존성 프리플라이트 체크 — 누락 발견 ✗"
+    echo "[1/3] Dependency preflight check — missing dependencies ✗"
     for dep in "${MISSING[@]}"; do
         echo "      - $dep"
     done
     exit 1
 fi
-echo "[1/3] 의존성 프리플라이트 체크 ✓"
-echo "      감지된 터미널: ${DETECTED_TERMINALS[*]}"
+echo "[1/3] Dependency preflight check ✓"
+echo "      Detected terminals: ${DETECTED_TERMINALS[*]}"
 if ! command -v zoxide >/dev/null 2>&1 && ! command -v z >/dev/null 2>&1; then
-    echo "      경고: zoxide/z가 없습니다. 기본 명령의 'z {repo}'가 동작하지 않습니다 (brew install zoxide)"
+    echo "      Warning: zoxide/z not found. 'z {repo}' in the default command will not work (brew install zoxide)"
 fi
 
-# [2/3] 앱 빌드
-echo "[2/3] 앱 빌드 중..."
+# [2/3] Build the app
+echo "[2/3] Building the app..."
 "$SCRIPT_DIR/app/build.sh"
 
-# [3/3] 설치 & 실행
+# [3/3] Install & launch
 mkdir -p "$INSTALL_DIR"
 if pgrep -x TerminalCheckout >/dev/null 2>&1; then
     pkill -x TerminalCheckout || true
@@ -54,15 +55,15 @@ fi
 rm -rf "$INSTALL_DIR/$APP_NAME"
 ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
 "$LSREGISTER" -f "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
-echo "[3/3] 설치 완료: $INSTALL_DIR/$APP_NAME"
+echo "[3/3] Installed: $INSTALL_DIR/$APP_NAME"
 
 echo ""
-echo "=== 설치 완료! 앱을 실행합니다 ==="
+echo "=== Installation complete! Launching the app ==="
 echo ""
-echo "앱 설정 창이 남은 단계를 안내합니다 (Native Host 등록·확장 폴더 준비는 자동):"
-echo "  ① [Chrome에 설치하기] → chrome://extensions에서 폴더 로드"
-echo "  ② 터미널 선택 (iTerm2 선택 시 권한 허용 — 권한은 이 앱에만 부여됩니다)"
-echo "  ③ [터미널에서 실행]으로 동작 테스트"
+echo "The app's setup window walks you through the remaining steps (Native Host registration and extension folder setup are automatic):"
+echo "  ① [Install in Chrome] → load the folder from chrome://extensions"
+echo "  ② Pick a terminal (if you pick iTerm2, allow the permission prompt — the permission is granted to this app only)"
+echo "  ③ Verify it works with [Run in Terminal]"
 echo ""
 
 open "$INSTALL_DIR/$APP_NAME"

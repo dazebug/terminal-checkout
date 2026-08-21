@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Terminal Checkout",
   "version": "1.6",
-  "description": "GitHub PR·이슈·저장소 페이지에서 터미널(iTerm2/WezTerm/Warp)로 명령 실행",
+  "description": "Run commands in your terminal (iTerm2/WezTerm/Warp) from GitHub PR, issue, and repository pages",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9H9y+H1eFxDXAS77EooL8aU01VZfLkKJmG3r6gOOL3s05YNrSU2iU6YzQpDMKLwxahQKT7pAIuiPsDvrX9fqcfq1Z5iL0LeSu0RZmpeWb7pkzVpW+iY1eKspfYZcvagEDTaUxznEcguDKAP+kcH+9wjBUSY0Wo3Xgu3V0nJ3qERMhbCFTI2NqNPIvPWtWgPAMOPz0eW8rhakaST6S0RqmHC4qlEClNI66hWaR3VWPTST63mwV6DkRmkemxks/pjfiOFhc40rEio3b2PwunROzE6uDQhje//ILNTT3uyyTwTMPy2HpCbnZoiFE3cjBtmVOK7A7HkzUJSoWQ+LoIO+eQIDAQAB",
   "permissions": [
     "nativeMessaging",

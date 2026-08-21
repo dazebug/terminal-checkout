@@ -6,6 +6,6 @@ __pycache__
 .vscode
 .ruby-lsp
 
-# Swift 빌드 산출물
+# Swift build artifacts
 app/.build/
 app/build/
