@@ -408,12 +408,18 @@ private func typeAndSubmit(
         }
         var reflected: String?
         var failure = "입력이 화면에 반영되지 않음"
+        // Same read-cost compensation as `poll` — a 137ms Warp read on top of a full interval
+        // sleep stretched this "2 second" window to ~3.8s of wall clock. The wait comes before
+        // the read here, so it is the **previous** iteration's read that gets subtracted
+        var lastReadCost: TimeInterval = 0
         for attempt in 0..<13 { // 0.15s × 13 ≈ 2s, the same deadline as before
-            if attempt > 0 { io.wait(screenPollInterval) }
+            if attempt > 0 { io.wait(max(0, screenPollInterval - lastReadCost)) }
+            let readStarted = Date()
             guard let screen = io.screenText() else {
                 failure = "화면 조회 실패"
                 break
             }
+            lastReadCost = Date().timeIntervalSince(readStarted)
             // **At least** one more, not exactly one more: claude may draw our line a second time
             // (the hint-line behaviour the attribution experiment exists for), and demanding an
             // exact count made the button do nothing at all — five typings, no CR, no message
@@ -617,11 +623,18 @@ let screenPollInterval: TimeInterval = 0.15
 /// Deadlines are unchanged or longer; only the sampling moved. Nothing was dropped from what gets
 /// checked: the same reads, the same conditions, just asked sooner.
 private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: () -> Bool) -> Bool {
-    // Counted rather than clock-driven so the fake, whose `wait` is a no-op, still terminates
+    // Counted rather than clock-driven so the fake, whose `wait` is a no-op, still terminates.
+    // The sleep is **shortened by what the read itself cost**: a Warp Accessibility read is
+    // 134∼139ms (measured in the field, 2026-08-22), so sleeping the full interval on top made
+    // every "5 second" deadline take ~9.5s of wall clock — the attempt count assumed reads were
+    // free. With the compensation, one iteration costs ~interval regardless of the reader
     let attempts = max(1, Int((deadline / screenPollInterval).rounded()))
     for attempt in 0..<attempts {
-        if attempt > 0 { io.wait(screenPollInterval) }
+        let readStarted = Date()
         if ready() { return true }
+        if attempt < attempts - 1 {
+            io.wait(max(0, screenPollInterval - Date().timeIntervalSince(readStarted)))
+        }
     }
     return false
 }
@@ -846,9 +859,17 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
         // 다른 pane·다른 앱으로 샐 수 없다. 합성 키 입력을 쓰지 않는 이유가 이것이다.
         // 기대 PID를 함께 보내 헬퍼가 "지금 이 tty를 읽을 프로세스"까지 확인하게 한다 —
         // 우리는 보내기 전만 볼 수 있고, 큐에 넣은 뒤 누가 읽는지는 거기서만 정해진다
-        guard case .ok? = warpHelperRequest(
+        let answer = warpHelperRequest(
             .inject(expectedPID: Int32(expectedPID), bytes: Data(text.utf8)), socket: socket
-        ) else { return false }
+        )
+        guard case .ok? = answer else {
+            // The reason matters in the field: the first send after claude reaches raw mode
+            // failed once in a measured run and cost that delivery 8 seconds, and without this
+            // line the log could not say whether the helper refused (reader-gate mismatch),
+            // died, or never answered
+            checkoutLog("Warp 헬퍼 전송 거절/실패 — 응답: \(answer.map(String.init(describing:)) ?? "없음")")
+            return false
+        }
         return true
     case .none:
         return false
