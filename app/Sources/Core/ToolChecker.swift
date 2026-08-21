@@ -39,8 +39,8 @@ public func toolCheckScript(_ tools: [String]) -> String {
     // against a cwd we cannot know — the pane's, after the command has `cd`ed. One of those and
     // the executable answer is worthless, so it disqualifies the whole answer.
     //
-    // **A trailing colon is not caught, on purpose** (measured, `scratchpad/trailing-colon-probe.sh`;
-    // field splitting produces no trailing null field):
+    // **A trailing colon is not caught, on purpose** (measured; the split produces no trailing
+    // empty element):
     //
     //     PATH=/usr/bin:/bin   -> TC_REL=[]      PATH=:/usr/bin      -> TC_REL=[rel]
     //     PATH=/usr/bin::/bin  -> TC_REL=[rel]   PATH=/usr/bin:rel   -> TC_REL=[rel]
@@ -56,14 +56,25 @@ public func toolCheckScript(_ tools: [String]) -> String {
     // false for the shell we ask — `/bin/sh` (bash 3.2 here) absolutises it (`/./claude`), while
     // bash, zsh and dash return `./claude` or `claude`. So the residual is real: with `/claude`
     // present and `claude` nowhere on the absolute PATH, we would answer "executable" and the pane
-    // would fail. That failure is a visible `command not found` (a lost input, not a misdelivered
-    // one), whereas treating every trailing colon as relative would silently cost the merge — and
-    // on Warp without the permission, the whole request — to everyone whose PATH merely ends in a
-    // stray `:`. The rarer, visible failure is the one we keep
+    // would fail. A reviewer added the mirror case: the pane `z`es into a repository that happens
+    // to contain an executable `./claude`, so the check and the run resolve **different files** —
+    // it needs a PATH ending in `:` *and* that file, and it does not hold otherwise.
+    // Both failures are visible `command not found` or a wrong-but-user-owned program (a lost
+    // input, not a misdelivered one), whereas treating every trailing colon as relative would
+    // silently cost the merge — and on Warp without the permission, the whole request — to
+    // everyone whose PATH merely ends in a stray `:`. The rarer, visible failure is the one we keep
+    // Split with `${}` rather than word splitting: **zsh does not split an unquoted parameter**,
+    // so `for d in $PATH` looped once over the whole string and this guard did nothing in the
+    // shell most macOS users log in with. Measured, all four shells and six PATHs, before/after:
+    //
+    //     `for d in $PATH`   sh/bash/dash agree · **zsh answers [] for every PATH, including `.`**
+    //     `${p%%:*}` loop    sh, bash, zsh, dash all agree, and the table below is unchanged
+    //
     // The patterns carry a leading `(`: inside `$( )`, bash 3.2 — which is `/bin/sh` on macOS —
     // mis-parses a bare `pattern)` in a `case` and dies with a syntax error (measured)
-    let relative = "TC_REL=$(IFS=:; for d in $PATH; do case \"$d\" in (/*) : ;; (*) printf rel;"
-        + " break ;; esac; done)"
+    let relative = "TC_REL=$(p=\"$PATH\"; while [ -n \"$p\" ]; do e=${p%%:*};"
+        + " case \"$e\" in (/*) : ;; (*) printf rel; break ;; esac;"
+        + " case \"$p\" in (*:*) p=${p#*:} ;; (*) p= ;; esac; done)"
     let checks = tools.flatMap { tool in
         [
             "TC_PATH=$(command -v \(tool) 2>/dev/null) && echo TC_OK:\(tool)",
@@ -108,30 +119,28 @@ public struct ToolCheckResult: Equatable {
     public let executable: [String: Bool]
 }
 
-/// 셸을 어떻게 띄워 물어볼 것인가 — **둘 다 물어보고 합집합을 쓴다.**
+/// 셸을 어떻게 띄워 물어볼 것인가 — **탭이 실제로 여는 그 형태 하나**(로그인 + 인터랙티브).
 ///
-/// 실측(`scratchpad/rcfiles-probe.sh`): `bash -l -i -c`는 `.bash_profile`만 읽고 **`.bashrc`를
-/// 읽지 않는다**. `bash -i -c`는 `.bashrc`를 읽는다. zsh는 `-l -i -c`가 `-i -c`의 상위집합이다
-/// (`.zshenv .zprofile .zshrc`). 즉 어느 한 형태도 다른 쪽을 포함하지 못한다.
+/// 근거는 우리가 지원하는 세 터미널의 기본값이다: WezTerm은 argv0 앞에 `-`를 붙여 **로그인
+/// 셸로** 띄우고(문서 "Launching Programs", 그리고 그 이유를 설명한 discussion #4544), iTerm2의
+/// 기본 프로필 명령이 "Login shell"이며, Warp도 사용자의 로그인 셸을 띄운다. 탭 안의 셸은
+/// 인터랙티브 로그인 셸이므로 우리도 그렇게 묻는다.
 ///
-/// 라운드 7은 "로그인 형태를 먼저, 실패하면 폴백"으로 두었는데 로그인 형태는 **성공한다** —
-/// 도구를 못 찾았을 뿐이다. 그래서 폴백이 영영 돌지 않았고, 도구가 `.bashrc`에만 있는 bash
-/// 사용자는 설정 창에 `z` ❌가 뜨고 **모든 버튼의 병합이 조용히 꺼졌다**(독립 검증자 차단 항목).
-/// 합집합이면 어느 rc에 있든 찾는다. 대가는 셸을 두 번 띄우는 시간(백그라운드)뿐이다.
+/// 실측(빈 HOME에 rc 파일을 심어 확인): `bash -l -i -c` → `.bash_profile`, `bash -i -c` →
+/// `.bashrc`, `zsh -l -i -c` → `.zshenv .zprofile .zshrc`(즉 zsh는 상위집합이라 무관).
+///
+/// **라운드 8의 합집합은 되돌렸다.** 합집합은 "어느 rc에든 있으면 있다"고 답하는데, 그것은
+/// 우리가 답해야 하는 질문("그 pane에서 이 이름이 도는가")이 아니다 — 합집합 때문에 로그인
+/// 셸에 없는 claude를 있다고 판정해 병합이 켜지고 pane에서 `command not found`가 났다(검증자
+/// 재현). 반대로 도구가 `.bashrc`에만 있는 bash 사용자는 이제 "없음"으로 나오는데, 그 답이
+/// **맞다**: 그 사용자의 탭은 로그인 셸이라 `.bashrc`를 읽지 않고, 그래서 버튼의 `z …` 명령도
+/// 실제로 실패한다. 남는 위음성은 탭을 비로그인으로 띄우도록 **설정을 바꾼** 사용자이고, 그때의
+/// 결과는 병합이 꺼지고 도구 카드에 경고가 뜨는 것(눈에 보이는 실패)이다.
+///
+/// 두 번째 후보는 `-l`을 모르는 셸(dash)을 위한 폴백일 뿐이다 — 첫 후보가 **답을 내지 못했을
+/// 때만** 쓰인다. 첫 후보가 "도구 없음"이라고 답한 것은 답을 낸 것이므로 폴백이 돌지 않는다.
 public func toolCheckShellArgumentCandidates(_ script: String) -> [[String]] {
     [["-l", "-i", "-c", script], ["-i", "-c", script]]
-}
-
-/// 여러 형태로 물어본 답을 합친다 — 한 곳에서라도 보이면 있는 것이다. 전부 실패(빈 배열)면
-/// nil: "없음"이 아니라 "모름"이고, 그때는 직전 결과를 그대로 둔다.
-public func mergeToolChecks(_ results: [ToolCheckResult]) -> ToolCheckResult? {
-    guard !results.isEmpty else { return nil }
-    func union(_ pick: (ToolCheckResult) -> [String: Bool]) -> [String: Bool] {
-        results.map(pick).reduce(into: [:]) { merged, answer in
-            for (tool, found) in answer { merged[tool] = (merged[tool] ?? false) || found }
-        }
-    }
-    return ToolCheckResult(available: union(\.available), executable: union(\.executable))
 }
 
 /// 로그인 셸에게 물어 확인한다. 느리므로(프로필·rc 로드) 백그라운드에서 부른다.
@@ -142,13 +151,13 @@ public func checkTools(
     shell: String = loginShellPath(), environment: [String: String]? = nil
 ) -> ToolCheckResult? {
     let script = toolCheckScript(tools)
-    let answers = toolCheckShellArgumentCandidates(script).compactMap { arguments in
+    for arguments in toolCheckShellArgumentCandidates(script) {
         guard let result = try? runProcess(shell, arguments, env: environment, timeout: timeout),
               let available = parseToolCheck(output: result.stdout, tools: tools),
               let executable = parseToolExecutables(output: result.stdout, tools: tools) else {
-            return ToolCheckResult?.none // 이 형태로는 셸이 답하지 않았다(완료 마커 없음)
+            continue // 이 형태로는 셸이 답하지 않았다(완료 마커 없음) — 다음 후보로
         }
         return ToolCheckResult(available: available, executable: executable)
     }
-    return mergeToolChecks(answers)
+    return nil
 }

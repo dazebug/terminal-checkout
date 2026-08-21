@@ -244,7 +244,10 @@ func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: I
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
 
-    mutating func recordSend(keys: String, sent: Bool) {
+    /// 바이트를 내보내려 **시도했다**. 결과도 종류도 보지 않는다: 실패로 돌아온 전송의 바이트도
+    /// 이미 들어가 있을 수 있고(헬퍼가 일부만 넣고 err), CR·Ctrl+U가 쓰였다는 것은 TUI가 그것을
+    /// 처리했다는 뜻이 아니다. 내려가는 것은 관찰뿐이다(`recordInputBoxIsFreeOfOurs`).
+    mutating func recordSendAttempt() {
         mayHoldOurs = true
     }
 
@@ -279,7 +282,7 @@ public func submitClaudeInputs(
     var tracked = io
     tracked.sendKeys = { keys in
         let sent = io.sendKeys(keys)
-        ownership.recordSend(keys: keys, sent: sent)
+        ownership.recordSendAttempt()
         return sent
     }
 
@@ -357,34 +360,20 @@ private func typeAndSubmit(
         if attempt > 1 {
             guard io.confirmSession(retryConfirmTimeout) else { return .gaveUp }
         }
-        // 읽히는 화면이 우리 pane인지 먼저 증명한다. 실패는 대개 "사용자가 다른 탭·앱을
-        // 보고 있다"이므로 오류가 아니라 대기다 — 다음 시도에서 다시 본다
-        var proved = true
-        if io.screenNeedsPaneProof {
-            proved = proveOurPane(io: io)
-            if !proved {
-                checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
-            }
-        }
-        guard proved else {
-            // 증명이 실패해도 표식은 지운다 — 남기면 사용자가 그것을 제출하게 된다
-            _ = send(claudeClearInputKey, io: io)
-            io.wait(1.0)
-            continue
-        }
+        // **표식 하나로 세 가지를 얻는다**(`proveOurPaneAndEmptyBox` 참고): ① 읽히는 화면이
+        // 우리 pane이라는 증명 ② 우리가 친 것이 뜨는 그 자리가 **입력창**이라는 귀속
+        // ③ 그 Ctrl+U를 TUI가 실제로 **처리했다**는 확인
+        guard proveOurPaneAndEmptyBox(io: io, attempt: attempt, of: maxAttempts) else { continue }
+        // 여기서 입력창은 **비어 있음이 관찰된** 상태다 — 쓰기 성공이 아니라 관찰이다
+        boxObservedEmpty()
         guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
             checkoutLog("화면 조회 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
         }
-        // **실험 한 번으로 두 가지를 얻는다**(`inputBoxHoldsWhatWeType` 참고): ① 우리가 친 것이
-        // 화면에 뜬 그 자리가 **입력창**이라는 귀속 ② 그 Ctrl+U를 TUI가 실제로 **처리했다**는
-        // 확인. 둘 다 없이 CR을 보내면 되돌릴 수 없는 바이트가 남의 것을 제출할 수 있다
-        guard inputBoxHoldsWhatWeType(text, io: io, baseline: baseline, attempt: attempt) else {
-            continue
-        }
-        // 여기서 입력창은 **비어 있음이 관찰된** 상태다 — 쓰기 성공이 아니라 관찰이다
-        boxObservedEmpty()
-        // 아직 아무것도 제출되지 않았으므로 다시 치는 것이 안전한 유일한 구간이다
+        // 본문은 **한 번만** 친다. 실험을 본문으로 하던 때는, 그 시험 타이핑이 화면에 뜬 순간
+        // 사용자가 Enter를 누르면 명령이 실행되고 우리는 그것을 모른 채 다시 쳐서 CR을 보내
+        // **`!` 명령이 두 번 실행됐다**(검증자 재현). 표식이 대신 맞으면 제출되는 것은 무해한
+        // 한 줄이고, 사용자 Enter가 세어지지 않는다는 사실은 그대로여도 피해가 없다
         guard send(text, io: io) else {
             checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
@@ -397,7 +386,12 @@ private func typeAndSubmit(
                 failure = "화면 조회 실패"
                 break
             }
-            if probeCount(of: text, in: screen) == baseline + 1 {
+            // **At least** one more, not exactly one more: claude may draw our line a second time
+            // (the hint-line behaviour the attribution experiment exists for), and demanding an
+            // exact count made the button do nothing at all — five typings, no CR, no message
+            // (reviewer reproduction). Only the *disappearance* check needs an exact count, where
+            // "some of it is still there" has to fail
+            if probeCount(of: text, in: screen) >= baseline + 1 {
                 reflected = screen
                 break
             }
@@ -513,44 +507,62 @@ func inputBoxAfterSubmit(
     return last
 }
 
-/// Types `text`, waits for it to show up, then **clears the box and waits for it to go away**.
+/// Types a throwaway marker, waits for it to appear, **clears the box and waits for it to go
+/// away**. One experiment, three answers, and the canonical version of what used to be two
+/// half-overlapping mechanisms (the Warp pane proof and round 8's body experiment):
 ///
-/// Why an experiment rather than a reading. Seeing the probe appear says only that the screen
-/// gained our text somewhere, and claude draws hint lines that can contain exactly what we typed
-/// ("try /review"); a screen that gains one of those while our typing was dropped is
-/// indistinguishable from a render, and the CR that followed submitted whatever the box really
-/// held (reviewer reproduction). **Text that disappears when the input box is cleared was in the
-/// input box** — that is the only attribution available from outside, and it is the same evidence
-/// for the other question: a Ctrl+U whose *write* succeeded is not one the TUI processed
-/// (AppleScript and the CLI answer for the terminal, not for claude), and the disappearance is
-/// what makes it observed rather than assumed.
+///  1. **The screen is our pane.** A random marker can only reach the tty we injected it into, so
+///     seeing it appear rules out reading someone else's pane — the Warp requirement, now applied
+///     everywhere because the other two answers need it anyway.
+///  2. **What appears is in the input box.** Seeing our text on screen does not say where it is;
+///     claude draws the same string in hint lines below the box. Text that **disappears when the
+///     box is cleared** was in the box — the only attribution obtainable from outside.
+///  3. **The TUI processed our Ctrl+U.** AppleScript and the wezterm CLI report that the terminal
+///     accepted the write, never that claude acted on it; the disappearance is the only evidence.
 ///
-/// The body is typed again afterwards. Retyping is safe here and **only** here — nothing has been
-/// submitted yet, so it cannot duplicate a message (contrast the rule after a CR has gone out).
+/// **Why a marker and not the body** (round 9, the regression this replaces): the experiment types
+/// something and leaves it on screen for a moment. If the user presses Enter right then — on Warp
+/// they are watching that tab by design — *they* submit whatever is in the box. With the body in
+/// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
+/// retypes and submits: the user's command runs **twice**. With a marker, that stray Enter submits
+/// one inert line and the body is still typed exactly once.
 ///
-/// The residual, stated plainly: between the verified-empty box and the CR, our second typing
-/// could be dropped **and** the screen gain our text from somewhere else in the same window. The
-/// damage then is a CR into an empty box, which does nothing (measured) — unless the user typed in
-/// that window, which is the issue #16 race the design already lives with.
-private func inputBoxHoldsWhatWeType(
-    _ text: String, io: ClaudeSessionIO, baseline: Int, attempt: Int
-) -> Bool {
-    guard send(text, io: io) else {
-        checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/5)")
+/// The marker is alphanumeric for the same reason `paneProofToken` always was: `/`, `!` and `@`
+/// mean something to the input box.
+private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int) -> Bool {
+    guard let before = io.screenText() else {
+        checkoutLog("화면 조회 실패 — 재시도 (\(attempt)/\(maxAttempts))")
         return false
     }
-    guard waitUntilProbeCount(baseline + 1, of: text, io: io) else {
-        checkoutLog("입력이 화면에 반영되지 않음 — 재시도 (\(attempt)/5)")
+    let marker = paneProofToken()
+    guard send(marker, io: io) else {
+        checkoutLog("표식 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    // 폴링이 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고, 그건 기다리면
+    // 풀리는 상태이기 때문이다 (Warp 실측)
+    var appeared = false
+    for _ in 0..<10 {
+        io.wait(0.5)
+        guard let after = io.screenText() else { continue }
+        if screenReflectsNewInput(before: before, after: after, input: marker) {
+            appeared = true
+            break
+        }
+    }
+    guard appeared else {
+        checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
         return false
     }
     guard send(claudeClearInputKey, io: io) else {
-        checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/5)")
+        checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
         return false
     }
-    guard waitUntilProbeCount(baseline, of: text, io: io) else {
-        // Either what we saw was never in the box (a hint line, someone else's pane) or the
-        // TUI did not act on the clear. Both mean the same thing here: do not send a CR
-        checkoutLog("친 것이 입력창에서 지워지는 것을 확인하지 못함 — 재시도 (\(attempt)/5)")
+    let baseline = probeCount(of: marker, in: before)
+    guard waitUntilProbeCount(baseline, of: marker, io: io) else {
+        // 표식이 사라지지 않았다 — 우리가 본 것이 입력창이 아니었거나, TUI가 Ctrl+U를 처리하지
+        // 않았다. 둘 다 "CR을 보내면 안 된다"로 같다
+        checkoutLog("표식이 입력창에서 지워지는 것을 확인하지 못함 — 재시도 (\(attempt)/\(maxAttempts))")
         return false
     }
     return true
@@ -584,40 +596,6 @@ private func screenTail(from probe: String, in screen: String) -> String? {
     let squeezed = screen.filter { !$0.isWhitespace }
     guard let found = squeezed.range(of: probe, options: .backwards) else { return nil }
     return String(squeezed[found.lowerBound...])
-}
-
-/// 읽히는 화면이 우리 pane인지 증명한다. 우리 tty에만 들어가는 난수를 하나 넣고 그것이
-/// 화면에 **새로** 뜨는지 본다 — 뜨면 지금 읽히는 화면이 우리 pane이다. 다른 pane에 같은
-/// 난수가 같은 순간 나타날 확률은 무시할 수 있다.
-/// 표식은 여기서 지우지 않는다 — 성공·실패 경로가 갈리면 정리를 빠뜨리므로 호출자가
-/// 한 자리에서 Ctrl+U로 지운다.
-/// 폴링이 반영 확인보다 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고,
-/// 그건 기다리면 풀리는 상태이기 때문이다.
-///
-/// **증명은 본문 타이핑 시점까지만 유효하다.** 증명 뒤 [Ctrl+U → 1초 → 타이핑 → 반영 확인]
-/// 사이에 사용자가 탭을 옮기면, 본문 반영 확인은 다시 남의 화면을 읽게 된다. 그 창을 없애려면
-/// CR 직전에 증명을 다시 태워야 하는데, 그때 입력창에는 본문이 들어 있어 표식을 덧붙이면
-/// 제출에 섞인다. 표식을 본문 뒤에 붙였다 지우는 안도 검토했지만, **지웠음을 확인하는 화면
-/// 읽기가 다시 같은 문제를 갖는다** — 남의 화면에서는 표식도 안 보이므로 "지워졌다"가 거짓
-/// 양성이 되고, 그러면 `본문+표식`이 그대로 제출된다. 유실보다 나쁜 결과라 택하지 않았다.
-///
-/// 남는 창의 크기와 피해: 창은 위 구간(대략 1∼3초, 폴링 간격 0.4초). 그 안에서 피해가
-/// 생기려면 ①사용자가 정확히 그때 탭을 옮기고 ②그 pane이 우리 프로브(입력 앞 24자)를
-/// **새로** 얻고 ③claude가 우리 본문을 그리지 못하고 버려야 한다 — 셋이 모두 겹쳐야 한다.
-/// 그때의 결과는 **빈 CR 한 번**이다: 바이트는 CR을 포함해 전부 우리 tty로만 가므로
-/// (`sendKeys`의 `.warp` 갈래 → 헬퍼 TIOCSTI, 합성 키 입력·AX 쓰기 경로는 코드에 없다)
-/// 남의 pane 내용이 제출될 수는 없고, 우리 pane의 입력창이 비어 있어 아무 일도 일어나지
-/// 않는다. 앱 로그에는 전달된 것으로 남으므로 그 한 건이 유실된다.
-private func proveOurPane(io: ClaudeSessionIO) -> Bool {
-    guard let before = io.screenText() else { return false }
-    let token = paneProofToken()
-    guard send(token, io: io) else { return false }
-    for _ in 0..<10 {
-        io.wait(0.5)
-        guard let after = io.screenText() else { continue }
-        if screenReflectsNewInput(before: before, after: after, input: token) { return true }
-    }
-    return false
 }
 
 /// 화면에 뜬 것이 확인된 입력을 CR로 제출한다. 전송이 실패하면 재타이핑이 아니라 CR만 다시

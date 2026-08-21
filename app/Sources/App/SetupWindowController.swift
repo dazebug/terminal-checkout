@@ -656,7 +656,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             apply(
                 accessibilityGranted
                     ? .ok("허용됨")
-                    : .warning("허용 안 됨 — 명령은 실행되지만 claude 입력은 전달되지 않습니다"),
+                    : .warning("허용 안 됨 — claude 입력이 예약된 버튼은 거절됩니다"),
                 to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
             )
         }
@@ -733,9 +733,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.ok
                 terminalDetail = "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
             } else {
-                // 명령 실행은 되므로 오류가 아니라 경고다 — claude 입력만 막힌다
+                // claude 입력이 없는 버튼은 그대로 도므로 오류가 아니라 경고다
                 terminalColor = Theme.warn
-                terminalDetail = "손쉬운 사용 권한 없음 — 명령은 실행되고 claude 입력은 전달되지 않음"
+                terminalDetail = "손쉬운 사용 권한 없음 — claude 입력이 예약된 버튼은 탭을 열지 않고 거절됨"
             }
         }
         return [

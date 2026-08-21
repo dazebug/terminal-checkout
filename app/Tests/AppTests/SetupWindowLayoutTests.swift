@@ -151,4 +151,18 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
         XCTAssertFalse(text.contains("그대로 실행되지만"), text)
         XCTAssertTrue(text.contains("거절"), text)
     }
+
+    /// The same promise was made in two more places — the permission status line and the pipeline
+    /// row — and round 8 fixed only the card. They are plain string literals with no seam, so the
+    /// source itself is the thing to check: no window text may say the command still runs
+    func testNoWindowTextStillPromisesTheCommandRunsWithoutThePermission() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/SetupWindowController.swift")
+        let text = try String(contentsOf: source, encoding: .utf8)
+        for promise in ["명령은 실행되지만", "명령은 실행되고"] {
+            XCTAssertFalse(text.contains(promise), promise)
+        }
+    }
 }
