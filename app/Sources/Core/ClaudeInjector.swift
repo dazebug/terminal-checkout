@@ -292,7 +292,8 @@ struct InputBoxOwnership {
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
-    betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
+    betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2,
+    timeline: DeliveryTimeline? = nil
 ) -> Int {
     // 나가는 바이트를 세어 "입력창에 우리 조각이 남아 있을 수 있는가"를 따라간다.
     // 추적을 이 함수 안에 두는 이유는 **실패 종료 경로가 여럿**이기 때문이다(입력 사이 세션
@@ -317,7 +318,8 @@ public func submitClaudeInputs(
         let outcome = typeAndSubmit(
             input, io: tracked, retryConfirmTimeout: retryConfirmTimeout,
             // 관찰로만 내려간다 — 쓰기 성공은 증거가 아니다
-            boxObservedEmpty: { ownership.recordInputBoxIsFreeOfOurs() }
+            boxObservedEmpty: { ownership.recordInputBoxIsFreeOfOurs() },
+            timeline: timeline, label: "입력 \(index + 1)/\(inputs.count)"
         )
         switch outcome {
         case .sentAndBoxIsFreeOfOurs:
@@ -370,7 +372,8 @@ public func submitClaudeInputs(
 /// 전부 "전달을 멈추고 보고"로 끝나며, 입력창에 남았을 조각은 호출자의 정리가 지운다.
 private func typeAndSubmit(
     _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval,
-    boxObservedEmpty: () -> Void = {}
+    boxObservedEmpty: () -> Void = {},
+    timeline: DeliveryTimeline? = nil, label: String = ""
 ) -> SubmitOutcome {
     let maxAttempts = 5
     for attempt in 1...maxAttempts {
@@ -385,6 +388,10 @@ private func typeAndSubmit(
         // 우리 pane이라는 증명 ② 우리가 친 것이 뜨는 그 자리가 **입력창**이라는 귀속
         // ③ 그 Ctrl+U를 TUI가 실제로 **처리했다**는 확인
         guard proveOurPaneAndEmptyBox(io: io, attempt: attempt, of: maxAttempts) else { continue }
+        // The gap on this line is the one the app does not control: on Warp the proof only passes
+        // while the user is looking at that tab, so a large number here is the answer "you were
+        // on another tab", not a bug to fix
+        timeline?.step("\(label) pane 증명 통과 (시도 \(attempt)/\(maxAttempts))")
         // 여기서 입력창은 **비어 있음이 관찰된** 상태다 — 쓰기 성공이 아니라 관찰이다
         boxObservedEmpty()
         guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
@@ -418,6 +425,7 @@ private func typeAndSubmit(
             }
         }
         if let reflected {
+            timeline?.step("\(label) 본문 반영 확인")
             guard submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) else {
                 // **A CR that went out may have landed even when the call reports failure** — the
                 // helper can inject part of a write and then error. So this input is never typed
@@ -428,14 +436,20 @@ private func typeAndSubmit(
                 checkoutLog("제출(CR) 전송 실패 — 이미 CR을 보낸 입력은 다시 치지 않고 전달을 멈춤")
                 return .gaveUp
             }
+            // 첫 입력의 이 줄에 찍히는 「총」이 사용자가 체감하는 수치다 — 버튼 클릭에서
+            // 첫 제출까지
+            timeline?.step("\(label) 제출(CR) 전송")
             switch inputBoxAfterSubmit(io: io, whenTyped: reflected, text: text) {
             case .stillHoldsOurInput:
+                timeline?.step("\(label) 사후 확인: 입력이 입력창에 남음")
                 return .leftInTheInputBox
             case .ourInputIsGone:
+                timeline?.step("\(label) 사후 확인: 입력창에 우리 것 없음")
                 // The box is not holding ours. Whether claude took the message or the transcript
                 // merely scrolled it out of view is question (i), which we do not ask
                 return .sentAndBoxIsFreeOfOurs
             case .unknown:
+                timeline?.step("\(label) 사후 확인: 입력창 상태 알 수 없음")
                 return .sentButBoxUnknown
             }
         }
@@ -667,7 +681,8 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
-    betweenInputTimeout: TimeInterval = 15
+    betweenInputTimeout: TimeInterval = 15,
+    timeline: DeliveryTimeline? = nil
 ) {
     guard !inputs.isEmpty else { return }
     // Warp 헬퍼는 pane에 남아 떠도는 프로세스가 되면 안 된다 — 어느 경로로 끝나든 종료시킨다
@@ -694,6 +709,8 @@ public func deliverClaudeInputs(
             return
         }
         ttyPath = warpHelperTTY(socket: socket)
+        // 가설 (a): 헬퍼 대기 창은 최대 20초다. 이 줄의 「+」가 그중 얼마를 썼는지 말한다
+        timeline?.step(ttyPath == nil ? "Warp 주입 헬퍼 대기 실패" : "Warp 주입 헬퍼 준비")
     case .none:
         checkoutLog("claude 입력 전달 불가 — 세션 핸들 없음")
         return
@@ -707,9 +724,13 @@ public func deliverClaudeInputs(
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
+        timeline?.step("claude 기동 대기 시간 초과")
         checkoutLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
         return
     }
+    // 가설 (b): 여기까지의 「+」가 cd + 셸 rc + claude 부팅이다 (전면 프로세스 = claude이고
+    // tty가 raw mode가 될 때까지)
+    timeline?.step("claude 준비 (pid \(claudePID))")
 
     let io = ClaudeSessionIO(
         sendKeys: { keys in sendKeys(keys, to: handle, expectedPID: claudePID) },
@@ -730,8 +751,9 @@ public func deliverClaudeInputs(
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
     let sent = submitClaudeInputs(
-        inputs, io: io, betweenInputTimeout: betweenInputTimeout
+        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline
     )
+    timeline?.step("전달 종료 — 입력 \(inputs.count)개 중 \(sent)개 보냄")
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(sent)개 보냄(수신은 확인하지 않는다)")
     // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —
     // 정리 조건은 권한이 아니라 "다 끝내지 못했다"이기 때문이다. 여기서는 진단만 남긴다:

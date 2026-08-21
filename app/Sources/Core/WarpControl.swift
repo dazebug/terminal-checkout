@@ -250,6 +250,10 @@ public func requestAccessibilityPrompt() -> Bool {
 /// 때문이다: 타이핑·제출은 헬퍼가 우리 tty에만 넣으므로, 남의 pane을 읽어 생기는 최악은
 /// "pane 증명·반영 확인이 실패해 재시도하다 아무것도 제출하지 않는 것"이다.
 public func warpScreenText() -> String? {
+    // Timed from the first line, not from after the guard: what the poll interval has to cover is
+    // the **whole call** — the TCC trust check, the `ps` that finds Warp's pids, and the AX walk
+    let started = Date()
+    defer { warpScreenReadCost.record(Date().timeIntervalSince(started)) }
     guard accessibilityIsTrusted() else { return nil }
     // 창 하나를 읽을 때마다 ps를 다시 부른다 — 반영 확인은 0.4초 간격 다섯 번이라
     // 비용이 드러나지 않고, 캐시를 두면 Warp 재시작 뒤 죽은 pid를 붙들게 된다
@@ -257,6 +261,37 @@ public func warpScreenText() -> String? {
         if let text = warpFocusedPaneText(pid: pid_t(pid)) { return text }
     }
     return nil
+}
+
+/// What one Accessibility screen read costs, for the first few reads of a process.
+///
+/// Round 10 set `screenPollInterval` (0.15s) so that every known reader stays under half the
+/// interval — osascript 59ms, wezterm cli 14ms, ps+stty 9ms — and had to **assume** Warp's read was
+/// "no cheaper than osascript", because measuring it needs Warp running and the permission granted.
+/// Both hold now, so the reads report themselves. If this turns out to be hundreds of milliseconds,
+/// the poll interval is resting on a false premise and the next round has its input.
+///
+/// Only the first reads are logged: the first one carries process-attach and AX-tree warm-up, the
+/// next few are the steady state, and after that it would be noise on every poll. The normal log
+/// level, not `debug` — `Logger.debug` is not persisted, so `log show` would not have it when the
+/// number is read back.
+private let warpScreenReadCost = ScreenReadCostLog(reportsWanted: 5)
+
+private final class ScreenReadCostLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private let reportsWanted: Int
+    private var reported = 0
+
+    init(reportsWanted: Int) { self.reportsWanted = reportsWanted }
+
+    func record(_ elapsed: TimeInterval) {
+        lock.lock()
+        guard reported < reportsWanted else { return lock.unlock() }
+        reported += 1
+        let index = reported
+        lock.unlock()
+        checkoutLog("Warp 화면 읽기 \(index)회차 \(Int((elapsed * 1000).rounded()))ms")
+    }
 }
 
 /// 주어진 Warp 프로세스의 포커스된 창에서 pane 화면 텍스트를 읽는다.

@@ -1640,6 +1640,78 @@ private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
+// MARK: - 전달 단계 계측 (라운드 15)
+// A successful delivery used to log one line, at the end. When a real run took 86 seconds between
+// the tab opening and the first submission, nothing in the log could say where they went — helper
+// wait, claude startup, or the user not looking at the tab. These pin the shape of the stopwatch
+// and the fact that the delivery loop actually drives it.
+
+final class DeliveryTimelineTests: XCTestCase {
+    /// Every step reports **both** numbers: the gap from the previous step (which stage was slow)
+    /// and the total since the request arrived (the metric this round exists for — button press to
+    /// the first CR).
+    func testEachStepReportsTheGapFromThePreviousStepAndTheTotal() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        var lines: [String] = []
+        let timeline = DeliveryTimeline(now: { clock }, emit: { lines.append($0) })
+        timeline.step("요청 수신")
+        clock = clock.addingTimeInterval(3.2)
+        timeline.step("Warp 탭 생성")
+        clock = clock.addingTimeInterval(86)
+        timeline.step("claude 준비")
+        XCTAssertEqual(lines, [
+            "요청 수신 (+0.0s, 총 0.0s)",
+            "Warp 탭 생성 (+3.2s, 총 3.2s)",
+            "claude 준비 (+86.0s, 총 89.2s)",
+        ])
+    }
+
+    /// The stopwatch is only worth anything if the delivery loop drives it. One input has to log
+    /// its pane proof, its reflection check and its submission — that split is what tells a slow
+    /// claude apart from a user who is looking at another tab.
+    func testTheDeliveryLoopLogsEveryStepOfAnInput() {
+        let session = FakeClaudeSession()
+        var lines: [String] = []
+        // A frozen clock, so this pins the **shape** of the output rather than its timings
+        let timeline = DeliveryTimeline(
+            now: { Date(timeIntervalSince1970: 0) }, emit: { lines.append($0) }
+        )
+        XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline), 1)
+        XCTAssertEqual(lines, [
+            "입력 1/1 pane 증명 통과 (시도 1/5) (+0.0s, 총 0.0s)",
+            "입력 1/1 본문 반영 확인 (+0.0s, 총 0.0s)",
+            // The "총" on this line is the number the user is complaining about: press to submit
+            "입력 1/1 제출(CR) 전송 (+0.0s, 총 0.0s)",
+            "입력 1/1 사후 확인: 입력창 상태 알 수 없음 (+0.0s, 총 0.0s)",
+        ])
+    }
+
+    /// The attempt counter is the whole point of the pane-proof line: on Warp the proof only
+    /// passes while the user is looking at that tab, so "통과 (시도 3/5)" with a large gap is the
+    /// evidence for telling them so, rather than a defect to chase
+    func testThePaneProofLineCarriesHowManyAttemptsItTook() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        session.failScreenAt = [1] // 첫 시도의 화면 조회 실패 → 두 번째 시도에서 통과
+        var lines: [String] = []
+        let timeline = DeliveryTimeline(
+            now: { Date(timeIntervalSince1970: 0) }, emit: { lines.append($0) }
+        )
+        _ = submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline)
+        XCTAssertTrue(
+            lines.contains { $0.hasPrefix("입력 1/1 pane 증명 통과 (시도 2/5)") }, "\(lines)"
+        )
+    }
+
+    /// No timeline, no lines — the tests above are the only callers that pass one, and every other
+    /// test in this file must keep running against an unchanged loop.
+    func testWithoutATimelineNothingIsEmitted() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io), 1)
+        XCTAssertEqual(session.submitted, ["!gh pr diff 1"])
+    }
+}
+
 private final class FakeClaudeSession {
     private(set) var keystrokes: [String] = []
     private(set) var submitted: [String] = []
