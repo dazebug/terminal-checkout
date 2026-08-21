@@ -137,16 +137,18 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
     return count
 }
 
-/// 꼬리를 치기 전에 통과해야 하는 게이트의 재료.
+/// What the gate needs before the tail may be typed.
 ///
-/// `screenBefore`는 **claude가 뜨기 전에** 찍은 화면이다. 존재 여부로 판정하면 안 되기
-/// 때문이다(재현): `set -x`인 zsh는 치환이 끝난 argv를 실행 **전에** 화면에 뱉는다 —
-/// `+zsh:1> claude $'==== tc-… ====\nplain context'`. 그 에코를 렌더로 오인하면 claude가
-/// 그리기도 전에 꼬리를 쳐서, argv 제출의 입력창 clear에 통째로 지워진다. 스냅샷을 먼저 찍고
-/// **개수가 하나 늘었을 때만** 통과시키면 그 에코는 스냅샷 쪽에 이미 들어 있어 통과되지 않는다.
+/// `screenBefore` is the screen as it was **before claude started**, because presence alone is not
+/// a safe test (reproduced): a zsh with `set -x` echoes the fully substituted argv to the screen
+/// *before* running it — `+zsh:1> claude $'==== tc-… ====\nplain context'`. Mistaking that echo
+/// for the render types the tail before claude has drawn anything, and the input-box clear that
+/// comes with submitting the argv message wipes it. Taking the snapshot first and passing only
+/// when the **count has gone up by one** cannot be fooled: the echo is already in the snapshot.
 ///
-/// 그래서 스냅샷은 claude 기동을 기다리기 **전에** 찍는다(`deliverClaudeInputs`). 못 찍었으면
-/// (nil) 실패다 — 못 찍은 것을 "없었다"로 다루면 판정이 존재 여부로 되돌아간다.
+/// That is why the snapshot is taken **before** waiting for claude to start
+/// (`deliverClaudeInputs`). Failing to take one (nil) is a failure — treating "could not look" as
+/// "was not there" would put the judgement right back to presence.
 public struct ArgvPromptGate {
     public let marker: String
     public let screenBefore: String?
@@ -157,17 +159,19 @@ public struct ArgvPromptGate {
     }
 }
 
-/// argv 첫 메시지가 화면에 렌더될 때까지 기다린다. **바이트를 하나도 내보내지 않는다** —
-/// 렌더 전에 친 것은 argv 제출의 입력창 clear에 지워지기 때문이고(실측), 아무것도 보내지
-/// 않았으니 실패로 끝나도 지울 조각이 없다.
+/// Waits until the argv opening message has rendered on screen. **Not one byte goes out** — what
+/// is typed before the render is wiped by the input-box clear that comes with submitting the argv
+/// message (measured), and since nothing was sent there is no fragment to clean up on failure.
 ///
-/// 판정은 `screenReflectsNewInput` **하나를 그대로 쓴다.** 같은 규칙(직전 화면보다 하나 더
-/// 보여야 한다 / 스냅샷을 못 찍었으면 실패 / 공백 무시)을 두 벌로 두면 한쪽만 강화된다.
+/// The judgement reuses **the single `screenReflectsNewInput`**. Keeping a second copy of the
+/// same rule (one more occurrence than the previous screen / no snapshot means failure / ignore
+/// whitespace) would mean only one of them ever gets hardened.
 ///
-/// 세션 동일성을 루프 안에서 재확인하지 않는 이유: 마커가 요청 고유라 **다른 세션은 애초에
-/// 이 조건을 만족시킬 수 없다.** `ps`/`stty`가 한 번 튀었다고 포기하면 기다리면 풀릴 상태
-/// (사용자가 다른 탭을 보는 중, 신뢰 다이얼로그가 떠 있는 중)에서 꼬리를 버리게 된다.
-/// 게이트를 지난 뒤 첫 입력 앞에서 `submitClaudeInputs`가 어차피 `confirmSession`을 부른다.
+/// Session identity is not re-checked inside the loop: the marker is unique per request, so
+/// **no other session can satisfy this condition in the first place**. Giving up because `ps` or
+/// `stty` hiccuped once would throw the tail away in a state that resolves by waiting (the user
+/// is looking at another tab, a trust dialog is up). Past the gate, `submitClaudeInputs` calls
+/// `confirmSession` before the first input anyway.
 func waitUntilArgvPromptRendered(
     gate: ArgvPromptGate, io: ClaudeSessionIO, pollInterval: TimeInterval, timeout: TimeInterval
 ) -> Bool {
@@ -289,11 +293,12 @@ struct InputBoxOwnership {
 /// 입력마다 세션 동일성을 먼저 확인한다 — 그 사이 원래 세션이 죽고 같은 tty에 새 claude가
 /// 떴다면 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 셸 명령까지 실행된다.
 ///
-/// `awaitingArgvMarker`가 있으면 **첫 입력을 치기 전에 그 마커가 화면에 뜨는 것을 먼저 본다.**
-/// 접두사를 argv로 실어 보낸 요청에서 claude는 뜨자마자 그 메시지를 제출하는데, 그 제출이
-/// 입력창을 비운다 — 그 전에 친 꼬리는 통째로 지워지고, 운이 나쁘면 [반영 확인 통과 → clear →
-/// CR] 순서가 되어 빈 CR만 나간다(실측). 준비 판정(포그라운드+raw 모드)은 이 시점보다 한참
-/// 이르러 아무것도 막지 못한다.
+/// With an `argvGate`, **the marker has to appear on screen before the first input is typed.**
+/// In a request whose prefix went out in argv, claude submits that message as soon as it starts,
+/// and the submission clears the input box — a tail typed before that is wiped whole, and with
+/// bad luck the order becomes [reflection check passes → clear → CR] and an empty CR is all that
+/// goes out (measured). The readiness gates (foreground + raw mode) happen far too early to stop
+/// any of it.
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
@@ -303,8 +308,9 @@ public func submitClaudeInputs(
     if let argvGate, !waitUntilArgvPromptRendered(
         gate: argvGate, io: io, pollInterval: 0.5, timeout: argvRenderTimeout
     ) {
-        // 기존 "claude가 입력을 받을 상태가 되지 않음"과 같은 결로 끝낸다 — 조용히 치지 않는다.
-        // 한 바이트도 안 나갔으므로 정리(Ctrl+U)도 하지 않는다: 입력창에 있는 것은 사용자 것이다
+        // Ends the same way as the existing "claude never became ready" path — it does not type
+        // quietly. Nothing went out, so no cleanup (Ctrl+U) either: whatever is in the input box
+        // belongs to the user
         checkoutLog(
             "\(Int(argvRenderTimeout))초 내에 argv 첫 메시지가 화면에 뜨지 않아 꼬리 입력 \(inputs.count)개를 보내지 않음"
         )
@@ -477,7 +483,8 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// 타임아웃 내에 claude가 준비되지 않으면 아무것도 보내지 않고 포기한다(로그만).
 /// 기동 대기(기본 2분)와 입력별 재시도가 모두 블로킹이라 전체로는 수 분이 걸릴 수 있다 —
 /// 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
-/// `awaitingArgvMarker`는 접두사를 argv로 보낸 요청에서만 준다 — `submitClaudeInputs` 참고.
+/// `awaitingArgvMarker` is supplied only for requests whose prefix went out in argv — see
+/// `submitClaudeInputs`.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     awaitingArgvMarker: String? = nil,
@@ -519,10 +526,11 @@ public func deliverClaudeInputs(
     }
     let ttyName = String(ttyPath.dropFirst("/dev/".count))
 
-    // **claude 기동을 기다리기 전에** 찍는다. 이 시점의 화면에는 셸이 이미 뱉은 것(xtrace의
-    // argv 에코 포함)이 들어 있고 claude의 렌더는 아직 없으므로, 뒤에 개수가 느는 것은
-    // claude가 그린 것뿐이다. 기다린 뒤에 찍으면 렌더가 스냅샷에 섞여 게이트가 영영 통과하지
-    // 못할 수 있다(그때의 결과는 꼬리 유실 — fail-closed 방향이지만 피할 수 있는 손해다)
+    // Taken **before** waiting for claude to start. At this point the screen holds whatever the
+    // shell has already emitted (including an xtrace echo of the argv) and none of claude's
+    // render, so any later increase in the count is claude's drawing alone. Snapshotting after
+    // the wait risks catching the render itself, and the gate would then never pass (the result
+    // is a lost tail — fail-closed, but an avoidable loss)
     let argvGate = awaitingArgvMarker.map {
         ArgvPromptGate(marker: $0, screenBefore: screenText(of: handle))
     }

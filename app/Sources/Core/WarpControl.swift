@@ -112,15 +112,15 @@ public func shellSingleQuoted(_ text: String) -> String {
     "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
 }
 
-/// 두 인자 모두 절대 경로를 단일 인용해 넣는다 — 사용자 셸의 PATH·함수·별칭 어느 것도
-/// 이 줄이 무엇을 실행할지 바꿀 수 없다.
+/// Both arguments are absolute paths, single-quoted — nothing in the user's shell (PATH,
+/// functions, aliases) can change what this line runs.
 public func warpHelperCommand(executable: String, socketPath: String) -> String {
     "\(shellSingleQuoted(executable)) \(shellSingleQuoted(socketPath))"
 }
 
-/// 주입 헬퍼를 띄울 수 있는 상태인가 — 번들에 실행 파일이 있고, 소켓 경로가 104바이트
-/// 제한에 걸리지 않는가. 경로 길이는 임시 디렉토리에 달려 있고 토큰 길이는 고정(8자)이라
-/// 아무 토큰으로 재도 답이 같다.
+/// Can the injection helper be launched — is the executable in the bundle, and does the socket
+/// path stay under the 104-byte limit? The length depends on the temp directory and the token is
+/// always 8 characters, so measuring with any token gives the same answer.
 public func warpInjectionHelperIsReady() -> Bool {
     warpHelperExecutablePath() != nil && warpHelperSocketPath(token: warpHelperToken()) != nil
 }

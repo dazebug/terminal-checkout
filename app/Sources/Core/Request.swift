@@ -45,9 +45,10 @@ public func resolveRequest(_ json: [String: Any]) throws -> ResolvedRequest {
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)
 }
 
-/// NUL은 어느 경로로도 원문대로 전달할 수 없다: argv 트랙에서는 명령 치환이 조용히 **삭제**하고
-/// (`pre<NUL>post` → `prepost`, 재현됨), 주입 트랙에서는 tty 입력 큐에 그대로 넣을 수 없다.
-/// 조용히 바꿔 보내느니 요청을 거절한다 — 확장은 이 문자열을 그대로 실패로 표시한다.
+/// A NUL cannot be delivered faithfully by either route: on the argv track command substitution
+/// **drops** it silently (`pre<NUL>post` → `prepost`, reproduced), and on the injection track it
+/// cannot go into the tty input queue at all. Rather than send something altered, reject the
+/// request — the extension surfaces this string as the failure.
 private func rejectNUL(in text: String, what: String) throws {
     guard text.utf8.contains(0) else { return }
     throw CommandError.badRequest("\(what) must not contain NUL")
