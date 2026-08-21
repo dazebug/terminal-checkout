@@ -315,6 +315,7 @@
     .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Status: styled like a line of terminal output */
+    #load-error { margin-top: 14px; }
     .status { display: none; font: 12px var(--mono); margin-top: 14px; padding: 8px 12px; border-radius: 6px; }
     .status.success { display: block; color: var(--ok); background: rgba(78, 201, 123, 0.08); }
     .status.success::before { content: "✓ "; }
@@ -329,6 +330,10 @@
   </style>
 </head>
 <body>
+  <!-- Everything the user can act on lives inside #app, which is inert until the settings have
+       been read. The status line and [Retry] below are deliberately outside it: a load that fails
+       still has to be able to say so and offer a way back. -->
+  <main id="app" inert>
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
     <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window</p>
@@ -425,6 +430,11 @@
     <button class="btn-primary" id="save-btn">Save</button>
     <button class="btn-secondary" id="reset-btn">Reset to Defaults</button>
     <span id="dirty-indicator" hidden>● Unsaved changes</span>
+  </div>
+  </main>
+
+  <div id="load-error" hidden>
+    <button class="btn-secondary" id="retry-btn">Retry</button>
   </div>
   <div id="status" class="status"></div>
 

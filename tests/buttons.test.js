@@ -196,3 +196,50 @@ test('adoptStoredButtons: the readable ones survive next to the broken ones', ()
     { face: '🤖', label: 'keep', command: '{cd} && claude', claudeInputs: ['/review'] },
   ]);
 });
+
+// --- Fields, not just containers ---
+// Checking that an entry is an object stops the crash at the outer layer and lets a bad field
+// straight through: `command: 42` reaches .trim(), and `claudeInputs: "hello"` used to be quietly
+// replaced by [] — the user's scheduled inputs gone at the next Save with nothing said.
+
+test('adoptStoredButtons: a non-string face, label or command makes the entry unreadable', () => {
+  for (const bad of [{ command: 42 }, { face: null }, { label: [] }, { command: {} }]) {
+    const entry = { face: 'x', label: 'b', command: 'c', claudeInputs: [], ...bad };
+    const { buttons, skipped } = adoptStoredButtons([entry]);
+    assert.deepEqual(buttons, [], JSON.stringify(bad));
+    assert.equal(skipped, 1, JSON.stringify(bad));
+  }
+});
+
+test('adoptStoredButtons: claudeInputs must be an array of strings, or the entry goes', () => {
+  // Dropping the whole entry rather than the field: a button whose scheduled inputs we cannot read
+  // is not a button we understand, and silently keeping it with [] is how they got lost before.
+  for (const claudeInputs of ['hello', [1], [null], [{}], {}]) {
+    const { buttons, skipped } = adoptStoredButtons([{ face: 'x', label: 'b', command: 'c', claudeInputs }]);
+    assert.deepEqual(buttons, [], JSON.stringify(claudeInputs));
+    assert.equal(skipped, 1, JSON.stringify(claudeInputs));
+  }
+});
+
+test('adoptStoredButtons: absent fields are still fine — only present-and-wrong is unreadable', () => {
+  const { buttons, skipped } = adoptStoredButtons([{ command: '{cd}' }]);
+  assert.equal(skipped, 0);
+  assert.deepEqual(buttons, [{ face: '', label: '', command: '{cd}', claudeInputs: [] }]);
+});
+
+test('adoptStoredButtons: the legacy emoji field still counts, and still has to be a string', () => {
+  assert.deepEqual(
+    adoptStoredButtons([{ emoji: '🤖', command: '{cd}' }]).buttons,
+    [{ face: '🤖', label: '', command: '{cd}', claudeInputs: [] }]
+  );
+  assert.equal(adoptStoredButtons([{ emoji: 7, command: '{cd}' }]).skipped, 1);
+});
+
+test('adoptStoredButtons: one bad field does not take the good entries with it', () => {
+  const { buttons, skipped } = adoptStoredButtons([
+    { face: 'x', label: 'bad', command: 42, claudeInputs: [] },
+    { face: 'y', label: 'good', command: '{cd} && claude', claudeInputs: ['/review'] },
+  ]);
+  assert.equal(skipped, 1);
+  assert.deepEqual(buttons, [{ face: 'y', label: 'good', command: '{cd} && claude', claudeInputs: ['/review'] }]);
+});

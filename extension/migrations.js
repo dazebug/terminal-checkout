@@ -376,11 +376,14 @@ function planSave({ loadedSnapshot, liveSnapshot, payload }) {
 // field that was still live bumped the revision, the answer was dropped, and nothing ever retried,
 // so the page sat unloaded forever. Being overtaken by a newer request still wins.
 function shouldApplyLoadedSnapshot({
-  revisionAtStart, revisionNow, dirty, generation, latestGeneration, initial,
+  revisionAtStart, revisionNow, dirty, generation, latestGeneration, initial, reviewTouched,
 }) {
   if (generation !== latestGeneration) return false;
   if (initial) return true;
-  return !dirty && revisionAtStart === revisionNow;
+  // reviewTouched is named here as well as being counted in the revision. Both halves were needed
+  // once: the badge click did not bump the revision, so an answer already in flight arrived and
+  // wiped the review. The click bumps it now, and this line means that cannot be undone by accident.
+  return !dirty && !reviewTouched && nothingHappenedSince(revisionAtStart, revisionNow);
 }
 
 // Reads a settings object that came from outside this page — storage or an imported file — and
@@ -429,3 +432,29 @@ function adoptStoredSettings(raw) {
 
   return { settings, skipped };
 }
+
+// --- One signal for "the user said something" ---
+// `revision` is the primary signal and everything else is derived from it. It used to be three
+// half-signals — dirty, revision, reviewTouched — each maintained at its own call sites, and every
+// boundary between them leaked: a save cleared reviewTouched before checking the revision, and a
+// badge click bumped neither.
+//
+// So: every interaction goes through one function that bumps the revision (options.js `touch`), and
+// every asynchronous step ends by asking this one question before it changes anything.
+function nothingHappenedSince(revisionAtStart, revisionNow) {
+  return revisionAtStart === revisionNow;
+}
+
+// Whether a user action may change any state at all. Before the first load there is nothing to
+// change and no snapshot to compare against, so the answer is no however the action arrived —
+// `inert` stops clicks, but a dispatched event or a programmatic `.click()` walks straight past it.
+// Guarding the state change instead of the listeners is what makes that route irrelevant.
+function shouldAcceptUserAction(loaded) {
+  return loaded === true;
+}
+
+// A load can fail — storage.sync rejects, and it did so silently: the page stayed unloaded and inert
+// with nothing on screen and no way back. The gate stays shut (opening it would bring back writing
+// an empty settings object over real ones), so the way out has to be a retry, and the message has to
+// offer one.
+const LOAD_FAILED_MESSAGE = 'Could not read your settings. Retry, or reopen this page.';

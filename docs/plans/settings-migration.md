@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R4 커밋(항목 10 — 루트 inert 게이트·첫 로드 비폐기·리뷰 중 adoption 차단·echo 판정·공용 모양 검증기(3 reader)·length·소유 키 필터, verified) · 게이트 그린(드라이버 재실행 — node 93/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×3** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R5 커밋(항목 11 — touch() 단일 신호·nothingHappenedSince 술어·필드 검증기·#app inert+Retry·초크포인트 가드, verified) · 게이트 그린(드라이버 재실행 — node 102/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×4** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -106,7 +106,9 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | 9 | **R3 — Codex R2 차단(no)의 다섯 부류.** ⒜ 쓰기는 로드한 것 위에서만(floor 폐기, 낙관적 동시성 — 다르면 거부) ⒝ 로드 전에는 설정이 없다(`loaded` 게이트 + 로드 세대) ⒞ uid는 우리 것(`adoptButton`/`reshapeButton` 분리) ⒟ prefix 후보는 `behavior-change`(기본 해제) ⒠ 신뢰 경계 마무리(`onMessage` 가드, 역사 픽스처) | verified | 커밋 `856bf03`, 아래 R3 로그. Codex 재검증에서 이 7건은 전부 통과했고 신규 5건으로 차단됐다 — 상태 갱신은 드라이버 몫 | R3 |
 | 10 | **R4 — Codex R3 차단(no)의 두 부류.** **⒜ 상태 보호의 경계**: 로드 전 조작 차단을 컨트롤 열거에서 **루트 `inert`** 하나로 바꾸고(열거는 `default-main`·[+ Add Override]를 놓쳐 첫 로드를 영구 중단시켰다), 첫 로드는 revision으로 폐기하지 않으며(`initial`), 진행 중인 리뷰(`reviewTouched`)를 미저장 편집과 같은 급으로 보호하고 자기 저장 echo를 `loadedSnapshot`으로 걸러낸다. **⒝ 저장값 모양의 신뢰 경계**: `adoptStoredSettings` 하나를 load와 import가 공유하고 버린 항목을 보이게 보고한다. 부수: `sameStoredValue`의 배열 length, 소유 키에서만 stale 배너, `effect` 정의를 base dir 계약 안으로 좁힘, 잔여 창 서술 정정. **⒝는 옵션 페이지에서 끝나지 않는다** — `content.js`·`background.js`의 읽기 지점도 같은 검증기를 거치고, 그래서 검증기는 `migrations.js`가 아니라 `defaults.js`에 있다(그 둘은 migrations.js를 로드하지 않는다) | verified | 아래 R4 로그 | R4 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤.
+| 11 | **R5 — Codex R4 차단(no)의 세 부류.** **⒜ "사용자가 말했다"는 신호를 하나로**: `revision`이 유일한 1차 신호이고 모든 상호작용이 `touch()` 하나를 거친다. `dirty`·`reviewTouched`는 그 안에서만 갱신되고, 비동기 작업의 상태 전이는 전부 `nothingHappenedSince(revisionAtStart)` 하나로 판단한다(저장 성공 후 해제도, 로드 응답 적용도). `shouldApplyLoadedSnapshot`은 `reviewTouched`도 함께 본다. **⒝ 외부 입력 검증을 필드까지**: `readableButtonFields`가 `face`·`emoji`·`label`·`command`는 문자열, `claudeInputs`는 문자열 배열임을 요구하고 하나라도 어긋나면 **entry 전체**를 불량으로 세며, import도 같은 함수를 쓴다. **⒞ 로드 실패는 복구 가능**: inert의 루트를 `body`에서 `#app`으로 내리고 상태 줄·[Retry]를 그 밖에 둔다. **⒟ inert는 코드 규칙이 아니다**: `touch()`가 `loaded`가 아니면 무시하므로 프로그램적 이벤트도 상태를 못 바꾼다 | verified | 아래 R5 로그 | R5 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -117,6 +119,7 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] 옛 백업 JSON을 가져오면 같은 프리뷰가 뜨고, 역시 [Save] 전에는 아무것도 저장되지 않는다
 - [ ] 커스터마이즈된 command는 나열만 되고 값이 바뀌지 않는다
 - [ ] `storage.sync`의 버튼 배열에 `null` 항목을 넣어도 GitHub 페이지에 버튼이 그려지고(나머지 항목으로), 페이지·서비스 워커 콘솔에 "N stored buttons were unreadable and skipped" 경고가 남는다
+- [ ] `storage.sync.get`이 실패하도록 흉내 내면(오프라인·throw 주입) 상태 줄에 사유가 뜨고 [Retry]가 보이며, 누르면 정상 로드된다 — 실패 중에도 `#app`은 inert라 저장이 열리지 않는다
 
 ## 전수 소탕 표
 
@@ -218,6 +221,42 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | `content.js` `loadButtonConfigs` | 버튼 배열(그리기) | **닫음(R4)**: 같은 `readStoredButtons` |
 | `background.js:123` `repoMainBranch`·`defaultMain` | 오버라이드 맵 | 닫음(R2·R3): `Object.hasOwn` 가드 + 문자열만 통과 |
 
+### 소탕 표 7 — 상호작용 진입점이 `touch()`를 거치는가 (R5, 부류 ⒜⒟)
+
+`touch()`만이 `revision`·`dirty`·`reviewTouched`를 건드린다. 로드 전에는 무시하므로 `inert`를 우회하는 경로(프로그램적 이벤트)도 상태를 바꾸지 못한다.
+
+| 진입점 | 경유 | 신호 |
+|:--|:--|:--|
+| 카드 입력(face·label·command·claude 입력 행) | `markDirty()` → `touch({dirty:true})` | dirty |
+| 카드 버튼(삭제·복제·팔레트·입력 추가/삭제) | 동일 | dirty |
+| 프리셋 적용 select | 동일 | dirty |
+| 드래그·↑↓ 순서 변경 | 동일 | dirty |
+| `#default-main` 입력 | 동일 | dirty |
+| 오버라이드 입력·[+ Add Override]·[✕] | 동일 | dirty |
+| [+ Add Button] | 동일 | dirty |
+| [Reset to Defaults] | `markReviewed()` + `markDirty()` | dirty (+ reviewed) |
+| 가져오기 적용 | `applyImportedSettings` → `markDirty()` | dirty |
+| **마이그레이션 배지 클릭** | `touch({review:true})` | **review** — R4까지 revision을 안 올려 진행 중 로드가 리뷰를 지웠다 |
+| **후보 체크박스** | `touch({review:true})` | review |
+| **[Apply selected]** | `touch({review:true})` + `markDirty()` | review + dirty |
+| **[Keep mine] / [Got it]** | `touch({review:true})` + `markDirty()` | review + dirty |
+| [Save] · [Export] · [Import…] · [Retry] | 사용자 상태를 바꾸지 않음(읽기·쓰기 동작) | — (`requireLoaded()` 가드는 유지) |
+
+### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
+
+`adoptStoredButtons` → `readableButtonFields`. 하나라도 어긋나면 **entry 전체**를 버리고 센다 — 필드만 고쳐 살려 두는 것이 `claudeInputs` 유실의 원인이었다.
+
+| 필드 | 규칙 | 어겼을 때 |
+|:--|:--|:--|
+| `face` | 있으면 문자열 | entry 불량 |
+| `emoji`(레거시) | 있으면 문자열 | entry 불량 |
+| `label` | 있으면 문자열 | entry 불량 |
+| `command` | 있으면 문자열 | entry 불량 — `42`가 `.trim()`에 닿던 경로 |
+| `claudeInputs` | 있으면 **문자열 배열**(원소 하나라도 비문자열이면 불량) | entry 불량 — `"hello"`가 조용히 `[]`가 돼 다음 Save에 유실되던 경로 |
+| 위 필드가 **없음** | 허용 | 옛 버전이 저장한 버튼의 모습이다 |
+| `defaultMain` | 문자열 | 키를 버리고 센다 |
+| `repoMainBranch` | 문자열→문자열 맵 | 맵이 아니면 키를 버리고, 비문자열 값은 항목별로 버리고 센다 |
+
 ## 라운드 로그
 
 ### R0 — `6fa5daf` (계획 초안)
@@ -318,4 +357,26 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - 실측: `node --test` **93/0**(R3 81 → 신규 12: `migration.test.js` 8건 + `buttons.test.js` 4건). `swift test`·`app/e2e.sh`는 회귀 확인.
 - **⒝는 세 reader 전부.** 처음에는 `background.js`·`content.js`를 잔여로 남겼지만, Codex가 방금 차단한 부류 그대로를 두 곳 남기는 것이므로 같은 라운드에서 닫았다. 검증기(`adoptStoredButtons`)는 **`defaults.js`**에 둔다 — 설정 모양은 마이그레이션이 아니라 설정의 관심사이고, content/background는 `migrations.js`를 로드하지 않는다(그 경계는 유지). 두 reader는 `readStoredButtons`로 검증 + `console.warn`("N stored buttons were unreadable and skipped — open the options page to repair") + 남은 것이 없을 때만 기본값. 옵션 페이지의 `adoptStoredSettings`도 같은 함수를 부른다. red는 `tests/buttons.test.js`(defaults.js만 로드) 4건 — `ReferenceError: adoptStoredButtons is not defined` 확인 후 구현. 실동작은 수기 검사 목록에 1항목 추가.
 - **미검증**: DOM·클릭 경로(inert 게이트의 실제 동작, 배지·체크박스·배너, 실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다.
+- 판정: 미요청.
+
+### R4 — `209bf9b` (Codex 판정: 차단)
+
+- 기존 5건: **전부 차단 확인**(initial 적용·generation 폐기 / reviewTouched로 adoption 거부 / `[null]`·`{length:1}`·문자열·중첩 배열 → `skipped=1` 무예외 / sparse length conflict / 소유 키·echo). `git diff --check` 통과.
+- 신규 P1: **`reviewTouched`가 비동기 경계에서 풀린다** — Save 대기 중 체크박스 변경(revision 2) → set 성공 → 성공 경로가 `reviewTouched=false`를 **먼저** 만든 뒤 revision 변경을 감지 → 다음 원격 변경에 adoption이 허용돼 선택이 기본값으로 돌아가고 Apply가 거부 항목을 적용할 수 있다. 또 **배지 클릭은 revision을 올리지 않아** 진행 중이던 `loadSettings()`가 도착하면 `reviewTouched`를 보지 않는 `shouldApplyLoadedSnapshot`이 응답을 적용해 리뷰를 지울 수 있다.
+- 신규 P2 ×2: (1) **필드 모양 미검증** — `adoptStoredButtons`가 entry가 object인지만 보고 `command: 42`·`claudeInputs: "hello"`·비문자열 `face`를 통과시켜 `.trim()` TypeError 또는 claudeInputs가 조용히 `[]`로 바뀌어 다음 Save에 유실 (2) **`storage.sync.get` reject 시 영구 inert** — 첫 로드의 rejection 처리·재시도가 없어 `loaded=false`·`body.inert=true`로 영원히 남고 아무 메시지도 없다.
+- 신규 P3: 프로그램적 이벤트(`dispatchEvent(new Event('input'))`, `add-override.click()`)가 inert를 우회해 해당 listener에 `requireLoaded()`가 없으므로 로드 후 false dirty — 손실은 없지만 "inert가 코드 규칙을 대체하지는 못한다".
+- 잔여: "현재 문구에 동의한다 … CAS 없는 storage.sync로는 이 창을 제거할 수 없다. 다만 이 잔여를 제품 정책으로 수용하는 것과 불변 원칙을 완전히 만족하는 것은 별개다." `initial` 오판·`isOwnEcho` 오탐은 찾지 못함(오탐은 무해로 판정).
+- 부류 이동: 남은 것은 **"사용자가 말했다"는 신호의 단일화**(revision·dirty·reviewTouched가 세 개의 반쪽 신호)와 **외부 입력 검증의 깊이**(컨테이너까지만, 필드는 아직 신뢰), 그리고 **로드 실패의 복구 경로**다.
+
+### R5 — 워킹트리(미커밋, base `209bf9b`) · 항목 11
+
+- 범위: Codex R4 차단의 신규 4건을 세 부류로 묶어 근본 수정. R4의 5건은 재검증에서 전부 차단 확인됐으므로 손대지 않았다.
+- **⒜ 신호 단일화.** `revision`이 유일한 1차 신호이고, 모든 상호작용이 `touch({dirty, review})` 하나를 거친다(소탕 표 7). `dirty`·`reviewTouched`는 그 함수 안에서만 갱신된다. 비동기 경계는 전부 `nothingHappenedSince(revisionAtStart, revisionNow)` 하나로 판단한다 — 저장 성공 경로에서 **"저장소에 대한 사실"**(`loadedSnapshot`·`staleSinceLoad`)과 **"사용자에 대한 주장"**(`reviewTouched`·`dirty`·뷰 정리·재계획)을 갈라, 후자는 전부 그 술어 뒤로 옮겼다. Codex (1)이 정확히 이 순서 문제였다: `reviewTouched=false`가 revision 검사보다 앞에 있었다. 배지 클릭은 이제 `touch({review:true})`로 revision을 올리고, `shouldApplyLoadedSnapshot`은 `reviewTouched`도 함께 본다(Codex (2)의 양쪽 절반).
+- **⒝ 필드까지 검증.** `readableButtonFields`를 `defaults.js`에 두고 `adoptStoredButtons`가 부른다(소탕 표 8). 필드가 어긋나면 **entry 전체**를 버린다 — 필드만 고쳐 살려 두는 방식이 `claudeInputs: "hello"` → `[]` 유실의 원인이었다. import는 이미 같은 검증기를 거치므로 규칙이 하나다.
+- **⒞ 로드 실패 복구.** `storage.sync.get`을 try/catch로 감싸고, inert의 루트를 `body` → `#app`으로 내려 상태 줄·[Retry]를 밖에 뒀다. 실패 시 사유 + [Retry](새 load generation으로 재시도), 게이트는 그대로 닫힌 채다 — 열면 R3의 P1(빈 배열 저장)이 되살아난다.
+- **⒟ 초크포인트.** `touch()`가 `shouldAcceptUserAction(state.loaded)`에서 막으므로, `dispatchEvent`·프로그램적 `.click()`이 inert를 우회해도 상태가 변하지 않는다. listener마다 가드를 붙이는 열거를 하지 않았다 — 다음에 추가되는 listener가 곧 잊히는 listener다.
+- red 기록: ⒜⒞⒟ → `ReferenceError: nothingHappenedSince is not defined`; ⒝ → `not ok 25·26·28·29`(buttons.test.js). 각 확인 후 구현.
+- 실측: `node --test` **102/0**(R4 93 → 신규 9: `migration.test.js` 4 + `buttons.test.js` 5). `swift test` 210/0, `app/build.sh` + `app/e2e.sh` PASS 9건. HTML 구조 확인: `#app` 여닫이 1쌍, `#retry-btn`·`#status`는 `</main>` **뒤**, 배지·[Save]는 안.
+- 잔여: get↔set 창은 그대로(Codex가 서술에 동의). 수기 검사에 로드 실패·Retry 1항목 추가.
+- **미검증**: DOM·클릭 경로(inert 실동작, 배지·체크박스·배너·Retry, 실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다.
 - 판정: 미요청.

@@ -87,7 +87,20 @@ function requireLoaded() {
 // the page unloaded with nothing to retry it. A control added later is covered here without anyone
 // having to remember.
 function updateLoadedGate() {
-  document.body.inert = !state.loaded;
+  // The app, not the whole document: the status line and [Retry] live outside it, so a load that
+  // failed still has somewhere to say so and something the user can press.
+  document.getElementById('app').inert = !state.loaded;
+}
+
+// A load that never answered. The gate stays shut — a Save here would write an empty settings object
+// over real ones — so what is offered instead is another attempt.
+function showLoadFailure(error) {
+  document.getElementById('load-error').hidden = false;
+  showStatus('error', `${LOAD_FAILED_MESSAGE} (${error?.message || error})`);
+}
+
+function hideLoadFailure() {
+  document.getElementById('load-error').hidden = true;
 }
 
 // Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
@@ -270,10 +283,29 @@ function cardElement(kind, index, selector) {
 
 // --- Unsaved-change indicator ---
 
-function markDirty() {
-  state.dirty = true;
+// The one place a user action becomes state. Everything the user can do — typing, checking a box,
+// opening the review, pressing a panel button — comes through here, and nothing else assigns
+// `revision`, `dirty` or `reviewTouched`.
+//
+// One funnel, for two reasons. Before the load there is nothing to change, and refusing here covers
+// every route in: `inert` stops clicks, but a dispatched event or a programmatic `.click()` walks
+// straight past it, and guarding listeners one at a time means the listener added next year is the
+// one that was forgotten. After the load, `revision` is the primary signal — the three half-signals
+// it replaces were each maintained at their own call sites, and every boundary between them leaked
+// (a save cleared `reviewTouched` before checking the revision; the badge click bumped neither).
+function touch({ dirty = false, review = false } = {}) {
+  if (!shouldAcceptUserAction(state.loaded)) return false;
   state.revision++;
-  document.getElementById('dirty-indicator').hidden = false;
+  if (dirty) {
+    state.dirty = true;
+    document.getElementById('dirty-indicator').hidden = false;
+  }
+  if (review) state.reviewTouched = true;
+  return true;
+}
+
+function markDirty() {
+  touch({ dirty: true });
 }
 
 function clearDirty() {
@@ -378,10 +410,21 @@ async function loadSettings() {
   // Before the first answer there is nothing on screen to protect, so this one is applied whatever
   // the user did meanwhile — dropping it left the page unloaded with nothing to retry it.
   const initial = !state.loaded;
-  const data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+
+  // storage.sync can reject. It used to do so silently: the page stayed unloaded and inert with
+  // nothing on screen and no way back. The gate stays shut — opening it would let a Save write an
+  // empty settings object over real ones — so the way out is a retry the user can actually reach.
+  let data;
+  try {
+    data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+  } catch (error) {
+    if (generation === state.loadGeneration) showLoadFailure(error);
+    return;
+  }
 
   if (!shouldApplyLoadedSnapshot({
     revisionAtStart, revisionNow: state.revision, dirty: state.dirty,
+    reviewTouched: state.reviewTouched,
     generation, latestGeneration: state.loadGeneration, initial,
   })) return;
 
@@ -404,6 +447,7 @@ async function loadSettings() {
   state.reviewTouched = false;
   state.reviewed = false;
   state.loaded = true;
+  hideLoadFailure();
   updateLoadedGate();
   renderStaleBanner();
   if (skipped) {
@@ -472,21 +516,24 @@ async function saveSettings() {
     showStatus('error', `Could not save: ${error.message}`);
     return;
   }
-  // What we just wrote is now what storage holds. Recording it here is also what makes our own
-  // change event a no-op instead of a conflict with ourselves.
+  // Facts about storage, true whatever the user did meanwhile: it now holds exactly this payload,
+  // so that is what a later save must find there, and our own change event is no longer a conflict
+  // with ourselves.
   state.loadedSnapshot = payload;
   state.staleSinceLoad = false;
-  state.reviewTouched = false;
   renderStaleBanner();
   const version = payload[VERSION_KEY];
 
-  // The form stays live while the save is in flight. If the user edited more in the meantime,
-  // resetting the view to the snapshot we just saved would wipe that input, so leave the view
-  // alone and keep the dirty flag set.
-  if (state.revision !== savedRevision) {
+  // Everything below is a claim about the *user* — that they have nothing outstanding — and none of
+  // it may be made if they acted while the save was in flight. Clearing `reviewTouched` above this
+  // line is precisely the bug: a box toggled during the save was forgotten, the next remote change
+  // was adopted, the selection snapped back to the defaults, and Apply rewrote a candidate they had
+  // declined. One predicate now guards the whole settlement.
+  if (!nothingHappenedSince(savedRevision, state.revision)) {
     showStatus('success', 'Settings saved. Changes made since then are not saved yet.');
     return;
   }
+  state.reviewTouched = false;
 
   // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed). The uids
   // are carried over: these are the same buttons, only tidied, and a candidate the user is looking
@@ -652,6 +699,7 @@ function renderMigration() {
 // import — the edit state is the only thing that changes here.
 function applyMigration() {
   if (!requireLoaded()) return;
+  touch({ review: true });
   const migrated = applyMigrationPlan(editStateSnapshot(), state.plan, state.selection);
   const count = state.selection.size;
 
@@ -1056,7 +1104,7 @@ document.getElementById('reset-btn').addEventListener('click', resetSettings);
 // --- Update notice ---
 
 document.getElementById('migration-badge').addEventListener('click', () => {
-  state.reviewTouched = true; // opening the review is the start of deciding about it
+  touch({ review: true }); // opening the review is the start of deciding about it
   const panel = document.getElementById('migration-section');
   panel.hidden = !panel.hidden;
   if (!panel.hidden) panel.scrollIntoView({ block: 'nearest' });
@@ -1070,8 +1118,7 @@ document.getElementById('migration-actionable').addEventListener('change', (e) =
   // Choosing which candidates to accept is not a "dirty" edit — nothing to save yet — but it is the
   // user speaking about this plan, so a snapshot that arrives from sync afterwards must not silently
   // reset their choices back to the defaults.
-  state.revision++;
-  state.reviewTouched = true;
+  touch({ review: true });
   renderMigration();
   // Re-opening after a redraw would be surprising: the panel was open, keep it open
   document.getElementById('migration-section').hidden = false;
@@ -1084,6 +1131,7 @@ document.getElementById('migration-apply').addEventListener('click', applyMigrat
 // once the user presses Save.
 document.getElementById('migration-keep').addEventListener('click', () => {
   if (!requireLoaded()) return;
+  touch({ review: true });
   markReviewed();
   markDirty();
   showStatus('info', 'Marked as reviewed. Press Save to keep your commands as they are.');
@@ -1130,8 +1178,16 @@ window.addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
+// A load that failed is the only thing the user can act on while unloaded, and pressing it starts a
+// fresh attempt — a new generation, so an earlier answer that turns up late cannot win.
+document.getElementById('retry-btn').addEventListener('click', () => {
+  hideLoadFailure();
+  showStatus('info', LOADING_MESSAGE);
+  loadSettings();
+});
+
 // Nothing on this page may act on settings until there are settings. The gate goes up before the
-// first load is even asked for, so the window where the buttons are live but the state is empty
+// first load is even asked for, so the window where the controls are live but the state is empty
 // does not exist.
 updateLoadedGate();
 renderStaleBanner();

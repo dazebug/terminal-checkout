@@ -242,9 +242,29 @@ function adoptStoredButtons(value) {
     // A button is an object. null, a string, a number, an array — none of those can be read as one,
     // and guessing at them is how a typo in someone's backup becomes a command.
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { skipped += 1; continue; }
+    if (!readableButtonFields(entry)) { skipped += 1; continue; }
     buttons.push(buttonFields(entry));
   }
   return { buttons, skipped };
+}
+
+// Whether every field of an entry has the shape its readers assume.
+//
+// Checking that the entry is an object only moves the crash inwards: `command: 42` still reaches
+// `.trim()`, and `claudeInputs: "hello"` was quietly turned into `[]` — the user's scheduled inputs
+// gone at the next Save with nothing said. A field that is present has to be right; a field that is
+// absent is fine, because that is what buttons saved by older versions look like.
+//
+// One bad field condemns the whole entry rather than the field. A button whose inputs we cannot read
+// is not a button we understand, and keeping a quietly repaired version of it is exactly how those
+// inputs were lost.
+function readableButtonFields(entry) {
+  const isText = value => value === undefined || typeof value === 'string';
+  if (!isText(entry.face) || !isText(entry.emoji)) return false;
+  if (!isText(entry.label) || !isText(entry.command)) return false;
+  if (entry.claudeInputs === undefined) return true;
+  return Array.isArray(entry.claudeInputs)
+    && entry.claudeInputs.every(input => typeof input === 'string');
 }
 
 // What the content script and the service worker read through: validate, say out loud what was

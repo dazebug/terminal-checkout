@@ -721,3 +721,59 @@ test('a sparse or padded array is not the same stored value', () => {
   assert.equal(saveConflict(loaded, { buttons: new Array(1) }), true, 'holes still make it longer');
   assert.equal(saveConflict({ buttons: [1] }, { buttons: [1, undefined] }), true);
 });
+
+// --- One signal for "the user said something" (class (a)) ---
+// dirty, revision and reviewTouched were three half-signals, and every boundary between them leaked.
+// revision is now the primary: every interaction bumps it, and every async step asks the same
+// question — did anything happen since I started?
+
+const { nothingHappenedSince, shouldAcceptUserAction, LOAD_FAILED_MESSAGE } =
+  vm.runInThisContext('({ nothingHappenedSince, shouldAcceptUserAction, LOAD_FAILED_MESSAGE })');
+
+test('a save that was overtaken does not get to declare the page settled', () => {
+  // Codex (1): reviewTouched was cleared on the success path *before* the revision check, so a
+  // checkbox toggled during the save was forgotten. The next remote change was then adopted, the
+  // selection reset to the defaults, and Apply rewrote a candidate the user had declined.
+  assert.equal(nothingHappenedSince(1, 2), false, 'a toggle during the save must be noticed');
+  assert.equal(nothingHappenedSince(1, 1), true);
+
+  // With the toggle noticed, reviewTouched survives the save and still blocks adoption
+  const stillTouched = true;
+  assert.equal(shouldAdoptSyncedChange(false || stillTouched, { buttons: {} }), false);
+});
+
+test('a review in progress blocks a load answer, not just a typed edit', () => {
+  // Codex (2): the badge click did not bump the revision, so an in-flight load applied its answer
+  // and wiped the review. Both are covered now — the click bumps it, and the predicate reads
+  // reviewTouched as well, so neither half alone can let the answer through.
+  const inFlight = { generation: 1, latestGeneration: 1, initial: false, dirty: false };
+  assert.equal(shouldApplyLoadedSnapshot({
+    ...inFlight, revisionAtStart: 1, revisionNow: 2, reviewTouched: true,
+  }), false);
+  assert.equal(shouldApplyLoadedSnapshot({
+    ...inFlight, revisionAtStart: 1, revisionNow: 1, reviewTouched: true,
+  }), false, 'reviewTouched alone is enough to refuse');
+  assert.equal(shouldApplyLoadedSnapshot({
+    ...inFlight, revisionAtStart: 1, revisionNow: 1, reviewTouched: false,
+  }), true);
+});
+
+// --- Nothing changes before there are settings (class (d)) ---
+
+test('a user action before the load is ignored, however it arrived', () => {
+  // inert stops clicks, but a dispatched event or a programmatic .click() walks straight past it.
+  // The chokepoint is the state change itself, not the listener list.
+  assert.equal(shouldAcceptUserAction(false), false);
+  assert.equal(shouldAcceptUserAction(true), true);
+});
+
+// --- A failed load is recoverable (class (c)) ---
+
+test('a failed load leaves the page shut, and says how to reopen it', () => {
+  // A rejected storage.get left loaded=false and the page inert forever, with nothing on screen.
+  // The gate must stay shut — opening it would bring back writing an empty settings object — so the
+  // way out is a retry, and the message has to offer one.
+  assert.equal(shouldAcceptUserAction(false), false);
+  assert.match(LOAD_FAILED_MESSAGE, /could not|failed/i);
+  assert.match(LOAD_FAILED_MESSAGE, /retry/i);
+});
