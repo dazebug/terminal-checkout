@@ -290,10 +290,15 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 // Receive messages from content.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // The action name arrives in a message, so an inherited member ("constructor", "toString") would
-  // otherwise pass the truthiness check below and then fail as "not a function" one line later
+  // A message is an arbitrary value — `null` reaches here, and reading `.action` off it throws
+  // before any check below can run. Establish that there is a string to look up, then look it up as
+  // an own property: an inherited member ("constructor", "toString") would otherwise pass the
+  // truthiness check and fail as "not a function" one line later.
+  if (typeof message?.action !== 'string') return;
   const kind = Object.hasOwn(ACTION_KIND, message.action) ? ACTION_KIND[message.action] : null;
   if (!kind) return;
+  // The index picks a button out of an array; anything that is not one is not a request we can serve
+  if (!Number.isInteger(message.buttonIndex)) return;
 
   RUN_BY_KIND[kind](sender.tab, message.buttonIndex).then(() => {
     sendResponse({ success: true });

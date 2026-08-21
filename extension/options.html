@@ -273,6 +273,16 @@
       color: var(--warn); font: 600 11px var(--mono);
     }
     #migration-badge:hover { background: rgba(224, 177, 78, 0.2); }
+    #stale-banner {
+      margin-top: 10px; padding: 8px 11px; border-radius: 6px;
+      background: rgba(224, 108, 117, 0.1); border: 1px solid rgba(224, 108, 117, 0.4);
+      color: var(--err); font: 11px/1.6 var(--mono);
+    }
+    .mig-effect {
+      font: 10px var(--mono); padding: 1px 6px; border-radius: 999px;
+      border: 1px solid rgba(224, 177, 78, 0.5); color: var(--warn);
+    }
+    .mig-why { margin: 4px 0 0 22px; font-size: 11px; color: var(--dim); line-height: 1.6; }
     .mig-item { border-top: 1px solid var(--border); padding: 10px 0; }
     .mig-item:first-child { border-top: none; }
     .mig-head { display: flex; align-items: center; gap: 8px; font: 12px var(--ui); color: var(--text); }
@@ -323,6 +333,10 @@
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
     <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window</p>
     <button id="migration-badge" hidden>● Your saved buttons predate the current presets — review</button>
+    <!-- Raised as soon as another device's change arrives, so the warning is on screen before Save is
+         pressed. Save re-reads and decides for itself: a change event can be missed, and a banner
+         that never appeared must not be read as "nothing changed". -->
+    <p id="stale-banner" hidden>⚠ Settings changed on another device since this page loaded. Reload to see them — export first if you want to keep unsaved edits.</p>
   </header>
 
   <!-- Shown only when the stored settings were reviewed against an older generation of the presets.
@@ -345,7 +359,7 @@
     <p class="help">Buttons that sit next to the branch name on a PR page (up to 3). <b>Face</b> is what the button shows — a single emoji, several of them (🌳🤖), or a short name (Review, WT). <b>Tooltip</b> appears on hover, and picking a preset fills the card with that template.</p>
     <p class="help">Drag the <code>⠿</code> handle on the left of a card, or use the <code>↑</code> <code>↓</code> keys, to reorder — this is the order the buttons appear in on GitHub, and clicking the extension icon runs the first one. <b>Duplicate</b> is for making another button like an existing one — the copy's tooltip gets a number such as <code>(1)</code> appended.</p>
     <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — the app fills this in from its repository base folder setting, so it works on every page)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR number, digits only)</span> <code>{branch}</code> <span class="faint">(head — the branch being merged)</span> <code>{base}</code> <span class="faint">(base — the branch it merges into)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch with / replaced by _)</span></p>
-    <p class="help">Every preset starts with <code>{cd}</code>. With no base folder set it is just <code>z {repo}</code>; with one, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally.</p>
+    <p class="help">Rewrites of presets we shipped are pre-checked. A command you customized is offered <b>unchecked</b> and marked as a behavior change: only its leading jump is replaced, and the rest of it will now run wherever the new entry clause lands. Every preset starts with <code>{cd}</code>. With no base folder set it is just <code>z {repo}</code>; with one, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally.</p>
     <div id="pr-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="pr-add">+ Add Button</button>

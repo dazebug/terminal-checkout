@@ -186,11 +186,47 @@ function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
 
-// The exact shape a button takes in storage, and the only place that shape is decided. The options
-// page hangs a runtime `uid` on its buttons so it can tell them apart while they are edited and
-// reordered; that handle means nothing anywhere else, so it is dropped here rather than at each call
-// site — leaked into storage it would ride storage.sync to other machines and into export files,
-// where it would collide with the uids minted there.
+// --- Button identity in the edit state ---
+// While buttons are being edited they need names: they get typed over, reordered and duplicated, and
+// an index stops meaning the same button the moment any of that happens. That name is a `uid` this
+// page mints, and it is **ours**. A uid arriving in stored data or an imported file is that data's
+// word for something, not ours — adopting one has already cost us: a stored `"uid": 0` became a plan
+// id of the number 0 while the DOM carried the string "0", so unchecking that item did nothing and
+// it was migrated anyway.
+//
+// The two directions are separate functions on purpose. One funnel doing both is how that hole
+// reopens.
+let uidSequence = 0;
+function nextButtonUid() {
+  return `b${++uidSequence}`;
+}
+
+// The fields of a button, with no identity attached.
+function buttonFields(button) {
+  return {
+    face: button.face ?? button.emoji ?? '', // emoji: compatibility with values saved before face existed
+    label: button.label || '',
+    command: button.command || '',
+    claudeInputs: Array.isArray(button.claudeInputs) ? button.claudeInputs.map(String) : [],
+  };
+}
+
+// Data from outside — storage, an imported file, a preset. Whatever it claims its uid is, it does
+// not get one: we mint ours.
+function adoptButton(button) {
+  return { ...buttonFields(button), uid: nextButtonUid() };
+}
+
+// A button already in the edit state being reshaped — tidied on save, rewritten by a migration. Same
+// button, so it keeps its name: renaming it underneath a preview the user is reading would detach
+// their choices from the items they made them about.
+function reshapeButton(button, uid) {
+  return { ...buttonFields(button), uid };
+}
+
+// The exact shape a button takes in storage, and the only place that shape is decided. The runtime
+// uid is dropped here rather than at each call site — leaked into storage it would ride storage.sync
+// to other machines and into export files, where it would collide with the uids minted there.
 function toStoredButton(button) {
   return {
     face: (button.face ?? '').trim(),

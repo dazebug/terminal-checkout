@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R2 커밋(항목 8 — Codex 차단 7건 근본 수정, verified) · 게이트 그린(드라이버 재실행 — node 72/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no)** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R3 커밋(항목 9 — floor 폐기·낙관적 동시성·loaded 게이트·uid 경계·prefix=behavior-change·역사 오라클, verified) · 게이트 그린(드라이버 재실행 — node 81/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×2** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -32,7 +32,9 @@
 
 - **`effect`의 정의(R2 명문화).** `effect`는 딱 한 가지만 묻는다: **"어떤 앱 설정에서도 이 rewrite가 사용자를 더 나쁘게 만드는가?"** 아니면 `unconditional`, 그렇다면 `behavior-change`이고 프리뷰가 항목별로 저울질하게 만들어야 한다. 이 정의로 v0→v1은 `unconditional`이다 — base dir 미설정이면 렌더가 바이트 동일이고, 설정했다면 붙는 폴백은 **사용자가 앱에서 직접 켠 설정**의 결과이며 `{cd}`는 그 설정이 명령에 닿는 배선일 뿐이다. 정의를 적어 두지 않으면 "예전보다 더 한다"가 곧 behavior-change로 읽히므로, 이 문장이 분류의 근거다(Codex 반박 대상 — 드라이버가 다음 검증 요청에 싣는다).
 - **계획은 저장된 것이 아니라 "저장될 것"(편집 상태) 위에서 세운다.** import는 파일에 있는 키만 채우므로 나머지 섹션은 옛 command를 든 채 남고, 저장소 스냅샷으로 계획하면 그 절반이 검토 없이 승격된다. 후보의 이름은 **런타임 uid**이지 인덱스가 아니다 — 계획과 적용 사이에 타이핑·순서 변경이 일어나고, 인덱스는 그 순간 다른 버튼을 가리킨다. uid는 `toStoredButton`이 떼어 내 저장·내보내기에 절대 실리지 않는다.
-- **version은 이 페이지가 관찰한 바닥 아래로 내려가지 않는다.** 페이지는 오래 열려 있을 수 있고 그 사이 다른 기계가 계정을 앞으로 옮긴다. 저장은 쓰기 **직전에** version을 한 번 더 읽어 `max(바닥, 현재 저장값, 동의가 요구하는 값)`을 쓴다. dirty여도 version 변화는 항상 바닥에 기록한다 — 화면이 받아들일 준비가 됐는지와 무관하게 그 값은 존재한다.
+- ~~version은 이 페이지가 관찰한 바닥 아래로 내려가지 않는다~~ → **R3 개정(이 설계가 틀렸다)**: **version은 쓰는 내용의 세대이고, 로드 이후 바뀐 저장소 위에는 쓰지 않는다.** 바닥은 version 표식만 지키고 그것이 서술하는 command는 지키지 않아서, v0 내용에 v1 표식을 씌워 다른 기기의 마이그레이션을 조용히 지웠다. version은 `versionToSave(loadedVersion, reviewed)`만으로 정하고, 저장은 쓰기 직전에 **소유한 키 전부**를 다시 읽어 로드 스냅샷과 대조해 하나라도 다르면 **거부**한다. `storage.sync`에 CAS가 없으므로 병합은 둘 중 누구의 의도를 버릴지 고르는 추측이 된다 — 덮어쓰기 버튼도 만들지 않는다(트리거: 사용자가 실제로 요구하면 별도 이슈).
+- **페이지는 첫 로드가 끝나기 전에는 설정을 갖지 않는다.** `loaded=false`·`loadedVersion=null`로 시작하고 저장·적용·거절·리셋·가져오기가 전부 `requireLoaded()`를 통과해야 한다(버튼 disabled는 힌트, 가드가 규칙). 로드 응답은 **세대 카운터**로 걸러 추월당한 응답을 버린다 — 두 로드가 겹치면 늦게 답한 쪽이 최신이 아닐 수 있다.
+- **uid는 우리가 만든다.** 저장·파일에서 들어온 uid는 항상 버리고 새로 부여하며(`adoptButton`), 보존은 편집 상태 내부 연산에서만 명시적으로 한다(`reshapeButton`). 한 함수가 둘 다 하면 구멍이 다시 생긴다 — 저장값의 `uid: 0`이 숫자 id가 돼 DOM dataset(문자열)과 어긋나 체크 해제가 무력화된 것이 그 증거다.
 - **설정에서 온 문자열로 객체를 조회하지 않는다.** command·repo 이름·메시지 action은 전부 프로토타입 멤버 이름일 수 있다 — `Map`이나 `Object.hasOwn` 뒤에서만 찾는다(소탕 표 2).
 - **버전은 사용자의 명시적 행위로만 올라간다.** `saveSettings`가 무조건 현재 버전을 찍으면, 툴팁 하나 고치고 저장한 사용자의 마이그레이션이 조용히 소멸한다(아이콘은 사라지고 옛 command는 남는다). 이 루프에서 이 성질 하나만 지켜도 절반은 성공이다 — 테스트로 고정한다.
 - **`extension/defaults.js`가 현재 스키마 버전 상수의 단일 정본이다**(이슈 제약 5). 아이콘을 그리는 쪽도, 레지스트리도 이 상수를 본다. 레지스트리가 별도 파일로 가면 "레지스트리가 0→CURRENT의 모든 단계를 덮는가"를 테스트로 고정한다 — 상수만 올리고 항목을 빼먹는 것이 이 구조의 대표적 실패다.
@@ -79,11 +81,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 1. **`version`은 「검토한 세대」다(질문 1 — 초안 권고 채택).** 아이콘은 준수 표식이 아니라 할 일 표시등이다. [적용]은 바꾸겠다는 동의, [지금 것 유지]는 두겠다는 동의 — 둘 다 검토의 결과이므로 둘 다 승격한다. 옛 command를 의도적으로 유지하는 것은 base dir 미설정과 동형의 정당한 상태(#30 결정)이고, 끌 수 없는 아이콘은 사용자가 아이콘 자체를 무시하게 만들어 다음 마이그레이션의 신호를 죽인다. 이슈의 "applying is the consent"는 변경에 대한 동의를 말한 것이지 거절 경로를 금지한 것이 아니다 — 항목 4 진행.
 2. **actionable 0건이어도 조용히 승격하지 않는다(질문 2).** 아이콘 → 검토 화면이 "바꿀 자동 후보 없음"과 informational 목록을 보여 주고, [확인(지금 것 유지)] 클릭이 승격한다. "버전은 명시적 행위로만"의 예외를 만들지 않는 쪽이 불변 원칙을 단순하게 유지한다 — 비용은 클릭 한 번.
 3. ~~base dir 무지는 조건부 서술로 충족한다~~ → **개정(사용자, R1 중): v0→v1은 `unconditional`이다.** base dir 미설정이면 렌더가 바이트 동일하고, 설정했다면 그때 붙는 cd 폴백·clone은 마이그레이션이 아니라 **사용자가 앱에서 직접 켠 설정이 일으키는 동작**이다 — `{cd}`로 바꾸는 것 자체는 어느 경우에도 나빠지지 않는다. `effect`는 **2값**(`'unconditional' | 'behavior-change'`)으로 줄이고 `'conditional'`은 폐기한다. 프리뷰에는 선언이 아니라 **안내 한 줄**만 남긴다. 앱↔확장 상태 채널 신설은 여전히 기각.
-4. ~~커스텀 command에 기계적 수정 제안을 붙이지 않는다~~ → **개정(사용자, R1 중): 커스텀도 조건을 만족하면 후보로 승격한다.** 조건은 엄격한 접두 일치 하나 — `command === 'z {repo}'` 또는 `command.startsWith('z {repo} && ')`. 그러면 **맨 앞 절만** `{cd}`로 바꾼 rewrite를 actionable 후보로 올린다(나머지는 바이트 그대로). 판정은 verbatim과 같은 `unconditional`이라 기본 체크이고, 프리뷰가 출처를 구분 표시한다(`verbatim` / `prefix`). 그 밖의 모양(`cd x && z {repo}`, `z {repo};`, `z {repo}&&x`, 중간의 `z {repo}`, 공백이 다른 `z  {repo}`)은 informational + 안내 문구 유지. `claudeInputs`는 비목표 그대로 — **트리거**: 커스텀 claude 입력에 `!z {repo}`가 실제로 관찰되면 재검토.
+4. ~~커스텀 command에 기계적 수정 제안을 붙이지 않는다~~ → **개정(사용자, R1 중): 커스텀도 조건을 만족하면 후보로 승격한다.** 조건은 엄격한 접두 일치 하나 — `command === 'z {repo}'` 또는 `command.startsWith('z {repo} && ')`. 그러면 **맨 앞 절만** `{cd}`로 바꾼 rewrite를 actionable 후보로 올린다(나머지는 바이트 그대로). ~~판정은 verbatim과 같은 `unconditional`이라 기본 체크~~ → **R3 개정(Codex (b) 반박 수용)**: prefix 후보는 `behavior-change`이고 **기본 해제**다. suffix가 임의라 "어떤 설정에서도 나빠지지 않는다"를 주장할 수 없다 — `z {repo} && git clean -fdx`는 옛 command에서 아무것도 안 하지만, base dir이 설정돼 있고 같은 이름의 다른 저장소가 거기 있으면 새 command는 **거기서** 지운다. `effect`는 step 단위가 아니라 후보 단위이며, 레지스트리는 `verbatimEffect`/`prefixEffect`로 나눠 선언한다. 프리뷰는 출처를 구분 표시하고(`verbatim` / `prefix`) behavior-change 항목에는 전용 설명을 항목 옆에 붙인다. 그 밖의 모양(`cd x && z {repo}`, `z {repo};`, `z {repo}&&x`, 중간의 `z {repo}`, 공백이 다른 `z  {repo}`)은 informational + 안내 문구 유지. `claudeInputs`는 비목표 그대로 — **트리거**: 커스텀 claude 입력에 `!z {repo}`가 실제로 관찰되면 재검토.
 5. ~~미래 version의 백업은 경고 + 채움~~ → **개정(사용자, R1 중): 현재보다 높은 `version`의 백업은 가져오기를 거부한다.** 편집 상태를 채우지 않고, 저장에도 닿지 않으며, 저장된 version은 그대로다. 거부 메시지는 해결책 둘을 제시한다(영어): "This backup was exported by a newer version of the extension. Update the extension (`git pull` + refresh at chrome://extensions), or use Reset to Defaults to start from the current presets." 미래 값에 대한 "저장 시 보존" 규칙은 **정상 로드 경로에만** 남는다(같은 계정의 최신 확장이 올려 둔 version을 낮은 확장이 강등하지 않는 것). 거부는 "일부 키 건너뜀"이 아니라 **가져오기 전체의 실패**다.
 6. **레지스트리는 `extension/migrations.js`로 분리한다(질문 6).** defaults.js는 「현재의 진실」로 남고 역사 문자열은 옆방으로 — options.html만 로드하고 content/background는 모른다(표면 최소). 드리프트는 초안이 이미 의무화한 red("레지스트리가 0→CURRENT 전 구간을 덮는다")가 막는다. 이슈 제약 5(상수는 defaults.js)는 그대로.
 7. **[Reset to Defaults]는 동의다(질문 7).** 내용이 CURRENT 세대가 되는 가장 명시적인 채택 행위 — 승격 지점 표에 4행째로 추가한다(신규 설치 / 마이그레이션 적용 / 검토 확인 / 리셋 — 전부 명시적 행위).
-8. **동의는 항목별이다(질문 8 — 이슈 스펙 그대로).** verbatim 후보는 기본 체크된 체크박스, [적용]은 체크된 것만 편집 상태에 반영. 부분 적용 후 [Save]는 version을 CURRENT로 올리고(검토 완료) 체크 해제분은 다시 묻지 않는다 — 프리뷰가 그 사실을 말한다.
+8. **동의는 항목별이다(질문 8 — 이슈 스펙 그대로).** ~~verbatim 후보는 기본 체크된 체크박스~~ → **R3 개정**: **`unconditional` 후보만** 기본 체크이고 `behavior-change`(= prefix) 후보는 기본 해제다(결정 4 개정과 같은 근거 — 읽고 켜는 것이지 놓쳐서 켜지는 것이 아니다). 체크박스, [적용]은 체크된 것만 편집 상태에 반영. 부분 적용 후 [Save]는 version을 CURRENT로 올리고(검토 완료) 체크 해제분은 다시 묻지 않는다 — 프리뷰가 그 사실을 말한다.
 
 계획서 언어는 한국어 유지(선례 준수 — 라인 42의 근거 그대로).
 
@@ -152,6 +154,38 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | `state.buttons[kind]`·`presetTemplates[kind]`·`btn[field]`(필수 항목 검사) | 내부 열거값·`REQUIRED_FIELDS` | 안전 |
 | `Object.fromEntries(entries)`(`serializeOverrides`) | 사용자 repo 이름이 **키가 된다** | 안전 — `fromEntries`는 own property로 만든다(프로토타입 오염 아님). 읽는 쪽은 위의 `hasOwn` 가드가 받는다 |
 
+### 소탕 표 3 — 쓰기·편집 진입점과 로드 게이트 (R3, 부류 ⒜⒝)
+
+`state.loaded`를 요구해야 하는 곳과, 로드 스냅샷 대조가 걸리는 곳 전부.
+
+| 지점 | 로드 전에 불릴 수 있는가 | 판정 |
+|:--|:--|:--|
+| `saveSettings` | **그렇다** — 초기 await 중 [Save] | 닫음(R3): `requireLoaded()` + 버튼 disabled. 유일한 `storage.sync.set`이고 여기서 `planSave`가 로드 스냅샷과 라이브를 대조한다 |
+| `resetSettings` | 그렇다 | 닫음(R3): `requireLoaded()` + disabled. 리셋은 동의(결정 7)라 로드 전에 통과하면 빈 상태를 승격시킨다 |
+| `importSettings` | 그렇다 | 닫음(R3): `requireLoaded()`. 빈 편집 상태에 병합되고 대조할 스냅샷도 없다 |
+| `applyMigration` | 이론상 — 계획이 없으면 패널이 안 뜨지만 가드는 둔다 | 닫음(R3): `requireLoaded()` |
+| [Keep mine] / [Got it] | 위와 같다 | 닫음(R3): `requireLoaded()` |
+| `+ Add Button` | 그렇다 | 닫음(R3): disabled. 편집 상태를 바꾸므로 다음 저장 내용에 들어간다 |
+| [Export (JSON)] | 그렇다 | 닫음(R3): disabled. 저장소에서 직접 읽으므로 손상은 없지만 로드 전 클릭은 빈 결과로 혼란만 준다 |
+| 카드 안의 입력·드래그·프리셋 적용 | 아니다 — 카드는 로드 후에만 그려진다 | 안전(구조상) |
+| `loadSettings` 자신 | 겹칠 수 있다 | 닫음(R3): 세대 카운터 + revision/dirty 대조(`shouldApplyLoadedSnapshot`) |
+| `storage.onChanged` → `loadSettings` | 로드 전에 도착 가능 | 닫음(R3): `state.loaded` 확인 후 반환 — 진행 중인 로드가 어차피 최신값을 가져온다 |
+
+### 소탕 표 4 — uid가 편집 상태로 들어오는 지점 (R3, 부류 ⒞)
+
+| 지점 | 출처 | 판정 |
+|:--|:--|:--|
+| `loadSettings`의 저장값 | **외부** | 닫음(R3): `adoptButton` — 들어온 uid는 버린다 |
+| `applyImportedSettings`의 파일 | **외부** | 닫음(R3): `adoptButton` |
+| `resetSettings`의 기본값 | 우리 프리셋이지만 편집 상태 밖 | 닫음(R3): `adoptButton` |
+| `+ Add Button` | 새 버튼 | 닫음(R3): `adoptButton` |
+| `applyPreset`(카드에 프리셋 적용) | 같은 카드의 내용 교체 | 닫음(R3): `reshapeButton(…, 기존 uid)` — 같은 버튼이므로 이름을 유지한다 |
+| `saveSettings`의 화면 정리 | 편집 상태 | 닫음(R3): `reshapeButton(…, 기존 uid)` |
+| `applyMigration`의 결과 | 편집 상태 | 닫음(R3): `reshapeButton(button, button.uid)` |
+| `duplicateButton`의 사본 | 편집 상태(복제) | 닫음(R3): 사본에 `nextButtonUid()` — spread가 uid까지 복제한다 |
+| `parseImportedSettings`의 형태 정규화 | 파일 | 닫음(R3): `buttonFields`(uid 없음) — 신원은 `adoptButton`이 나중에 붙인다 |
+| `toStoredButton` | 편집 상태 → 저장 | 안전 — uid를 떼어 낸다(테스트로 고정) |
+
 ## 라운드 로그
 
 ### R0 — `6fa5daf` (계획 초안)
@@ -206,4 +240,28 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - **잔여(설계상 남김)**: 저장의 `get`↔`set` 사이 창은 트랜잭션 없이는 닫히지 않는다 — 그 사이 다른 기계가 더 높은 version을 쓰면 이 저장이 덮는다. 바닥·재조회로 창을 최소화했고, 피해는 "알림이 한 번 더 뜬다"이지 command 손실이 아니다.
 - 실측: `node --test` **72/0**(R1 56 → 신규 16), `swift test` 210/0, `app/build.sh` + `app/e2e.sh` PASS 9건. `node --check`로 확장 스크립트 5개 구문 확인.
 - **미검증**: DOM·클릭 경로(배지·체크박스·실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다 — 수기 검사 목록 그대로.
+- 판정: 미요청.
+
+### R2 — `524c91e` (Codex 판정: 차단)
+
+- 기존 7건 재검증: **전부 통과**("P1 부분 import 통과 / 중복 command·순서 변경 통과 / prototype key 통과 / future version 강등 통과 / load race 해당 입력 통과 / fractional version 통과 / 레지스트리 drift 통과").
+- 신규 P1 ×3: (1) **초기 `loadSettings()`의 await 중 [Save]** — 초기 state가 `buttons=[]`·`loadedVersion=SETTINGS_VERSION`이라 빈 배열 + version 1을 써서 "command 소실 + 조용한 승격"을 동시에 재현 (2) **겹친 load 응답의 순서 역전** — L0(옛)·L1(새)이 같은 revision이라 둘 다 적용되고 늦게 온 옛 스냅샷이 이김, 이후 툴팁 저장이 옛 command를 version 1로 씀 (3) **get↔set 창은 command 손실도 일으킨다** — 기기 A(dirty, 옛 command)가 B의 마이그레이션 저장 뒤에 저장하면 floor가 version 1을 보존한 채 옛 command를 써서 B의 명시적 마이그레이션이 사라지고 알림도 안 옴. 판정 원문: **"`versionFloor`는 version metadata만 보호하고 command 배열 병합은 하지 않습니다 … '피해는 알림 한 번 더이고 command 손실은 없다'는 잔여 수용 근거는 성립하지 않습니다."**
+- 신규 P2 ×2: (4) 저장 데이터의 `uid: 0`(숫자)을 보존해 계획 id(숫자)와 DOM dataset(문자열)이 어긋나 **체크 해제가 무력화**, 중복 uid도 동일 (5) **`unconditional`은 prefix 커스텀에 부정확** — `z {repo} && git clean -fdx` + base dir + 동명 타저장소면 옛 command는 아무것도 안 하고 새 command는 다른 저장소에서 `git clean -fdx`. "verbatim preset만 unconditional로 두고 prefix custom은 behavior-change로 보는 편이 정확".
+- 신규 P3 ×2: (6) `onMessage(null)`이 `message.action`에서 예외(hasOwn 이전) (7) 현재 프리셋에서 유도한 커버리지는 프리셋과 쌍을 **함께** 지우면 통과 — 역사 문자열 자체의 오라클이 없다.
+- 판단: (a)(c)(d) 수용, (b) 반박(위 5), 잔여 창 재반박(위 3).
+- **드라이버 소견**: R2의 "version 바닥" 설계는 내 지시였고 틀렸다 — version은 관찰된 최댓값이 아니라 **쓰는 내용의 세대**를 말해야 한다. 바닥은 v0 내용에 v1 표식을 씌우는 장치였다. R3는 바닥을 버리고 저장 시점의 낙관적 동시성 검사(로드 스냅샷과 라이브 저장값 대조, 다르면 저장 거부 + 재로드 안내)로 바꾼다 — storage.sync에 CAS가 없으니 **덮어쓰기 대신 거부**가 리포 철학(보이는 실패 > 조용한 손상)에 맞는 답이다.
+
+### R3 — 워킹트리(미커밋, base `524c91e`) · 항목 9
+
+- 범위: Codex R2 차단의 신규 7건을 부류 다섯으로 묶어 근본 수정. 기존 7건은 재검증에서 전부 통과했으므로 건드리지 않았다.
+- **⒜ 쓰기는 로드한 것 위에서만.** `versionFloor`·`raiseVersionFloor`·`versionToWrite`를 **삭제**했다(드라이버 소견대로 그 설계가 결함의 원인이었다 — version 표식만 지키고 command는 지키지 않았다). version은 `versionToSave`만으로 정하고, 저장은 쓰기 직전 소유 키 전부를 재조회해 `planSave`가 로드 스냅샷과 대조, 다르면 거부한다(`SAVE_CONFLICT_MESSAGE`). 성공 시 로드 스냅샷을 방금 쓴 payload로 갱신해 자기 echo를 구분한다. onChanged는 dirty 여부와 무관하게 `staleSinceLoad`를 세워 배너를 띄우되, 판정은 저장 시 재조회가 정본이다(이벤트 유실 대비).
+- **⒝ 로드 전에는 설정이 없다.** `loaded=false`·`loadedVersion=null`로 시작하고 진입점 7곳이 `requireLoaded()`를 통과한다(+ 버튼 disabled). 로드 세대 카운터를 `shouldApplyLoadedSnapshot`에 넣어 추월당한 응답을 버린다.
+- **⒞ uid는 우리 것.** `normalizeButton` 하나를 `adoptButton`(외부 입력 — uid를 버리고 새로 부여)과 `reshapeButton`(편집 상태 — 이름 유지)으로 갈랐고, 둘 다 `defaults.js`에 둬 순수 테스트가 닿는다. 유입 지점 10곳을 소탕 표 4로 정리했다.
+- **⒟ prefix 후보는 `behavior-change`.** 레지스트리를 `verbatimEffect`/`prefixEffect`로 갈라 선언 의무를 유지하고, 후보마다 `effect`와 전용 `describe`를 싣는다. `defaultSelection`이 `unconditional`만 체크한다.
+- **⒠ 신뢰 경계 마무리.** `onMessage`에 `typeof message?.action !== 'string'` 가드(+`buttonIndex` 정수 확인). 역사 오라클 `tests/fixtures/presets-v0.json`을 `git show 294c46a:extension/defaults.js`에서 **생성**해(손으로 옮겨 적지 않았다) 14개 항목(distinct 8)을 고정하고, 파일 헤더의 `_note`에 "고쳐서 테스트를 통과시키면 안 되는 역사"임을 적었다.
+- red 기록(3배치): ⒟+⒠ → `not ok 10·49·50`; ⒞ → `not ok 52·53·54`; ⒜+⒝ → `ReferenceError: saveConflict is not defined`. 각 배치 red 확인 후 구현.
+- R2 테스트 2건(`the floor only ever rises`, `a save never writes below anything it has already seen`)은 **삭제**했다 — 틀린 설계를 고정하고 있었다. 삭제 자리에 왜 지웠는지 남겼다.
+- 실측: `node --test` **81/0**(R2 72 → 신규 9, 삭제 2). `swift test`·`app/e2e.sh`는 회귀 확인.
+- **잔여(설계상)**: 저장의 `get`↔`set` 사이 창은 `storage.sync`에 CAS가 없어 닫히지 않는다 — 그 틈에 다른 기기가 쓰면 LWW로 1회 덮인다. 창을 최소화하고 **덮어쓰기 대신 거부**를 택했으며, 덮어쓰기 버튼은 만들지 않았다(트리거: 사용자가 실제로 요구하면 별도 이슈).
+- **미검증**: DOM·클릭 경로(배지·체크박스·배너·실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다.
 - 판정: 미요청.

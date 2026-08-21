@@ -82,13 +82,16 @@ test('the registry covers every step from 0 to the current version', () => {
 test('every registry entry declares what kind of change it is, and can describe it', () => {
   // "A migration that cannot articulate which of the two it is doesn't ship" (issue #31)
   for (const entry of MIGRATIONS) {
-    // Two values only. "conditional" was dropped: for v0->v1 the base-directory fallbacks are
-    // caused by a setting the user turned on in the app themselves, not by this rewrite, so the
-    // rewrite is unconditionally safe and the base directory is a note rather than a verdict.
-    assert.ok(
-      ['unconditional', 'behavior-change'].includes(entry.effect),
-      `${entry.from}->${entry.to}: effect must be declared`
-    );
+    // Declared per candidate kind, not per step: replacing a preset we shipped is not the same
+    // promise as replacing the first clause of a command someone else wrote.
+    for (const field of ['verbatimEffect', 'prefixEffect']) {
+      assert.ok(
+        ['unconditional', 'behavior-change'].includes(entry[field]),
+        `${entry.from}->${entry.to}: ${field} must be declared`
+      );
+    }
+    assert.equal(typeof entry.prefixDescribe, 'string');
+    assert.ok(entry.prefixDescribe.length > 0);
     assert.equal(typeof entry.describe, 'string');
     assert.ok(entry.describe.length > 0, `${entry.from}->${entry.to}: describe is empty`);
     assert.equal(typeof entry.customNote, 'string');
@@ -140,12 +143,14 @@ test('the same old string maps the same way whichever page it was saved under', 
 });
 
 test('a customized command with the exact old first clause is promoted to a candidate', () => {
-  // Revised decision 4: strict prefix only, and only the first clause is replaced
+  // Revised decision 4: strict prefix only, and only the first clause is replaced. Offered, but as
+  // a behavior change — the tail is theirs, and with a base folder set it will run somewhere the old
+  // command never reached.
   const plan = plan0(stored('buttons', 'z {repo} && npm test'));
   assert.equal(plan.informational.length, 0);
   assert.deepEqual(
     { to: plan.actionable[0].to, source: plan.actionable[0].source, effect: plan.actionable[0].effect },
-    { to: '{cd} && npm test', source: 'prefix', effect: 'unconditional' }
+    { to: '{cd} && npm test', source: 'prefix', effect: 'behavior-change' }
   );
 });
 
@@ -451,37 +456,167 @@ test('a plan over a merged edit state covers the sections the file never mention
   assert.deepEqual(ids(plan.actionable).sort(), ['buttons#0', 'issueButtons#0']);
 });
 
-// --- The version floor, and snapshots that went stale mid-flight (class (c)) ---
-
-test('the floor only ever rises, and ignores values that are not versions', () => {
-  const { raiseVersionFloor } = vm.runInThisContext('({ raiseVersionFloor })');
-  assert.equal(raiseVersionFloor(0, 7), 7);
-  assert.equal(raiseVersionFloor(7, 0), 7, 'a later, lower reading must not lower the floor');
-  assert.equal(raiseVersionFloor(7, 0.5), 7);
-  assert.equal(raiseVersionFloor(7, undefined), 7);
-  assert.equal(raiseVersionFloor(0, 0), 0);
-});
-
-test('a save never writes below anything it has already seen', () => {
-  // P1-4: while the form was dirty, another machine saved version 7. An ordinary save here computed
-  // 0 from what it had loaded and wrote it — downgrading the account and bringing the notice back
-  // for everyone.
-  const { versionToWrite } = vm.runInThisContext('({ versionToWrite })');
-  assert.equal(versionToWrite({ floor: 7, live: 7, loadedVersion: 0, reviewed: false }), 7);
-  assert.equal(versionToWrite({ floor: 7, live: 7, loadedVersion: 0, reviewed: true }), 7);
-  // The floor holds even if the last read came back lower than something seen earlier
-  assert.equal(versionToWrite({ floor: 7, live: 0, loadedVersion: 0, reviewed: false }), 7);
-  // With nothing higher around, consent still promotes
-  assert.equal(versionToWrite({ floor: 0, live: 0, loadedVersion: 0, reviewed: true }), SETTINGS_VERSION);
-  assert.equal(versionToWrite({ floor: 0, live: 0, loadedVersion: 0, reviewed: false }), 0);
-});
+// --- Snapshots that went stale mid-flight (class (c)) ---
+// The two tests that used to sit here pinned a "version floor" — the highest version ever observed,
+// written alongside whatever content the page held. That design was wrong and is gone: it protected
+// the version marker while leaving the commands it describes unprotected, so a v1 marker could land
+// on v0 commands and erase another device's migration. What replaces it is `saveConflict` above:
+// a save that would land on settings that moved is refused outright.
 
 test('a snapshot that was overtaken while loading is thrown away', () => {
   // P1-5: onChanged -> loadSettings() awaits storage, and the user types during the await. Applying
   // the snapshot afterwards overwrites what they just typed. Checkbox changes count too — they are
   // not "dirty", but they are the user having said something about this plan.
   const { shouldApplyLoadedSnapshot } = vm.runInThisContext('({ shouldApplyLoadedSnapshot })');
-  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 3, dirty: false }), true);
-  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 4, dirty: false }), false);
-  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 3, dirty: true }), false);
+  const inFlight = { generation: 1, latestGeneration: 1 };
+  assert.equal(shouldApplyLoadedSnapshot({ ...inFlight, revisionAtStart: 3, revisionNow: 3, dirty: false }), true);
+  assert.equal(shouldApplyLoadedSnapshot({ ...inFlight, revisionAtStart: 3, revisionNow: 4, dirty: false }), false);
+  assert.equal(shouldApplyLoadedSnapshot({ ...inFlight, revisionAtStart: 3, revisionNow: 3, dirty: true }), false);
+});
+
+// --- What each kind of candidate promises (class (d)) ---
+// Replacing a preset we shipped is a different promise from replacing the first clause of a command
+// someone else wrote: the rest of their command is arbitrary, and it will now run somewhere else.
+
+test('a verbatim candidate is unconditional; a prefix candidate is a behavior change', () => {
+  const verbatim = plan0(stored('buttons', V0.claude)).actionable[0];
+  assert.equal(verbatim.effect, 'unconditional');
+
+  const prefix = plan0(stored('buttons', 'z {repo} && git clean -fdx')).actionable[0];
+  assert.equal(prefix.effect, 'behavior-change');
+  // The scenario that forces this: with a base folder set, a failed jump now lands in
+  // <base>/<repo> — possibly a different repository of the same name — and `git clean -fdx` runs there
+  assert.ok(prefix.describe.length > 0, 'a behavior change has to say what changes');
+  assert.notEqual(prefix.describe, verbatim.describe);
+});
+
+test('only unconditional candidates are checked to begin with', () => {
+  const { defaultSelection } = vm.runInThisContext('({ defaultSelection })');
+  const data = {
+    buttons: [
+      { uid: 'v', face: 'x', label: 'preset', command: V0.claude, claudeInputs: [] },
+      { uid: 'p', face: 'x', label: 'custom', command: 'z {repo} && git clean -fdx', claudeInputs: [] },
+    ],
+  };
+  const plan = plan0(data);
+  assert.deepEqual(defaultSelection(plan), ['v'], 'the custom one is opt-in, not opt-out');
+  assert.equal(migrationSummary(plan, defaultSelection(plan)).selectedCount, 1);
+  assert.equal(migrationSummary(plan, defaultSelection(plan)).actionableCount, 2);
+});
+
+// --- The history oracle (class (e)) ---
+// Deriving coverage from today's presets passes if a preset and its pair are deleted together. The
+// fixture is what users actually have saved, so it cannot be edited to make a test go green.
+
+test('every v0 command ever shipped still reaches a current preset', () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/presets-v0.json'), 'utf8'));
+  const current = new Set(
+    Object.values(BUTTON_KINDS).flatMap(kind => [...kind.presets, ...kind.defaults].map(b => b.command))
+  );
+  assert.ok(fixture.commands.length > 0);
+  for (const command of fixture.commands) {
+    const plan = plan0(stored('buttons', command));
+    assert.equal(plan.actionable.length, 1, `no candidate for shipped v0 command: ${command}`);
+    assert.ok(
+      current.has(plan.actionable[0].to),
+      `v0 command migrates to something that is not a current preset: ${command} -> ${plan.actionable[0].to}`
+    );
+  }
+});
+
+// --- The uid is ours, not the stored data's (class (c)) ---
+// It is a handle this page mints to tell buttons apart while they are edited. Anything arriving from
+// storage or a file is data, and data does not get to name our handles.
+
+test('a uid found in stored data is discarded, not adopted', () => {
+  // A stored `"uid": 0` used to survive: the plan then carried the number 0 while the DOM dataset
+  // carried the string "0", so unchecking that item did nothing and it was applied anyway.
+  const { adoptButton } = vm.runInThisContext('({ adoptButton })');
+  const adopted = adoptButton({ uid: 0, face: 'x', label: 'b', command: 'z {repo}', claudeInputs: [] });
+  assert.equal(typeof adopted.uid, 'string');
+  assert.notEqual(adopted.uid, 0);
+  assert.notEqual(adopted.uid, '0');
+});
+
+test('two stored buttons claiming the same uid still get told apart', () => {
+  const { adoptButton } = vm.runInThisContext('({ adoptButton })');
+  const same = { uid: 'collide', face: 'x', label: 'b', command: 'z {repo}', claudeInputs: [] };
+  const [a, b] = [adoptButton(same), adoptButton(same)];
+  assert.notEqual(a.uid, b.uid);
+  const plan = plan0({ buttons: [a, b] });
+  assert.equal(new Set(ids(plan.actionable)).size, 2, 'two candidates must have two names');
+});
+
+test('an edit-state button keeps its uid when it is reshaped', () => {
+  // Save tidies the buttons and puts them back on screen; that is the same button, and a candidate
+  // the user is looking at must not be renamed underneath them.
+  const { reshapeButton } = vm.runInThisContext('({ reshapeButton })');
+  assert.equal(reshapeButton({ face: ' x ', label: 'b', command: 'c', claudeInputs: [] }, 'keep').uid, 'keep');
+});
+
+// --- A load result is only good for the page it was asked from (class (b)) ---
+
+test('a load result from an overtaken request is discarded', () => {
+  const { shouldApplyLoadedSnapshot } = vm.runInThisContext('({ shouldApplyLoadedSnapshot })');
+  const base = { revisionAtStart: 3, revisionNow: 3, dirty: false, generation: 2, latestGeneration: 2 };
+  assert.equal(shouldApplyLoadedSnapshot(base), true);
+  // Two loads in flight (a sync event arriving during the first): whichever answers last used to
+  // win, so the older settings could land on top of the newer ones
+  assert.equal(shouldApplyLoadedSnapshot({ ...base, generation: 1, latestGeneration: 2 }), false);
+  assert.equal(shouldApplyLoadedSnapshot({ ...base, revisionNow: 4 }), false);
+  assert.equal(shouldApplyLoadedSnapshot({ ...base, dirty: true }), false);
+});
+
+// --- Writing only on top of what we loaded (class (a)) ---
+// storage.sync has no compare-and-set, so the only honest thing to do with a settings object that
+// moved underneath us is to refuse and say so. Overwriting would be a silent, unrecoverable merge.
+
+const { saveConflict, planSave, SAVE_CONFLICT_MESSAGE } =
+  vm.runInThisContext('({ saveConflict, planSave, SAVE_CONFLICT_MESSAGE })');
+
+test('an untouched settings object is not a conflict', () => {
+  const snapshot = { buttons: [{ command: 'z {repo}' }], defaultMain: 'main', version: 0 };
+  assert.equal(saveConflict(snapshot, { ...snapshot }), false);
+  assert.equal(saveConflict({}, {}), false);
+  // Keys we never wrote read back as undefined — that is the same settings object, not a change
+  assert.equal(saveConflict({ defaultMain: 'main' }, { defaultMain: 'main', buttons: undefined }), false);
+});
+
+test('any change to our keys since the load is a conflict', () => {
+  const loaded = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  assert.equal(saveConflict(loaded, { buttons: [{ command: '{cd}' }], version: 1 }), true);
+  assert.equal(saveConflict(loaded, { buttons: [{ command: 'z {repo}' }], version: 1 }), true);
+  assert.equal(saveConflict(loaded, { buttons: [], version: 0 }), true);
+  assert.equal(saveConflict(loaded, {}), true);
+});
+
+test('a save onto a settings object that moved is refused, not merged', () => {
+  // The scenario in full. Device A loads v0 settings and starts editing. Device B reviews the
+  // migration and saves the rewritten commands as v1. A now presses Save: its payload still holds
+  // the old commands, and writing it would erase B's explicit decision with no trace and no notice.
+  const loadedByA = { buttons: [{ command: 'z {repo} && claude' }], version: 0 };
+  const savedByB = { buttons: [{ command: '{cd} && claude' }], version: 1 };
+  const payloadFromA = {
+    buttons: [{ command: 'z {repo} && claude' }],
+    version: versionToSave({ loadedVersion: 0, reviewed: false }),
+  };
+
+  const outcome = planSave({ loadedSnapshot: loadedByA, liveSnapshot: savedByB, payload: payloadFromA });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.write, undefined, 'nothing may be written');
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  // The way out has to be in the message: what happened, how to see it, how not to lose your edits
+  assert.match(SAVE_CONFLICT_MESSAGE, /another device/i);
+  assert.match(SAVE_CONFLICT_MESSAGE, /reload/i);
+  assert.match(SAVE_CONFLICT_MESSAGE, /export/i);
+  // B's settings stay exactly as B left them
+  assert.deepEqual(savedByB, { buttons: [{ command: '{cd} && claude' }], version: 1 });
+});
+
+test('a save onto the settings we loaded goes through unchanged', () => {
+  const snapshot = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const payload = { buttons: [{ command: 'z {repo}' }], version: 0, defaultMain: 'main' };
+  const outcome = planSave({ loadedSnapshot: snapshot, liveSnapshot: { ...snapshot }, payload });
+  assert.equal(outcome.refused, false);
+  assert.equal(outcome.write, payload);
 });

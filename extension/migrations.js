@@ -47,20 +47,30 @@ const MIGRATIONS = [
     to: 1,
     // `effect` answers one question and only that one: **is there any app configuration under
     // which this rewrite leaves the user worse off?** 'unconditional' means no; 'behavior-change'
-    // means yes, and the preview must then make the user weigh it per item.
+    // means yes, and the preview then makes the user weigh it per item, unchecked by default.
     //
-    // By that definition this hop is unconditional. With no base directory the rendered command is
-    // byte-identical. With one, the button gains fallbacks — but those come from a setting the user
-    // switched on in the app themselves, and `{cd}` is how that setting was always meant to reach
-    // the command; the rewrite is the wiring, not the decision. Neither case is worse than today.
-    // (Without a stated definition "does more than before" would read as behavior-change, which is
-    // why the definition is written down here rather than left to taste.)
-    effect: 'unconditional',
+    // It is declared per *candidate kind*, because the two make very different promises.
+    //
+    // Replacing a preset we shipped, byte for byte, is unconditional: we know the entire command.
+    // With no base directory the render is identical; with one, the fallbacks come from a setting
+    // the user switched on themselves, and `{cd}` is how that setting was always meant to reach the
+    // command — the rewrite is the wiring, not the decision.
+    verbatimEffect: 'unconditional',
+    // Replacing the first clause of a command someone else wrote is not, because the rest of it is
+    // arbitrary and will now run somewhere else. `z {repo} && git clean -fdx` did nothing when the
+    // jump failed; with a base directory it lands in <base>/<repo> — possibly a different
+    // repository that happens to share the name — and deletes there. "No configuration makes this
+    // worse" cannot be claimed over a command we did not write, so the user opts in per item.
+    prefixEffect: 'behavior-change',
     rewrites: V0_TO_V1,
     describe:
       'The command opens with {cd} instead of z {repo}. With no repository base folder set in the '
         + 'Terminal Checkout app this runs exactly what it runs today; if you have set one, z failing '
         + 'now falls back to that folder and clones the repository when it is not there.',
+    prefixDescribe:
+      'Your command continues after the jump. With a base folder set, a failed z now lands in '
+        + '<base folder>/<repo> or a fresh clone — make sure the rest of this command is safe to run '
+        + 'there before accepting it.',
     customNote:
       'This command was edited, so it is left exactly as it is — `z {repo}` is not its first clause, '
         + 'and rewriting it safely would mean parsing the shell. Replace the leading jump with {cd} '
@@ -159,14 +169,18 @@ function planMigration(stored, fromVersion) {
 
       let current = command;
       let source = null;
+      let describe = '';
       let behaviorChange = false;
       for (const step of steps) {
         const verbatim = step.rewrites?.get(current);
         const promoted = verbatim === undefined ? step.promote?.(current) : verbatim;
         if (promoted === undefined || promoted === null || promoted === current) continue;
+        const viaPrefix = verbatim === undefined;
         // The first step that matched says how this entered the chain
-        source = source || (verbatim === undefined ? 'prefix' : 'verbatim');
-        behaviorChange = behaviorChange || step.effect === 'behavior-change';
+        source = source || (viaPrefix ? 'prefix' : 'verbatim');
+        behaviorChange = behaviorChange
+          || (viaPrefix ? step.prefixEffect : step.verbatimEffect) === 'behavior-change';
+        describe = [describe, viaPrefix ? step.prefixDescribe : step.describe].filter(Boolean).join(' ');
         current = promoted;
       }
 
@@ -182,6 +196,7 @@ function planMigration(stored, fromVersion) {
           from: command,
           to: current,
           source,
+          describe,
           // Worst case across the steps that applied: one behavior change anywhere makes the whole
           // hop a behavior change for this button
           effect: behaviorChange ? 'behavior-change' : 'unconditional',
@@ -218,6 +233,12 @@ function applyMigrationPlan(stored, plan, selectedIds) {
     next[item.storageKey] = buttons;
   }
   return next;
+}
+
+// Which candidates start checked. Only the ones nothing can go wrong with: a behavior change is
+// something the user opts into after reading it, never something they have to notice and opt out of.
+function defaultSelection(plan) {
+  return plan.actionable.filter(item => item.effect === 'unconditional').map(item => item.id);
 }
 
 // What the preview panel needs to know, without it having to count anything itself.
@@ -266,26 +287,46 @@ function shouldAdoptSyncedChange(dirty, changes) {
   return Object.keys(changes || {}).some(key => ours.has(key));
 }
 
-// The highest version this page has ever seen, from any source. It rises and never falls.
+// storage.sync has no compare-and-set, so two pages editing one account can only be told apart by
+// looking. Before writing, the page re-reads every key it owns and compares it against what it read
+// when it loaded; if anything moved, the save is refused.
 //
-// The floor exists because reading and writing are far apart in time: the page loads a version,
-// the user edits for a while, and another machine can save a newer one in between. Writing what was
-// loaded would then downgrade the account and bring the notice back everywhere. A reading that is
-// not a version at all changes nothing.
-function raiseVersionFloor(floor, observed) {
-  const version = normalizeVersion(observed);
-  return version === null ? floor : Math.max(floor, version);
+// Refusing rather than merging is the whole point, and it replaces a design that got this wrong. An
+// earlier version kept a "floor" of the highest version ever seen and wrote that alongside whatever
+// content the page happened to hold — which stamped a v1 marker onto v0 commands and erased another
+// device's migration without a word. The version states which generation **the content being
+// written** belongs to; it cannot be defended separately from the content it describes.
+const SAVE_CONFLICT_MESSAGE =
+  'Settings changed on another device since this page loaded. Reload to see them — export first if '
+    + 'you want to keep your unsaved edits.';
+
+function sameStoredValue(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every(key => Object.hasOwn(b, key) && sameStoredValue(a[key], b[key]));
 }
 
-// The version a save actually writes: never below the floor, never below what is in storage right
-// now, and at least what consent asks for. `live` is a fresh read taken immediately before the
-// write, which is what closes the window the floor alone cannot see — another machine's save that
-// landed after this page loaded.
-function versionToWrite({ floor, live, loadedVersion, reviewed }) {
-  return Math.max(
-    raiseVersionFloor(floor, live),
-    versionToSave({ loadedVersion, reviewed })
+// True when the settings moved under us since the load. Every key we own is compared, the version
+// included — a version change on its own means another device reviewed the migration, and writing
+// over that undoes their decision just as surely as overwriting their commands would.
+function saveConflict(loadedSnapshot, liveSnapshot) {
+  return [...SETTINGS_KEYS, VERSION_KEY].some(
+    key => !sameStoredValue(loadedSnapshot?.[key], liveSnapshot?.[key])
   );
+}
+
+// The save as a decision, kept apart from the act of writing so it can be reasoned about on its own.
+// A refusal carries the message and writes nothing; there is no repair attempted behind the user's
+// back, because any repair here would be a guess about which of two intentions to keep.
+function planSave({ loadedSnapshot, liveSnapshot, payload }) {
+  if (saveConflict(loadedSnapshot, liveSnapshot)) {
+    return { refused: true, message: SAVE_CONFLICT_MESSAGE };
+  }
+  return { refused: false, write: payload };
 }
 
 // Whether a settings snapshot read from storage may still be applied to the page.
@@ -294,6 +335,12 @@ function versionToWrite({ floor, live, loadedVersion, reviewed }) {
 // checkbox, or start editing. Any of that makes the snapshot older than the screen, and applying it
 // would silently undo what they just did. `revision` counts every such act — including checkbox
 // toggles, which are not "dirty" edits but are still the user speaking about this plan.
-function shouldApplyLoadedSnapshot({ revisionAtStart, revisionNow, dirty }) {
+//
+// The generation covers the other half: two loads can be in flight at once — a sync event arriving
+// while the first is still running — and the one that answers last is not necessarily the one that
+// asked last. Only the newest request may apply its answer, or an older view of the settings lands
+// on top of a newer one.
+function shouldApplyLoadedSnapshot({ revisionAtStart, revisionNow, dirty, generation, latestGeneration }) {
+  if (generation !== latestGeneration) return false;
   return !dirty && revisionAtStart === revisionNow;
 }
