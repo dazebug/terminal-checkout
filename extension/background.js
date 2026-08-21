@@ -247,6 +247,13 @@ async function runButton(button, variables, page) {
   // Everything from here to the send is synchronous **on purpose**: an await in between would make
   // this one more check with a gap behind it, which is the shape of every defect this loop has been
   // closing. sendToNativeHost hands the message to Chrome as its own first statement.
+  //
+  // That closes the window **inside this script** and nothing more. Handing the message to Chrome is
+  // not the command running: it crosses a native-messaging IPC, and the page can move between the
+  // hand-off and the moment the app acts on it. So the check and the execution are **not atomic** —
+  // this is the same TOCTOU residual as the get↔set window on the options page, accepted for the
+  // same reason: closing it would need a compare-and-set the boundary does not offer. The app cannot
+  // supply one either; it has no view of the browser's pages to re-check against.
   await assertRequestIsCoherent(page.tab, page);
   const message = { command_template: button.command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
