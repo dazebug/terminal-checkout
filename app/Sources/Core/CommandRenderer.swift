@@ -59,18 +59,30 @@ private let variableRegex = try! NSRegularExpression(pattern: "\\{(\\w+)\\}")
 
 /// Substitutes `{var}` in a command template with validated variable values.
 ///
+/// This is the whole public surface: everything it substitutes has passed the character whitelist.
+/// Bypassing that whitelist is possible only through the module-internal overload below, whose sole
+/// caller is `resolveRequest`.
+public func renderCommand(template: String, variables: [String: String]) throws -> String {
+    try renderCommand(template: template, variables: variables, appVariables: [:])
+}
+
 /// `variables` comes from the extension, so every last one of them has to pass the character
 /// whitelist. `appVariables` is a shell fragment the app assembled (`{cd}` —
-/// `BaseDirectory.swift`): it contains spaces and braces, so it cannot pass that verdict, and
-/// there is no reason it should — its ingredients being already-validated values is what earns the
-/// exemption. The two dictionaries cannot collide on a name: a fragment name is absent from
-/// `allowedVariables`, so a request carrying one is rejected by the loop above first. The merge
+/// `BaseDirectory.swift`): it contains spaces and braces, so it cannot pass that verdict, and there
+/// is no reason it should — its ingredients being already-validated values is what earns the
+/// exemption. That exemption is why this overload is **not public**: a general `[String: String]`
+/// can't express "assembled by us", so the type can't carry the guarantee and the module boundary
+/// has to. Keep the only caller `resolveRequest`, which builds the dictionary from
+/// `repoEntryCommand` alone.
+///
+/// The two dictionaries cannot collide on a name: a fragment name is absent from
+/// `allowedVariables`, so a request carrying one is rejected by the loop below first. The merge
 /// order is only a safety net.
 ///
 /// Substituted values are never rescanned (matches are taken from the template alone), so there is
 /// no path by which a `{…}` inside a fragment gets substituted a second time.
-public func renderCommand(
-    template: String, variables: [String: String], appVariables: [String: String] = [:]
+func renderCommand(
+    template: String, variables: [String: String], appVariables: [String: String]
 ) throws -> String {
     var values: [String: String] = [:]
     for (key, value) in variables {

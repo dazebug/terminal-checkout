@@ -1402,8 +1402,9 @@ final class WarpTabConfigTests: XCTestCase {
         )
     }
 
-    // directory를 두지 않는다 — iTerm2·WezTerm과 같이 기본 cwd에서 시작하고
-    // 명령의 `z {repo}`가 이동한다. 여기서 cwd를 정하면 터미널별로 동작이 갈린다
+    // No directory key — like iTerm2 and WezTerm the pane starts in the default cwd and the
+    // command's entry clause (`{cd}`) does the moving. Pinning a cwd here would make the behavior
+    // differ per terminal
     func testTOMLDoesNotPinDirectory() {
         XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("directory"))
     }
@@ -2043,19 +2044,19 @@ final class WarpReclaimTests: XCTestCase {
 // **한계**: 문자열이 파일에 있는지만 본다. 그래서 uninstall.sh를 고칠 때 문자열을 주석이나 죽은
 // 코드에만 남기면 이 가드는 통과한다 — 셸 구문까지 보지는 않는다.
 
-final class UninstallScriptSyncTests: XCTestCase {
-    /// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
-    /// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
-    /// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
-    private func repoFileContents(_ name: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
-            .deletingLastPathComponent() // CoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // app
-            .deletingLastPathComponent() // 리포 루트
-        return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
-    }
+/// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
+/// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
+/// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
+private func repoFileContents(_ name: String) throws -> String {
+    let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
+        .deletingLastPathComponent() // CoreTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // app
+        .deletingLastPathComponent() // 리포 루트
+    return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+}
 
+final class UninstallScriptSyncTests: XCTestCase {
     func testUninstallScriptSweepsWithTheSameConstants() throws {
         let script = try repoFileContents("uninstall.sh")
         // 스크립트에 그대로 나타나야 하는 것들. `--serve` 플래그는 일부러 빠져 있다 —
@@ -2074,5 +2075,53 @@ final class UninstallScriptSyncTests: XCTestCase {
                 "uninstall.sh가 \(needle.debugDescription)을 다루지 않는다 — Swift 상수만 바뀌었다"
             )
         }
+    }
+}
+
+// MARK: - extension/defaults.js ↔ Swift: names the app fills in
+// The name of an app-provided variable exists twice: `repoEntryVariable` here and `APP_VARIABLES`
+// in `extension/defaults.js`. Neither side can catch the other drifting at runtime, and the damage
+// is asymmetric but total either way — rename it only in Swift and every preset renders `{cd}`
+// literally into the shell; rename it only in JS and the app rejects every button with "Unknown
+// variable". This test is the only thing that turns that drift into a red.
+//
+// **Limit**: it reads the array literal out of the file's text. Computing `APP_VARIABLES` at
+// runtime, or spelling it across several statements, would slip past this guard.
+
+final class AppVariableSyncTests: XCTestCase {
+    /// Pulls the element names out of `const APP_VARIABLES = ['cd'];`. Returns nil when the
+    /// declaration is missing or no longer a plain array literal — the caller fails, rather than
+    /// comparing against an empty set and passing for the wrong reason.
+    private func appVariablesFromDefaults(_ source: String) -> Set<String>? {
+        guard let range = source.range(of: #"APP_VARIABLES\s*=\s*\[([^\]]*)\]"#, options: .regularExpression)
+        else { return nil }
+        let body = source[range].drop { $0 != "[" }.dropFirst().dropLast()
+        let names = body
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " \t\n'\"")) }
+            .filter { !$0.isEmpty }
+        return Set(names)
+    }
+
+    func testAppProvidedVariableNamesMatchTheExtension() throws {
+        let defaults = try repoFileContents("extension/defaults.js")
+        let fromJS = try XCTUnwrap(
+            appVariablesFromDefaults(defaults),
+            "APP_VARIABLES is gone from extension/defaults.js, or is no longer an array literal"
+        )
+        XCTAssertEqual(
+            fromJS, [repoEntryVariable],
+            "the app-provided variable names have drifted: JS has \(fromJS.sorted()), "
+                + "Swift has [\(repoEntryVariable)]"
+        )
+    }
+
+    /// The parser has to be able to fail — otherwise the test above passes on a file it never read
+    /// correctly. These are the shapes that must not be mistaken for a match.
+    func testParserRejectsWhatItCannotRead() {
+        XCTAssertNil(appVariablesFromDefaults("const OTHER = ['cd'];"))
+        XCTAssertNil(appVariablesFromDefaults("// APP_VARIABLES was here"))
+        XCTAssertEqual(appVariablesFromDefaults("const APP_VARIABLES = ['cd', 'zz'];"), ["cd", "zz"])
+        XCTAssertEqual(appVariablesFromDefaults("const APP_VARIABLES = [];"), [])
     }
 }

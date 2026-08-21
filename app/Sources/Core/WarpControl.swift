@@ -73,12 +73,14 @@ public func escapeForTOMLBasicString(_ text: String) -> String {
     return out
 }
 
-/// 명령들을 차례로 실행하는 단일 pane Tab Config.
-/// `directory`를 두지 않는 것은 iTerm2·WezTerm과 맞추기 위해서다 — 기본 cwd에서 시작하고
-/// 이동은 명령의 `z {repo}`가 한다.
-/// `[params.*]`도 두지 않는다. 파라미터를 선언하면 열 때 채워 넣는 모달이 떠 명령이
-/// 사용자 응답 전까지 실행되지 않는다. 선언하지 않으면 명령 속 `{{...}}`는 치환도 모달도 없이
-/// 셸에 그대로 전달된다(실측) — 그래서 `{{`를 따로 방어하지 않는다.
+/// A single-pane Tab Config that runs the commands in order.
+/// It carries no `directory` key, to match iTerm2 and WezTerm — the pane starts in the default cwd
+/// and the command's own entry clause does the moving (`{cd}`, which the app renders from its base
+/// directory setting).
+/// It declares no `[params.*]` either. Declaring parameters pops a fill-in modal on open, and the
+/// command doesn't run until the user answers. Undeclared, a `{{...}}` inside a command is passed
+/// to the shell as-is, with no substitution and no modal (measured) — which is why `{{` needs no
+/// defense of its own.
 public func warpTabConfigTOML(commands: [String]) -> String {
     let list = commands.map { "\"\(escapeForTOMLBasicString($0))\"" }.joined(separator: ", ")
     return """

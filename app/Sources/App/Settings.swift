@@ -23,8 +23,17 @@ enum Settings {
     /// in Core (`normalizedBaseDirectory`, `repoEntryCommand`). The extension neither knows nor
     /// sends this value: paths differ per machine while extension settings ride storage.sync
     /// across an account.
+    ///
+    /// A stored value that isn't a string (a hand-edited plist, some future build writing another
+    /// type) must not read as "not configured" — that is exactly the silent fold decision 4 rules
+    /// out. It is handed on as text instead, so `normalizedBaseDirectory` rejects it and the button
+    /// fails carrying the reason. `string(forKey:)` cannot express that: it returns nil for both
+    /// "absent" and "present but another type".
     static var baseDirectory: String {
-        get { UserDefaults.standard.string(forKey: "baseDirectory") ?? "" }
+        get {
+            guard let stored = UserDefaults.standard.object(forKey: "baseDirectory") else { return "" }
+            return stored as? String ?? String(describing: stored)
+        }
         set { UserDefaults.standard.set(newValue, forKey: "baseDirectory") }
     }
 
