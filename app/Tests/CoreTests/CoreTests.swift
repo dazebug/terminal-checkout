@@ -938,6 +938,29 @@ final class ClaudeInputPlanTests: XCTestCase {
         }
     }
 
+    /// **Reproduction (PR #36 review, Codex).** The separator cases consumed `;` and `|` one
+    /// character at a time, so a malformed separator *sequence* — an empty command between two
+    /// separators — passed the gate: `["!echo one ||| echo two", "!echo later"]` merged, the whole
+    /// line died as a parse error in zsh, bash AND dash (measured), and `later` never ran, while
+    /// separate submissions run it. Separators are now read as tokens: `|`, `||`, `&&` and a
+    /// single `;` are valid only after a command word; anything else folds the run.
+    func testMalformedSeparatorSequencesDoNotMerge() {
+        for body in [
+            "echo one ||| echo two", "echo one ||; echo two", "echo one |; echo two",
+            "echo one ;; echo two", "echo one ; ; echo two", "echo one ;| echo two",
+            "echo one && ; echo two", "echo one ; && echo two", "echo one | | echo two",
+        ] {
+            XCTAssertFalse(claudeBodyJoinsSafely(body), "\(body) 를 안전하다고 판정했다")
+        }
+        // …and every valid separator shape still merges — the gate must not fold real pipes
+        for body in [
+            "echo one | wc -l", "echo one || echo two", "gh pr view 1 && gh pr diff 1",
+            "echo one; echo two", "gh api x --jq '.[]|.n'", "echo 'a ||| b'",
+        ] {
+            XCTAssertTrue(claudeBodyJoinsSafely(body), "\(body) 를 접었다")
+        }
+    }
+
     /// **Reproduction (round 13, independent reviewer — 162 merged/separate runs in bash and zsh,
     /// 47 divergences).** Two families were missing from the state-word list:
     ///  - `exit` and `return` end the eval. Merged, `…; exit 0; …` prints nothing after itself and

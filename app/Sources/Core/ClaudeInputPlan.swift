@@ -175,6 +175,11 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
     var word = ""
     var wordIsOpaque = false
     var foldsTheRun = false
+    // A separator is only valid **after a command word** (PR #36 review, Codex): the old cases
+    // consumed `;` and `|` one character at a time, so `|||`, `||;`, `; ;` — an empty command
+    // between separators — passed the gate, and the merged line died as a parse error in zsh,
+    // bash and dash (measured), taking every later body with it. Separate submissions run them.
+    var commandSinceSeparator = false
 
     // Two different reasons, one answer: the word leaks state into the bodies after it, or it is
     // compound grammar this scan does not model. An assignment needs no third check — it is a word
@@ -194,6 +199,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             guard scan < chars.count else { return false } // unterminated
             index = scan + 1
             wordIsOpaque = true
+            commandSinceSeparator = true
             continue
         }
         if character == "\"" {
@@ -211,6 +217,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             guard scan < chars.count else { return false } // unterminated
             index = scan + 1
             wordIsOpaque = true
+            commandSinceSeparator = true
             continue
         }
         switch character {
@@ -222,6 +229,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             guard index + 1 < chars.count else { return false }
             // The escaped character is data, and part of the word: `\c\d` is the command `cd`
             word.append(chars[index + 1])
+            commandSinceSeparator = true
             index += 2
             continue
         case "$" where index + 1 < chars.count && chars[index + 1] == "(":
@@ -236,12 +244,21 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             var run = 0
             while index + run < chars.count, chars[index + run] == "&" { run += 1 }
             guard run == 2 else { return false } // `&&` joins; a single `&` backgrounds
+            guard commandSinceSeparator else { return false } // `; &&` — empty command
+            commandSinceSeparator = false
             endWord() // `git fetch && cd ..` — the word after the operator is a command too
             index += run
             continue
         case ";", "|":
+            // Read as a token, not a character: `|` pipes and `||` joins, but `|||` and `;;`
+            // leave an empty command and kill the whole merged line (parse error, measured)
+            var run = 0
+            while index + run < chars.count, chars[index + run] == character { run += 1 }
+            let validToken = character == "|" ? run <= 2 : run == 1
+            guard validToken, commandSinceSeparator else { return false }
+            commandSinceSeparator = false
             endWord()
-            index += 1
+            index += run
             continue
         default:
             break
@@ -250,6 +267,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             endWord()
         } else {
             word.append(character)
+            commandSinceSeparator = true
         }
         index += 1
     }
