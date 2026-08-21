@@ -866,14 +866,114 @@ final class ClaudeInputPlanTests: XCTestCase {
         XCTAssertEqual(claudeTypedInputs(["!gh pr view 1", "!gh pr diff 1"]).count, 1)
     }
 
-    /// The shell the merged line runs in is **claude's**, not the pane's, and we do not know which
-    /// one it is (bash is likely; unmeasured). So the gate is conservative across shells: a word
-    /// starting with `=` is harmless in bash and an expansion error in zsh that takes the whole
-    /// line with it, which is exactly the difference merging must not create
+    /// The merged line runs in **claude's** `!` shell, which is zsh-family (measured: a missing
+    /// command reports `(eval):1: command not found`). A word starting with `=` is harmless in bash
+    /// and an expansion error in zsh that takes the whole line with it, which is exactly the
+    /// difference merging must not create — so the gate rejects it for every shell
     func testAWordThatOnlyZshWouldExpandStopsTheMerge() {
         XCTAssertFalse(claudeBodyJoinsSafely("echo ===="))
         XCTAssertFalse(claudeBodyJoinsSafely("=ls"))
         XCTAssertTrue(claudeBodyJoinsSafely("gh pr view 42 --jq '.title=\"x\"'"))
+    }
+
+    /// **Reproduction (round 13, Codex — blocking).** The gate used to call a `#` a comment only
+    /// when a **space** came before it, so a `#` right after a separator was read as literal text
+    /// and the run merged. It is a comment there too, and it swallows the rest of the merged line —
+    /// banners and every later body included. Measured, all three shells, `echo one;# note; echo two`
+    /// prints `one` and **exits 0**: the second input disappears with no error anywhere, and the
+    /// button still reports success because delivery is asynchronous.
+    ///
+    /// `&&` and `|` are the same position: zsh takes `echo one&&# note` as `one` alone (exit 0),
+    /// bash and dash as a syntax error that runs nothing at all.
+    func testAnOperatorBeforeAHashIsNotProofThatItIsLiteral() {
+        for run in [
+            ["!echo one;# note", "!echo two"],
+            ["!echo one&&# note", "!echo two"],
+            ["!echo one|# note", "!echo two"],
+            ["!echo one; # note", "!echo two"], // the round-11 shape, still folded
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+        }
+    }
+
+    /// The same guard was the only thing standing behind `=`, and it misread that position for the
+    /// same reason: `echo one;=tcnosuchcmd` puts the word at a command position, where zsh expands
+    /// it and **aborts the rest of the line** (measured: `one` prints, `two` never does)
+    func testAnOperatorBeforeAnEqualsIsNotProofThatItIsLiteralEither() {
+        XCTAssertEqual(
+            claudeTypedInputs(["!echo one;=tcnosuchcmd", "!echo two"]),
+            ["!echo one;=tcnosuchcmd", "!echo two"]
+        )
+    }
+
+    /// **The gate now makes no judgement about position at all**, and that is the point: a rule of
+    /// the form "this `#` is provably not a comment" has produced two silent-loss defects, and the
+    /// gate is a whitelist, so the answer is to stop proving. The price is over-folding, which
+    /// costs a type/submit cycle and never correctness — pinned here so it stays visible.
+    func testTheGateFoldsEveryUnquotedHashAndEqualsIncludingLiteralOnes() {
+        XCTAssertFalse(claudeBodyJoinsSafely("echo a#b"))        // literal in every shell, folded
+        XCTAssertFalse(claudeBodyJoinsSafely("gh pr list --state=open")) // legal, folded
+        // …and quoting still merges, which is what keeps the shipped presets on the fast path
+        XCTAssertTrue(claudeBodyJoinsSafely("gh api x --jq '[.[]|select(.event==\"y\")]'"))
+        XCTAssertTrue(claudeBodyJoinsSafely("echo '#not a comment'"))
+        // A backslash-escaped one is data too — and measured to be disarmed: zsh reports a plain
+        // `command not found` for `\=tcnosuchcmd` instead of expanding it
+        XCTAssertTrue(claudeBodyJoinsSafely("echo a\\#b"))
+    }
+
+    /// The trailing-operator rule had no mirror and an incomplete list. Both edges of a body are
+    /// spliced onto `; `, so an operator on either side is a parse error that runs **nothing** on
+    /// the whole line (measured in zsh, bash and dash; zsh alone tolerates a leading `;`, and the
+    /// gate is conservative across shells for the same reason the `=` rule is)
+    func testABodyThatDoesNotStartOrEndWhereItLooksLikeItDoesIsNotMerged() {
+        for run in [
+            ["!echo one >", "!echo two"],   // `… >; …` — parse error
+            ["!echo one <", "!echo two"],
+            ["!;echo hi", "!echo two"],     // `…; ;echo hi` — parse error in bash and dash
+            ["!|cat", "!echo two"],
+            ["!&& echo hi", "!echo two"],
+            ["!& echo hi", "!echo two"],
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+        }
+    }
+
+    /// **Reproduction (round 13, independent reviewer — 162 merged/separate runs in bash and zsh,
+    /// 47 divergences).** Two families were missing from the state-word list:
+    ///  - `exit` and `return` end the eval. Merged, `…; exit 0; …` prints nothing after itself and
+    ///    **exits 0** (measured, zsh and bash for `exit`, zsh for `return`), so every later body
+    ///    disappears with no error — the same silence as the `#` case
+    ///  - words with no partner on the list: `setopt` had no `unsetopt`, `hash` no `unhash`, and
+    ///    the name-binding family (`enable`/`disable`, `unfunction`, `autoload`, `zmodload`) and
+    ///    the emulation switch (`emulate`) were absent altogether
+    ///
+    /// The list is not a claim of completeness — it is the second line, behind "anything the scan
+    /// cannot read folds" — but a *missing partner* is a hole with no argument behind it.
+    func testWordsThatEndTheLineOrRebindNamesAreNotMerged() {
+        for body in [
+            "exit 0", "return 0",
+            "unsetopt nomatch", "unhash gh", "unfunction gh", "emulate sh",
+            "disable echo", "enable -n echo", "zmodload zsh/pcre", "autoload -Uz compinit",
+            "let x", "integer n", "float f", "read answer",
+        ] {
+            XCTAssertFalse(claudeBodyJoinsSafely(body), body)
+        }
+        // …and the shipped shapes are untouched
+        XCTAssertTrue(claudeBodyJoinsSafely("gh pr diff 42"))
+    }
+
+    /// A state-changing word does not stop being one because an operator or a backslash is stuck to
+    /// it. `cd>/dev/null` really changes directory (measured: `cd /tmp; cd>/dev/null; pwd` prints
+    /// `$HOME`), and so does `\c\d /usr` — both are the wrong-directory class of item 117, reached
+    /// through a word the scan was splitting in the wrong place
+    func testAStateChangingWordIsSeenThroughARedirectionOrAnEscape() {
+        XCTAssertFalse(claudeBodyJoinsSafely("cd>/dev/null"))
+        XCTAssertFalse(claudeBodyJoinsSafely("cd</dev/null"))
+        XCTAssertFalse(claudeBodyJoinsSafely("\\c\\d sub"))
+        XCTAssertEqual(
+            claudeTypedInputs(["!cd>/dev/null", "!rm -rf build"]),
+            ["!cd>/dev/null", "!rm -rf build"]
+        )
     }
 
     /// The merged line reaches Warp as **one** injection payload, and the helper refuses anything
@@ -899,6 +999,25 @@ final class ClaudeInputPlanTests: XCTestCase {
         let joined = "printf '%s\n' one # note; /bin/echo '==== two ===='; printf '%s\n' two"
         let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
         XCTAssertEqual(result.stdout, "one\n", "재현이 성립하지 않는다: \(result.stdout)")
+    }
+
+    /// The same, for the three shapes round 13 adds. None of them merely loses its own command:
+    /// the rest of the merged line — later banners and bodies included — is either swallowed by a
+    /// comment or never parses
+    func testTheJoinsAddedInRoundThirteenAlsoRunNothingAfterThem() throws {
+        for (label, joined) in [
+            ("hash after a separator",
+             "/bin/echo one;# note; /bin/echo '==== two ===='; /bin/echo two"),
+            ("body ending in a redirection",
+             "/bin/echo one >; /bin/echo '==== two ===='; /bin/echo two"),
+            ("body starting with a separator",
+             "/bin/echo one; ;/bin/echo hi; /bin/echo '==== two ===='; /bin/echo two"),
+        ] {
+            let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
+            XCTAssertFalse(
+                result.stdout.contains("two"), "\(label): 재현이 성립하지 않는다 — \(result.stdout)"
+            )
+        }
     }
 
     /// Plain text is just a message, so the whole list rides in argv when that is all there is —
@@ -2587,6 +2706,20 @@ final class AppleScriptTests: XCTestCase {
         XCTAssertTrue(
             script.contains("write text ((character id 21) & (character id 127)) newline NO"),
             script
+        )
+    }
+
+    /// **Drift (round 13, independent reviewer).** "One constant, every site" was false for iTerm2:
+    /// the script transcribed 21 and 127 instead of reading `claudeClearInputKey`, so changing the
+    /// constant would have moved every terminal *except* iTerm2 — silently. The expectation here is
+    /// recomputed from the constant, so the two can no longer disagree
+    func testTheClearScriptIsDerivedFromTheClearKeyAndCannotDriftFromIt() {
+        let expected = claudeClearInputKey.unicodeScalars
+            .map { "(character id \($0.value))" }
+            .joined(separator: " & ")
+        XCTAssertTrue(
+            iTermClearInputScript(sessionID: "s").contains("write text (\(expected)) newline NO"),
+            iTermClearInputScript(sessionID: "s")
         )
     }
 

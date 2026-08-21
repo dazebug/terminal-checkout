@@ -12,7 +12,8 @@ import Foundation
 //
 // What is left to optimise is **cycles, not routes**: a run of consecutive `!` inputs is typed as
 // one line joined with `;`, so three inputs cost one type/submit cycle instead of three. And a
-// list that is nothing but plain text still rides in argv, because plain text is just a message.
+// list holding exactly one plain-text input still rides in argv, because plain text is just a
+// message (several of them would need a newline between, which is where that shape stopped).
 
 // MARK: - What the inputs turn into
 
@@ -46,6 +47,11 @@ func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
 /// merged line could have redefined (`echo() { :; }`), and a function or an alias cannot take over
 /// a name containing `/` — the same reasoning the pre-execution script used to apply to every
 /// utility it called. `/bin/echo` exists on macOS and Linux; claude's shell mode runs there.
+///
+/// The leading `/` this puts right after the `!` is safe, and that was measured rather than
+/// assumed (2.1.238, pty): `!/bin/echo '==== … ===='; …` — the exact opening shape of every merged
+/// line — stays in shell mode, no slash-command palette opens, and both commands' output appears
+/// after the CR.
 let claudeBannerCommand = "/bin/echo"
 
 /// The largest merged line we will produce. The Warp helper refuses an injection payload over
@@ -61,55 +67,94 @@ let claudeMergedLineLimit = 4096
 ///
 /// A **whitelist walk, not a shell parser** — parsing the user's shell is a road this repository
 /// has refused twice. The body passes only if the scan reaches its end seeing nothing that could
-/// reach past it. Everything below was reproduced or is the same class:
-///  - `#` at a word start — comments out the rest of the **merged line**, later banners included
+/// reach past it, and **the scan makes no judgement about where in the body a character sits**.
+/// That last part is the lesson of round 13: the rule used to be "a `#` is a comment only when a
+/// space comes before it", which reads `!echo one;# note` as literal text — and there the `#` is a
+/// comment too, so it swallowed the rest of the merged line and the second input vanished with
+/// exit 0 (measured in zsh, bash and dash). A whitelist has no business proving that a character
+/// is harmless *here*; if it cannot be waved through everywhere, it folds. Over-folding costs a
+/// type/submit cycle, never correctness.
+///
+/// What folds, each reproduced or the same class:
+///  - **any unquoted `#`** — a comment eats the rest of the **merged line**, later banners
+///    included. `echo a#b` is literal in every shell and folds anyway: see above
+///  - **any unquoted `=`** — a word starting with `=` is harmless in bash and an expansion error in
+///    zsh that aborts the whole line, and claude's `!` shell **is** zsh-family (measured: a missing
+///    command reports `(eval):1: command not found`). `--state=open` is legal and folds anyway
 ///  - a lone `&` — `… &; …` is a syntax error, so the whole line runs nothing
 ///  - `<<` / `<<-` — a heredoc eats what follows as its content
 ///  - a newline, a trailing backslash, an unterminated quote — the join splices two commands
 ///  - `(`, `)`, `{`, `}`, a backtick, `$(` — grammar this scan does not model, and a function
 ///    definition in one body would still be live when the next banner runs
-///  - an empty body, or one ending in an operator (`;`, `|`, `&`, `\`) — the join yields `;;`
-///    or `; ;`, a parse error, so **nothing on the line runs** (measured in bash and zsh)
-///  - a word starting with `=` — bash shrugs, zsh expands it and aborts the line. claude's `!`
-///    shell **is** zsh-family (measured: a missing command reports `(eval):1: command not found`),
-///    so this one is not hypothetical
-///  - a word that **changes shell state** (`cd`, `export`, `set`, `alias`, `source`, an assignment
-///    …). Measured (Q2b): separate `!` submissions share no state — `!export X=1` then `!echo $X`
-///    prints nothing, because each `!` is a fresh eval — while a merged line does share it. That
-///    is a difference in what runs, not in speed: `["!cd sub", "!rm -rf build"]` removes `./build`
-///    typed separately and `sub/build` merged. Deleting the wrong directory is the failure class
-///    this project treats as blocking, so those runs are typed one at a time.
-///    A quoted command name (`'cd' sub`) is not caught — the scan cannot read inside quotes, and
-///    rejecting every quoted word would break the shipped presets' `--jq '…'`
+///  - an empty body, or one whose **first or last** character is an operator. Both edges get `; `
+///    spliced onto them, and an operator next to that separator is a parse error that runs nothing
+///    on the line (measured; zsh alone tolerates a leading `;`, and the gate is conservative across
+///    shells for the same reason the `=` rule is)
+///  - a word that **changes shell state** (`cd`, `export`, `set`, `alias`, `source` …). Measured
+///    (Q2b): separate `!` submissions share no state — `!export X=1` then `!echo $X` prints
+///    nothing, because each `!` is a fresh eval — while a merged line does share it. That is a
+///    difference in what runs, not in speed: `["!cd sub", "!rm -rf build"]` removes `./build` typed
+///    separately and `sub/build` merged. Deleting the wrong directory is the failure class this
+///    project treats as blocking, so those runs are typed one at a time.
+///    The word has to be *found* before it can be matched, so a redirection ends a word (`cd>x`
+///    really changes directory, measured) and a backslash contributes the character it escapes
+///    (`\c\d /usr` really changes directory, measured). **A quoted command name (`'cd' sub`) is
+///    still not caught** — the scan cannot read inside quotes, and rejecting every quoted word
+///    would break the shipped presets' `--jq '…'`
 ///
-/// Anything unrecognised is *rejected*, which costs speed and never correctness: that run is typed
-/// one input at a time, exactly as it was before merging existed.
+/// Anything unrecognised is *rejected*: that run is typed one input at a time, exactly as it was
+/// before merging existed.
+
 /// Words that make a body's meaning depend on — or leak into — the commands around it. Read
 /// anywhere in the body, for the same reason the append scanner reads every word: this scan does
 /// not model command positions, and over-folding only costs a cycle.
+///
+/// Grouped by what leaks, because that is the only way to see a gap: round 13 found `setopt`
+/// without `unsetopt`, `hash` without `unhash`, and the whole name-binding family missing. Any
+/// word added here should bring its partner.
+///
+/// **Not a completeness claim.** It is the second line — the first is "anything the scan cannot
+/// read folds" — and a quoted command name (`'cd' sub`) still walks past both.
 private let claudeStateChangingWords: Set<String> = [
+    // working directory
     "cd", "pushd", "popd", "chdir",
-    "export", "unset", "set", "setopt", "shopt", "declare", "typeset", "local", "readonly",
-    "alias", "unalias", "hash", "trap", "umask", "ulimit",
-    "source", ".", "eval", "exec",
+    // variables (`NAME=…` itself folds earlier, on the unquoted `=`)
+    "export", "unset", "declare", "typeset", "local", "readonly", "let", "integer", "float", "read",
+    // shell options and emulation
+    "set", "setopt", "unsetopt", "shopt", "emulate",
+    // names: aliases, functions, the command hash, builtins, modules
+    "alias", "unalias", "autoload", "unfunction", "hash", "unhash", "enable", "disable", "zmodload",
+    // evaluating text, replacing the shell, process-wide settings
+    "source", ".", "eval", "exec", "trap", "umask", "ulimit",
+    // ending the eval early — measured: merged, `…; exit 0; …` runs nothing after itself and
+    // still exits 0, so every later body vanishes without a message
+    "exit", "return",
 ]
+
+/// A body may not **end** with one of these: the `; ` that follows would land next to an operator.
+/// `<` and `>` are here because a dangling redirection is the same parse error (measured).
+private let claudeJoinBreakingLastCharacters: Set<Character> = ["&", "|", ";", "\\", "<", ">"]
+/// …nor **begin** with one of these, for the mirror-image reason. A leading `<`/`>` is fine —
+/// `>out echo hi` is an ordinary command — and so is a leading `\`.
+private let claudeJoinBreakingFirstCharacters: Set<Character> = ["&", "|", ";"]
 
 func claudeBodyJoinsSafely(_ body: String) -> Bool {
     let trimmed = body.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty, let last = trimmed.last, !"&|;\\".contains(last) else { return false }
+    guard let first = trimmed.first, !claudeJoinBreakingFirstCharacters.contains(first),
+          let last = trimmed.last, !claudeJoinBreakingLastCharacters.contains(last)
+    else { return false }
     let chars = Array(trimmed)
     var index = 0
-    var previous: Character?
     var word = ""
     var wordIsOpaque = false
     var stateChanges = false
 
+    // An assignment is a word containing `=`, and every unquoted `=` folds before this runs, so
+    // there is nothing left here for `looksLikeAnAssignment` to catch
     func endWord() {
         defer { word = ""; wordIsOpaque = false }
         guard !wordIsOpaque, !word.isEmpty else { return }
-        if claudeStateChangingWords.contains(word) || looksLikeAnAssignment(word) {
-            stateChanges = true
-        }
+        if claudeStateChangingWords.contains(word) { stateChanges = true }
     }
     while index < chars.count {
         let character = chars[index]
@@ -118,7 +163,6 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             while scan < chars.count, chars[scan] != "'" { scan += 1 }
             guard scan < chars.count else { return false } // unterminated
             index = scan + 1
-            previous = "'"
             wordIsOpaque = true
             continue
         }
@@ -136,38 +180,38 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             }
             guard scan < chars.count else { return false } // unterminated
             index = scan + 1
-            previous = "\""
             wordIsOpaque = true
             continue
         }
         switch character {
         case "\n", "`", "(", ")", "{", "}":
             return false
+        case "#", "=":
+            return false // comment / zsh EQUALS expansion — never judged by position
         case "\\":
             guard index + 1 < chars.count else { return false }
+            // The escaped character is data, and part of the word: `\c\d` is the command `cd`
+            word.append(chars[index + 1])
             index += 2
-            previous = "\\"
             continue
-        case "#" where previous.map(\.isWhitespace) ?? true:
-            return false
         case "$" where index + 1 < chars.count && chars[index + 1] == "(":
             return false
-        case "=" where previous.map(\.isWhitespace) ?? true:
-            return false // zsh expands a word starting with `=` and aborts the line
         case "<" where index + 1 < chars.count && chars[index + 1] == "<":
             return false
+        case "<", ">":
+            endWord() // a redirection ends the word: `cd>x` is the command `cd`
+            index += 1
+            continue
         case "&":
             var run = 0
             while index + run < chars.count, chars[index + run] == "&" { run += 1 }
             guard run == 2 else { return false } // `&&` joins; a single `&` backgrounds
             endWord() // `git fetch && cd ..` — the word after the operator is a command too
             index += run
-            previous = "&"
             continue
         case ";", "|":
             endWord()
             index += 1
-            previous = character
             continue
         default:
             break
@@ -178,7 +222,6 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
             word.append(character)
         }
         index += 1
-        previous = character
     }
     endWord()
     return !stateChanges
@@ -194,8 +237,12 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
 ///    Only the banner, which is ours, is quoted (`shellSingleQuoted`), so nothing we add can be
 ///    read as syntax.
 ///
-/// No length cap: this is typed into a TUI, so `ARG_MAX` does not apply, the reflection check
-/// looks at a 24-character prefix, and truncating would silently change a command the user wrote.
+/// A merged line is capped at `claudeMergedLineLimit` — not because the line is too long to type
+/// (it goes into a TUI, so `ARG_MAX` does not apply, and the reflection probe still sees its first
+/// 24 characters at 4,000, measured) but because the Warp helper refuses an injection payload over
+/// 8 KiB. Merging is the optimisation, so it is what gives way: past the cap the run is typed input
+/// by input. **Nothing is ever truncated** — truncating would silently change a command the user
+/// wrote, which is the failure this loop exists to remove.
 public func claudeTypedInputs(_ inputs: [String]) -> [String] {
     var typed: [String] = []
     var run: [String] = []
@@ -649,8 +696,8 @@ func reclaimStaleClaudePromptDirectories(
 /// Turns a request into the form that will actually run: what the terminal is asked to execute,
 /// and what will be typed into the session afterwards.
 ///
-/// `!` inputs are always typed (see the top of this file). A list that is **nothing but plain
-/// text** can instead ride in claude's argv, and then there is nothing left to type — the two are
+/// `!` inputs are always typed (see the top of this file). A list holding **exactly one plain-text
+/// input** can instead ride in claude's argv, and then there is nothing left to type — the two are
 /// never mixed, because the argv message's own submission clears the input box seconds after
 /// claude starts and would wipe whatever we typed in the meantime (measured; round 4 removed the
 /// combination and no gate over it survived review).

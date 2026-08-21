@@ -26,6 +26,9 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 let claudeSubmitKey = "\r"
 /// 입력창을 비우는 **시퀀스**: Ctrl+U(0x15) 다음 Backspace(0x7F). 표식 지우기·입력 전 클리어·
 /// 전달 종료 정리가 전부 이 한 상수를 쓰므로, 여기만 고치면 모든 자리에 적용된다.
+/// iTerm2는 바이트가 아니라 AppleScript로 받지만 그 스크립트도 이 상수에서 유도한다
+/// (`appleScriptCharacters(of:)`) — 21·127을 따로 적어 두었던 동안에는 이 문장이 거짓이었고,
+/// 상수를 바꿔도 iTerm2만 옛 시퀀스로 조용히 남았다.
 ///
 /// **Backspace가 왜 붙는가 — 실측(2.1.238, pty).** Ctrl+U는 claude의 `!` 셸 모드를 벗어나지
 /// 못한다: `!text`에서 Ctrl+U를 보내면 글자만 지워지고 **`!`가 남는다.** 화면상으로는 빈

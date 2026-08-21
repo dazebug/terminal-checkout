@@ -109,7 +109,7 @@ function renderButtons(kind) {
         <div class="claude-queue-head"><span class="ret">⏎</span> claude inputs
           <span class="help-inline">— delivered in order; <code>!</code> lines run in claude's shell mode</span>
         </div>
-        <div class="claude-hint" hidden><code>!</code> lines are typed into claude's shell mode so they really run as commands — consecutive ones go in as a single line joined with <code>;</code>, each behind a banner. On Warp that typing needs the Accessibility permission. A list that is <em>only</em> plain text skips typing entirely and becomes claude's opening message, which additionally needs the command to end in a bare <code>claude</code>.</div>
+        <div class="claude-hint" hidden><code>!</code> lines are typed into claude's shell mode so they really run as commands — consecutive ones go in as a single line joined with <code>;</code>, each behind a banner. On Warp that typing needs the Accessibility permission. A single plain-text input, with nothing else in the list, skips typing entirely and becomes claude's opening message — that additionally needs the command to end in a bare <code>claude</code>.</div>
         <div class="claude-warn" hidden>⚠ The command doesn't start claude, so these inputs won't be delivered</div>
         <div class="claude-rows"></div>
         <button class="add-input-btn">+ Add Input</button>
