@@ -303,14 +303,15 @@
 <body>
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
-    <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice and permissions live in the Terminal Checkout app settings window</p>
+    <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window</p>
   </header>
 
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> buttons <span class="section-where">— PR pages</span></h2>
     <p class="help">Buttons that sit next to the branch name on a PR page (up to 3). <b>Face</b> is what the button shows — a single emoji, several of them (🌳🤖), or a short name (Review, WT). <b>Tooltip</b> appears on hover, and picking a preset fills the card with that template.</p>
     <p class="help">Drag the <code>⠿</code> handle on the left of a card, or use the <code>↑</code> <code>↓</code> keys, to reorder — this is the order the buttons appear in on GitHub, and clicking the extension icon runs the first one. <b>Duplicate</b> is for making another button like an existing one — the copy's tooltip gets a number such as <code>(1)</code> appended.</p>
-    <p class="help">Available variables: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR number, digits only)</span> <code>{branch}</code> <span class="faint">(head — the branch being merged)</span> <code>{base}</code> <span class="faint">(base — the branch it merges into)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch with / replaced by _)</span></p>
+    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — the app fills this in from its repository base folder setting, so it works on every page)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR number, digits only)</span> <code>{branch}</code> <span class="faint">(head — the branch being merged)</span> <code>{base}</code> <span class="faint">(base — the branch it merges into)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch with / replaced by _)</span></p>
+    <p class="help">Every preset starts with <code>{cd}</code>. With no base folder set it is just <code>z {repo}</code>; with one, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally.</p>
     <div id="pr-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="pr-add">+ Add Button</button>
@@ -321,7 +322,7 @@
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> issueButtons <span class="section-where">— Issue pages</span></h2>
     <p class="help">Buttons that sit next to the status badge (Open/Closed) on an issue page (up to 3). They are configured separately from the PR buttons, and on an issue page clicking the extension icon runs the first button here. Reordering (drag <code>⠿</code>, or <code>↑</code> <code>↓</code>) and duplicating work just like they do for PR buttons.</p>
-    <p class="help">Available variables: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable.</p>
+    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable.</p>
     <p class="help">A claude input that starts with <code>!</code> is handed to the shell by claude — the default preset uses <code>gh</code> to feed claude the issue body, its comments, and the numbers of related issues and PRs.</p>
     <div id="issue-buttons"></div>
     <div style="margin-top:10px">
@@ -333,7 +334,7 @@
   <section class="section">
     <h2 class="section-prompt"><span class="prompt">❯</span> repoButtons <span class="section-where">— Repository pages</span></h2>
     <p class="help">Buttons that sit next to the repository name in the header of a repository page (code, issue list, Actions, and so on) — up to 3. Unlike the PR and issue buttons these look like GitHub's green action button, so a name such as <code>Open in Terminal</code> suits the <b>face</b> better than an emoji. On GitHub pages that are neither a PR nor an issue, clicking the extension icon runs the first button here.</p>
-    <p class="help">Available variables: <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — a repository page has neither a PR or issue number nor a branch, so <code>{number}</code>, the <code>{branch}</code> family, and <code>{base}</code> are unavailable. <code>{main}</code> is resolved from the repository default branch GitHub embeds in the page — a <code>master</code> repository comes out right without an override.</p>
+    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — a repository page has neither a PR or issue number nor a branch, so <code>{number}</code>, the <code>{branch}</code> family, and <code>{base}</code> are unavailable. <code>{main}</code> is resolved from the repository default branch GitHub embeds in the page — a <code>master</code> repository comes out right without an override.</p>
     <div id="repo-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="repo-add">+ Add Button</button>

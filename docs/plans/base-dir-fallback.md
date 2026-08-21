@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-base-dir-fallback` (브랜치 `base-dir-fallback`)
 - 시작 커밋: `294c46a`
-- 현재: R1 커밋(항목 1∼8) · 게이트 3종 그린(드라이버 재실행 — swift 208/0, node 24/24, e2e 9 PASS) · Codex R1 검증 진행 중 · 병행: 항목 9(문서)
-- 최근 검증자 판정: 미요청
+- 현재: R2 커밋(항목 9 문서분) · 게이트 3종 그린 · R3(판정 라운드 — P2 권고 반영) 진행
+- 최근 검증자 판정: **합의(yes)** — Codex R1, 스레드 `01a023c2-8afe-7de1-b755-489ec6b5bc6d`
 
 이슈 #30 — "A cold zoxide DB fails every preset silently — `command -v z` still reports all green". 확정 방향은 **옵션 1+1a**(base dir을 옵션으로 받아 두고 `z` 실패 시 base dir 기반으로 동작, 클론이 안 돼 있으면 clone까지)이며 이 방향 자체는 재론하지 않는다.
 
@@ -72,7 +72,7 @@
 | 6 | **App: 설정 창 「저장소 기본 폴더」 카드.** 텍스트필드 + [폴더 선택…](`NSOpenPanel`) + 상태 줄(검증 실패 사유, 존재하지 않는 폴더 경고). 터미널 카드와 같은 급의 **상시 카드**로 둔다(완료되면 숨는 설치 카드가 아니다). 파이프라인 점(`pipelineNodes`)은 늘리지 않는다 — Chrome→relay→앱→터미널 경로의 홉이 아니다. 문구는 한국어. **red 없음** — 항목 9의 수기 검사 목록으로 대체 | claimed | `SetupWindowController.swift:230-256`(카드), `:140`·`:151`(터미널 카드 뒤 배치), `:650-681`(`updateBaseDirCard`), `:800-846`(`baseDirectoryReason`·`baseDirectoryEdited`·`chooseBaseDirectory`). `./app/build.sh` → `Build complete!` 경고 없음. 저장은 정규화된 값으로(`~` 펼침·후행 슬래시 제거) 하고 필드에 되돌려 써 "실제로 도는 값"을 보여 준다. 검증 실패는 **저장하지 않고** 사유만 띄운다(입력 시점 거부 — 결정 4의 손상된 저장값 갈래는 `:658-668`이 따로 처리). 없는 폴더는 경고+저장(결정 5). 파이프라인 점은 늘리지 않았다. **미검증**: 실제 창을 띄운 시각·조작 확인은 하지 않았다 — GUI 기동이 `Installer.autoSetup()`을 돌려 사용자의 살아 있는 Native Host manifest를 이 워크트리 빌드로 덮어쓰기 때문(`Installer.swift`의 `autoSetup`). 아래 수기 검사 목록으로 넘긴다 | R1 |
 | 7 | **Extension: 프리셋 11개 + `DEFAULT_*` 3세트를 `{cd}`로.** `extension/defaults.js`에서만. `BUTTON_KINDS[*].variables`의 뜻("확장이 실제로 넘기는 것")은 지키고, 앱 제공 변수는 별도 상수(`APP_VARIABLES = ['cd']`)로 둔다. **red**: `tests/buttons.test.js` — (a) 기존 `the default repository button only moves to the repo`(`:97-101`)가 `'z {repo}'`를 고정하고 있어 **의도적으로 깨진다**. 새 기대값으로 갱신하고 왜 바꾸는지 주석을 남긴다. (b) 신규: 모든 프리셋의 `command`가 `{cd}`로 시작한다(맨 앞 `z {repo}`가 다시 새어 들어오는 것을 막는 회귀 방지). (c) 변수 검사(`:86-95`)가 `variables ∪ APP_VARIABLES`로 판정 | verified | `extension/defaults.js:6-10`(설명), `:104-109`(`APP_VARIABLES = ['cd']`), 프리셋 11개 전부 `{cd}`로 시작(`grep -n "command: " extension/defaults.js` → 11줄 모두 `'{cd}`). red: `ReferenceError: APP_VARIABLES is not defined`. green: `node --test` → `# tests 24 / # pass 24 / # fail 0`(기준 22 — 같은 명령을 294c46a 사본에서 실행해 대조). 신규 회귀 테스트 2건: `every preset enters the repository through {cd}`, `app-provided variables are not in any page's variable list`. `:100`의 `'z {repo}'` 고정은 `'{cd}'`로 갱신하고 이유를 주석에 남겼다 | R1 |
 | 8 | **e2e: 확장이 보낸 `cd` 거부.** `app/e2e.sh`에 결정적 케이스 1건(`{"command_template":"{cd}","variables":{"cd":"x"}}` → `Unknown variable: {cd}`). 개발자 머신의 `UserDefaults`에 의존하는 케이스는 넣지 않는다 | verified | `app/e2e.sh:77-83`. `./app/build.sh && ./app/e2e.sh` → `PASS: app-provided variable cannot come from the extension` 포함 9건 전부 PASS, `e2e 전체 통과`. 이름 거부는 변수 검증 단계에서 나므로 base dir 설정값과 무관하다 | R1 |
-| 9 | **문서·잔여 표면.** `README.md`(요구사항의 zoxide 위상, 설치 1단계, 변수 표에 `{cd}` 행 + 값의 출처가 앱이라는 표시, 사용법 코드블록 2곳, 트러블슈팅에 `zoxide: no match found` 항목), `docs/new-terminal-checklist.md`(아래 3개 실행 경로 추가), `install.sh:41-43` 경고 문구, `extension/options.html`의 변수 도움말 3곳과 `options.js:105` placeholder, `CLAUDE.md`(base dir 정본성·셸 조각 변수 경계·R0 실측 + **Working principles 절을 메인 체크아웃과 같은 문구로 반영** — 이 브랜치의 `CLAUDE.md`에는 아직 없다. 정본은 `/Users/choongjaelee/Codes/terminal-checkout/CLAUDE.md:5`), "이동은 `z {repo}`가 한다"고 적힌 주석 2곳(`app/Sources/Core/WarpControl.swift:78`, `app/Tests/CoreTests/CoreTests.swift:1162`) | todo | | |
+| 9 | **문서·잔여 표면.** `README.md`(요구사항의 zoxide 위상, 설치 1단계, 변수 표에 `{cd}` 행 + 값의 출처가 앱이라는 표시, 사용법 코드블록 2곳, 트러블슈팅에 `zoxide: no match found` 항목), `docs/new-terminal-checklist.md`(아래 3개 실행 경로 추가), `install.sh:41-43` 경고 문구, `extension/options.html`의 변수 도움말 3곳과 `options.js:105` placeholder, `CLAUDE.md`(base dir 정본성·셸 조각 변수 경계·R0 실측 + **Working principles 절을 메인 체크아웃과 같은 문구로 반영** — 이 브랜치의 `CLAUDE.md`에는 아직 없다. 정본은 `/Users/choongjaelee/Codes/terminal-checkout/CLAUDE.md:5`). **코드 파일 주석 2건(`app/Sources/Core/WarpControl.swift:78`, `app/Tests/CoreTests/CoreTests.swift:1162`)은 판정 라운드로 이월** — Codex가 R1 커밋의 그 파일들을 읽는 중이라 검증 대상과 워킹트리를 갈라 놓지 않는다 | verified | R2에서 **문서만** 수정(코드·테스트 0건). `README.md`: 요구사항 `:40-43`, 설치 1단계 재작성 `:47-65`, UI 라벨 매핑 `:79`, 설정 창 4단계 신설 `:92`·마무리 문장 `:95`, Updating 안내 `:112`(R0 결정 8), PR 코드블록 `:120-124`, 저장소 버튼 `:142`, **신설 「Getting into the repository」 `:163-176`**(폴백 표·콜드 DB 서술·앱 소유 이유), 변수 표 `{cd}` 행 `:182`, 변수 주석 `:191`, 트러블슈팅 신설 `:225` + 기존 z 항목 보강 `:227`. `docs/new-terminal-checklist.md`: 실행 경로 3건 `:61-63`, payload `:105` + 설명 `:107`. `CLAUDE.md`: Working principles `:5`(메인과 `diff` 동일 확인), base dir 정본성 `:45`, 셸 조각 경계+실측 `:46`, ToolChecker 항목에 임계도 한 줄 `:47`. `install.sh:41-45`. `extension/options.html`: 헤더 `:306`, 변수 도움말 3곳 `:313`·`:325`·`:337`, 프리셋 설명 `:314`. `extension/options.js:105`. 게이트 3종 재실행 그린 | R2 |
 
 의존: 1 → 2 → 3 → {4, 5}; 3 → 7 → 8; 6은 1·4 뒤; 9는 마지막.
 
@@ -103,18 +103,18 @@
 | `extension/defaults.js:64,68,72` (저장소 프리셋 3) | 성립 | 동일 | 구멍(항목 7) |
 | `extension/defaults.js:76-89` (`DEFAULT_*` 3세트) | 성립 — 프리셋을 참조하는 파생 | 코드 읽기 | 항목 7에 자동 포함(파생) |
 | `tests/buttons.test.js:100` | 성립 — 기본 command를 `'z {repo}'`로 고정 | `node --test` | 구멍(항목 7, 의도적 갱신) |
-| `extension/options.js:105` (command placeholder `z {repo} && claude`) | 성립 — 새 버튼을 쓰는 사용자에게 콜드 DB 형태를 학습시킨다 | 옵션 페이지에서 빈 카드 추가 | 구멍(항목 9) |
-| `extension/options.html:314,326,337` (변수 도움말 3곳) | 성립 — `{cd}`가 없어 사용자가 알 방법이 없다 | 페이지 육안 | 구멍(항목 9) |
-| `README.md:40,47-59` (요구사항·설치 1단계) | 성립 — zoxide를 사실상 필수로 서술, 완화책이 `:59` 한 줄 | 문서 읽기 | 구멍(항목 9) |
-| `README.md:109-115,132` (사용법 코드블록 2곳) | 성립 — 프리셋 문자열을 그대로 인용 | 문서 읽기 | 구멍(항목 9) |
-| `README.md:152-168` (변수 표) | 성립 — `{cd}` 행 없음, "값이 페이지에서 온다"는 전제도 깨진다 | 문서 읽기 | 구멍(항목 9) |
-| `README.md:198` (트러블슈팅 `z doesn't work`) | 성립 — 로그인 셸·init 문제만 다루고 `no match found`는 리포 어디에도 없다 | `grep -rn 'no match found'` → 0건 | 구멍(항목 9) |
-| `install.sh:41-43` | 성립 — zoxide 없으면 "기본 명령이 동작하지 않는다"고 단정 | 스크립트 읽기 | 구멍(항목 9) |
+| `extension/options.js:105` (command placeholder `z {repo} && claude`) | 성립 — 새 버튼을 쓰는 사용자에게 콜드 DB 형태를 학습시킨다 | 옵션 페이지에서 빈 카드 추가 | 닫음(R2) — `{cd} && claude`로 교체 |
+| `extension/options.html:313,325,337` (변수 도움말 3곳) | 성립 — `{cd}`가 없어 사용자가 알 방법이 없다 | 페이지 육안 | 닫음(R2) — 3곳 모두 `{cd}` 추가, `:314`에 프리셋 설명, `:306`에 "base folder는 앱에 있다" |
+| `README.md:40,47-59` (요구사항·설치 1단계) | 성립 — zoxide를 사실상 필수로 서술, 완화책이 `:59` 한 줄 | 문서 읽기 | 닫음(R2) — zoxide/base dir 택일로 재작성(`:40-43`, `:47-65`) |
+| `README.md:109-115,132` (사용법 코드블록 2곳) | 성립 — 프리셋 문자열을 그대로 인용 | 문서 읽기 | 닫음(R2) — `{cd}`로 교체(`:120`, `:142`) |
+| `README.md:152-168` (변수 표) | 성립 — `{cd}` 행 없음, "값이 페이지에서 온다"는 전제도 깨진다 | 문서 읽기 | 닫음(R2) — `{cd}` 행 `:182` + 예외 명시 `:191` + 전용 절 `:163-176` |
+| `README.md:198` (트러블슈팅 `z doesn't work`) | 성립 — 로그인 셸·init 문제만 다루고 `no match found`는 리포 어디에도 없다 | `grep -rn 'no match found'` → 0건 | 닫음(R2) — 전용 항목 `:225` 신설, 기존 항목 `:227` 보강 |
+| `install.sh:41-43` | 성립 — zoxide 없으면 "기본 명령이 동작하지 않는다"고 단정 | 스크립트 읽기 | 닫음(R2) — Warning→Note, base dir 대안 안내(`:41-45`) |
 | `app/Sources/App/SetupWindowController.swift:39-44` (`z` 조언) | 성립 — "모든 버튼이 실패합니다"가 base dir 설정 시 거짓이 된다 | 코드 읽기 | 구멍(항목 5) |
 | `app/Sources/Core/ToolChecker.swift:9,23-26` (`command -v z`) | 부분 성립 — 함수 존재만 증명. DB 내용은 원리적으로 여기서 알 수 없다 | 이슈 #30 본문 | 안전(설계상 유지, 비목표) |
-| `docs/new-terminal-checklist.md:61` (`z {repo}` 점프 항목) | 성립 — 폴백 경로가 검사 목록에 없다 | 문서 읽기 | 구멍(항목 9) |
-| `docs/new-terminal-checklist.md:103` (검증 payload 예시) | 성립(경미) — 예시 템플릿이 `z {repo} && claude` | 문서 읽기 | 구멍(항목 9) |
-| `app/Sources/Core/WarpControl.swift:78`, `app/Tests/CoreTests/CoreTests.swift:1162` (주석 "이동은 `z {repo}`가 한다") | 성립(문서) — 진입 수단이 바뀌면 낡는다 | `grep -n 'z {repo}'` | 구멍(항목 9) |
+| `docs/new-terminal-checklist.md:61` (`z {repo}` 점프 항목) | 성립 — 폴백 경로가 검사 목록에 없다 | 문서 읽기 | 닫음(R2) — 미설정·콜드DB·미클론 3갈래로 분리(`:61-63`) |
+| `docs/new-terminal-checklist.md:103` (검증 payload 예시) | 성립(경미) — 예시 템플릿이 `z {repo} && claude` | 문서 읽기 | 닫음(R2) — `{cd} && claude`로 교체하고 owner 추가(`:105`), 거부 사례 설명 `:107` |
+| `app/Sources/Core/WarpControl.swift:78`, `app/Tests/CoreTests/CoreTests.swift:1162` (주석 "이동은 `z {repo}`가 한다") | 성립(문서) — 진입 수단이 바뀌면 낡는다 | `grep -n 'z {repo}'` | **열림 — 판정 라운드로 이월**(R2 범위 제외: Codex가 R1 커밋의 이 파일들을 읽는 중) |
 | `app/e2e.sh:44,48,61,65` (payload의 `z {repo}`) | 성립 안 함 — 오류 경로 payload라 셸에서 실행되지 않는다 | 스크립트 읽기 | 안전 |
 | `app/Tests/CoreTests/CoreTests.swift` 렌더 테스트의 `z {repo}` 다수 | 성립 안 함 — 임의의 템플릿 예시일 뿐 | 테스트 읽기 | 안전 |
 | `extension/manifest.json:5` (description) | 성립 안 함 — `z` 언급 없음 | `grep -n description` | 안전 |
@@ -144,7 +144,16 @@
 - 실측: `swift test` 208/0(기준 180 + 신규 28), `node --test` 24/0(기준 22 — 294c46a 사본에서 같은 명령으로 대조), `app/e2e.sh` PASS 9건.
 - 언어 규칙 개정 반영: 이 브랜치가 새로 쓴 한국어 주석을 전부 영어로 교체했다. 확인 명령 `git diff -U0 -- app extension tests | grep '^+' | grep -E '^\+\s*(//|///|#)' | grep -P '[\x{AC00}-\x{D7A3}]'` → 출력 없음. 남은 한글 추가 줄은 설정 창 UI 문구(#24가 정본)와 화이트리스트 거부를 검증하는 테스트 픽스처 `"/Users/x/코드"`뿐이다.
 - 드라이버 대조: 게이트 3종 직접 재실행(swift 208/0 · node 24/24 · e2e 9 PASS). 표본 — `BaseDirectory.swift` 전문(조각 오라클·재료 재검증·`{ }` 그룹), `Request.swift`·`CommandRenderer.swift`·`HostServer.swift`·`e2e.sh` diff(이름 충돌은 조립 전 거부, 조각만 sanitize 면제, 치환 결과 재스캔 없음, App에 로직 없음), 프리셋 11개 `{cd}` 시작 grep, 추가 주석 한글 0건 grep. 항목 1∼5·7·8 → `verified`. 항목 6은 시각 검증 불가(GUI 기동이 살아 있는 Native Host manifest를 덮음)로 `claimed` 유지 — 수기 검사 목록으로 이월.
-- 판정: 요청함(Codex R1, 커밋 직후).
+- 판정(Codex, 스레드 `01a023c2-8afe-7de1-b755-489ec6b5bc6d`): **"`yes` — `5e77163`의 R1 코드에는 고위험 명령 주입이나 `{cd}` 우회가 없습니다. 다만 아래 P2 수준의 유지보수 위험은 남아 있습니다."** 불변 원칙 4종(미설정 바이트 동일·확장 `{cd}` 거부·화이트리스트 단일·App 분리) 전부 "통과" 판정. 우리가 노출한 판단 6건에 반박 없음. P2 지적: ① 항목 4 근거의 "App 검색 0건"은 부정확(SetupWindowController가 Core 검증기를 호출 — 별도 검증기는 아님) ② `renderCommand(appVariables:)`가 public이라 "앱 조립값만"을 타입으로 강제하지 않음 ③ Core `repoEntryVariable` ↔ JS `APP_VARIABLES` 교차 검증 테스트 부재(정본 드리프트) ④ `Settings.baseDirectory`가 비문자열 저장값을 "미설정"으로 접음(결정 4의 엄격 적용이면 보강 대상) ⑤ base dir의 `..`·중복 슬래시 허용(주입은 아님 — containment 요구 시 별도 보강). Codex 환경 실측: node 24/24·신규 Core 55/55·release build 통과, Swift 6건 실패와 e2e 미기동은 샌드박스의 소켓 bind 제한(변경 파일과 무관 — 드라이버 로컬에서는 전부 그린).
+
+### R2 — 워킹트리(미커밋, base `5e77163`)
+
+- 범위: 항목 9의 **문서분만**. 코드 파일 주석 2건(`WarpControl.swift:78`, `CoreTests.swift:1162`)은 Codex가 R1 커밋의 그 파일들을 읽는 중이라 판정 라운드로 이월했다. `git diff --name-only`에 `app/Sources`·`app/Tests`·`extension/defaults.js`·`tests/` 0건 — 검증 대상과 워킹트리가 갈리지 않는다.
+- 수정: `README.md`·`docs/new-terminal-checklist.md`·`CLAUDE.md`·`install.sh`·`extension/options.html`·`extension/options.js`(placeholder 한 줄). 소탕 표의 항목 9 행 9개를 「닫음(R2)」으로 갱신했고, 주석 2건 행만 「열림 — 판정 라운드로 이월」로 남겼다.
+- 설계 판단: `{cd}`를 README에 세 번 설명하는 대신 「Getting into the repository」 절 하나를 만들고 요구사항·설치·변수 표·트러블슈팅이 앵커로 가리키게 했다(리포의 Documentation principle — 같은 사실을 여러 곳에 두지 않는다). 설정 창 4단계 항목의 버튼 이름은 README의 기존 관례대로 영어로 쓰고 `:79`의 한국어 라벨 매핑 표에 2건(`Repository base folder`, `Choose Folder…`)을 추가했다.
+- **발견(판정 라운드 처리 대상)**: R0 결정 8의 "설정 창 base dir 카드 설명 문구"에 **기존 사용자 안내가 없다**. `SetupWindowController.swift:245-253`의 문구는 base dir이 무엇인지와 "비워 두면 지금까지와 같다"까지만 말하고, 저장된 버튼이 옛 command를 유지하므로 옵션 페이지에서 프리셋을 다시 적용해야 `{cd}`로 옮겨진다는 사실은 없다. 이번 라운드는 코드 파일을 건드리지 않으므로 기록만 한다. README 쪽 대응은 `:112`에 들어갔다.
+- 실측: `swift test` 208/0 · `node --test` 24/0 · `bash -n install.sh` OK · `app/build.sh` + `app/e2e.sh` PASS 9건. 문서만 바꿨어도 회귀 확인차 3종 전부 재실행했다. 마크다운 위험 점검 — 백틱 밖의 `<base>`/`<repo>` 0건(HTML 태그로 렌더되지 않음), 앵커 `#getting-into-the-repository` 링크 6곳에 대상 헤딩 1개 존재.
+- 판정: 미요청(R1 판정 대기 중).
 
 ## 열린 질문
 

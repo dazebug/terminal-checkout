@@ -102,7 +102,7 @@ function renderButtons(kind) {
         <div class="cmd-block">
           <span class="cmd-prompt">$</span>
           <textarea id="${kind}-${i}-command" class="command-input" data-field="command" rows="2"
-                    spellcheck="false" placeholder="z {repo} && claude"></textarea>
+                    spellcheck="false" placeholder="{cd} && claude"></textarea>
         </div>
       </div>
       <div class="claude-queue">

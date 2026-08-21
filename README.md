@@ -37,14 +37,18 @@ flowchart LR
 - Google Chrome
 - One of iTerm2, WezTerm, or Warp
 - Swift toolchain, for building (Command Line Tools via `xcode-select --install` is enough)
-- [zoxide](https://github.com/ajeetdsouza/zoxide) or [z.sh](https://github.com/rupa/z) — the default commands jump to your repo with `z`
-- Optional: [gh](https://cli.github.com) for the issue presets, `claude` for claude input
+- A way for the commands to reach your repository on disk: [zoxide](https://github.com/ajeetdsouza/zoxide)/[z.sh](https://github.com/rupa/z), a **base directory** set in the app, or both — see [Getting into the repository](#getting-into-the-repository)
+- Optional: [gh](https://cli.github.com) for the issue presets and for cloning a repository you don't have locally yet, `claude` for claude input
 
-On every launch the app checks `z`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window.
+On every launch the app checks `z`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window. With a base directory set, a missing `z` is a note rather than an error — the commands fall back to that folder.
 
 ## Installation
 
-### 1. zoxide (skip if you already have it)
+### 1. Decide how commands find your repositories
+
+The buttons run a command that starts by moving into the repository. Give it at least one way to get there — the two combine, and `z` is always tried first:
+
+**zoxide** — jumps to a repository wherever it lives (skip if you already have it):
 
 ```bash
 brew install zoxide
@@ -56,7 +60,9 @@ Add this line to `~/.zshrc`, then `source ~/.zshrc`:
 eval "$(zoxide init zsh)"
 ```
 
-> zoxide learns the directories you visit so you can jump with `z <folder>`. Visit a directory once with `cd` before relying on it.
+> zoxide learns the directories you visit, so a repository you have never `cd`'d into isn't in its database yet. Until it is, `z <folder>` fails — which is exactly what the base directory covers.
+
+**A base directory** — the folder you keep repositories in, e.g. `~/Codes`. You set it in the app's setup window, in installation step 3 below. It is used whenever `z` fails, and it clones the repository if you don't have it locally yet, so a first click works on a repository you've never opened. Details: [Getting into the repository](#getting-into-the-repository).
 
 ### 2. Build and install the app
 
@@ -70,7 +76,7 @@ cd terminal-checkout
 
 ### 3. Finish in the setup window
 
-> **Note:** The app's own UI is still in Korean — localization is tracked in [#24](https://github.com/dazebug/terminal-checkout/issues/24). Until it lands, the English labels used in this README appear in the app as: Install in Chrome = 「Chrome에 설치하기」, Request iTerm2 Permission = 「iTerm2 권한 요청」, Run in Terminal = 「터미널에서 실행」, Run Test = 「동작 테스트」, Open Extension Options Page = 「확장 옵션 페이지 열기」, Show Setup Guide Again = 「설치 안내 다시 보기」, Open System Settings = 「시스템 설정 열기」, Register/Update = 「등록/업데이트」.
+> **Note:** The app's own UI is still in Korean — localization is tracked in [#24](https://github.com/dazebug/terminal-checkout/issues/24). Until it lands, the English labels used in this README appear in the app as: Install in Chrome = 「Chrome에 설치하기」, Request iTerm2 Permission = 「iTerm2 권한 요청」, Run in Terminal = 「터미널에서 실행」, Run Test = 「동작 테스트」, Open Extension Options Page = 「확장 옵션 페이지 열기」, Show Setup Guide Again = 「설치 안내 다시 보기」, Open System Settings = 「시스템 설정 열기」, Register/Update = 「등록/업데이트」, Repository base folder = 「저장소 기본 폴더」, Choose Folder… = 「폴더 선택…」.
 
 When the app opens, walk through the setup window in order. Native Host registration and extension-folder preparation finish automatically at launch; the window is state-driven — completed cards disappear, remaining only as the pipeline lights (●) at the top.
 
@@ -83,9 +89,10 @@ When the app opens, walk through the setup window in order. Native Host registra
 2. **Terminal** — choose iTerm2, WezTerm, or Warp
 3. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
    - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received the input; without it, commands still run but scheduled claude input is not delivered. Keep the tab visible during delivery.
-4. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
+4. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
+5. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
-Once setup completes, the window keeps only the terminal selection, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
+Once setup completes, the window keeps only the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
 
 > Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
@@ -102,6 +109,8 @@ git pull --ff-only
 
 Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
 
+> **Updating from a version without the base directory?** Your saved buttons keep the exact command you already had — nothing rewrites them. The presets now open with `{cd}` instead of `z {repo}`; to move a button onto it, open the extension options page, apply the preset again on that button, and press **Save**.
+
 ## Usage
 
 ### PR pages
@@ -109,8 +118,10 @@ Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkou
 A button appears next to the branch name in the PR header. The default command checks out the PR branch; if checkout fails (e.g. the branch is checked out in a worktree), it moves to the worktree at the conventional path `../{repo}-{branch_underbar}`:
 
 ```bash
-z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
+{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
 ```
+
+`{cd}` is the clause that moves into the repository — the app renders it, and what it expands to depends on your base directory ([Getting into the repository](#getting-into-the-repository)).
 
 The default command assumes the PR branch exists on `origin` — i.e. a same-repository PR. It doesn't fetch branches that live on a fork; a fork-safe preset (via `gh pr checkout {number}`) is planned.
 
@@ -129,7 +140,7 @@ This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup wind
 
 ### Repository pages
 
-A button appears next to the repository name in the header. The default **Open in Terminal** button jumps to the repo directory (`z {repo}`). Since this button takes the shape of GitHub's green action button, a text label like `Open in Terminal` suits it better than an emoji. On GitHub pages that are neither PR nor issue, the extension icon runs this set's first button.
+A button appears next to the repository name in the header. The default **Open in Terminal** button moves into the repo directory (`{cd}`). Since this button takes the shape of GitHub's green action button, a text label like `Open in Terminal` suits it better than an emoji. On GitHub pages that are neither PR nor issue, the extension icon runs this set's first button.
 
 ### claude input
 
@@ -149,10 +160,26 @@ Installation, terminal selection, and permissions live in the app's setup window
 - Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
 - The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply.
 
+### Getting into the repository
+
+Every preset opens with `{cd}`, the clause that moves into the repository. The app renders it from the **base directory** in its setup window:
+
+| Base directory | What `{cd}` becomes |
+|:---|:---|
+| not set | `z {repo}` |
+| `<base>` | `z {repo}`, falling back to `cd <base>/{repo}`, falling back to `gh repo clone {owner}/{repo} <base>/{repo} && cd <base>/{repo}` |
+
+`z` is tried first either way, so a jump it makes is never overridden, and with no base directory the command is exactly what it was before this setting existed. That is also the failure the setting removes: a freshly installed zoxide has an empty database, `z {repo}` exits non-zero with `zoxide: no match found`, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and nothing on screen contradicts it.
+
+With a base directory, that same button falls through to the folder and clones the repository when it isn't there — which also covers not having zoxide at all, since `command not found` fails the same way. Cloning goes through `gh`, so it follows your `gh` protocol and auth settings and works for private repositories.
+
+The value lives in the app rather than the extension because it is machine-specific: extension settings sync across your Google account, and an absolute path from one machine is wrong on the next. For the same reason the extension can't send it — a request that tries is rejected.
+
 ### Variables
 
 | Variable | Value | PR | Issue | Repo |
 |:---|:---|:---:|:---:|:---:|
+| `{cd}` | move into the repository — filled in by the app, not the page ([above](#getting-into-the-repository)) | ✓ | ✓ | ✓ |
 | `{repo}` | repository name | ✓ | ✓ | ✓ |
 | `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ |
 | `{main}` | main branch (per-repo override → page detection → global default) | ✓ | ✓ | ✓ |
@@ -161,7 +188,7 @@ Installation, terminal selection, and permissions live in the app's setup window
 | `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — |
 | `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — |
 
-Variables work identically in commands and claude inputs. Using a variable the page doesn't have (the `{branch}` family on issue/repo buttons, `{number}` on repo buttons) gets the run rejected.
+Variables work identically in commands and claude inputs. Using a variable the page doesn't have (the `{branch}` family on issue/repo buttons, `{number}` on repo buttons) gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
 
 **`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
 
@@ -195,7 +222,9 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **Permission prompts again after rebuilding** — Ad-hoc signing means a rebuild changes the signing identity; allow the Automation prompt once more.
 
-**`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`).
+**`zoxide: no match found`, and nothing after it runs** — zoxide has never recorded that repository, so the first clause of the command fails and the `&&` chain stops there. The app can't see this: the command was delivered and died inside your shell, so the button still reports success. Set a **repository base folder** in the setup window and the command falls through to `<base>/<repo>`, cloning it when missing — or `cd` into the repository once by hand, which is what teaches zoxide. See [Getting into the repository](#getting-into-the-repository).
+
+**`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`). A base folder covers this case too, since a missing `z` fails the same way a cold database does.
 
 **Buttons don't appear** — GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
 
