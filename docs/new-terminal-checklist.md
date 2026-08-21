@@ -61,6 +61,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] `{cd}` with no base directory set — renders as a bare `z {repo}`, and without an interactive login shell the zoxide function isn't found and the first step dies. Compare the command printed in the tab against the pre-base-directory one: it has to be identical
 - [ ] `{cd}` with a base directory set and a cold zoxide DB (or no zoxide at all) — the fallback lands in the repository and the chain runs to its end
 - [ ] `{cd}` with a base directory set and the repository not cloned yet — the clone clause runs and the rest of the chain continues inside the fresh clone
+- [ ] `{cd}` with a base directory set and `<base>/<repo>` existing but **not** a git repository (an empty folder is enough) — the chain must not settle there: `fatal: not a git repository` appears and the clone clause takes over (empty folder) or stops visibly (non-empty)
 - [ ] A long `&&` chain (create worktree → cd → merge → claude) reaches its final step
 
 **Window selection**

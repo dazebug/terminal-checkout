@@ -2,7 +2,7 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-base-dir-fallback` (브랜치 `base-dir-fallback`)
 - 시작 커밋: `294c46a`
-- 현재: **종결 — 합의(R3 재검증 yes)** · 커밋 `5e77163`→`a76351a`→`f870f26` · 게이트 그린(swift 210/0, node 24/24, e2e 9 PASS) · 다음: PR 드라이브
+- 현재: **R4 워킹트리(항목 11 — PR #32 리뷰 반영, 미커밋)** · base `ef42cf9` · 게이트 3종 그린(swift 210/0, node 24/0, e2e 9 PASS)
 - 최근 검증자 판정: **합의(yes) ×2** — R1(`5e77163`)·R3 재검증(`f870f26`), 스레드 `01a023c2-8afe-7de1-b755-489ec6b5bc6d`
 
 이슈 #30 — "A cold zoxide DB fails every preset silently — `command -v z` still reports all green". 확정 방향은 **옵션 1+1a**(base dir을 옵션으로 받아 두고 `z` 실패 시 base dir 기반으로 동작, 클론이 안 돼 있으면 clone까지)이며 이 방향 자체는 재론하지 않는다.
@@ -76,7 +76,9 @@
 
 | 10 | **판정 라운드(R3): Codex P2 권고 4건 + 이월 2건.** ① **P2-1 타입 경계** — `renderCommand(appVariables:)`가 public이라 "앱 조립값만"을 타입으로 강제하지 못한다. 조각 오버로드를 `internal`로 내리고 public 표면은 `renderCommand(template:variables:)`만 남긴다(공개 API를 되넓히지 않는다). ② **P2-2 정본 드리프트 교차 검증** — Core `repoEntryVariable` ↔ `extension/defaults.js`의 `APP_VARIABLES`. 선례 `UninstallScriptSyncTests`를 따라 Swift 테스트가 JS를 읽어 양방향 집합 일치를 고정한다. red 대신 **토글 증명**. ③ **P2-3 비문자열 저장값** — `Settings.baseDirectory`가 String 아닌 값을 "미설정"으로 접는다. 결정 4를 엄격 적용해 `String(describing:)`으로 넘겨 거부되게 한다. ④ **P2-4 항목 4 근거 정정**. ⑤ 이월: 낡은 주석 2곳(`WarpControl.swift`, `CoreTests.swift`)을 `{cd}` 기준으로 영어 갱신. ⑥ 이월: 설정 창 카드에 기존 사용자 안내 한 줄(한국어) | agreed | ① `CommandRenderer.swift:60-66`(public 얇은 래퍼)·`:68-86`(internal 오버로드, 기본값 제거로 오버로드 모호성 회피). 경계 실측: `grep -n "public func renderCommand" ` → 1건(2인자만), `appVariables:` 호출자는 `Request.swift:54`·`:60` 둘뿐, App·Relay·WarpHelper의 `renderCommand` 호출 0건. `@testable import Core`(`CoreTests.swift:2`)라 테스트는 그대로 통과 — 공개 표면을 넓히지 않았다. ② `CoreTests.swift:2081-2126`(`AppVariableSyncTests` 2건) + 헬퍼 `repoFileContents`를 파일 스코프로 올려 선례와 공유(`:2046-2057`). **토글 증명**: JS만 `goto`로 → `XCTAssertEqual failed: ("["goto"]") is not equal to ("["cd"]")`; 되돌린 뒤 Swift만 `goto`로 → `("["cd"]") is not equal to ("["goto"]")`; 양쪽 복원 후 `git diff --quiet` 확인 + `Executed 2 tests, with 0 failures`. 파서 자체도 실패할 수 있음을 `testParserRejectsWhatItCannotRead`로 고정(선언 부재·주석·복수 원소·빈 배열). ③ `Settings.swift:27-33`. **미검증** — App 타깃에 테스트가 없어 비문자열 plist 값을 실제로 넣어 보지는 않았다(배선 4줄). ④ 항목 4 근거 칸 갱신. ⑤ `WarpControl.swift:76-83`, `CoreTests.swift:1405-1407`. ⑥ `SetupWindowController.swift:254-261`(한국어 UI 문구 + 영어 주석). 게이트: swift **210/0**(기준 208 + 신규 2) · node 24/0 · e2e 9 PASS | R3 |
 
-의존: 1 → 2 → 3 → {4, 5}; 3 → 7 → 8; 6은 1·4 뒤; 9는 마지막; 10은 R1·R2 판정 뒤.
+| 11 | **PR #32 리뷰 반영(R4): cd 절이 "저장소가 있다"의 증거가 아니다.** `z` 실패 후 `<base>/<repo>`가 빈 디렉터리·비저장소 디렉터리면 `cd`가 0을 반환해 clone 절을 건너뛰고, 프리셋 체인의 `git fetch`/`git checkout`이 그 무관한 디렉터리에서 돈다. cd 절을 `git -C <dir> rev-parse --git-dir >/dev/null && cd <dir>`로 감싸 저장소 확인 뒤에만 통과시킨다(Core `repoEntryCommand` 한 곳 — 프리셋 11개가 상속). `>/dev/null`은 stdout만 — stderr는 폴백 사유라 남긴다(결정 7 유지). **red**: 오라클 테스트(`RepoEntryCommandTests`·`RequestTests`)를 새 기대값으로 먼저 바꿔 red 확인 후 구현. `testStderrIsNotSuppressed`는 `/dev/null` 문자열 고정이 새 조각에서 깨지므로 **stderr 리다이렉션 부재** 판정으로 좁힌다 | claimed | `BaseDirectory.swift:78`(조각), `:53-63`(가드 근거·stdout/stderr 구분 주석). red 5건: `CoreTests.swift:153`·`:164`·`:173`·`:228`(RepoEntryCommandTests) + `:330`(RequestTests) — 예: `XCTAssertEqual failed: ("{ z remy \|\| cd /Users/x/Codes/remy \|\| …") is not equal to ("{ z remy \|\| { git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } \|\| …")`. green: `swift test` → `Executed 210 tests, with 0 failures`. `testStderrIsNotSuppressed`(`:196-205`)는 `2>`·`&>` 부재 판정으로 갱신하고 이유를 주석에 남겼다. 셸 실측 3건은 R4 로그 | R4 |
+
+의존: 1 → 2 → 3 → {4, 5}; 3 → 7 → 8; 6은 1·4 뒤; 9는 마지막; 10은 R1·R2 판정 뒤; 11은 PR #32 리뷰 판정 뒤.
 
 `docs/new-terminal-checklist.md`에 추가할 실행 경로(CLAUDE.md가 새 실행 경로마다 요구하는 것):
 
@@ -189,3 +191,16 @@
 - 기각 수용: **"`..` containment 기각도 수용합니다."** — "containment는 보안 경계라기보다 경로 정책이 되고, 정당한 레이아웃을 오탐할 수 있습니다. 계획서의 재검토 트리거도 충분합니다."
 - 비차단 잔여(수정하지 않음, 트리거만 기록): `AppVariableSyncTests`의 정규식 파서는 주석 안의 완전한 가짜 `APP_VARIABLES = […]` 선언도 읽을 수 있다 — 현재 드리프트도 런타임 우회도 아니고, 고치려면 테스트에 JS 파서를 들여야 해 비례가 맞지 않는다. 재검토 트리거: defaults.js에 `APP_VARIABLES` 텍스트를 담은 주석이 생기거나 선언 형식이 바뀌어 파서가 어긋나는 순간(그때는 테스트가 실패로 드러난다).
 - 검증자 실측: 표적 Swift 36/0, node 24/24 (e2e는 샌드박스 제한으로 드라이버 실측 인용).
+
+### R4 — 워킹트리(미커밋, base `ef42cf9`) · PR #32 리뷰 반영
+
+- 차단: Codex가 PR #32에 인라인 게시한 P2 1건(`BaseDirectory.swift:70`), 드라이버가 실측 재현해 **반영** 판정. 요지: 조각이 `cd`의 성공을 "요청한 저장소가 있다"의 증거로 취급한다 — `z` 실패 후 `<base>/<repo>`가 빈 디렉터리·비저장소 디렉터리면 `cd`가 0을 반환해 clone 절이 건너뛰어지고, 이후 `git fetch`/`git checkout`이 그 무관한 디렉터리에서 돈다.
+- 수정: cd 절을 `{ git -C <dir> rev-parse --git-dir >/dev/null && cd <dir>; }`로 감쌌다. **Core `repoEntryCommand` 한 곳**만 고쳐 프리셋 11개가 그대로 상속한다 — 조각을 앱이 조립하도록 설계한 이유가 여기서 값을 한다. `>/dev/null`은 **stdout만** 버린다(성공 시 `.git` 경로 한 줄). stderr는 그대로라 결정 7이 유지된다.
+- 실측(구현 에이전트 독립 재현, zsh -f + 로컬 bare 저장소):
+  - ① 무방비 조각 + 빈 `<base>/<repo>` → `pwd`가 그 빈 디렉터리, `git rev-parse` → `fatal: not a git repository (or any of the parent directories): .git`, **clone 절 미도달**
+  - ② 가드 조각 + 같은 빈 디렉터리 → stderr에 `fatal: not a git repository …` 뒤 `CLONE CLAUSE REACHED`, `cd` 미실행(`pwd` 불변)
+  - ③ `git clone`은 기존 **빈** 디렉터리로 exit 0, 비어 있지 않으면 `fatal: destination path '…' already exists and is not an empty directory.` exit 128 — **가시 실패**이고 기존 내용을 건드리지 않는다
+- 테스트: red를 먼저 만들었다 — 오라클 5건(`CoreTests.swift:153`·`:164`·`:173`·`:228`·`:330`)을 새 기대값으로 바꿔 `Executed 10 tests, with 4 failures` + `Executed 17 tests, with 1 failure` 확인 후 구현 → 210/0. 셸 동작 자체(빈 디렉터리 → clone 도달)는 Swift로 고정할 수 없어 위 실측이 유일한 근거다.
+- **남기는 것(수정하지 않음)**: `<base>/<repo>`가 이름만 같은 **다른 git 저장소**면 가드를 통과해 그 저장소에서 체인이 돈다. `z`의 퍼지 점프가 갖는 동일 부류(기존 동작)이고, base dir의 계약("저장소들을 클론해 두는 폴더")상 그 이름의 디렉터리가 다른 저장소인 것은 사용자 자신의 레이아웃 위반이며, 완전한 정체 확인(remote URL 대조)은 무겁고 부서지기 쉽다. **재검토 트리거**: 체인이 파괴적 동작(삭제·강제 덮어쓰기)을 갖게 되거나, base dir이 사용자 타이핑 밖(확장·URL 스킴·가져오기 파일·MDM)에서 오게 되는 순간.
+- 문서 동기화: `README.md:170`(표) + `:176`(가드 문단 신설), `docs/new-terminal-checklist.md:64`(비저장소 디렉터리 실행 경로), `CLAUDE.md:47`(가드 불릿 신설 — 남기는 것과 트리거 포함). 과거 라운드 근거 칸의 옛 오라클 인용은 역사이므로 손대지 않았다.
+- 판정: 미요청.

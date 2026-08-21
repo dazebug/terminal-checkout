@@ -167,11 +167,13 @@ Every preset opens with `{cd}`, the clause that moves into the repository. The a
 | Base directory | What `{cd}` becomes |
 |:---|:---|
 | not set | `z {repo}` |
-| `<base>` | `z {repo}`, falling back to `cd <base>/{repo}`, falling back to `gh repo clone {owner}/{repo} <base>/{repo} && cd <base>/{repo}` |
+| `<base>` | `z {repo}`, falling back to `<base>/{repo}` **if that is a git repository**, falling back to `gh repo clone {owner}/{repo} <base>/{repo}` |
 
 `z` is tried first either way, so a jump it makes is never overridden, and with no base directory the command is exactly what it was before this setting existed. That is also the failure the setting removes: a freshly installed zoxide has an empty database, `z {repo}` exits non-zero with `zoxide: no match found`, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and nothing on screen contradicts it.
 
 With a base directory, that same button falls through to the folder and clones the repository when it isn't there — which also covers not having zoxide at all, since `command not found` fails the same way. Cloning goes through `gh`, so it follows your `gh` protocol and auth settings and works for private repositories.
+
+The middle step checks that `<base>/{repo}` really is a git repository rather than just entering it. A directory that exists but isn't a checkout — an empty folder left over from an interrupted clone, a scratch directory — would otherwise pass for "found it", and the rest of the command (`git fetch`, `git checkout`) would run there. When the check fails, git says so on screen (`fatal: not a git repository`) and the clone step takes over; if that folder isn't empty, the clone stops with `destination path ... already exists and is not an empty directory` rather than touching what's in it.
 
 The value lives in the app rather than the extension because it is machine-specific: extension settings sync across your Google account, and an absolute path from one machine is wrong on the next. For the same reason the extension can't send it — a request that tries is rejected.
 

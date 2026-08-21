@@ -50,13 +50,21 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
 /// carrying a path variable: a path variable would leave every button of an unconfigured user
 /// failing with `Variable {basedir} not provided`.
 ///
-/// Configured, it chains `z` → `cd` → `clone`. `z` coming first is a rule: the base directory must
-/// not override a jump `z` made successfully. Measured, a cold DB exits 1 and a missing `z` exits
-/// 127, so this one branch covers both.
+/// Configured, it chains `z` → `cd` (guarded) → `clone`. `z` coming first is a rule: the base
+/// directory must not override a jump `z` made successfully. Measured, a cold DB exits 1 and a
+/// missing `z` exits 127, so this one branch covers both.
+///
+/// The middle clause asks git whether the directory **is a repository** before entering it. Plain
+/// `cd` returns 0 for any directory that exists — an empty one, a scratch folder, someone else's
+/// checkout — and treating that as "the repository is here" skips the clone and leaves the rest of
+/// the preset chain (`git fetch`, `git checkout`) running somewhere the user never asked for
+/// (measured: with an empty `<base>/<repo>`, an unguarded chain ends up sitting in it).
 ///
 /// Grouping is `{ …; }` only — `( … )` is a subshell, and `cd` inside one does not stick in the
-/// current shell. stderr is not suppressed either: the two fallback lines explain what happened,
-/// and hiding them would hide real failures (permissions, and so on) along with them.
+/// current shell. **stderr is never redirected**: `fatal: not a git repository` and `cannot change
+/// to` are what explain the fallback on screen, and hiding them would hide real failures
+/// (permissions, and so on) along with them. The `>/dev/null` on the guard is stdout only — the
+/// `.git` path git prints on success, which is noise nobody asked for.
 ///
 /// Every ingredient is a validated value — even though callers have validated already, the
 /// assembly site checks again. The result of this function is the only thing exempt from
@@ -67,7 +75,7 @@ public func repoEntryCommand(repo: String, owner: String?, baseDirectory: String
     guard let base = try normalizedBaseDirectory(baseDirectory) else { return jump }
 
     let dir = base == "/" ? "/\(repo)" : "\(base)/\(repo)"
-    var clauses = [jump, "cd \(dir)"]
+    var clauses = [jump, "{ git -C \(dir) rev-parse --git-dir >/dev/null && cd \(dir); }"]
     // Without an owner there is no clone address — drop the clause and chain z→cd only.
     // `gh` defers protocol (SSH/HTTPS) and auth to the user's gh config, which covers private
     // repositories too.

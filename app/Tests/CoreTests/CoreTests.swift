@@ -146,10 +146,14 @@ final class RepoEntryCommandTests: XCTestCase {
         )
     }
 
+    // The cd clause is gated on the directory actually being a repository. A bare `cd` returning 0
+    // would read as "found it" for an empty or unrelated directory too, and the rest of the preset
+    // chain (`git fetch`, `git checkout`) would then run somewhere the user never asked for.
     func testBaseDirectoryAddsCdThenCloneFallback() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base),
-            "{ z remy || cd /Users/x/Codes/remy || "
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
         )
     }
@@ -157,14 +161,19 @@ final class RepoEntryCommandTests: XCTestCase {
     // Without an owner there is no clone address — drop the clause and chain z→cd only
     func testWithoutOwnerTheCloneClauseIsOmitted() throws {
         let cmd = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: base)
-        XCTAssertEqual(cmd, "{ z remy || cd /Users/x/Codes/remy; }")
+        XCTAssertEqual(
+            cmd,
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
+        )
         XCTAssertFalse(cmd.contains("clone"))
     }
 
     func testEmptyOwnerCountsAsAbsent() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "", baseDirectory: base),
-            "{ z remy || cd /Users/x/Codes/remy; }"
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
         )
     }
 
@@ -188,12 +197,15 @@ final class RepoEntryCommandTests: XCTestCase {
     }
 
     // The reason for the fallback has to stay readable on screen — suppressing stderr would take
-    // real failures down with it
+    // real failures down with it.
+    // The repository guard discards `git rev-parse`'s *stdout* (on success it prints the .git path,
+    // which is pure noise), so "contains /dev/null" stopped telling the two apart. The check is
+    // narrowed to stderr redirection itself, which is what decision 7 is actually about: `fatal:
+    // not a git repository` and `cannot change to` have to reach the screen and explain the fallback.
     func testStderrIsNotSuppressed() throws {
-        XCTAssertFalse(
-            try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
-                .contains("/dev/null")
-        )
+        let cmd = try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
+        XCTAssertFalse(cmd.contains("2>"), cmd)  // 2>/dev/null, 2>&1, 2>>…
+        XCTAssertFalse(cmd.contains("&>"), cmd)  // the both-streams form
     }
 
     // A corrupted stored value (a hand-edited plist, say) is not silently ignored — the button
@@ -215,7 +227,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testRootBaseDirectoryDoesNotDoubleTheSlash() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "/"),
-            "{ z remy || cd /remy; }"
+            "{ z remy || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
         )
     }
 }
@@ -317,7 +329,8 @@ final class RequestTests: XCTestCase {
         ]
         XCTAssertEqual(
             try resolveRequest(req, baseDirectory: "/Users/x/Codes").command,
-            "{ z remy || cd /Users/x/Codes/remy || "
+            "{ z remy || "
+                + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
                 + " && git fetch origin"
         )
