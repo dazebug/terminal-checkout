@@ -465,11 +465,36 @@ final class ClaudeInputPreconditionTests: XCTestCase {
         ))
     }
 
-    func testWezTermIsNeverBlockedBeforeLaunch() {
+    /// WezTerm is not "never undeliverable" — it is "not decidable **here**". Whether a pane can
+    /// be addressed is only known once the mux has been asked, which is inside `runInWezTerm`
+    func testWezTermIsNotDecidedBeforeLaunch() {
         XCTAssertNil(claudeInputBlocker(
             terminal: .wezterm, injectsClaudeInput: true,
             accessibilityTrusted: false, injectionHelperReady: false
         ))
+    }
+
+    /// **Round 4**: with no mux to spawn into, `runInWezTerm` starts a fresh process, and a pane
+    /// in it cannot be addressed — `send-text`/`get-text` both need a mux pane id, so a scheduled
+    /// input is dropped **after** the command has already run and the answer was `{success:true}`.
+    /// Nothing has been spawned at that point, so it is a rejection like any other, raised at the
+    /// fallback boundary through the same door
+    func testWezTermFallbackWithScheduledInputIsRejectedBeforeSpawning() throws {
+        var seen: [ClaudeInputBlocker] = []
+        ClaudeInputGuidance.present = { seen.append($0) }
+
+        let rejection = try XCTUnwrap(wezTermFallbackRejection(injectsClaudeInput: true))
+        guard case TerminalError.claudeInputNotDeliverable(let blocker) = rejection else {
+            return XCTFail("전용 거절 케이스여야 한다: \(rejection)")
+        }
+        XCTAssertEqual(blocker, .wezTermSessionUnavailable)
+        XCTAssertEqual(seen, [.wezTermSessionUnavailable])
+    }
+
+    /// A button with nothing to type keeps the fallback — starting WezTerm for someone who does
+    /// not have it running is the whole point of that branch
+    func testWezTermFallbackWithoutScheduledInputStillRuns() {
+        XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false))
     }
 
     /// Regression: a Warp button with **no tail** still runs without the permission, exactly as
@@ -554,11 +579,68 @@ final class ClaudeInputPreconditionTests: XCTestCase {
     /// Each reason implies a different next action, so the wording has to differ — sharing one
     /// would send a user who needs to grant a permission off to reinstall.
     func testEachBlockerTellsADifferentNextAction() {
-        let permission = ClaudeInputBlocker.warpAccessibility.message
-        let helper = ClaudeInputBlocker.warpHelperUnavailable.message
-        XCTAssertFalse(permission.isEmpty)
-        XCTAssertFalse(helper.isEmpty)
-        XCTAssertNotEqual(permission, helper)
+        let messages = ClaudeInputBlocker.allCases.map(\.message)
+        XCTAssertFalse(messages.contains(where: \.isEmpty))
+        XCTAssertEqual(Set(messages).count, messages.count, "\(messages)")
+    }
+
+    // MARK: The last check before the side effect (round 4, TOCTOU)
+
+    /// **Round 4**: what `runInTerminal` checked can be gone by the time the Tab Config is
+    /// written — the permission revoked, the helper removed by a reinstall. That branch used to
+    /// log and run the command with no helper, which answers `{success:true}` with the input
+    /// dropped: the exact symptom this loop exists to remove. Checked again as late as possible,
+    /// it rejects
+    func testWarpInjectionSetupRejectsWhenThePermissionWentAwayAfterTheEarlierCheck() {
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: false,
+            helperExecutable: { "/x/helper" }, socketPath: { _ in "/tmp/tcw.sock" }
+        )) { error in
+            guard case TerminalError.claudeInputNotDeliverable(.warpAccessibility) = error else {
+                return XCTFail("권한 상실은 전용 거절이어야 한다: \(error)")
+            }
+        }
+    }
+
+    func testWarpInjectionSetupRejectsWhenTheHelperWentAway() {
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { nil }, socketPath: { _ in "/tmp/tcw.sock" }
+        )) { error in
+            guard case TerminalError.claudeInputNotDeliverable(.warpHelperUnavailable) = error else {
+                return XCTFail("헬퍼 실종은 전용 거절이어야 한다: \(error)")
+            }
+        }
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { "/x/helper" }, socketPath: { _ in nil }
+        ))
+    }
+
+    /// A button with nothing to type never touches any of this — no permission, no helper line
+    func testWarpInjectionSetupIsSkippedEntirelyWithoutScheduledInput() throws {
+        var probed = false
+        XCTAssertNil(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: false,
+            accessibilityTrusted: { probed = true; return false }(),
+            helperExecutable: { probed = true; return nil }, socketPath: { _ in nil }
+        ))
+        XCTAssertFalse(probed)
+    }
+
+    func testWarpInjectionSetupReturnsTheHelperLineAndItsSocket() throws {
+        let setup = try XCTUnwrap(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { "/x/warp helper" }, socketPath: { "/tmp/tcw-\($0).sock" }
+        ))
+        XCTAssertEqual(setup.socket, "/tmp/tcw-a1b2c3d4.sock")
+        XCTAssertEqual(
+            setup.line, warpHelperCommand(executable: "/x/warp helper", socketPath: setup.socket)
+        )
     }
 
     /// Rejection and explanation go through one door — the contract that keeps any new rejection
@@ -791,6 +873,92 @@ final class ClaudeCommandTailTests: XCTestCase {
         XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude() ( /bin/sh -c \"$1\" )\nclaude"))
     }
 
+    // The next block is **round 4**: both external reviewers, independently, got a plain-text
+    // input executed as a shell command through the *keyword* form of a function definition,
+    // which has no `(` for a "word followed by `(`" rule to see. Enumerating definition syntaxes
+    // is what let that through, so the judgement moved up to command-position words.
+
+    /// Reproduction (both reviewers created a sentinel file with these): bash/zsh `function name`
+    /// needs no parentheses, and zsh even accepts a brace-only body
+    func testKeywordFunctionDefinitionDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("function claude { eval \"$@\"; }; claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(
+            "function claude { shift; /bin/sh -c \"$1\"; }; claude"
+        ))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("function claude { echo hi }; claude"))
+    }
+
+    /// Reproduction: `{ }` has to stay allowed (a shipped preset uses it), so a definition can be
+    /// **hidden inside the group**. Judging every command position catches it wherever it sits
+    func testFunctionDefinitionHiddenInsideAGroupDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(
+            "{ function claude { eval \"$@\"; }; } && claude"
+        ))
+    }
+
+    /// Everything that can bind the name `claude` to something else has to run as a **builtin or
+    /// keyword in this same shell**, so it is visible in command position
+    func testNameRebindingBuiltinsFold() {
+        for command in [
+            "alias claude='sh -c' && claude",
+            "unalias claude; claude",
+            "eval 'alias claude=sh' && claude",
+            "source ./evil.sh && claude",
+            ". ./evil.sh && claude",
+            "hash -p /tmp/evil claude && claude",
+            "autoload -Uz claude && claude",
+            "trap 'alias claude=sh' DEBUG && claude",
+            "enable -f ./evil.so claude && claude",
+            "PATH=/tmp/evil:/usr/bin && claude",
+            "export PATH=/tmp/evil:/usr/bin; claude",
+            "declare -x PATH=/tmp/evil; claude",
+        ] {
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt(command), command)
+        }
+    }
+
+    /// A command modifier keeps the rebinding in **this** shell instead of a child, so it can
+    /// carry one of the words above behind it
+    func testCommandModifiersThatKeepRebindingInThisShellFold() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("builtin eval 'alias claude=sh' && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("command eval x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("time eval x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("! eval x && claude"))
+    }
+
+    /// Quoting does not stop a builtin (`'eval' x` runs eval) and an expansion hides the name
+    /// entirely — a command name we cannot read as plain text folds
+    func testCommandNameWeCannotReadAsTextFolds() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("'eval' 'alias claude=sh' && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("\"eval\" x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("$RUNNER build && claude"))
+    }
+
+    /// Compound commands are grammar this scanner does not model (it models one flat chain of
+    /// simple commands). It folds rather than guess — `then`, `do` and friends open command
+    /// positions that a flat segment scan does not see
+    func testCompoundCommandsFold() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("if true; then function claude { :; }; fi; claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("for f in a b; do echo x; done && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("while true; do break; done && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("case x in y) echo z;; esac && claude"))
+    }
+
+    /// The fold list is read **only in command position** — over-folding on arguments would cost
+    /// ordinary commands their argv track for no gain
+    func testFoldWordsUsedAsArgumentsStillMatch() {
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("git add . && claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("echo function && claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("grep -r eval src && claude"))
+    }
+
+    /// Whitespace that is not a space or a tab is not a word separator to the shell: `claude\r`
+    /// is a **different command name** and fails with "command not found" once we append to it
+    func testExoticWhitespaceAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude\r"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude\u{00A0}"))
+    }
+
     /// Appending after a backgrounding `&` makes the argument **the next command**
     func testBackgroundOperatorDoesNotMatch() {
         XCTAssertFalse(commandAcceptsAppendedClaudePrompt("sleep 1 & claude"))
@@ -914,24 +1082,23 @@ final class ClaudePromptScriptTests: XCTestCase {
         XCTAssertTrue(body.contains("\(claudeArgvEnvEntryOverhead)"), body)
     }
 
-    /// The marker rides along only when there is a tail — it must not pollute the context of a
-    /// preset, whose tail is empty
-    func testMarkerIsAbsentUnlessAsked() {
+    /// **Round 4**: the hand-off marker used to be written by a bare `>` after `set +C`, which
+    /// followed a planted symlink and truncated the file behind it (reproduced). `set -C` has to
+    /// stay on for the whole script — nothing below the context block needs to clobber anything
+    func testNoclobberIsNeverSwitchedOffAgain() {
         let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx)
-        XCTAssertFalse(body.contains("terminal-checkout tc-"), body)
+        XCTAssertTrue(body.contains("set -C"), body)
+        XCTAssertFalse(body.contains("set +C"), body)
     }
 
-    /// The marker goes **straight to stdout**, not into the context file — the gate can only see
-    /// it if it rides in argv even on the over-budget branch where the body stays in a file
-    func testMarkerGoesToStdoutNotIntoTheContextFile() {
-        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
-        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx, marker: marker)
-        let markerLine = "printf '%s\\n' \(shellSingleQuoted(marker))"
-        let markerAt = try? XCTUnwrap(body.range(of: markerLine))
-        let blockEndAt = try? XCTUnwrap(body.range(of: "} > \"$TC_CTX\""))
-        XCTAssertNotNil(markerAt)
-        XCTAssertTrue((markerAt?.lowerBound ?? body.startIndex)
-            > (blockEndAt?.lowerBound ?? body.endIndex), body)
+    /// …and the same two layers as the context file guard it: `-L` first, then an `O_EXCL`
+    /// create. Failing to leave the marker must not fail the script — the pointer text is already
+    /// out, and a non-zero exit would make the append side print "context lost" over a good prompt
+    func testHandoffMarkerIsGuardedAndCannotFailTheScript() {
+        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx)
+        let handoff = shellSingleQuoted(claudePromptHandoffPath(forContext: ctx))
+        XCTAssertTrue(body.contains("if [ ! -L \(handoff) ]; then : > \(handoff)"), body)
+        XCTAssertTrue(body.contains("2>/dev/null || :; fi"), body)
     }
 
     /// Reclaiming must never delete someone else's — the name check is the last line of defence.
@@ -1046,32 +1213,26 @@ final class ClaudePromptScriptExecutionTests: XCTestCase {
         XCTAssertTrue(out.contains("survived"), out)
     }
 
-    /// The marker has to be the **first line** of the argv message — if the TUI folds a long one,
-    /// the head survives longest, and that is what the gate watches for
-    func testMarkerLeadsTheAssembledPrompt() throws {
-        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
-        let body = claudePromptScriptBody(
-            prefix: ["!echo one", "설계 정리해줘"], contextPath: directory + "/ctx.txt", marker: marker
-        )
-        let (status, out) = try runScript(body)
-        XCTAssertEqual(status, 0)
-        XCTAssertTrue(out.hasPrefix(marker + "\n"), out)
-        XCTAssertTrue(out.contains("==== !echo one ====\none\n"), out)
-    }
-
-    /// The marker rides in argv on the over-budget branch too — without it the gate never passes
-    /// and the whole tail is thrown away
-    func testMarkerLeadsTheOverBudgetPointerToo() throws {
-        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
+    /// **Reproduction (round 4, reviewer P2-C)**: the hand-off marker was written by a bare `>`
+    /// one line after `set +C`, so it followed a link planted at that name and truncated the file
+    /// behind it — the very class closed for the context file, reopened a line later
+    func testHandoffMarkerDoesNotClobberASymlinkTarget() throws {
+        let victim = directory + "/victim.txt"
         let ctx = directory + "/ctx.txt"
+        try "귀중한 내용".write(toFile: victim, atomically: true, encoding: .utf8)
+        let before = try String(contentsOfFile: victim, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            atPath: claudePromptHandoffPath(forContext: ctx), withDestinationPath: victim
+        )
+
+        // The over-budget branch is the one that leaves the marker
         let body = claudePromptScriptBody(
-            prefix: ["!echo needle"], contextPath: ctx, marker: marker, argvSlack: 1_000_000_000
+            prefix: ["!echo needle"], contextPath: ctx, argvSlack: 1_000_000_000
         )
         let (status, out) = try runScript(body)
-        XCTAssertEqual(status, 0)
-        XCTAssertTrue(out.hasPrefix(marker + "\n"), out)
+        XCTAssertEqual(status, 0, "표식을 남기지 못한 것이 스크립트를 실패시켰다: \(out)")
         XCTAssertTrue(out.contains(claudeContextPointerInstruction), out)
-        XCTAssertFalse(out.contains("needle"), out)
+        XCTAssertEqual(try String(contentsOfFile: victim, encoding: .utf8), before)
     }
 
     /// Over budget it truncates nothing and carries only a file pointer — the context stays whole
@@ -1305,62 +1466,40 @@ final class PreparedRequestTests: XCTestCase {
         XCTAssertNil(prepared.temporaryDirectory)
     }
 
-    func testMatchedCommandCarriesThePrefixInArgvAndLeavesOnlyTheTail() throws {
+    /// Everything merges when there is no boundary — and then there is nothing left to type
+    func testFullyMergeableInputsAllRideInArgv() throws {
         let prepared = prepareRequest(ResolvedRequest(
             command: "z remy && claude",
-            claudeInputs: ["!gh issue view 1", "설계 정리해줘", "!gh pr diff 1"]
+            claudeInputs: ["!gh issue view 1", "설계 정리해줘"]
         ))
         defer { prepared.discardTemporaryFiles() }
         XCTAssertTrue(prepared.command.hasPrefix("z remy && claude -- \"$("), prepared.command)
-        XCTAssertEqual(prepared.claudeInputs, ["!gh pr diff 1"])
+        XCTAssertEqual(prepared.claudeInputs, [])
         let script = try XCTUnwrap(prepared.scriptPath)
         let written = try String(contentsOfFile: script, encoding: .utf8)
         XCTAssertTrue(written.contains("'==== !gh issue view 1 ===='"), written)
         XCTAssertTrue(written.contains("printf '%s\\n' '설계 정리해줘'"), written)
-        XCTAssertFalse(written.contains("gh pr diff"), "꼬리는 스크립트에 들어가면 안 된다")
     }
 
-    /// An empty prefix (a slash command first) creates no files
-    func testEmptyPrefixWritesNoScript() {
-        let inputs = ["/review", "!gh pr diff 1"]
-        let prepared = prepareRequest(ResolvedRequest(command: "z r && claude", claudeInputs: inputs))
-        defer { prepared.discardTemporaryFiles() }
-        XCTAssertEqual(prepared.command, "z r && claude")
-        XCTAssertEqual(prepared.claudeInputs, inputs)
-        XCTAssertNil(prepared.temporaryDirectory)
-    }
-
-    /// The marker exists **only when there is a tail**. With no tail there is no injection and so
-    /// nobody watching, and all that is left is one cryptic line in a preset's opening message
-    func testArgvMarkerExistsOnlyWhenATailWillBeInjected() throws {
-        let merged = prepareRequest(ResolvedRequest(
-            command: "z r && claude", claudeInputs: ["!gh pr view 1", "!gh pr diff 1"]
-        ))
-        defer { merged.discardTemporaryFiles() }
-        XCTAssertEqual(merged.claudeInputs, [])
-        XCTAssertNil(merged.argvRenderMarker)
-
-        let withTail = prepareRequest(ResolvedRequest(
-            command: "z r && claude", claudeInputs: ["!gh pr view 1", "설계 정리", "!gh pr diff 1"]
-        ))
-        defer { withTail.discardTemporaryFiles() }
-        XCTAssertEqual(withTail.claudeInputs, ["!gh pr diff 1"])
-        let marker = try XCTUnwrap(withTail.argvRenderMarker)
-        let script = try String(
-            contentsOfFile: try XCTUnwrap(withTail.scriptPath), encoding: .utf8
-        )
-        XCTAssertTrue(script.contains(shellSingleQuoted(marker)), script)
-    }
-
-    /// Only a per-request marker lets us say what is on screen is **this** request's render
-    /// (on Warp that is also the pane proof)
-    func testArgvMarkerIsUniquePerRequest() throws {
-        let inputs = ["!gh pr view 1", "설계 정리", "/review"]
-        let first = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: inputs))
-        defer { first.discardTemporaryFiles() }
-        let second = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: inputs))
-        defer { second.discardTemporaryFiles() }
-        XCTAssertNotEqual(try XCTUnwrap(first.argvRenderMarker), try XCTUnwrap(second.argvRenderMarker))
+    /// **Round 4 — the two routes are never used in one session.** A boundary anywhere in the
+    /// list sends **every** input down the typed route and leaves the command untouched. Merging
+    /// the part before the boundary and typing the rest is what made claude's startup submission
+    /// race the typing, and no gate over that race can be built out of signals the user's shell
+    /// cannot forge (see `prepareRequest`)
+    func testABoundaryAnywhereSendsEveryInputDownTheTypedRoute() {
+        for inputs in [
+            ["!gh pr view 1", "설계 정리해줘", "!gh pr diff 1"], // boundary ②: `!` after plain text
+            ["!gh pr view 1", "/review"],                      // boundary ①: a slash command
+            ["/review", "!gh pr diff 1"],                      // boundary at the head
+        ] {
+            let prepared = prepareRequest(
+                ResolvedRequest(command: "z remy && claude", claudeInputs: inputs)
+            )
+            defer { prepared.discardTemporaryFiles() }
+            XCTAssertEqual(prepared.command, "z remy && claude", "\(inputs)")
+            XCTAssertEqual(prepared.claudeInputs, inputs, "\(inputs)")
+            XCTAssertNil(prepared.temporaryDirectory, "\(inputs)")
+        }
     }
 
     /// Each request claims a **fresh directory** atomically (`mkdir`, failing if it exists) and
@@ -1393,6 +1532,30 @@ final class PreparedRequestTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: script))
         prepared.discardTemporaryFiles()
         XCTAssertFalse(FileManager.default.fileExists(atPath: script))
+    }
+
+    /// **Round 4**: the sweep used to run only after the "this request merges" guard, so a user
+    /// who never sends another mergeable request kept `context.txt` — PR and issue bodies, and
+    /// whatever `!` printed — for good. Any request sweeps now, including one that merges nothing
+    func testEvenARequestThatMergesNothingReclaimsOldContext() throws {
+        let stale = NSTemporaryDirectory() + claudePromptDirectoryPrefix + "ffffffff"
+        try? FileManager.default.removeItem(atPath: stale)
+        try FileManager.default.createDirectory(atPath: stale, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: stale) }
+        try "PR 본문".write(
+            toFile: stale + "/" + claudePromptContextName, atomically: true, encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-7 * 3600)], ofItemAtPath: stale
+        )
+
+        // Nothing about this request can merge: no `claude` to append to, and a slash command
+        let prepared = prepareRequest(
+            ResolvedRequest(command: "z remy", claudeInputs: ["/review"])
+        )
+        defer { prepared.discardTemporaryFiles() }
+        XCTAssertNil(prepared.temporaryDirectory)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale))
     }
 }
 
@@ -1493,13 +1656,14 @@ private final class FakeClaudeSession {
     var presetBox = "" { didSet { box = presetBox } }
     /// 화면에 이미 떠 있는 텍스트 (다른 pane을 읽고 있는 상황을 만들 때 쓴다)
     var screenPrefix = ""
-    /// Text that newly appears from the nth `screenText` call onwards — models the argv message
-    /// rendering late (measured at 2.06–3.41s)
+    /// Text that newly appears from the nth `screenText` call onwards
     var screenGains: [Int: String] = [:]
     /// What was already on screen when the first byte went out — pins "what did it see before typing"
     private(set) var screenPrefixAtFirstSend: String?
-    /// 제출한 입력이 화면(대화 기록)에 남게 한다
-    var keepSubmittedOnScreen = false
+    /// A submitted message stays on screen, in the transcript — that is what claude does, and it
+    /// is what `submissionSurvived` reads. Turning this on models **the input box losing our text
+    /// instead of submitting it**: the CR goes out and nothing appears anywhere
+    var dropSubmittedFromScreen = false
     /// 화면 읽기가 pane 단위로 정확하지 않은 터미널(Warp)
     var screenNeedsPaneProof = false
     /// 읽히는 화면이 우리 pane이 아닌 상황 — 우리 타이핑은 화면에 비치지 않는다
@@ -1524,7 +1688,7 @@ private final class FakeClaudeSession {
                 switch keys {
                 case claudeSubmitKey:
                     submitted.append(box)
-                    if keepSubmittedOnScreen { history += box + " " }
+                    if !dropSubmittedFromScreen { history += box + " " }
                     box = ""
                 case claudeClearInputKey: box = ""
                 default:
@@ -1551,120 +1715,58 @@ private final class FakeClaudeSession {
     }
 }
 
-// MARK: - Tail start gate (the tail is typed only after the argv message renders)
+// MARK: - The two delivery routes are never mixed in one session
 // Measured (claude 2.1.238, bare pty, 3 runs per timepoint all agreeing, 32 runs under
 // `scratchpad/argv-timing-probe/runs/`): **submitting the argv message clears the input box.**
 // Bytes typed before it renders land in the box and are wiped by that clear (T1 at 0.06s and T2
-// right after the first frame both lost 3/3). After the render: preserved 3/3 and the CR submits.
-// **Raw mode is not a safety signal** — the switch happens at 0.1–0.19s while the render lands at
-// 2.06–3.41s with 65% jitter, so waiting a fixed time does not work either.
-// **Round 4 will rework this**: two independent reviewers showed the gate still passes on a shell
-// tracing echo, so "an increase in the marker count" is not a sufficient condition.
+// right after the first frame both lost 3/3), while raw mode — the readiness signal — is reached
+// at 0.1–0.19s, seconds too early to protect anything.
+//
+// Round 3 tried to gate the typing on a per-request marker appearing on screen. Two independent
+// reviewers broke it: a zsh with `set -x` prints the fully substituted argv, marker included,
+// right before the exec, and it can print it more than once — so no count over that marker is a
+// condition **only claude** can satisfy, and the production loop recorded a wiped input as
+// delivered. Round 4 removes the combination instead of the gate: a request either merges
+// everything into argv or types everything (`prepareRequest`). These tests pin that, and pin the
+// one thing kept from the lesson — a submission is only counted once it is seen to have survived.
 
-final class ClaudeArgvRenderGateTests: XCTestCase {
-    private let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
-    private let tail = ["/review"]
+final class ClaudeSubmissionSurvivalTests: XCTestCase {
+    private let inputs = ["/review"]
 
-    private func gate(_ before: String?) -> ArgvPromptGate {
-        ArgvPromptGate(marker: marker, screenBefore: before)
+    /// **Reproduction (round 4, both reviewers)**: an input the input box lost is not a delivered
+    /// input. The fake submits the CR into a box something else already emptied — the old loop
+    /// returned 1 for this
+    func testAnInputWipedFromTheBoxIsNotCountedAsDelivered() {
+        let session = FakeClaudeSession()
+        session.dropSubmittedFromScreen = true
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 0)
     }
 
-    /// Why the gate exists — before the render, **not one byte** may go out
-    func testNothingIsTypedBeforeTheArgvMessageRenders() throws {
+    /// …and it stops there rather than retyping. Retyping is the one move that could submit the
+    /// same message twice, because "gone from the screen" is also what a scrolled transcript
+    /// looks like
+    func testAWipedInputIsNotRetyped() {
         let session = FakeClaudeSession()
-        session.screenGains = [3: marker]
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면")), 1)
-        XCTAssertEqual(session.submitted, tail)
-        XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
+        session.dropSubmittedFromScreen = true
+        _ = submitClaudeInputs(["/review", "/second"], io: session.io)
+        XCTAssertEqual(session.keystrokes, ["/review", claudeSubmitKey])
     }
 
-    /// Never seeing the render gives up the same way the existing "not ready" path does — it does
-    /// not type quietly. Nothing went out, so no cleanup (Ctrl+U) either: what is in the input box
-    /// is the user's own draft
-    func testTailIsNotTypedWhenTheArgvMessageNeverRenders() {
+    /// A screen we cannot read says nothing — treating "could not look" as "was wiped" would turn
+    /// every Warp tab switch into a false alarm
+    func testAnUnreadableScreenAfterTheCarriageReturnIsNotTreatedAsAWipe() {
         let session = FakeClaudeSession()
-        XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면"), argvRenderTimeout: 2),
-            0
-        )
-        XCTAssertEqual(session.keystrokes, [])
+        session.dropSubmittedFromScreen = true
+        // 1: pre-typing snapshot · 2: reflection · 3–5: the survival check
+        session.failScreenAt = [3, 4, 5]
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
     }
 
-    /// **Reproduction (reviewer P1-3)**: a zsh with `set -x` echoes the substituted argv to the
-    /// screen **before running it**. Testing presence alone passes before claude has drawn
-    /// anything, and the tail is wiped by the argv submission's clear — exactly the loss the gate
-    /// exists to prevent. So the test is an **increase**, not presence.
-    /// Known insufficient (round 4): the snapshot this passes in cannot be produced by the
-    /// production path, and a repeated echo also increases the count.
-    func testXtraceEchoOfTheArgvIsNotMistakenForARender() {
+    /// The normal path is unchanged — a message that reached the transcript counts once
+    func testASubmittedInputStaysOnScreenAndCounts() {
         let session = FakeClaudeSession()
-        let xtrace = "+zsh:1> claude $'\(marker)\\nplain context'"
-        session.screenPrefix = xtrace
-        XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, argvGate: gate(xtrace), argvRenderTimeout: 2),
-            0
-        )
-        XCTAssertEqual(session.keystrokes, [])
-    }
-
-    /// On that same xtrace screen, an actual render by claude (the count goes up by one) passes
-    func testRenderIsRecognisedEvenWhenXtraceAlreadyEchoedTheMarker() {
-        let session = FakeClaudeSession()
-        let xtrace = "+zsh:1> claude $'\(marker)\\nplain context'"
-        session.screenPrefix = xtrace
-        session.screenGains = [2: marker]
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate(xtrace)), 1)
-    }
-
-    /// No snapshot means failure — treating "could not look" as "was not there" puts the
-    /// judgement right back to presence
-    func testMissingSnapshotIsTreatedAsFailure() {
-        let session = FakeClaudeSession()
-        session.screenGains = [1: marker]
-        XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, argvGate: gate(nil), argvRenderTimeout: 2),
-            0
-        )
-        XCTAssertEqual(session.keystrokes, [])
-    }
-
-    /// A marker the TUI wrapped still counts as rendered — comparing it whole would fail forever
-    /// at some widths
-    func testWrappedMarkerStillCountsAsRendered() {
-        let session = FakeClaudeSession()
-        session.screenGains = [1: "==== tc-\na1b2c3d4 ===="]
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면")), 1)
-    }
-
-    /// The script path echoed on the command line (`tc-prompt-a1b2c3d4/prompt.sh`) must not be
-    /// mistaken for the render — that echo is on screen before claude even starts
-    func testScriptPathEchoIsNotMistakenForTheRenderedMessage() {
-        let session = FakeClaudeSession()
-        let echo = "z remy && claude \"$(/bin/sh '/tmp/tc-prompt-a1b2c3d4/prompt.sh')\""
-        session.screenPrefix = echo
-        XCTAssertEqual(
-            submitClaudeInputs(tail, io: session.io, argvGate: gate(echo), argvRenderTimeout: 2),
-            0
-        )
-        XCTAssertEqual(session.keystrokes, [])
-    }
-
-    /// Warp: the marker is unique per request, so reading it off the screen doubles as proof that
-    /// the pane is ours at that moment — the gate injects no nonce of its own (the marker was
-    /// already visible before the first byte went out)
-    func testWarpGateNeedsNoNonceOfItsOwn() throws {
-        let session = FakeClaudeSession()
-        session.screenNeedsPaneProof = true
-        session.screenGains = [2: marker]
-        _ = submitClaudeInputs(tail, io: session.io, argvGate: gate("빈 화면"))
-        XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
-    }
-
-    /// The pure-injection fallback has no argv and so no gate — unchanged behaviour
-    func testPureInjectionFallbackIsNotGated() {
-        let session = FakeClaudeSession()
-        XCTAssertEqual(submitClaudeInputs(tail, io: session.io), 1)
-        XCTAssertEqual(session.submitted, tail)
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+        XCTAssertEqual(session.submitted, inputs)
     }
 }
 
@@ -2013,7 +2115,6 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 제출된다 — "있었나/없었나"가 아니라 "몇 번 보이나"로 세기 때문이다
     func testRepeatedInputIsStillSubmittedWhileTheEarlierOneStaysOnScreen() {
         let session = FakeClaudeSession()
-        session.keepSubmittedOnScreen = true
         XCTAssertEqual(submitClaudeInputs([inputs[0], inputs[0]], io: session.io), 2)
         XCTAssertEqual(session.submitted, [inputs[0], inputs[0]])
     }
@@ -2995,6 +3096,9 @@ final class UninstallScriptSyncTests: XCTestCase {
             warpTabConfigHeader,
             warpTabConfigLegacyStem + ".toml",
             warpHelperExecutableName,
+            // Round 4: uninstall swept the helper sockets but left the prompt directories, which
+            // are the ones holding **content** — PR and issue bodies, and `!` output
+            claudePromptDirectoryPrefix + "*",
         ]
         for needle in expected {
             XCTAssertTrue(

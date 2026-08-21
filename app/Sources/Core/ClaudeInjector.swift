@@ -137,55 +137,6 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
     return count
 }
 
-/// What the gate needs before the tail may be typed.
-///
-/// `screenBefore` is the screen as it was **before claude started**, because presence alone is not
-/// a safe test (reproduced): a zsh with `set -x` echoes the fully substituted argv to the screen
-/// *before* running it — `+zsh:1> claude $'==== tc-… ====\nplain context'`. Mistaking that echo
-/// for the render types the tail before claude has drawn anything, and the input-box clear that
-/// comes with submitting the argv message wipes it. Taking the snapshot first and passing only
-/// when the **count has gone up by one** cannot be fooled: the echo is already in the snapshot.
-///
-/// That is why the snapshot is taken **before** waiting for claude to start
-/// (`deliverClaudeInputs`). Failing to take one (nil) is a failure — treating "could not look" as
-/// "was not there" would put the judgement right back to presence.
-public struct ArgvPromptGate {
-    public let marker: String
-    public let screenBefore: String?
-
-    public init(marker: String, screenBefore: String?) {
-        self.marker = marker
-        self.screenBefore = screenBefore
-    }
-}
-
-/// Waits until the argv opening message has rendered on screen. **Not one byte goes out** — what
-/// is typed before the render is wiped by the input-box clear that comes with submitting the argv
-/// message (measured), and since nothing was sent there is no fragment to clean up on failure.
-///
-/// The judgement reuses **the single `screenReflectsNewInput`**. Keeping a second copy of the
-/// same rule (one more occurrence than the previous screen / no snapshot means failure / ignore
-/// whitespace) would mean only one of them ever gets hardened.
-///
-/// Session identity is not re-checked inside the loop: the marker is unique per request, so
-/// **no other session can satisfy this condition in the first place**. Giving up because `ps` or
-/// `stty` hiccuped once would throw the tail away in a state that resolves by waiting (the user
-/// is looking at another tab, a trust dialog is up). Past the gate, `submitClaudeInputs` calls
-/// `confirmSession` before the first input anyway.
-func waitUntilArgvPromptRendered(
-    gate: ArgvPromptGate, io: ClaudeSessionIO, pollInterval: TimeInterval, timeout: TimeInterval
-) -> Bool {
-    for _ in 0..<max(1, Int(timeout / pollInterval)) {
-        if let screen = io.screenText(), screenReflectsNewInput(
-            before: gate.screenBefore, after: screen, input: gate.marker
-        ) {
-            return true
-        }
-        io.wait(pollInterval)
-    }
-    return false
-}
-
 /// 세션 입출력 — 실제로는 osascript·wezterm cli 호출이지만, 전달 순서와 실패 복구 판정을
 /// 프로세스 없이 검증할 수 있도록 클로저로 분리한다.
 public struct ClaudeSessionIO {
@@ -293,29 +244,16 @@ struct InputBoxOwnership {
 /// 입력마다 세션 동일성을 먼저 확인한다 — 그 사이 원래 세션이 죽고 같은 tty에 새 claude가
 /// 떴다면 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 셸 명령까지 실행된다.
 ///
-/// With an `argvGate`, **the marker has to appear on screen before the first input is typed.**
-/// In a request whose prefix went out in argv, claude submits that message as soon as it starts,
-/// and the submission clears the input box — a tail typed before that is wiped whole, and with
-/// bad luck the order becomes [reflection check passes → clear → CR] and an empty CR is all that
-/// goes out (measured). The readiness gates (foreground + raw mode) happen far too early to stop
-/// any of it.
+/// A session that gets typed input never also carries an argv opening message
+/// (`prepareRequest` merges all inputs or none), so there is no startup submission racing us for
+/// the input box. That invariant is what lets this function trust "the CR went out" — with both
+/// routes in one session it did **not**: the argv submission clears the box and a wiped input was
+/// recorded as delivered. What remains of that lesson is `submissionSurvived`.
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
-    argvGate: ArgvPromptGate? = nil, argvRenderTimeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
 ) -> Int {
-    if let argvGate, !waitUntilArgvPromptRendered(
-        gate: argvGate, io: io, pollInterval: 0.5, timeout: argvRenderTimeout
-    ) {
-        // Ends the same way as the existing "claude never became ready" path — it does not type
-        // quietly. Nothing went out, so no cleanup (Ctrl+U) either: whatever is in the input box
-        // belongs to the user
-        checkoutLog(
-            "\(Int(argvRenderTimeout))초 내에 argv 첫 메시지가 화면에 뜨지 않아 꼬리 입력 \(inputs.count)개를 보내지 않음"
-        )
-        return 0
-    }
     // 나가는 바이트를 세어 "입력창에 우리 조각이 남아 있을 수 있는가"를 따라간다.
     // 추적을 이 함수 안에 두는 이유는 **실패 종료 경로가 여럿**이기 때문이다(입력 사이 세션
     // 확인 실패·재시도 소진). 정리를 바깥에 두면 그중 하나만 정리에 닿는다
@@ -417,10 +355,44 @@ private func typeAndSubmit(
             }
         }
         if reflected {
-            if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) { return true }
+            if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) {
+                if submissionSurvived(io: io, before: before, text: text) { return true }
+                // Positive evidence that the CR did not turn into a message. Reported, **not
+                // retried**: this is the one place where retyping could duplicate a message that
+                // did go through, and the caller stopping is what keeps the next input from
+                // landing in a session that never got this one
+                checkoutLog("제출한 입력이 화면에서 사라짐 — 제출되지 않은 것으로 보고 전달을 멈춤")
+                return false
+            }
             failure = "제출(CR) 전송 실패"
         }
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
+    }
+    return false
+}
+
+/// After the CR, is the input **still** on screen? Submitting moves it from the input box into
+/// the transcript, so it stays; something that wiped the box instead makes it disappear.
+///
+/// Why this exists: "we sent a CR" is not "claude received a message". Two independent reviewers
+/// drove the delivery loop into reporting `submitted=1` for an input claude never got, and this
+/// repository has measured the same shape before — claude discarding input during initialisation
+/// while the app logged it as delivered. Sending is ours to see; the message existing is not,
+/// and the reflection check already gives us the vocabulary for the difference.
+///
+/// It reuses the single `screenReflectsNewInput` with the **same `before` snapshot** as the
+/// typing check, so "still there" means exactly what "appeared" meant.
+///
+/// Two honest limits. A screen we cannot read (nil) is **not** treated as absence — that would
+/// turn a Warp tab switch into a false alarm, so it keeps the old assumption and says nothing.
+/// And a transcript that scrolls the message out of the viewport within this window would look
+/// like a wipe; the cost of that misreading is one under-count and a stopped delivery, never a
+/// duplicate submission.
+private func submissionSurvived(io: ClaudeSessionIO, before: String?, text: String) -> Bool {
+    for attempt in 1...3 {
+        if attempt > 1 { io.wait(0.4) }
+        guard let screen = io.screenText() else { return true }
+        if screenReflectsNewInput(before: before, after: screen, input: text) { return true }
     }
     return false
 }
@@ -483,11 +455,8 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// 타임아웃 내에 claude가 준비되지 않으면 아무것도 보내지 않고 포기한다(로그만).
 /// 기동 대기(기본 2분)와 입력별 재시도가 모두 블로킹이라 전체로는 수 분이 걸릴 수 있다 —
 /// 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
-/// `awaitingArgvMarker` is supplied only for requests whose prefix went out in argv — see
-/// `submitClaudeInputs`.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
-    awaitingArgvMarker: String? = nil,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15
 ) {
@@ -526,15 +495,6 @@ public func deliverClaudeInputs(
     }
     let ttyName = String(ttyPath.dropFirst("/dev/".count))
 
-    // Taken **before** waiting for claude to start. At this point the screen holds whatever the
-    // shell has already emitted (including an xtrace echo of the argv) and none of claude's
-    // render, so any later increase in the count is claude's drawing alone. Snapshotting after
-    // the wait risks catching the render itself, and the gate would then never pass (the result
-    // is a lost tail — fail-closed, but an avoidable loss)
-    let argvGate = awaitingArgvMarker.map {
-        ArgvPromptGate(marker: $0, screenBefore: screenText(of: handle))
-    }
-
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
@@ -561,7 +521,7 @@ public func deliverClaudeInputs(
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
     let submitted = submitClaudeInputs(
-        inputs, io: io, argvGate: argvGate, betweenInputTimeout: betweenInputTimeout
+        inputs, io: io, betweenInputTimeout: betweenInputTimeout
     )
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
     // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —

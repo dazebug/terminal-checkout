@@ -33,6 +33,14 @@ for sock in "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock; do
         rm -f "$sock"
     fi
 done
+# The prompt working directories hold the assembled opening message — PR and issue bodies, and
+# whatever a `!` input printed. The running app reclaims them by age; an uninstall takes them all,
+# but still only directories (never links) whose name is our prefix plus an 8 character hex token
+for dir in "${TMPDIR:-/tmp}"tc-prompt-* /tmp/tc-prompt-*; do
+    if [ -d "$dir" ] && [ ! -L "$dir" ] && [[ "${dir##*/}" =~ ^tc-prompt-[0-9a-f]{8}$ ]]; then
+        rm -rf "$dir"
+    fi
+done
 # The header below must equal `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
 # UninstallScriptSyncTests enforces the match (the app still writes this header in Korean)
 for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do

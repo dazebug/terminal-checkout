@@ -95,9 +95,9 @@ final class HostServer {
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
             let response = execQueue.sync {
                 handleRequest(json: json) { resolved in
-                    // 예약된 claude 입력 중 병합할 수 있는 접두사는 claude의 argv로 실어 보내고
-                    // 주입 경로로 갈 꼬리만 남는다. 꼬리가 비면 Warp 헬퍼도 손쉬운 사용 권한도
-                    // 필요 없어진다 — `injectsClaudeInput`에 넘기는 값이 그것을 정한다
+                    // 예약된 claude 입력은 전부 claude의 argv로 병합되거나 전부 주입 경로로
+                    // 간다(`prepareRequest`) — 섞이지 않는다. 병합된 쪽은 주입할 것이 없어
+                    // Warp 헬퍼도 손쉬운 사용 권한도 필요 없어진다
                     let prepared = prepareRequest(resolved)
                     do {
                         // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
@@ -110,10 +110,7 @@ final class HostServer {
                             // 수 분이 걸릴 수 있다 — 직렬 execQueue와 Chrome 응답을 막지 않도록
                             // 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
                             DispatchQueue.global(qos: .utility).async {
-                                deliverClaudeInputs(
-                                    prepared.claudeInputs, to: handle,
-                                    awaitingArgvMarker: prepared.argvRenderMarker
-                                )
+                                deliverClaudeInputs(prepared.claudeInputs, to: handle)
                             }
                         }
                     } catch {

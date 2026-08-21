@@ -1,14 +1,14 @@
 import Foundation
 
-// Splits the scheduled claude inputs in two: the **merged prefix** rides along in the argv of the
-// command that starts claude, as a single opening message, and only the **tail** goes through the
-// existing injection path (`ClaudeInjector`).
+// Decides how the scheduled claude inputs reach claude. **All of them ride along in the argv of
+// the command that starts claude, as one opening message, or all of them are typed into the
+// session by `ClaudeInjector` — never a mix** (see `prepareRequest`).
 //
-// Why: injection has to read the screen to confirm delivery, which makes the Accessibility
+// Why argv: injection has to read the screen to confirm delivery, which makes the Accessibility
 // permission mandatory on Warp and drags in pane proofs, reflection checks and retries — slow and
 // fragile. argv needs none of it, because claude already holds the prompt when it starts. Every
-// claude input in the shipped presets is a `!` line, so the tail comes out empty and neither the
-// helper nor the permission is needed at all.
+// claude input in the shipped presets is a `!` line and all of them merge, so neither the helper
+// nor the permission is needed at all.
 //
 // The cost: N inputs become one message and therefore one response. The user chose that change in
 // meaning (each `!` already triggers a response today — measured in session transcripts).
@@ -35,15 +35,20 @@ private enum ClaudeInputKind {
     }
 }
 
-/// The inputs split into a merged prefix and an injected tail. `prefix + tail` is always the input.
+/// The inputs split at the first boundary. `prefix + tail` is always the input.
+///
+/// **An empty `tail` is what "this configuration can be merged" means** — `prepareRequest` merges
+/// only then. The split is still computed as a split (rather than a single Bool) because the
+/// boundary rule is what defines mergeability, and because it is the thing worth pinning with a
+/// property test: no input may be lost or duplicated on the way to that answer.
 public struct ClaudeInputPlan: Equatable {
-    /// Inputs folded into the single opening message in claude's argv (order preserved)
+    /// Inputs before the first boundary (order preserved)
     public let prefix: [String]
-    /// Inputs left for the existing injection path
+    /// The first boundary onwards. Non-empty means **nothing merges** and everything is typed
     public let tail: [String]
 }
 
-/// Finds the **longest prefix** that can be merged. There are only two boundaries:
+/// Finds the **longest prefix** that could be merged. There are only two boundaries:
 ///
 /// 1. **A slash command** — it is only read as a command when it is the whole message. Only a
 ///    leading `/` reaches the slash dispatcher; put a banner in front and it becomes inert text
@@ -74,45 +79,118 @@ public func claudeInputPlan(_ inputs: [String]) -> ClaudeInputPlan {
 
 let claudeExecutableName = "claude"
 
+/// A word the scanner read outside quotes. `opaque` means the text cannot be compared: it held a
+/// quote or an expansion. That matters **only in command position** — `'eval' x` still runs the
+/// `eval` builtin and `$RUNNER x` runs whatever the variable holds, so a command name we cannot
+/// read is a command name we cannot clear.
+private struct ShellWord {
+    var text = ""
+    var opaque = false
+}
+
+/// Words that make us give up on appending, **read only in command position**.
+///
+/// The list is closed by an argument about the shell, not by enumerating attacks. For the final
+/// `claude` to be anything other than the `claude` on PATH, something has to rebind that name in
+/// **the same shell** that will run it. Only a builtin or a keyword can do that (a child process
+/// cannot reach back into its parent), so it has to appear in command position — and the ways to
+/// get there are: directly, behind a command modifier, or behind a variable assignment. All three
+/// are covered:
+///
+///  - **Definition and rebinding**: `function` (the keyword form has no `(` — this is what both
+///    reviewers used), `alias`/`unalias`, `hash` (rewrites the lookup table), `autoload`
+///    (zsh/ksh: declares a function loaded from `fpath`), `enable` (bash: loads builtins).
+///  - **Evaluating text we cannot see**: `eval`, `source`, `.`, `trap` (its handler runs later in
+///    this shell, `DEBUG` before every command).
+///  - **PATH**: `export`/`declare`/`typeset`/`local`/`readonly`, and any word shaped like an
+///    assignment (`PATH=…`). A different PATH is a different `claude`.
+///  - **Command modifiers** that keep the above in this shell rather than a child: `command`,
+///    `builtin`, `exec`, `time`, `!`. (`env`, `nohup`, `xargs` fork, so they cannot rebind.)
+///  - **Compound-command keywords**: `if`/`then`/`fi`/`for`/`while`/`case`/… . These are not
+///    rebinding — they open command positions that a flat segment scan does not model, so a
+///    definition could hide behind one. We fold on grammar we do not model rather than guess.
+///
+/// **What is still not caught**, both because it needs runtime knowledge the app does not have:
+/// a `claude` function or alias defined in the user's shell **rc** (it is not in the command text
+/// at all), and a command that *writes* a `claude` executable earlier on PATH (`cp x ~/bin/claude
+/// && claude`) — telling that apart from any other `cp` needs the PATH and the filesystem. Both
+/// are recorded as residuals in `docs/new-terminal-checklist.md`; in both the merged prompt
+/// arrives as that wrapper's argument.
+private let commandPositionWordsThatFold: Set<String> = [
+    "function", "alias", "unalias", "hash", "autoload", "enable",
+    "eval", "source", ".", "trap",
+    "export", "declare", "typeset", "local", "readonly",
+    "command", "builtin", "exec", "time", "!",
+    "if", "then", "elif", "else", "fi",
+    "for", "while", "until", "do", "done", "in",
+    "case", "esac", "select", "coproc",
+]
+
+/// `NAME=` / `NAME+=` in command position — a variable assignment. `PATH=…` alone changes which
+/// `claude` runs, and `PROMPT_COMMAND=…`/`BASH_ENV=…` run text later in this shell.
+private func looksLikeAnAssignment(_ word: String) -> Bool {
+    guard let equals = word.firstIndex(of: "=") else { return false }
+    var name = word[word.startIndex..<equals]
+    if name.hasSuffix("+") { name = name.dropLast() }
+    guard let first = name.first, first.isLetter || first == "_" else { return false }
+    return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+}
+
 /// Whether one prompt argument can be appended to the command — a **whitelist syntax scanner**.
 ///
 /// The previous rule looked only at "is the last segment's token `claude`", justified by "the
 /// worst a misjudgement can do is drop the prompt silently". **Reproductions proved that false**
-/// (external reviewer):
+/// (external reviewers):
 ///  - `echo ready # && claude` → the last token is `claude`, but all of it is a comment (silent loss)
 ///  - `cat <<claude` … `claude` → that `claude` is the heredoc **terminator**. Appending an
 ///    argument changes the terminator and the shell hangs waiting for input (breakage)
 ///  - `claude() { /bin/sh -c "$1"; }` ⏎ `claude` → a **function** defined earlier captures the
 ///    name, and the plain-text input we appended is **executed as a shell command** (arbitrary
 ///    execution)
+///  - `function claude { eval "$@"; }; claude` — the same thing with **no parentheses at all**,
+///    which is why the judgement is not a list of definition syntaxes but a list of
+///    command-position words (`commandPositionWordsThatFold`)
 ///
 /// So the whole command is scanned instead of just its tail, and **anything outside quotes that
 /// is not on the whitelist folds the judgement** (→ inject everything, i.e. today's behaviour).
 /// What is allowed is a run of simple commands joined by `&&`, `||`, `;` or `|`, plus groups
-/// (`{ }`) and subshells (`( )`); on top of that the **last simple command must be exactly the
-/// single token `claude`**.
+/// (`{ }`) and subshells (`( )`); each of their command-position words has to be an ordinary,
+/// readable name, and the **last simple command must be exactly the single word `claude`**.
 ///
 /// Flags fold for a separate, measured reason: `claude -p --resume "Reply with exactly: OK"` →
 /// `Provided value … is not a UUID`. A flag that optionally takes a value swallows our argument,
 /// and knowing which flags do that needs claude's flag table, which changes between versions.
-///
-/// **What this cannot catch**: a `claude` function or alias defined in the user's shell rc. The
-/// definition is not in the command text, so there is nothing to judge — recorded as a residual
-/// in the sweep table of `docs/new-terminal-checklist.md`.
 public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
     let chars = Array(command)
     // A group's or subshell's brackets also separate commands, so they help find the last segment
     let separators: Set<Character> = ["&", "|", ";", "(", ")", "{", "}"]
     var index = 0
-    var segmentStart = 0
     var lastSeparatorWasPipe = false
     var previous: Character?          // previous character, spaces included — for comments
     var previousMeaningful: Character? // previous non-space character — for function definitions
+    var word: ShellWord?
+    var segment: [ShellWord] = []
+    var segments: [[ShellWord]] = []
 
     /// Are we at the first character of a word? `#` only starts a comment here (`echo a#b` is literal)
     func atWordStart() -> Bool {
         guard let previous else { return true }
         return previous.isWhitespace || separators.contains(previous)
+    }
+    func endWord() {
+        if let word { segment.append(word) }
+        word = nil
+    }
+    func endSegment() {
+        endWord()
+        segments.append(segment)
+        segment = []
+    }
+    func extend(_ character: Character? = nil, opaque: Bool = false) {
+        var current = word ?? ShellWord()
+        if let character { current.text.append(character) }
+        current.opaque = current.opaque || opaque
+        word = current
     }
 
     while index < chars.count {
@@ -122,6 +200,7 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
             var scan = index + 1
             while scan < chars.count, chars[scan] != "'" { scan += 1 }
             guard scan < chars.count else { return false } // unterminated quote: cannot judge
+            extend(opaque: true)
             index = scan + 1
             previous = "'"
             previousMeaningful = "'"
@@ -142,6 +221,7 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
                 scan += 1
             }
             guard scan < chars.count else { return false }
+            extend(opaque: true)
             index = scan + 1
             previous = "\""
             previousMeaningful = "\""
@@ -162,7 +242,16 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
         default:
             break
         }
-        guard separators.contains(character) else {
+        if !separators.contains(character) {
+            // Only a space or a tab separates words. Every other whitespace is part of the name:
+            // `claude\r` is a **different command** and fails with "command not found" once we
+            // have appended to it, and a non-breaking space is not a separator either
+            switch character {
+            case " ", "\t": endWord()
+            case _ where character.isWhitespace: return false
+            case "$": extend(character, opaque: true) // `$VAR` — the name is not in the text
+            default: extend(character)
+            }
             index += 1
             previous = character
             if !character.isWhitespace { previousMeaningful = character }
@@ -190,14 +279,23 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
         }
         // `||` is or, not a pipe — decide from the end of the run
         lastSeparatorWasPipe = run.hasSuffix("|") && !run.hasSuffix("||")
-        segmentStart = index
+        endSegment()
         previous = run.last
         previousMeaningful = run.last
     }
+    endSegment()
+
     if lastSeparatorWasPipe { return false } // claude on the receiving end of a pipe has no TUI
-    let segment = String(chars[segmentStart...])
-    let tokens = segment.split(whereSeparator: \.isWhitespace).map(String.init)
-    return tokens == [claudeExecutableName]
+    // **Command position is the first word of every segment.** Both of the ways to sit in front
+    // of a command name — a modifier and an assignment — are themselves on the fold list, so
+    // reading the first word is enough to reach every one of them
+    for first in segments.compactMap(\.first) {
+        if first.opaque { return false }
+        if commandPositionWordsThatFold.contains(first.text) { return false }
+        if looksLikeAnAssignment(first.text) { return false }
+    }
+    guard let last = segments.last, last.count == 1, !last[0].opaque else { return false }
+    return last[0].text == claudeExecutableName
 }
 
 // MARK: - Prompt assembly script
@@ -267,29 +365,6 @@ let claudePromptLostInstruction =
 /// command produced it.
 func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
 
-/// **The marker that lets us confirm from outside that the argv message has rendered — the single
-/// source of truth shared by the converter and the tail gate.**
-///
-/// Why it is needed (measured on claude 2.1.238, bare pty, 3 runs per timepoint, all agreeing):
-/// **submitting the argv message clears the input box.** Bytes typed before that message renders
-/// land in the box and are wiped by that clear (lost 3/3). And the switch to raw mode happens at
-/// 0.1–0.19s while the render lands at 2.06–3.41s with 65% jitter, so **[foreground = claude +
-/// raw mode] does not mark this moment at all, and neither does waiting a fixed time.** The only
-/// signal available from outside is the rendered message itself.
-///
-/// It is shaped like a banner so the message gains no new visual element. It is deliberately its
-/// **own first line rather than an addition to the first banner**: when the first input is not a
-/// `!` there is no banner to attach to, the marker would silently vanish, the gate would never
-/// pass, and the whole tail would be dropped.
-///
-/// The token is unique per request, so on Warp checking for this string doubles as proof that the
-/// pane on screen is ours. The gate matches the whole line so the script path echoed on the
-/// command line (`tc-prompt-<token>/prompt.sh`) cannot be mistaken for it.
-///
-/// **It has to be short**: the gate reuses `screenReflectsNewInput`, which compares only the
-/// leading `claudeInputProbe` (24 characters) — a token pushed past that loses its uniqueness.
-public func claudeArgvRenderMarker(token: String) -> String { "==== tc-\(token) ====" }
-
 /// The text of the script that assembles the opening message inside the pane.
 ///
 /// **Nowhere in this script does user text become syntax.** Banners and interactive inputs are
@@ -301,15 +376,12 @@ public func claudeArgvRenderMarker(token: String) -> String { "==== tc-\(token) 
 /// Assembly running at the moment claude is invoked is the whole point — in
 /// `z {repo} && … && cd ../worktree && claude` the cwd `!gh` sees is the one after the last `cd`,
 /// and the app does not know that path.
-///
-/// `marker` is supplied only when there is a tail to inject (`claudeArgvRenderMarker`). It is
-/// written to stdout **outside** the context block, so it rides in argv even on the over-budget
-/// branch where the body stays in a file — without it the gate never passes and the tail is lost.
 public func claudePromptScriptBody(
-    prefix: [String], contextPath: String, marker: String? = nil,
+    prefix: [String], contextPath: String,
     argvSlack: Int = claudeArgvBudgetSlack
 ) -> String {
     let printf = ShellUtility.printf
+    let handoff = claudePromptHandoffPath(forContext: contextPath)
     var lines = [
         "#!/bin/sh",
         "# Generated by \(appDisplayName) — assembles claude's opening message.",
@@ -338,7 +410,11 @@ public func claudePromptScriptBody(
     }
     lines += [
         "} > \"$TC_CTX\" || exit 1",
-        "set +C",
+        // **`set -C` stays on for the whole script.** It used to be switched off right here, and
+        // the hand-off marker written further down was a bare `>` again — which followed a
+        // planted symlink and truncated the file behind it (reproduced). Nothing below needs
+        // clobbering: every other redirect is a read
+        //
         // Two layers: even in a shell where `set -C` does not stop it, a symlink stops here.
         // Testing `-s` first would pass on the grounds that **someone else's file** behind the
         // link is non-empty, and that content would go out as the prompt. And since a failed
@@ -347,10 +423,6 @@ public func claudePromptScriptBody(
         // lets the `|| printf <claudePromptLostInstruction>` on the append side speak
         "if [ -L \"$TC_CTX\" ] || [ ! -f \"$TC_CTX\" ] || [ ! -s \"$TC_CTX\" ]; then exit 1; fi",
     ]
-    if let marker {
-        // The **first line** of the message — if the TUI folds a long one, the head survives longest
-        lines.append("\(printf) '%s\\n' \(shellSingleQuoted(marker))")
-    }
     lines += [
         // Through arithmetic expansion to get a plain integer — `wc` pads with spaces and
         // `test -le` dislikes that
@@ -375,8 +447,16 @@ public func claudePromptScriptBody(
         "\(printf) '%s\\n%s\\n' \(shellSingleQuoted(claudeContextPointerInstruction)) \"$TC_CTX\"",
         // On this branch claude reads the context **during the session** — if the sweep removed
         // it on the short age the session would find the file it was told to read missing. The
-        // marker makes the sweep wait much longer
-        ": > \(shellSingleQuoted(claudePromptHandoffPath(forContext: contextPath)))",
+        // marker makes the sweep wait much longer.
+        //
+        // The same two layers as the context file, for the same reason: this used to be a bare
+        // `>` after `set +C` and it **followed a planted symlink and truncated the file behind
+        // it** (reproduced). `-L` first, and the redirect itself is `O_EXCL` because `set -C` is
+        // still on. `|| :` because failing to leave a marker must not fail the script — the
+        // pointer text is already on stdout, and swallowing the status here keeps the append
+        // side's `|| printf <lost>` from firing on top of a prompt that is perfectly fine
+        "if [ ! -L \(shellSingleQuoted(handoff)) ]; then : > \(shellSingleQuoted(handoff))"
+            + " 2>/dev/null || :; fi",
         "fi",
         "",
     ]
@@ -426,11 +506,6 @@ public struct PreparedRequest {
     public let claudeInputs: [String]
     /// The directory this request alone owns. Removed whole if the command never reached the terminal
     public let temporaryDirectory: String?
-    /// The string to look for on screen before typing the tail (`claudeArgvRenderMarker`).
-    /// Present **only when there is a tail** — with no tail nobody would be watching, and all
-    /// that would be left is one extra line in a preset's opening message. Nil means no gate,
-    /// which is the case for the pure-injection fallback where there is no argv at all.
-    public let argvRenderMarker: String?
 
     /// Path of the assembly script. Nil when there is no directory (the fallback)
     public var scriptPath: String? {
@@ -499,10 +574,32 @@ func reclaimStaleClaudePromptDirectories(
     }
 }
 
-/// Turns a request into the form that will actually run. When there is a prefix to merge and the
-/// command can take the append, the prefix goes into argv and only the tail is left for injection.
-/// If either condition fails it falls back to **injecting everything** (today's behaviour) — with
-/// no confidence in the conversion, the fallback is the default.
+/// Claims the request's own directory, `drwx------`, with **one `mkdir(2)`**. `FileManager`'s
+/// `attributes:` is a `mkdir` followed by a `chmod`, so only the name is atomic and the directory
+/// exists at the process umask for the moment in between. Harmless while `$TMPDIR` is itself
+/// 0700, but the script and the assembled context live here and the guarantee should not lean on
+/// that. umask can only take bits away, never add them, so this is never *wider* than 0700 —
+/// which is the property that matters (`testRequestGetsItsOwnFreshDirectory` pins the exact mode
+/// for the ordinary umasks; an owner-masking umask would break far more than this).
+private func claimPrivateDirectory(_ path: String) -> Bool {
+    mkdir(path, 0o700) == 0
+}
+
+/// Turns a request into the form that will actually run. Either **every** scheduled input merges
+/// into claude's opening message (argv), or **none** does and they are all typed — today's
+/// behaviour. There is no third state.
+///
+/// **Why not merge the longest prefix and type the rest** (round 4). Doing both in one session
+/// means racing claude's own startup: submitting the argv message clears the input box, so a tail
+/// typed before that message renders is wiped (measured), and the only signals available from
+/// outside are ones the user's shell can forge — a zsh with `set -x` prints the substituted argv,
+/// including any marker we put in it, right before the exec, and it can print it more than once.
+/// Two independent reviewers drove the production path into recording a wiped input as delivered.
+/// A gate cannot be made sound without either typing bytes before we know claude owns the input
+/// box (a new hazard: those keystrokes reach the trust dialog) or reading claude's internal
+/// session files. Removing the combination removes the race, and it costs nothing that exists
+/// today: a mixed configuration simply behaves the way it did before the argv track existed.
+/// (Design candidates and their failure modes are recorded in the plan file.)
 ///
 /// It does not throw: this conversion cannot fail a request. Not being able to write the temp
 /// files is a fallback, not a rejection — throwing here would make a request that works today
@@ -511,37 +608,33 @@ public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
     func injectEverything() -> PreparedRequest {
         PreparedRequest(
             command: resolved.command, claudeInputs: resolved.claudeInputs,
-            temporaryDirectory: nil, argvRenderMarker: nil
+            temporaryDirectory: nil
         )
     }
+    // Reclaim leftovers from earlier runs the app died in the middle of (age decides, so nothing
+    // still in use is touched). **Before the guard, not after**: the sweep used to run only for
+    // requests that were about to merge, so a user who never sends another mergeable request kept
+    // `context.txt` — PR and issue bodies, and `!` output — forever. Every request sweeps now
+    reclaimStaleClaudePromptDirectories()
 
     let plan = claudeInputPlan(resolved.claudeInputs)
-    guard !plan.prefix.isEmpty, commandAcceptsAppendedClaudePrompt(resolved.command) else {
+    guard !plan.prefix.isEmpty, plan.tail.isEmpty,
+          commandAcceptsAppendedClaudePrompt(resolved.command) else {
         return injectEverything()
     }
-    // Reclaim leftovers from earlier runs the app died in the middle of (age decides, so nothing
-    // still in use is touched)
-    reclaimStaleClaudePromptDirectories()
 
     let token = claudePromptToken()
     let directory = (NSTemporaryDirectory() as NSString)
         .appendingPathComponent("\(claudePromptDirectoryPrefix)\(token)")
-    // `withIntermediateDirectories: false` throws if it already exists — that is what makes the
-    // claim atomic, and it means a link or directory someone else left under that name is never
-    // adopted as ours
-    guard (try? FileManager.default.createDirectory(
-        atPath: directory, withIntermediateDirectories: false,
-        attributes: [.posixPermissions: 0o700]
-    )) != nil else {
+    // `mkdir` fails if the name is taken — that is what makes the claim atomic, and it means a
+    // link or directory someone else left under that name is never adopted as ours
+    guard claimPrivateDirectory(directory) else {
         checkoutLog("프롬프트 작업 디렉토리를 만들지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
         return injectEverything()
     }
     let scriptPath = (directory as NSString).appendingPathComponent(claudePromptScriptName)
     let contextPath = (directory as NSString).appendingPathComponent(claudePromptContextName)
-    // The marker rides along only when there is a tail to type — with nothing to type there is
-    // no reason to watch the screen
-    let marker = plan.tail.isEmpty ? nil : claudeArgvRenderMarker(token: token)
-    let body = claudePromptScriptBody(prefix: plan.prefix, contextPath: contextPath, marker: marker)
+    let body = claudePromptScriptBody(prefix: plan.prefix, contextPath: contextPath)
     guard writeNewPrivateFile(path: scriptPath, contents: body) else {
         checkoutLog("프롬프트 조립 스크립트를 쓰지 못해 claude 입력 \(resolved.claudeInputs.count)개를 주입 경로로 보낸다")
         try? FileManager.default.removeItem(atPath: directory)
@@ -549,8 +642,7 @@ public func prepareRequest(_ resolved: ResolvedRequest) -> PreparedRequest {
     }
     return PreparedRequest(
         command: appendedPromptCommand(resolved.command, scriptPath: scriptPath),
-        claudeInputs: plan.tail,
-        temporaryDirectory: directory,
-        argvRenderMarker: marker
+        claudeInputs: [],
+        temporaryDirectory: directory
     )
 }
