@@ -23,6 +23,55 @@ const state = {
   dirty: false,
   // Bumped on every edit. Used after a save to tell whether the user changed anything in the meantime.
   revision: 0,
+  // False until the first load answers. The page has no settings before then, so nothing may be
+  // saved: an early Save used to write `buttons: []` at the current version — every command gone and
+  // the migration marked as reviewed, in one click.
+  loaded: false,
+  // The schema generation read from storage — null while unknown, so it can never be mistaken for a
+  // real one. Whether the user has since decided about it is `reviewed`, and that is the consent:
+  // only it lets a save move the version forward, so an ordinary edit cannot swallow a pending
+  // migration (versionToSave in migrations.js).
+  loadedVersion: null,
+  // Exactly what storage held when this page loaded it. A save compares against it and refuses if
+  // anything moved, because storage.sync offers no compare-and-set and merging would be a guess.
+  loadedSnapshot: null,
+  // Counts load requests, so an answer from an overtaken one can be dropped
+  loadGeneration: 0,
+  // Counts the loads that actually **applied**. The request counter above cannot stand in for this:
+  // a load requested before a save started and applied halfway through it never moves the request
+  // counter, so the save read "nothing reloaded" while the form had already been replaced.
+  appliedGeneration: 0,
+  // How many load requests are outstanding. Any of them may replace the form the moment it answers,
+  // so a save must not start into that window.
+  loadsInFlight: 0,
+  // Set when a change arrives from another device while editing — the banner warns before the save
+  // is attempted, but the re-read at save time is what decides
+  staleSinceLoad: false,
+  // A save is in flight. It is unsaved work like any other — adopting a remote change during one
+  // replaced the very snapshot the save was about to compare against, and the payload built before
+  // that adoption then overwrote the remote settings with no conflict reported.
+  saving: false,
+  // The payload of the save in flight, so the change event our own write produces is recognized as
+  // ours even before it has been recorded as the loaded snapshot.
+  pendingWrite: null,
+  // Set when an owned, non-echo change arrives during a save: the store has moved, so this save
+  // cannot be written whatever its live read happens to say.
+  changedDuringSave: false,
+  // A remote change that arrived during a save, held rather than dropped — once the save settles
+  // the page is clean again and the change should land.
+  deferredChange: null,
+  // A settings file is being read. One at a time: two in flight both captured the same revision, and
+  // whichever finished reading first applied and disqualified the other, so the file chosen second
+  // lost to the one chosen first with nothing said.
+  importing: false,
+  // Set the moment the user engages with the migration preview. Checking boxes is not a "dirty"
+  // edit — nothing has been typed — but it is unsaved work all the same, and re-planning underneath
+  // it silently restores the choices they just made.
+  reviewTouched: false,
+  reviewed: false,
+  plan: null,
+  // Ids of the checked candidates — they start checked, so this starts as all of them.
+  selection: new Set(),
 };
 
 function section(kind) {
@@ -38,13 +87,124 @@ const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
   return [kind, select];
 }));
 
-function normalizeButton(btn) {
-  return {
-    face: btn.face ?? btn.emoji ?? '', // emoji: compatibility with values saved before face existed
-    label: btn.label || '',
-    command: btn.command || '',
-    claudeInputs: Array.isArray(btn.claudeInputs) ? btn.claudeInputs.map(String) : [],
-  };
+// Buttons enter the edit state through `adoptButton` (anything from outside: storage, a file, a
+// preset — it gets a uid we mint) or `reshapeButton` (a button already here, keeping its name).
+// Both live in defaults.js, along with why they are two functions and not one.
+
+// Until the first load answers, this page holds no settings — only the empty shell of the edit
+// state. Every entry point that would write, or that would change what a later write contains, asks
+// here first. The page is also inert until then (updateLoadedGate), but that is the fence; this is
+// the rule, and code paths that do not come from a click still have to pass it.
+const LOADING_MESSAGE = 'Still loading your settings — one moment.';
+
+function requireLoaded() {
+  if (state.loaded) return true;
+  showStatus('info', LOADING_MESSAGE);
+  return false;
+}
+
+// Nothing on the page is interactive until there are settings to interact with.
+//
+// One switch on the root, not a list of controls. The list was wrong the moment it was written: it
+// named the buttons and forgot the `default-main` field and [+ Add Override], and typing in that
+// field bumped the revision — which made the first load throw away its own answer and stop, leaving
+// the page unloaded with nothing to retry it. A control added later is covered here without anyone
+// having to remember.
+function updateLoadedGate() {
+  // The app, not the whole document: the status line and [Retry] live outside it, so a load that
+  // failed still has somewhere to say so and something the user can press.
+  document.getElementById('app').inert = !state.loaded;
+}
+
+// A load that never answered. The gate stays shut — a Save here would write an empty settings object
+// over real ones — so what is offered instead is another attempt.
+function showLoadFailure(error) {
+  document.getElementById('load-error').hidden = false;
+  showStatus('error', `${LOAD_FAILED_MESSAGE} (${error?.message || error})`);
+}
+
+function hideLoadFailure() {
+  document.getElementById('load-error').hidden = true;
+}
+
+// Save is the one control that has to be shut while it is already running. `inert` covers "before
+// the load"; this covers "while a write is in flight", and the guard in saveSettings covers the
+// routes that never touch a button.
+function updateSavingGate() {
+  document.getElementById('save-btn').disabled = state.saving;
+}
+
+// Unsaved work that a remote change must never overwrite: text typed, and a review being decided.
+// A save in flight is handled on its own axis — a change arriving then is deferred, not refused.
+function editsInProgress() {
+  return hasUnsavedWork({ dirty: state.dirty, reviewTouched: state.reviewTouched });
+}
+
+// Unsaved work that leaving the page would lose — the same definition, plus the write still in
+// flight. Asking `dirty` alone here let a decided review go with the tab: unchecking a candidate
+// types nothing, so the browser said nothing on the way out.
+function wouldLoseWork() {
+  return hasUnsavedWork({
+    dirty: state.dirty, reviewTouched: state.reviewTouched, saving: state.saving,
+  });
+}
+
+// Our own write, whether or not it has been recorded as the loaded snapshot yet — the change event
+// for a save can arrive before `set` has even resolved.
+// Before the first load there is no write of ours to compare against, and "nothing versus nothing"
+// must not read as a match: a remote key *removal* would otherwise look exactly like our own echo.
+function isOurOwnWrite(changes) {
+  if (state.loadedSnapshot && isOwnEcho(changes, state.loadedSnapshot)) return true;
+  return !!state.pendingWrite && isOwnEcho(changes, state.pendingWrite);
+}
+
+// A remote change that could not be acted on when it arrived — the first load had not answered yet,
+// or a save was in flight — was held rather than dropped. Once that moment has passed, the same
+// question is asked again through the same classifier.
+//
+// Every branch here ends somewhere visible: adopted, still held, or on the banner. A change we
+// decide not to adopt is still a change, and dropping it silently is how the warning disappeared
+// while the page was in fact still behind the store.
+// What is holding the form right now, in the shape every gate asks for. A load counts here too:
+// its answer replaces the form, so a save or an import started into that window builds from
+// something that is about to be gone.
+function pageTasks() {
+  return { saving: state.saving, importing: state.importing, loading: state.loadsInFlight > 0 };
+}
+
+function adoptDeferredChange() {
+  const changes = state.deferredChange;
+  if (!changes) return;
+  const outcome = classifyStorageChange({
+    changes, loaded: state.loaded, taskInFlight: state.saving || state.importing,
+    busy: editsInProgress(), isOwnWrite: false,
+  });
+  if (outcome === 'defer') return; // still not a moment to act; it stays held
+  state.deferredChange = null;
+  if (outcome === 'ignore') return;
+  markStale(); // true until a load actually lands, which is what clears it
+  if (outcome === 'adopt') loadSettings();
+}
+
+// The one way "this page is behind the store" gets recorded. Every branch that learns it and cannot
+// act on it ends here, so there is no route where the fact is known and nothing shows it.
+function markStale() {
+  state.staleSinceLoad = true;
+  renderStaleBanner();
+}
+
+// Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
+// event can be missed, and a banner that was never shown must not mean "nothing changed".
+function renderStaleBanner() {
+  const banner = document.getElementById('stale-banner');
+  if (banner) banner.hidden = !state.staleSinceLoad;
+}
+
+// The edit state in the shape the planner reads: what would be stored if Save were pressed now,
+// with the uids still attached. The plan is always computed against this, never against what
+// storage happens to hold — those two drift apart the moment anything is edited or imported.
+function editStateSnapshot() {
+  return Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, state.buttons[kind]]));
 }
 
 // --- Rendering ---
@@ -102,7 +262,7 @@ function renderButtons(kind) {
         <div class="cmd-block">
           <span class="cmd-prompt">$</span>
           <textarea id="${kind}-${i}-command" class="command-input" data-field="command" rows="2"
-                    spellcheck="false" placeholder="z {repo} && claude"></textarea>
+                    spellcheck="false" placeholder="{cd} && claude"></textarea>
         </div>
       </div>
       <div class="claude-queue">
@@ -217,10 +377,43 @@ function cardElement(kind, index, selector) {
 
 // --- Unsaved-change indicator ---
 
-function markDirty() {
-  state.dirty = true;
+// The one place a user action becomes state. Everything the user can do — typing, checking a box,
+// opening the review, pressing a panel button — comes through here, and nothing else assigns
+// `revision`, `dirty` or `reviewTouched`.
+//
+// One funnel, for two reasons. Before the load there is nothing to change, and refusing here covers
+// every route in: `inert` stops clicks, but a dispatched event or a programmatic `.click()` walks
+// straight past it, and guarding listeners one at a time means the listener added next year is the
+// one that was forgotten. After the load, `revision` is the primary signal — the three half-signals
+// it replaces were each maintained at their own call sites, and every boundary between them leaked
+// (a save cleared `reviewTouched` before checking the revision; the badge click bumped neither).
+function touch({ dirty = false, review = false } = {}) {
+  if (!shouldAcceptUserAction(state.loaded)) return false;
   state.revision++;
-  document.getElementById('dirty-indicator').hidden = false;
+  if (dirty) {
+    state.dirty = true;
+    document.getElementById('dirty-indicator').hidden = false;
+  }
+  if (review) state.reviewTouched = true;
+  return true;
+}
+
+// Every handler is one of these three: the guard runs, and only then does the change. Writing the
+// guard and the change as separate statements is how their order got reversed — [+ Add Button]
+// pushed the button and asked afterwards, and so did [+ Add Override], the card inputs, delete,
+// duplicate, reorder and the review checkboxes (userAction in migrations.js).
+function edit(change) {
+  return userAction(() => touch({ dirty: true }), change);
+}
+
+function review(change) {
+  return userAction(() => touch({ review: true }), change);
+}
+
+// Applying, declining and resetting are all decisions about the migration *and* changes that have
+// to be saved, so they raise both signals.
+function editAndReview(change) {
+  return userAction(() => touch({ dirty: true, review: true }), change);
 }
 
 function clearDirty() {
@@ -248,12 +441,14 @@ function applyPreset(select) {
     return;
   }
 
-  state.buttons[kind][index] = normalizeButton({
-    face: preset.face, label: preset.name, command: preset.command,
-    claudeInputs: [...(preset.claudeInputs || [])],
+  edit(() => {
+    // The card stays the same button — only its contents are replaced — so it keeps its uid
+    state.buttons[kind][index] = reshapeButton({
+      face: preset.face, label: preset.name, command: preset.command,
+      claudeInputs: [...(preset.claudeInputs || [])],
+    }, state.buttons[kind][index].uid);
+    renderButtons(kind); // the number of claude input rows changes too, so redraw the whole card
   });
-  markDirty();
-  renderButtons(kind); // the number of claude input rows changes too, so redraw the whole card
 }
 
 // --- Validation ---
@@ -316,66 +511,255 @@ function serializeOverrides() {
 
 // The terminal choice is owned solely by the Terminal Checkout app (its settings window)
 async function loadSettings() {
-  const keys = SECTIONS.map(s => s.storageKey).concat(['defaultMain', 'repoMainBranch']);
-  const data = await chrome.storage.sync.get(keys);
+  // The user can act while storage is being read, and a second load can start before the first
+  // answers. Remember both where the page was and which request this is, so an answer that has been
+  // overtaken is dropped instead of landing on top of newer settings.
+  const revisionAtStart = state.revision;
+  const generation = ++state.loadGeneration;
+  // Before the first answer there is nothing on screen to protect, so this one is applied whatever
+  // the user did meanwhile — dropping it left the page unloaded with nothing to retry it.
+  const initial = !state.loaded;
+
+  // storage.sync can reject. It used to do so silently: the page stayed unloaded and inert with
+  // nothing on screen and no way back. The gate stays shut — opening it would let a Save write an
+  // empty settings object over real ones — so the way out is a retry the user can actually reach.
+  //
+  // While this is outstanding the form may be replaced at any moment, so a save must not start.
+  // Counted rather than flagged, because two loads can overlap and the first to answer must not
+  // declare the window closed for the second.
+  let data;
+  state.loadsInFlight += 1;
+  try {
+    data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+  } catch (error) {
+    if (generation === state.loadGeneration) showLoadFailure(error);
+    // The change that asked for this re-read is not adopted, and `staleSinceLoad` was never cleared,
+    // so the banner it raised is still up — which is the whole point of not clearing it early.
+    return;
+  } finally {
+    state.loadsInFlight -= 1;
+  }
+
+  if (!shouldApplyLoadedSnapshot({
+    revisionAtStart, revisionNow: state.revision, dirty: state.dirty,
+    reviewTouched: state.reviewTouched,
+    generation, latestGeneration: state.loadGeneration, initial,
+  })) {
+    // Not applying is not the same as not having read. This answer is evidence about the store, and
+    // if it differs from what the page holds, the page is behind — say so rather than discarding
+    // both the snapshot and the fact that it existed. Only once there is a snapshot to compare
+    // against: before that, "everything differs from nothing" would be a banner about nothing.
+    if (state.loaded && saveConflict(state.loadedSnapshot, data)) markStale();
+    return;
+  }
+
+  // Storage is as untrusted as an imported file: another device, another version of this extension,
+  // or a hand edit wrote it. Anything unreadable is dropped and counted, never guessed at.
+  const { settings, skippedByKey } = adoptStoredSettings(data);
 
   for (const { kind, storageKey, defaults } of SECTIONS) {
-    const saved = data[storageKey];
-    state.buttons[kind] = (saved?.length ? saved : defaults).map(normalizeButton);
+    // Presets only where the key said nothing at all. A key that held something we could not use is
+    // answered with whatever survived — even if that is nothing — because what lands here is what
+    // the next Save records, and filling it from our presets makes that Save a rewrite.
+    state.buttons[kind] = seedFromStorage(settings[storageKey], defaults, skippedByKey[storageKey])
+      .map(adoptButton);
   }
-  state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
-  document.getElementById('default-main').value = data.defaultMain || 'main';
+  state.overrides = Object.entries(settings.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
+  document.getElementById('default-main').value = settings.defaultMain || 'main';
+
+  state.loadedVersion = storedSchemaVersion(data);
+  // Exactly what was read — the raw object, not the cleaned one, because that is what a later save
+  // has to find unchanged in storage
+  state.loadedSnapshot = data;
+  state.staleSinceLoad = false;
+  state.reviewTouched = false;
+  state.reviewed = false;
+  state.loaded = true;
+  // The form has been replaced. This is what a save in flight compares against — counting requests
+  // instead of applications is what let a load applied mid-save go unnoticed.
+  state.appliedGeneration += 1;
+  hideLoadFailure();
+  updateLoadedGate();
+  renderStaleBanner();
+  const dropped = describeSkipped(skippedByKey);
+  if (dropped.length) {
+    // Said out loud, named per key, and with the consequence attached. The section above is now
+    // empty rather than quietly full of presets, so the user can see that something is missing —
+    // and this says what pressing Save would do to it, and how to keep a copy first.
+    showStatus('error', `${dropped.join('; ')}. ${SKIP_CONSEQUENCE}`);
+  }
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderOverrides();
+  // Planned from the edit state that was just built, not from `data` — those are the same thing
+  // here, and keeping one path means they cannot fall out of step later.
+  setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
+
+  // A change that arrived before this page had settings was held rather than dropped, because the
+  // read that was already outstanding may have been answered from before that write landed. Now
+  // there is something to compare against, so ask again — which re-reads, this time knowing the
+  // store moved.
+  adoptDeferredChange();
 }
 
 async function saveSettings() {
+  // Nothing may be written before the first load answers: the edit state is empty until then, and
+  // writing it would delete every command and mark the migration as reviewed in the same breath.
+  if (!requireLoaded()) return;
+  // One page-changing task at a time. Two saves would each capture the same world, each find it
+  // unchanged, and the later write would land carrying what was true before the earlier one; a save
+  // started while a load is outstanding builds its payload from a form that answer is about to
+  // replace.
+  if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
+    showStatus('info', pageBusyMessage(pageTasks()));
+    return;
+  }
+
   const invalidButton = validateButtons();
   if (invalidButton) return showError(invalidButton);
 
   const overrides = serializeOverrides();
   if (overrides.error) return showError(overrides.error);
 
+  // toStoredButton is what decides the stored shape — including dropping the runtime uid
   const cleaned = Object.fromEntries(SECTIONS.map(({ kind }) => [
-    kind,
-    state.buttons[kind].map(b => ({
-      face: b.face.trim(),
-      label: b.label.trim(),
-      command: b.command,
-      claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // empty rows are dropped silently
-    })),
+    kind, state.buttons[kind].map(toStoredButton),
   ]));
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
+
+  // The world this save starts in, captured once. Everything below settles against these values and
+  // never against `state`, which moves underneath: adoption of a remote change is not a user action
+  // and bumps no revision, so it used to replace `state.loadedSnapshot` mid-save and the comparison
+  // became "the remote settings against the remote settings" — no conflict, and this payload went
+  // over the top of them.
   const savedRevision = state.revision;
+  const appliedGenerationAtStart = state.appliedGeneration;
+  const capturedSnapshot = state.loadedSnapshot;
+  // A change event that arrived *before* this save is exactly as disqualifying as one that arrives
+  // during it: either way the store moved and this page has not caught up, so the payload describes
+  // the world before it. Latching it at the start is what makes the refusal independent of what the
+  // live read happens to return.
+  const staleAtStart = state.staleSinceLoad;
 
+  // The version moves only when the user decided something (applied, declined, acknowledged, or
+  // reset). Stamping the current version on every save would clear the notice for someone who only
+  // renamed a tooltip, and their stale commands would never be offered again. It describes the
+  // generation of *this content* and nothing else.
+  const payload = {
+    ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])),
+    defaultMain,
+    repoMainBranch: overrides.value,
+    [VERSION_KEY]: versionToSave({ loadedVersion: state.loadedVersion, reviewed: state.reviewed }),
+  };
+
+  state.saving = true;
+  state.changedDuringSave = false;
+  updateSavingGate();
   try {
-    await chrome.storage.sync.set({
-      ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])),
-      defaultMain,
-      repoMainBranch: overrides.value,
+    // This page may have been open a long time, and another device on the account can have saved in
+    // the meantime — a migration, say. Writing our payload over that would erase their decision with
+    // no trace. There is no compare-and-set in storage.sync, so we read once more, right here, and
+    // refuse if anything moved.
+    //
+    // The window between this read and the write below cannot be closed without a transaction. What
+    // lands in it is a last-write-wins overwrite, and if what it overwrites was a migration decision
+    // the loss is permanent: the version we write is ours, so the notice does not come back to offer
+    // it again. That is the residual, stated as it is — it is not "the notice appears once more".
+    let liveSnapshot;
+    try {
+      liveSnapshot = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+    } catch (error) {
+      // The read that decides whether writing is safe failed, so writing is not safe. It used to
+      // reject unhandled: no status, no refusal, and the save simply evaporated.
+      showStatus('error', `Could not save: ${error.message}`);
+      return;
+    }
+    const outcome = planSave({
+      capturedSnapshot,
+      liveSnapshot,
+      payload,
+      appliedGenerationAtStart,
+      appliedGenerationNow: state.appliedGeneration,
+      // Before or during — either way an owned change arrived that this page has not adopted. A
+      // change event is a stronger fact than the live read, which can be answered from before the
+      // remote write committed.
+      storeMovedSinceLoad: staleAtStart || state.changedDuringSave,
+      // Settings from a generation we do not understand are readable and exportable, never
+      // writable. Decision 9 should keep this unreachable; it is the insurance if it is not.
+      loadedVersion: state.loadedVersion,
     });
-  } catch (error) {
-    showStatus('error', `Could not save: ${error.message}`);
-    return;
-  }
+    if (outcome.refused) {
+      // Only a conflict means the page is behind the store. After a reload it has just caught up,
+      // and a banner there would be telling the user about a gap that no longer exists.
+      if (outcome.stale) markStale();
+      showStatus('error', outcome.message);
+      return;
+    }
 
-  // The form stays live while the save is in flight. If the user edited more in the meantime,
-  // resetting the view to the snapshot we just saved would wipe that input, so leave the view
-  // alone and keep the dirty flag set.
-  if (state.revision !== savedRevision) {
+    try {
+      // From here until settleSave records it as the loaded snapshot, this is what our own change
+      // event will look like — the event can arrive before `set` has even resolved.
+      state.pendingWrite = payload;
+      await chrome.storage.sync.set(outcome.write);
+    } catch (error) {
+      showStatus('error', `Could not save: ${error.message}`);
+      return;
+    }
+    settleSave({ payload, cleaned, defaultMain, overrides, savedRevision });
+  } finally {
+    state.saving = false;
+    state.pendingWrite = null;
+    updateSavingGate();
+    // A remote change that arrived during the save was held rather than acted on. Now that the save
+    // has settled, ask the ordinary question again.
+    adoptDeferredChange();
+  }
+}
+
+// Everything that follows a successful write, kept out of saveSettings so the try/finally around the
+// asynchronous part stays readable.
+function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision }) {
+  // Facts about storage, true whatever the user did meanwhile: it now holds exactly this payload,
+  // so that is what a later save must find there, and our own change event is no longer a conflict
+  // with ourselves.
+  state.loadedSnapshot = payload;
+  // …but only if nothing arrived while we were writing. A remote change that landed after the
+  // pre-write read is still unadopted, so clearing the banner here would erase a warning that is
+  // still true — and if the user had also been typing, the held change was then dropped as well and
+  // nothing at all showed it.
+  if (!state.changedDuringSave) state.staleSinceLoad = false;
+  renderStaleBanner();
+  const version = payload[VERSION_KEY];
+
+  // Everything below is a claim about the *user* — that they have nothing outstanding — and none of
+  // it may be made if they acted while the save was in flight. Clearing `reviewTouched` above this
+  // line is precisely the bug: a box toggled during the save was forgotten, the next remote change
+  // was adopted, the selection snapped back to the defaults, and Apply rewrote a candidate they had
+  // declined. One predicate now guards the whole settlement.
+  if (!nothingHappenedSince(savedRevision, state.revision)) {
     showStatus('success', 'Settings saved. Changes made since then are not saved yet.');
     return;
   }
+  state.reviewTouched = false;
 
-  // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed)
+  // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed). The uids
+  // are carried over: these are the same buttons, only tidied, and a candidate the user is looking
+  // at must keep its name across a save.
   document.getElementById('default-main').value = defaultMain;
   for (const { kind } of SECTIONS) {
-    state.buttons[kind] = cleaned[kind].map(normalizeButton);
+    state.buttons[kind] = cleaned[kind].map(
+      (button, index) => reshapeButton(button, state.buttons[kind][index].uid)
+    );
     renderButtons(kind);
   }
   state.overrides = Object.entries(overrides.value).map(([repo, branch]) => ({ repo, branch }));
   renderOverrides();
+
+  // What was just written is now what is stored, so the notice reflects that — and because the
+  // version rode along, the other machines on this account drop their notice as the change syncs.
+  state.loadedVersion = version;
+  state.reviewed = false;
+  setPlan(planMigration(editStateSnapshot(), version));
 
   clearDirty();
   showStatus('success', 'Settings saved.');
@@ -383,16 +767,165 @@ async function saveSettings() {
 
 // Saving happens through the Save button alone. This only resets the view; storage is untouched.
 function resetSettings() {
-  for (const { kind, defaults } of SECTIONS) {
-    state.buttons[kind] = defaults.map(normalizeButton);
-    renderButtons(kind);
-  }
-  state.overrides = [];
-  document.getElementById('default-main').value = 'main';
+  if (!requireLoaded()) return;
+  editAndReview(() => {
+    for (const { kind, defaults } of SECTIONS) {
+      state.buttons[kind] = defaults.map(adoptButton);
+      renderButtons(kind);
+    }
+    state.overrides = [];
+    document.getElementById('default-main').value = 'main';
 
-  renderOverrides();
-  markDirty();
-  showStatus('info', 'Reset to defaults. Press Save to apply.');
+    renderOverrides();
+    // Reset replaces every command with the current preset, so the settings are the current
+    // generation by construction — taking that as a decision keeps the notice from lingering over
+    // settings that have nothing stale left in them.
+    markReviewed();
+    showStatus('info', 'Reset to defaults. Press Save to apply.');
+  });
+}
+
+// --- The update notice ---
+// The stored settings can predate the current presets. What we may rewrite (an old preset matched
+// verbatim, or a customized command whose first clause was exactly the old jump) is offered per
+// item; anything else is only pointed at. Applying fills the edit state — the write still goes
+// through Save, like import.
+
+function setPlan(plan) {
+  state.plan = plan;
+  // Only the candidates nothing can go wrong with start checked. A behavior change is opted into
+  // after reading it, never opted out of after missing it (defaultSelection in migrations.js).
+  state.selection = new Set(defaultSelection(plan));
+  renderMigration();
+}
+
+// The user has decided about this generation — by applying some or none of it, by declining, or by
+// resetting. That decision is what lets the next save move the version.
+function markReviewed() {
+  state.reviewed = true;
+  state.plan = null;
+  state.selection = new Set();
+  renderMigration();
+}
+
+function migrationItemRow(item, { checkbox }) {
+  const row = document.createElement('div');
+  row.className = 'mig-item';
+  row.dataset.id = item.id;
+  const where = `${section(item.kind).storageKey}[${item.index}]`;
+  row.innerHTML = `
+    <div class="mig-head">
+      ${checkbox ? `<input type="checkbox" class="mig-check" checked>` : ''}
+      <span class="mig-label"></span>
+      <span class="mig-where"></span>
+      ${checkbox ? `<span class="mig-source"></span>` : ''}
+      ${checkbox && item.effect === 'behavior-change' ? `<span class="mig-effect">behavior change</span>` : ''}
+    </div>
+  `;
+  row.querySelector('.mig-label').textContent = item.label || '(no tooltip)';
+  row.querySelector('.mig-where').textContent = where;
+  if (checkbox) {
+    // 'verbatim' = this was one of our old presets; 'prefix' = you had edited it, and only the
+    // leading jump is being replaced. Saying which is how the user knows we noticed their edit.
+    row.querySelector('.mig-source').textContent = item.source;
+  }
+
+  const detail = document.createElement('div');
+  if (checkbox) {
+    detail.className = 'mig-diff';
+    const from = document.createElement('div');
+    from.className = 'mig-from';
+    from.textContent = `- ${item.from}`;
+    const to = document.createElement('div');
+    to.className = 'mig-to';
+    to.textContent = `+ ${item.to}`;
+    detail.append(from, to);
+  } else {
+    detail.className = 'mig-note';
+    detail.textContent = item.note;
+  }
+  row.appendChild(detail);
+
+  // A behavior change has to say what changes, next to the item it changes — a paragraph at the top
+  // of the panel is not what someone reads while deciding about one particular button.
+  if (checkbox && item.effect === 'behavior-change' && item.describe) {
+    const why = document.createElement('div');
+    why.className = 'mig-why';
+    why.textContent = item.describe;
+    row.appendChild(why);
+  }
+  return row;
+}
+
+function renderMigration() {
+  const badge = document.getElementById('migration-badge');
+  const panel = document.getElementById('migration-section');
+  const plan = state.plan;
+  const pending = !!plan && state.loadedVersion < plan.targetVersion;
+
+  badge.hidden = !pending;
+  if (!pending) {
+    panel.hidden = true;
+    return;
+  }
+
+  const summary = migrationSummary(plan, state.selection);
+  // Every step being applied gets its say, not only the newest one — a settings object can be
+  // several generations behind, and the user is consenting to all of them at once.
+  let intro = migrationDescription(plan.fromVersion);
+  if (summary.reviewOnly) {
+    intro = summary.informationalCount
+      ? 'Nothing here can be rewritten safely, but these commands still use the old form:'
+      : 'Nothing to change — your commands are already current. Press Got it to mark them as reviewed.';
+  }
+  document.getElementById('migration-describe').textContent = intro;
+
+  const actionable = document.getElementById('migration-actionable');
+  const informational = document.getElementById('migration-informational');
+  actionable.innerHTML = '';
+  informational.innerHTML = '';
+  for (const item of plan.actionable) {
+    const row = migrationItemRow(item, { checkbox: true });
+    row.querySelector('.mig-check').checked = state.selection.has(item.id);
+    actionable.appendChild(row);
+  }
+  for (const item of plan.informational) {
+    informational.appendChild(migrationItemRow(item, { checkbox: false }));
+  }
+
+  const apply = document.getElementById('migration-apply');
+  apply.hidden = summary.reviewOnly;
+  apply.disabled = summary.nothingToApply;
+  const keep = document.getElementById('migration-keep');
+  keep.textContent = summary.reviewOnly ? 'Got it' : 'Keep mine';
+  document.getElementById('migration-hint').textContent = summary.reviewOnly
+    ? 'Dismissing this marks your settings as reviewed — press Save afterwards.'
+    : `${summary.selectedCount} of ${summary.actionableCount} selected. Applying fills the form; press Save to store it.`;
+}
+
+// Fills the edit state with the selected rewrites. Storage is untouched until Save, exactly like
+// import — the edit state is the only thing that changes here.
+function applyMigration() {
+  if (!requireLoaded()) return;
+  editAndReview(() => {
+    // `applied` is what was actually rewritten, not what was checked: a candidate whose button was
+    // deleted, moved, or typed over while the preview was open is skipped, and counting checkboxes
+    // reported those skips as successes.
+    const { settings: migrated, applied } = applyMigrationPlan(
+      editStateSnapshot(), state.plan, state.selection
+    );
+    const declined = state.selection.size - applied;
+
+    for (const { kind, storageKey } of SECTIONS) {
+      state.buttons[kind] = migrated[storageKey].map(button => reshapeButton(button, button.uid));
+      renderButtons(kind);
+    }
+    markReviewed();
+    const missed = declined > 0
+      ? ` ${declined} changed since the preview was built and ${declined === 1 ? 'was' : 'were'} left alone.`
+      : '';
+    showStatus('info', `${applied} command${applied === 1 ? '' : 's'} updated in the form.${missed} Press Save to apply.`);
+  });
 }
 
 // --- Export / import ---
@@ -400,7 +933,9 @@ function resetSettings() {
 // Chrome profiles on the same Google account — this path is for moving them without an account, or
 // for a file backup against a reinstall.
 
-const BACKUP_KEYS = [...SECTIONS.map(s => s.storageKey), 'defaultMain', 'repoMainBranch'];
+// The version rides along, so a backup records which generation of the presets it was written
+// against and an old one still gets offered the migration when it comes back in.
+const BACKUP_KEYS = [...SETTINGS_KEYS, VERSION_KEY];
 const MAX_IMPORT_BYTES = 256 * 1024;
 
 // Validate file text into a fragment of the storage schema. It touches neither the DOM nor the
@@ -417,58 +952,57 @@ function parseImportedSettings(raw) {
     throw new Error('The top level of the settings file is not an object.');
   }
 
-  // Values from a file can't be trusted to have the right type. Non-string fields are dropped to
-  // an empty value so the required-field check catches them on save (left as they are, saving
-  // would blow up in .trim()).
-  const text = v => (typeof v === 'string' ? v : '');
+  // A file from a newer extension is refused whole, before anything is read out of it: we do not
+  // know what its keys mean, and filling the form from a half-understood file invites a Save that
+  // downgrades the account. This throws rather than joining `skipped` — it is not a key we ignored,
+  // it is an import that must not happen.
+  const version = importedSchemaVersion(data);
+
+  // Shape checking — and the limits — are shared with the load path (adoptStoredSettings): a file
+  // and a stored object are the same kind of stranger, and a shape one path survives must not be one
+  // the other dies on. The limits used to be applied only here, as a silent `slice`, so the same
+  // four-button array was three buttons through import and four through storage; and the entry this
+  // trimmed away vanished with nothing said. All that is left specific to a file is "an empty array
+  // is not a setting".
+  const adopted = adoptStoredSettings(data);
   const settings = {};
   const skipped = [];
+  // What was dropped from *inside* a key the file did carry. A file with one good button and one
+  // unusable one used to import the good one in silence: the key was present in the result, so it
+  // never reached the "skipped keys" list below and nothing said an entry had gone.
+  const unreadable = describeSkipped(adopted.skippedByKey);
 
   for (const key of SECTIONS.map(s => s.storageKey)) {
     if (data[key] === undefined) continue;
     // An empty array means "no setting", not "no buttons" — the background logic doesn't fall back
     // to the defaults for an empty array, so the buttons would disappear entirely.
-    const buttons = (Array.isArray(data[key]) ? data[key] : [])
-      .filter(b => b && typeof b === 'object' && !Array.isArray(b))
-      .slice(0, MAX_BUTTONS)
-      .map(b => {
-        const btn = normalizeButton(b);
-        return {
-          face: text(btn.face),
-          label: text(btn.label),
-          command: text(btn.command),
-          claudeInputs: btn.claudeInputs.slice(0, MAX_CLAUDE_INPUTS),
-        };
-      });
+    const buttons = adopted.settings[key] || [];
     if (buttons.length) settings[key] = buttons;
     else skipped.push(key);
   }
 
-  if (data.defaultMain !== undefined) {
-    if (typeof data.defaultMain === 'string') settings.defaultMain = data.defaultMain;
-    else skipped.push('defaultMain');
-  }
-
-  if (data.repoMainBranch !== undefined) {
-    const map = data.repoMainBranch;
-    if (map && typeof map === 'object' && !Array.isArray(map)) {
-      // An empty object is a valid setting meaning "no overrides", so take it as is
-      settings.repoMainBranch = Object.fromEntries(
-        Object.entries(map).filter(([, branch]) => typeof branch === 'string')
-      );
-    } else {
-      skipped.push('repoMainBranch');
-    }
+  for (const key of ['defaultMain', 'repoMainBranch']) {
+    if (data[key] === undefined) continue;
+    if (adopted.settings[key] !== undefined) settings[key] = adopted.settings[key];
+    else skipped.push(key);
   }
 
   if (Object.keys(settings).length === 0) {
     throw new Error(`Nothing to import (one of ${BACKUP_KEYS.join(', ')} is required).`);
   }
-  return { settings, skipped };
+  return { settings, skipped, unreadable, version };
 }
 
 async function exportSettings() {
-  const data = await chrome.storage.sync.get(BACKUP_KEYS);
+  let data;
+  try {
+    data = await chrome.storage.sync.get(BACKUP_KEYS);
+  } catch (error) {
+    // An unhandled rejection here produced a button that did nothing and said nothing — and this is
+    // the path a user takes precisely when they are trying not to lose their settings.
+    showStatus('error', `Could not export: ${error.message}`);
+    return;
+  }
   // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
@@ -488,40 +1022,91 @@ async function exportSettings() {
   if (state.dirty) showStatus('info', 'Unsaved changes were not included in the export.');
 }
 
-// Saving happens through the Save button alone — this too only fills in the view and leaves storage untouched.
-function applyImportedSettings(settings) {
-  for (const { kind, storageKey } of SECTIONS) {
-    if (settings[storageKey]) state.buttons[kind] = settings[storageKey].map(normalizeButton);
-  }
-  if (settings.defaultMain !== undefined) {
-    document.getElementById('default-main').value = settings.defaultMain.trim() || 'main';
-  }
-  if (settings.repoMainBranch) {
-    state.overrides = Object.entries(settings.repoMainBranch).map(([repo, branch]) => ({ repo, branch }));
-  }
+// Saving happens through the Save button alone — this too only fills in the view and leaves storage
+// untouched. The guard runs before any of it, like every other edit.
+function applyImportedSettings(settings, mergedVersion) {
+  return edit(() => {
+    for (const { kind, storageKey } of SECTIONS) {
+      if (settings[storageKey]) state.buttons[kind] = settings[storageKey].map(adoptButton);
+    }
+    if (settings.defaultMain !== undefined) {
+      document.getElementById('default-main').value = settings.defaultMain.trim() || 'main';
+    }
+    if (settings.repoMainBranch) {
+      state.overrides = Object.entries(settings.repoMainBranch).map(([repo, branch]) => ({ repo, branch }));
+    }
 
-  SECTIONS.forEach(({ kind }) => renderButtons(kind));
-  renderOverrides();
-  markDirty();
+    SECTIONS.forEach(({ kind }) => renderButtons(kind));
+    renderOverrides();
+
+    // The edit state is now part file, part whatever was already on screen — a file carrying only
+    // `defaultMain` leaves every button section untouched. So the generation to answer for is the
+    // *older* of the two, and the plan covers the merged whole rather than the file's keys.
+    state.loadedVersion = mergedVersion;
+    state.reviewed = false;
+    setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
+  });
 }
 
 async function importSettings(file) {
+  // An import that landed before the load answered would be merged into an empty edit state and
+  // then compared against a snapshot we do not have yet
+  if (!requireLoaded()) return;
+  // One file at a time. Two in flight both captured the same revision, and whichever finished
+  // reading first applied and disqualified the other — so the file chosen *second* lost, silently.
+  if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
+    showStatus('error', pageBusyMessage(pageTasks()));
+    return;
+  }
   if (file.size > MAX_IMPORT_BYTES) {
     showStatus('error', 'The settings file is too large (256KB max).');
     return;
   }
 
-  let imported;
-  try {
-    imported = parseImportedSettings(await file.text());
-  } catch (error) {
-    showStatus('error', `Could not import: ${error.message}`);
-    return;
-  }
+  // The world this import starts in. Reading the file is asynchronous and the form stays live
+  // throughout, so a file applied afterwards can land on top of what was typed meanwhile — the same
+  // defect as a stale load answer overwriting an edit, and it gets the same predicate.
+  const revisionAtStart = state.revision;
+  const generationAtStart = state.loadGeneration;
 
-  applyImportedSettings(imported.settings);
-  const dropped = imported.skipped.length ? ` (skipped: ${imported.skipped.join(', ')})` : '';
-  showStatus('info', `Settings imported. Press Save to apply.${dropped}`);
+  state.importing = true;
+  try {
+    let imported;
+    let mergedVersion;
+    try {
+      imported = parseImportedSettings(await file.text());
+      // Refused here rather than merged: with stored settings from the future, taking the minimum
+      // hands an old generation to content a newer extension wrote, and the next Save records it.
+      mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
+    } catch (error) {
+      showStatus('error', `Could not import: ${error.message}`);
+      return;
+    }
+
+    const outcome = planImport({
+      revisionAtStart,
+      revisionNow: state.revision,
+      generationAtStart,
+      generationNow: state.loadGeneration,
+      settings: imported.settings,
+    });
+    if (outcome.refused) {
+      showStatus('error', outcome.message);
+      return;
+    }
+
+    // Refused only if the page stopped being loaded under us; nothing was filled in, so nothing is
+    // reported as imported either.
+    if (!applyImportedSettings(outcome.apply, mergedVersion)) return;
+
+    const notes = [...imported.unreadable];
+    if (imported.skipped.length) notes.push(`skipped: ${imported.skipped.join(', ')}`);
+    showStatus('info', `Settings imported. Press Save to apply.${notes.length ? ` (${notes.join('; ')})` : ''}`);
+  } finally {
+    state.importing = false;
+    // Same settlement as the save: a change held while this ran gets asked again now
+    adoptDeferredChange();
+  }
 }
 
 let statusTimer = null;
@@ -548,70 +1133,80 @@ function onCardInput(e) {
 
   if (e.target.classList.contains('ci-input')) {
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    state.buttons[kind][index].claudeInputs[row] = e.target.value;
-    updateClaudeWarn(card, state.buttons[kind][index]);
-    markDirty();
+    edit(() => {
+      state.buttons[kind][index].claudeInputs[row] = e.target.value;
+      updateClaudeWarn(card, state.buttons[kind][index]);
+    });
     return;
   }
 
   const field = e.target.dataset.field;
   if (!field) return;
-  state.buttons[kind][index][field] = e.target.value;
-  if (field === 'face') updateFacePreview(card, e.target.value);
-  if (field === 'command') {
-    autosize(e.target);
-    updateClaudeWarn(card, state.buttons[kind][index]);
-  }
-  markDirty();
+  edit(() => {
+    state.buttons[kind][index][field] = e.target.value;
+    if (field === 'face') updateFacePreview(card, e.target.value);
+    if (field === 'command') {
+      autosize(e.target);
+      updateClaudeWarn(card, state.buttons[kind][index]);
+    }
+  });
 }
 
 function onCardClick(e) {
   if (e.target.classList.contains('remove-btn')) {
     const { kind, index } = cardOf(e.target);
-    state.buttons[kind].splice(index, 1);
-    markDirty();
-    renderButtons(kind);
+    edit(() => {
+      state.buttons[kind].splice(index, 1);
+      renderButtons(kind);
+    });
     return;
   }
 
   if (e.target.classList.contains('duplicate-btn')) {
     const { kind, index } = cardOf(e.target);
     if (state.buttons[kind].length >= MAX_BUTTONS) return;
-    state.buttons[kind] = duplicateButton(state.buttons[kind], index);
-    markDirty();
-    renderButtons(kind);
-    // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
-    cardElement(kind, index + 1, '.face-input').focus();
+    edit(() => {
+      state.buttons[kind] = duplicateButton(state.buttons[kind], index);
+      // duplicateButton spreads the original, uid included — two buttons answering to the same name
+      // would make a candidate ambiguous, so the copy gets its own
+      state.buttons[kind][index + 1].uid = nextButtonUid();
+      renderButtons(kind);
+      // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
+      cardElement(kind, index + 1, '.face-input').focus();
+    });
     return;
   }
 
   if (e.target.classList.contains('palette-btn')) {
     const { card, kind, index } = cardOf(e.target);
-    const input = card.querySelector('.face-input');
-    state.buttons[kind][index].face += e.target.textContent;
-    input.value = state.buttons[kind][index].face;
-    updateFacePreview(card, input.value);
-    markDirty();
+    edit(() => {
+      const input = card.querySelector('.face-input');
+      state.buttons[kind][index].face += e.target.textContent;
+      input.value = state.buttons[kind][index].face;
+      updateFacePreview(card, input.value);
+    });
     return;
   }
 
   if (e.target.classList.contains('add-input-btn')) {
     const { kind, index } = cardOf(e.target);
-    const inputs = state.buttons[kind][index].claudeInputs;
-    if (inputs.length >= MAX_CLAUDE_INPUTS) return;
-    inputs.push('');
-    markDirty();
-    renderButtons(kind);
-    cardElement(kind, index, `.claude-row[data-ci="${inputs.length - 1}"] .ci-input`).focus();
+    if (state.buttons[kind][index].claudeInputs.length >= MAX_CLAUDE_INPUTS) return;
+    edit(() => {
+      const inputs = state.buttons[kind][index].claudeInputs;
+      inputs.push('');
+      renderButtons(kind);
+      cardElement(kind, index, `.claude-row[data-ci="${inputs.length - 1}"] .ci-input`).focus();
+    });
     return;
   }
 
   if (e.target.classList.contains('ci-remove')) {
     const { kind, index } = cardOf(e.target);
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    state.buttons[kind][index].claudeInputs.splice(row, 1);
-    markDirty();
-    renderButtons(kind);
+    edit(() => {
+      state.buttons[kind][index].claudeInputs.splice(row, 1);
+      renderButtons(kind);
+    });
   }
 }
 
@@ -657,13 +1252,15 @@ function endDrag(container) {
 // Returns the index after the move (so keyboard reordering can keep focus on the handle)
 function reorderButtons(kind, from, insertBefore) {
   if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
-  state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
-  markDirty();
-  renderButtons(kind);
+  const moved = edit(() => {
+    state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
+    renderButtons(kind);
+  });
+  if (!moved) return from; // refused: nothing moved, so the handle stays where it was
   return insertBefore > from ? insertBefore - 1 : insertBefore;
 }
 
-for (const { kind, container, addButton, defaults } of SECTIONS) {
+for (const { kind, container, addButton } of SECTIONS) {
   const element = document.getElementById(container);
   element.addEventListener('input', onCardInput);
   element.addEventListener('click', onCardClick);
@@ -736,15 +1333,11 @@ for (const { kind, container, addButton, defaults } of SECTIONS) {
 
   document.getElementById(addButton).addEventListener('click', () => {
     if (state.buttons[kind].length >= MAX_BUTTONS) return;
-
-    const used = new Set(state.buttons[kind].map(b => b.face));
-    const presets = section(kind).presets;
-    const face = presets.map(p => p.face).find(f => !used.has(f)) || defaults[0].face;
-
-    state.buttons[kind].push(normalizeButton({ face, label: 'New Button', command: '' }));
-    markDirty();
-    renderButtons(kind);
-    cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
+    edit(() => {
+      state.buttons[kind] = appendButton(state.buttons[kind], section(kind));
+      renderButtons(kind);
+      cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
+    });
   });
 }
 
@@ -753,32 +1346,121 @@ const overridesBody = document.getElementById('overrides-body');
 overridesBody.addEventListener('input', (e) => {
   const tr = e.target.closest('tr[data-index]');
   if (!tr) return;
-  const row = state.overrides[Number(tr.dataset.index)];
-  // Don't trim while typing (whitespace is cleaned up all at once on save)
-  if (e.target.classList.contains('override-repo')) row.repo = e.target.value;
-  else if (e.target.classList.contains('override-branch')) row.branch = e.target.value;
-  else return;
-  markDirty();
+  const isRepo = e.target.classList.contains('override-repo');
+  const isBranch = e.target.classList.contains('override-branch');
+  if (!isRepo && !isBranch) return;
+  edit(() => {
+    const row = state.overrides[Number(tr.dataset.index)];
+    // Don't trim while typing (whitespace is cleaned up all at once on save)
+    if (isRepo) row.repo = e.target.value;
+    else row.branch = e.target.value;
+  });
 });
 
 overridesBody.addEventListener('click', (e) => {
   if (!e.target.classList.contains('remove-row')) return;
-  state.overrides.splice(Number(e.target.closest('tr').dataset.index), 1);
-  markDirty();
-  renderOverrides();
+  const index = Number(e.target.closest('tr').dataset.index);
+  edit(() => {
+    state.overrides.splice(index, 1);
+    renderOverrides();
+  });
 });
 
 document.getElementById('add-override').addEventListener('click', () => {
-  state.overrides.push({ repo: '', branch: '' });
-  markDirty();
-  renderOverrides();
-  overrideInput(state.overrides.length - 1, '.override-repo').focus();
+  edit(() => {
+    state.overrides.push({ repo: '', branch: '' });
+    renderOverrides();
+    overrideInput(state.overrides.length - 1, '.override-repo').focus();
+  });
 });
 
-document.getElementById('default-main').addEventListener('input', markDirty);
+// The field itself is what a save reads, so there is nothing in the edit state to change here — the
+// guard is still the first thing that runs, and before the first load it refuses.
+document.getElementById('default-main').addEventListener('input', () => touch({ dirty: true }));
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
 document.getElementById('reset-btn').addEventListener('click', resetSettings);
+
+// --- Update notice ---
+
+document.getElementById('migration-badge').addEventListener('click', () => {
+  // Opening the review is the start of deciding about it
+  review(() => {
+    const panel = document.getElementById('migration-section');
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) panel.scrollIntoView({ block: 'nearest' });
+  });
+});
+
+document.getElementById('migration-actionable').addEventListener('change', (e) => {
+  if (!e.target.classList.contains('mig-check')) return;
+  const { id } = e.target.closest('.mig-item').dataset;
+  const { checked } = e.target;
+  // Choosing which candidates to accept is not a "dirty" edit — nothing to save yet — but it is the
+  // user speaking about this plan, so a snapshot that arrives from sync afterwards must not silently
+  // reset their choices back to the defaults.
+  review(() => {
+    if (checked) state.selection.add(id);
+    else state.selection.delete(id);
+    renderMigration();
+    // Re-opening after a redraw would be surprising: the panel was open, keep it open
+    document.getElementById('migration-section').hidden = false;
+  });
+});
+
+document.getElementById('migration-apply').addEventListener('click', applyMigration);
+
+// Declining is a decision too, and it is the only thing that stops the notice coming back forever
+// for someone who means to keep their commands. It changes no command — only the version, and only
+// once the user presses Save.
+document.getElementById('migration-keep').addEventListener('click', () => {
+  if (!requireLoaded()) return;
+  editAndReview(() => {
+    markReviewed();
+    showStatus('info', 'Marked as reviewed. Press Save to keep your commands as they are.');
+  });
+});
+
+// A save on another machine on this account arrives here as a storage change. Adopting it is what
+// makes the notice disappear everywhere once anyone has dealt with it — but never at the cost of
+// what someone is typing right now.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync') return;
+
+  // One decision instead of a chain of early returns, because each of those returns had to remember
+  // to raise the banner and one of them did not: a change arriving before the first load was dropped
+  // on the theory that the read already in flight would see it, which it need not.
+  const outcome = classifyStorageChange({
+    changes,
+    loaded: state.loaded,
+    // A save or an import holds the form across an await; adopting underneath either replaces what
+    // it is about to write or fill
+    taskInFlight: state.saving || state.importing,
+    // Unsaved work — text typed, or a review being decided — wins over a remote change
+    busy: editsInProgress(),
+    // Our own save arrives here as a change event too. Treating it as another device would warn
+    // about a conflict with ourselves and throw away a review in progress.
+    isOwnWrite: isOurOwnWrite(changes),
+  });
+  if (outcome === 'ignore') return;
+
+  // From here the store has moved under us, and that fact is recorded before anything else is
+  // decided — the save is the authority, but the warning belongs on screen sooner.
+  markStale();
+  // A save in flight captured the store as it was before this change; it cannot be written now,
+  // whatever its own live read comes back with.
+  if (state.saving) state.changedDuringSave = true;
+
+  if (outcome === 'defer') {
+    // Held, not dropped. Merged rather than replaced: two changes arriving before we can act are
+    // two keys that moved, and the adoption that follows has to cover both.
+    state.deferredChange = { ...state.deferredChange, ...changes };
+    return;
+  }
+  if (outcome === 'banner') return; // the mark above is the whole action
+  // loadSettings checks again, after its await, whether the page moved on in the meantime
+  loadSettings();
+});
 
 const importInput = document.getElementById('import-file');
 
@@ -794,10 +1476,22 @@ importInput.addEventListener('change', () => {
 // The manifest uses options_page (a full tab), so the leave-site warning dialog actually appears.
 // Switching to options_ui (embedded) makes the browser suppress it.
 window.addEventListener('beforeunload', (e) => {
-  if (!state.dirty) return;
+  if (!wouldLoseWork()) return;
   e.preventDefault();
   e.returnValue = '';
 });
 
-// Initial load
+// A load that failed is the only thing the user can act on while unloaded, and pressing it starts a
+// fresh attempt — a new generation, so an earlier answer that turns up late cannot win.
+document.getElementById('retry-btn').addEventListener('click', () => {
+  hideLoadFailure();
+  showStatus('info', LOADING_MESSAGE);
+  loadSettings();
+});
+
+// Nothing on this page may act on settings until there are settings. The gate goes up before the
+// first load is even asked for, so the window where the controls are live but the state is empty
+// does not exist.
+updateLoadedGate();
+renderStaleBanner();
 loadSettings();

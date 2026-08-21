@@ -61,7 +61,10 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Issue button → new tab + `{number}` `{owner}` substituted
 - [ ] Extension-icon click → the first button on PR, issue, and repository pages respectively (three distinct branches)
 - [ ] `{main}` substitution via repository/issue buttons on a repo whose default branch is `master` (read from the page; on failure it silently falls back to the global default)
-- [ ] The `z {repo}` jump — without an interactive login shell the zoxide function isn't found and the first step dies
+- [ ] `{cd}` with no base directory set — renders as a bare `z {repo}`, and without an interactive login shell the zoxide function isn't found and the first step dies. Compare the command printed in the tab against the pre-base-directory one: it has to be identical
+- [ ] `{cd}` with a base directory set and a cold zoxide DB (or no zoxide at all) — the fallback lands in the repository and the chain runs to its end
+- [ ] `{cd}` with a base directory set and the repository not cloned yet — the clone clause runs and the rest of the chain continues inside the fresh clone
+- [ ] `{cd}` with a base directory set and `<base>/<repo>` existing but **not** a git repository (an empty folder is enough) — the chain must not settle there: `fatal: not a git repository` appears and the clone clause takes over (empty folder) or stops visibly (non-empty)
 - [ ] A long `&&` chain (create worktree → cd → merge → claude) reaches its final step
 
 **Window selection**
@@ -119,10 +122,12 @@ p=sys.stdin.read().encode()
 r=subprocess.run(["/Users/<you>/Applications/Terminal Checkout.app/Contents/MacOS/terminal-checkout-relay"],
                  input=struct.pack("=I",len(p))+p, capture_output=True)
 n=struct.unpack("=I",r.stdout[:4])[0]; print(r.stdout[4:4+n].decode())' <<< \
-'{"command_template":"z {repo} && claude","variables":{"repo":"terminal-checkout"},"claude_inputs":["!echo ok"]}'
+'{"command_template":"{cd} && claude","variables":{"repo":"terminal-checkout","owner":"dazebug"},"claude_inputs":["!echo ok"]}'
 ```
 
 The payload above is typed (its input is a `!` line), which is the route every shipped preset that schedules claude input takes. To exercise the argv route instead, use a single plain-text input (`["summarise the diff"]`) with a command ending in a bare `claude`.
+
+`{cd}` is filled in by the app from its base directory setting, so the same payload exercises the bare `z` clause or the full `z`→`cd`→`clone` chain depending on what the setup window holds. Sending a `cd` variable of your own is rejected (`Unknown variable: {cd}`), which is the point — the app is the only source for it.
 
 - **New tab and working directory**: compare the set of ttys with attached shells before and after the run (`ps -eo tty,command`), then check the new tty's shell pid with `lsof -a -p <pid> -d cwd` for its working directory. Verifiable without any permission to control the terminal app
 - **Whether claude actually received a *typed* input**: look for `<bash-input>` (shell mode) and `<command-name>` (slash commands) in `~/.claude/projects/<cwd slug>/*.jsonl`. Since round 10 a merged `!` run lands here too — one `<bash-input>` carrying the whole `;`-joined line, banners included. Order and timestamps are recorded without reading the screen

@@ -74,4 +74,12 @@ run_case "owner injection" \
   '{"command_template":"gh api repos/{owner}/{repo}","variables":{"owner":"a`whoami`","repo":"r"}}' \
   'Invalid characters'
 
+# {cd} (the repository entry clause) is a shell fragment the app assembles from its base directory
+# setting. A value the extension sends under that same name is rejected, not merged — allowing the
+# merge would let the extension run an arbitrary shell fragment. The verdict is the same whatever
+# the app's base directory holds, so this case does not depend on machine state.
+run_case "app-provided variable cannot come from the extension" \
+  '{"command_template":"{cd}","variables":{"cd":"rm -rf /"}}' \
+  'Unknown variable: {cd}'
+
 echo "e2e 전체 통과"

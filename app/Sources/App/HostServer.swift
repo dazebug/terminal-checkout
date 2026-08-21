@@ -97,10 +97,12 @@ final class HostServer {
             // 「총」이 사용자가 버튼을 누른 뒤 체감하는 시간과 같은 축에 있다
             let timeline = DeliveryTimeline()
             let response = execQueue.sync {
-                handleRequest(json: json) { resolved in
-                    // 예약된 claude 입력은 전부 claude의 argv로 병합되거나 전부 주입 경로로
-                    // 간다(`prepareRequest`) — 섞이지 않는다. 병합된 쪽은 주입할 것이 없어
-                    // Warp 헬퍼도 손쉬운 사용 권한도 필요 없어진다
+                // Like the terminal choice, the base directory has the app's settings as its
+                // single source — hand over the stored string only; validation, normalization,
+                // and `{cd}` assembly belong to Core (no logic here)
+                handleRequest(json: json, baseDirectory: Settings.baseDirectory) { resolved in
+                    // 예약된 claude 입력의 경로는 `prepareRequest`가 정한다 — 평문 1개는 argv,
+                    // 나머지는 타이핑(연속 `!`는 안전 게이트를 통과할 때만 한 줄로 병합)
                     let prepared = prepareRequest(
                         resolved, claudeIsExecutable: Settings.claudeIsExecutable
                     )
