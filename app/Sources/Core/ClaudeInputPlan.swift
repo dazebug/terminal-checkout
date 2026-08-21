@@ -42,6 +42,148 @@ private enum ClaudeInputKind {
 /// because claude's shell mode already shows the command it ran.
 func claudePromptBanner(for input: String) -> String { "==== \(input) ====" }
 
+/// The banner is printed by **absolute path**. `echo` is a builtin the *previous* body on the
+/// merged line could have redefined (`echo() { :; }`), and a function or an alias cannot take over
+/// a name containing `/` — the same reasoning the pre-execution script used to apply to every
+/// utility it called. `/bin/echo` exists on macOS and Linux; claude's shell mode runs there.
+let claudeBannerCommand = "/bin/echo"
+
+/// The largest merged line we will produce. The Warp helper refuses an injection payload over
+/// 8 KiB in one request (`injectMaxBytes`), and merging is an optimisation, so it gives way well
+/// before that: past this the run is typed input by input, each far below the limit. Nothing is
+/// truncated either way.
+///
+/// The ceiling is **not** about the reflection probe: a 4,000-character line still shows its first
+/// 24 characters in the composer, which grows vertically (measured, 2.1.238).
+let claudeMergedLineLimit = 4096
+
+/// Can this `!` body be joined to another with `; ` without changing what it means?
+///
+/// A **whitelist walk, not a shell parser** — parsing the user's shell is a road this repository
+/// has refused twice. The body passes only if the scan reaches its end seeing nothing that could
+/// reach past it. Everything below was reproduced or is the same class:
+///  - `#` at a word start — comments out the rest of the **merged line**, later banners included
+///  - a lone `&` — `… &; …` is a syntax error, so the whole line runs nothing
+///  - `<<` / `<<-` — a heredoc eats what follows as its content
+///  - a newline, a trailing backslash, an unterminated quote — the join splices two commands
+///  - `(`, `)`, `{`, `}`, a backtick, `$(` — grammar this scan does not model, and a function
+///    definition in one body would still be live when the next banner runs
+///  - an empty body, or one ending in an operator (`;`, `|`, `&`, `\`) — the join yields `;;`
+///    or `; ;`, a parse error, so **nothing on the line runs** (measured in bash and zsh)
+///  - a word starting with `=` — bash shrugs, zsh expands it and aborts the line. claude's `!`
+///    shell **is** zsh-family (measured: a missing command reports `(eval):1: command not found`),
+///    so this one is not hypothetical
+///  - a word that **changes shell state** (`cd`, `export`, `set`, `alias`, `source`, an assignment
+///    …). Measured (Q2b): separate `!` submissions share no state — `!export X=1` then `!echo $X`
+///    prints nothing, because each `!` is a fresh eval — while a merged line does share it. That
+///    is a difference in what runs, not in speed: `["!cd sub", "!rm -rf build"]` removes `./build`
+///    typed separately and `sub/build` merged. Deleting the wrong directory is the failure class
+///    this project treats as blocking, so those runs are typed one at a time.
+///    A quoted command name (`'cd' sub`) is not caught — the scan cannot read inside quotes, and
+///    rejecting every quoted word would break the shipped presets' `--jq '…'`
+///
+/// Anything unrecognised is *rejected*, which costs speed and never correctness: that run is typed
+/// one input at a time, exactly as it was before merging existed.
+/// Words that make a body's meaning depend on — or leak into — the commands around it. Read
+/// anywhere in the body, for the same reason the append scanner reads every word: this scan does
+/// not model command positions, and over-folding only costs a cycle.
+private let claudeStateChangingWords: Set<String> = [
+    "cd", "pushd", "popd", "chdir",
+    "export", "unset", "set", "setopt", "shopt", "declare", "typeset", "local", "readonly",
+    "alias", "unalias", "hash", "trap", "umask", "ulimit",
+    "source", ".", "eval", "exec",
+]
+
+func claudeBodyJoinsSafely(_ body: String) -> Bool {
+    let trimmed = body.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty, let last = trimmed.last, !"&|;\\".contains(last) else { return false }
+    let chars = Array(trimmed)
+    var index = 0
+    var previous: Character?
+    var word = ""
+    var wordIsOpaque = false
+    var stateChanges = false
+
+    func endWord() {
+        defer { word = ""; wordIsOpaque = false }
+        guard !wordIsOpaque, !word.isEmpty else { return }
+        if claudeStateChangingWords.contains(word) || looksLikeAnAssignment(word) {
+            stateChanges = true
+        }
+    }
+    while index < chars.count {
+        let character = chars[index]
+        if character == "'" {
+            var scan = index + 1
+            while scan < chars.count, chars[scan] != "'" { scan += 1 }
+            guard scan < chars.count else { return false } // unterminated
+            index = scan + 1
+            previous = "'"
+            wordIsOpaque = true
+            continue
+        }
+        if character == "\"" {
+            var scan = index + 1
+            while scan < chars.count {
+                if chars[scan] == "\\" {
+                    scan += 2
+                    continue
+                }
+                if chars[scan] == "`" { return false }
+                if chars[scan] == "$", scan + 1 < chars.count, chars[scan + 1] == "(" { return false }
+                if chars[scan] == "\"" { break }
+                scan += 1
+            }
+            guard scan < chars.count else { return false } // unterminated
+            index = scan + 1
+            previous = "\""
+            wordIsOpaque = true
+            continue
+        }
+        switch character {
+        case "\n", "`", "(", ")", "{", "}":
+            return false
+        case "\\":
+            guard index + 1 < chars.count else { return false }
+            index += 2
+            previous = "\\"
+            continue
+        case "#" where previous.map(\.isWhitespace) ?? true:
+            return false
+        case "$" where index + 1 < chars.count && chars[index + 1] == "(":
+            return false
+        case "=" where previous.map(\.isWhitespace) ?? true:
+            return false // zsh expands a word starting with `=` and aborts the line
+        case "<" where index + 1 < chars.count && chars[index + 1] == "<":
+            return false
+        case "&":
+            var run = 0
+            while index + run < chars.count, chars[index + run] == "&" { run += 1 }
+            guard run == 2 else { return false } // `&&` joins; a single `&` backgrounds
+            endWord() // `git fetch && cd ..` — the word after the operator is a command too
+            index += run
+            previous = "&"
+            continue
+        case ";", "|":
+            endWord()
+            index += 1
+            previous = character
+            continue
+        default:
+            break
+        }
+        if character.isWhitespace {
+            endWord()
+        } else {
+            word.append(character)
+        }
+        index += 1
+        previous = character
+    }
+    endWord()
+    return !stateChanges
+}
+
 /// Everything that gets typed, in order, with **consecutive `!` inputs merged into one line**.
 ///
 /// The merged shape is `!echo '<banner>'; body; echo '<banner>'; body`. Two things about it are
@@ -62,11 +204,18 @@ public func claudeTypedInputs(_ inputs: [String]) -> [String] {
         defer { run = [] }
         guard !run.isEmpty else { return }
         guard run.count > 1 else { return typed.append(run[0]) }
-        let parts = run.flatMap { input -> [String] in
-            let body = String(input.dropFirst()).trimmingCharacters(in: .whitespaces)
-            return ["echo \(shellSingleQuoted(claudePromptBanner(for: input)))", body]
+        let bodies = run.map { String($0.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        // **Merge only what provably joins.** One body that reaches past its own end — a comment,
+        // a trailing `&`, a heredoc — takes the whole merged line with it, and the button still
+        // reports success because delivery is asynchronous (reproduced). When in doubt, type them
+        // one at a time: slower, and exactly what the user wrote
+        guard bodies.allSatisfy(claudeBodyJoinsSafely) else { return typed.append(contentsOf: run) }
+        let parts = zip(run, bodies).flatMap { input, body in
+            ["\(claudeBannerCommand) \(shellSingleQuoted(claudePromptBanner(for: input)))", body]
         }
-        typed.append("!" + parts.joined(separator: "; "))
+        let merged = "!" + parts.joined(separator: "; ")
+        guard merged.utf8.count <= claudeMergedLineLimit else { return typed.append(contentsOf: run) }
+        typed.append(merged)
     }
 
     for input in inputs {
@@ -84,16 +233,22 @@ public func claudeTypedInputs(_ inputs: [String]) -> [String] {
 
 /// The opening message for claude's argv, or nil when there is none.
 ///
-/// Only when **every** input is plain text. Plain text is just a message, so argv is exactly right
-/// for it and saves the whole typing dance — but mixing argv with typing in one session is the
-/// combination round 4 removed on a measurement: submitting the argv message clears the input box,
-/// and it renders 2.06∼3.41s after start while "claude accepts input" is true from 0.1s, so
-/// anything typed in between is wiped (3/3). No gate over that race survived review. Until one
-/// does, argv is used only when nothing has to be typed alongside it.
+/// **Exactly one** plain-text input, and nothing else in the list.
+///
+/// Two reasons, and they are different:
+///  - *Nothing else in the list*: mixing argv with typing in one session is the combination round 4
+///    removed on a measurement — submitting the argv message clears the input box, and it renders
+///    2.06∼3.41s after start while "claude accepts input" is true from 0.1s, so anything typed in
+///    between is wiped (3/3). No gate over that race survived review.
+///  - *Exactly one*: several plain inputs used to be joined with blank lines, and the newline guard
+///    in `prepareRequest` then rejected the result — so they could never ride argv anyway; the join
+///    was dead code wearing a feature's clothes (round 11). Carrying a newline through would mean
+///    shell-specific quoting (`$'…'` is not POSIX) and a new way to be wrong about the pane's
+///    shell, to save typing on a shape the shipped presets do not have. They are typed instead.
 public func claudeArgvOpeningMessage(_ inputs: [String]) -> String? {
-    guard !inputs.isEmpty,
-          inputs.allSatisfy({ ClaudeInputKind($0) == .interactive }) else { return nil }
-    return inputs.joined(separator: "\n\n")
+    guard inputs.count == 1, let only = inputs.first,
+          ClaudeInputKind(only) == .interactive else { return nil }
+    return only
 }
 
 // MARK: - Can a prompt be appended to the command?
@@ -369,7 +524,6 @@ public func shellCanRunAppendedPrompt(_ shellPath: String) -> Bool {
 let claudePromptDirectoryPrefix = "tc-prompt-"
 let claudePromptTokenLength = 8
 let claudePromptScriptName = "prompt.sh"
-let claudePromptContextName = "context.txt"
 /// Marked a context an older build had told claude to read during the session, which is why such
 /// a directory gets a much longer grace period from the sweep
 let claudePromptHandoffName = "handed-to-claude"

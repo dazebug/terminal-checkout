@@ -117,7 +117,7 @@ The default command assumes the PR branch exists on `origin` — i.e. a same-rep
 
 ### Issue pages
 
-A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory with these lines already in its opening message — a claude input starting with `!` is run in the shell, so the `gh` output lands directly in claude's context:
+A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory and then types these lines into it — a claude input starting with `!` runs in claude's shell mode, so `gh` really runs in that session and its output is there as command output. The three of them go in as one merged line:
 
 ```bash
 !gh issue view {number}                       # body and metadata
@@ -138,7 +138,8 @@ If the command runs `claude`, the options page lets you schedule up to 5 inputs 
 
 **`!` inputs are typed, and a run of them is typed as one line.** A `!` line only means "run this in the shell" to claude's own input box: passed as an argument at startup it arrives as ordinary text, and claude then decides to run it with its Bash tool — which can stop for a permission prompt and costs a turn (measured). Typed, it runs as a command and stays in the session as one.
 
-- **Consecutive `!` inputs are merged into a single line** joined with `;`, each preceded by an `echo '==== !your command ===='` banner so the outputs can be told apart. Three inputs are then one type-and-submit cycle instead of three. `;` and not `&&`: separate `!` lines never stopped each other, and the merge keeps that — a failing command does not swallow the ones after it.
+- **Consecutive `!` inputs are merged into a single line** joined with `;`, each preceded by a banner so the outputs can be told apart. Three inputs are then one type-and-submit cycle instead of three. `;` and not `&&`: separate `!` lines never stopped each other, and the merge keeps that — a failing command does not swallow the ones after it.
+- **Merging is skipped when it would change what runs.** Submitted separately, each `!` line gets a fresh shell — `!export TOKEN=x` does not carry into the next input — but a merged line shares one. So a run containing anything that changes shell state (`cd`, `export`, `source`, `set`, `VAR=…`) is typed one input at a time, as is a run whose syntax could run past its own end (a `#` comment, a trailing `&`, a heredoc, an unterminated quote). It costs a cycle and keeps `["!cd sub", "!rm -rf build"]` deleting the directory you meant.
 - What runs is exactly the text you wrote, in the directory claude is running in, through claude's shell mode — so it appears in the session as a command, with its output, the way it would if you had typed it.
 - A plain-text input, a slash command and a `#` memory line are each typed on their own; a run of `!` ends at the first input that is not one.
 - An input containing a NUL byte is rejected outright rather than delivered altered — a tty cannot carry it.
@@ -152,6 +153,15 @@ If the command runs `claude`, the options page lets you schedule up to 5 inputs 
 - Your login shell has to be POSIX-family (`sh`, `bash`, `zsh`, `dash`, `ksh`…), and the message must be single-line: csh has no `$( )`-style quoting rules the append relies on, and a newline would end the command line early in both iTerm2 and WezTerm.
 - **Mixing is not allowed.** If the list has plain text *and* anything else, everything is typed. Sending an opening message and typing into the same session races claude's startup: submitting that message clears the input box 2–3 seconds in, and anything typed before then is wiped (measured).
 - What the app still cannot see, because it needs your shell and filesystem at run time: a **`PATH` that resolves `claude` to a different program**, and a **`command` function or alias in your rc**, which would capture the invocation above.
+
+**What typing costs, and what the app will and won't tell you.** Typed delivery is the normal path now, so it is worth knowing what it does to the session:
+
+- The app waits up to **2 minutes** for claude to be ready in the new tab, then gives up and says so in its log. It never types into the shell: it waits for claude to be the foreground process with the tty in raw mode first.
+- Before each input it types a short random marker, watches it appear, clears the box, and watches it go — that is how it knows the screen it reads is this pane, that what appears is really in the input box, and that the terminal's Ctrl+U was actually acted on. Then it types the input once and submits it.
+- Those clears mean **a draft you start typing while delivery is running is erased**: one Ctrl+U per input, plus one when delivery ends. That is deliberate — the alternative is our line sitting in your box waiting for your Enter, and with a `!` line that Enter runs a command.
+- Delivery holds while claude's trust prompt for a first-time folder is up. Accept within about **15 seconds** and it continues; take longer and it gives up from that input on.
+- The log says **sent**, not delivered. Whether claude turned a submitted line into a message is not something anything outside the TUI can establish, so the app does not claim it. If a return key never took effect, that input is lost and the log still counts it as sent.
+- **On Warp, delivery only runs while you're looking at that tab** (see below).
 
 Known limits:
 

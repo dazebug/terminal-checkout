@@ -24,9 +24,21 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 
 /// 입력을 제출하는 키. LF가 아니라 CR이어야 하는 이유는 `submitClaudeInputs`에 있다.
 let claudeSubmitKey = "\r"
-/// 입력창을 비우는 키(Ctrl+U). pane 증명 표식 지우기·재타이핑 전 클리어·전달 중단 후 정리가
-/// 모두 같은 키를 쓴다.
-let claudeClearInputKey = "\u{15}"
+/// 입력창을 비우는 **시퀀스**: Ctrl+U(0x15) 다음 Backspace(0x7F). 표식 지우기·입력 전 클리어·
+/// 전달 종료 정리가 전부 이 한 상수를 쓰므로, 여기만 고치면 모든 자리에 적용된다.
+///
+/// **Backspace가 왜 붙는가 — 실측(2.1.238, pty).** Ctrl+U는 claude의 `!` 셸 모드를 벗어나지
+/// 못한다: `!text`에서 Ctrl+U를 보내면 글자만 지워지고 **`!`가 남는다.** 화면상으로는 빈
+/// 입력창처럼 보여 사라짐 확인도 통과하는데, 그 뒤에 친 평문이 **셸 명령으로 제출·실행됐다**
+/// (`command not found: tcq3hello`). Ctrl+U 뒤 Backspace 한 번이 그 `!`를 지우고, 그다음 평문은
+/// 일반 메시지로 제출된다(같은 실측). 빈 입력창에 Backspace를 여러 번 보내도 부작용은 없었다.
+///
+/// **순서가 중요하다**: 글자가 남아 있는 입력창에서 Backspace는 마지막 한 글자만 지우므로,
+/// 반드시 Ctrl+U로 비운 **뒤에** 와야 한다.
+///
+/// 측정 범위는 `!`뿐이다. `/`·`#` 프리픽스도 한 글자라 같은 시퀀스로 지워질 것으로 보지만,
+/// 그것은 추정이고 재지 않았다.
+let claudeClearInputKey = "\u{15}\u{7F}"
 
 /// `ps -t <tty> -o pid=,stat=,comm=` 출력에서 포그라운드 프로세스 그룹(stat에 `+`)인
 /// claude의 PID를 돌려준다. 없으면 nil. 셸이 프롬프트에 있으면 셸 자신이 `+`라서 nil이 된다 —
@@ -99,6 +111,10 @@ public func paneProofToken() -> String {
 }
 
 /// 화면 반영 확인용 프로브. 긴 입력은 화면에서 어딘가 잘리거나 접히므로 앞부분만 쓴다.
+///
+/// **앞 24자로 충분한가 — 실측(2.1.238, pty).** 4,000자짜리 한 줄을 입력창에 넣어도 composer가
+/// 세로로 자라며 전체를 보여 주고, 앞 24자가 화면에 남는다. 병합된 `!` 줄(프리셋 기준 ∼300자)은
+/// 그보다 한참 짧다. 그래서 프로브를 뒤쪽 조각으로 바꾸거나 병합 상한을 낮출 이유가 없다.
 public func claudeInputProbe(_ input: String) -> String {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     return String(trimmed.prefix(24))

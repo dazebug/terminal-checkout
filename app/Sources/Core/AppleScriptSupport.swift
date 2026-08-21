@@ -62,8 +62,12 @@ public func iTermWriteToSessionScript(sessionID: String, text: String, submit: B
     """
 }
 
-/// Ctrl+U(0x15)를 세션에 보내 입력창을 비우는 AppleScript — 재타이핑 전 잔여 제거용.
-/// 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 character id로 만든다.
+/// 입력창을 비우는 AppleScript — Ctrl+U(0x15) **다음 Backspace(0x7F)**를 보낸다.
+/// 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 character id로 만들고, 두 글자를 한 번의
+/// `write text`로 이어 보낸다(사이에 개행이 끼면 안 된다).
+///
+/// Backspace가 붙는 이유는 `claudeClearInputKey`에 있다 — Ctrl+U만으로는 claude의 `!` 셸 모드가
+/// 남고, 그 뒤에 친 평문이 셸 명령으로 실행된다(실측).
 public func iTermClearInputScript(sessionID: String) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     return """
@@ -72,7 +76,7 @@ public func iTermClearInputScript(sessionID: String) -> String {
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if (id of s) is "\(escapedID)" then
-                        tell s to write text (character id 21) newline NO
+                        tell s to write text ((character id 21) & (character id 127)) newline NO
                         return "ok"
                     end if
                 end repeat

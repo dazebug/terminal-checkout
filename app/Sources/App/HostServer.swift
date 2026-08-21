@@ -101,19 +101,17 @@ final class HostServer {
                     let prepared = prepareRequest(
                         resolved, claudeIsExecutable: Settings.claudeIsExecutable
                     )
-                    do {
-                        // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
-                        let handle = try runInTerminal(
-                            command: prepared.command, terminal: Settings.terminal,
-                            injectsClaudeInput: !prepared.claudeInputs.isEmpty
-                        )
-                        if !prepared.claudeInputs.isEmpty {
-                            // 전달 감시는 claude 기동 대기와 입력별 재시도가 모두 블로킹이라
-                            // 수 분이 걸릴 수 있다 — 직렬 execQueue와 Chrome 응답을 막지 않도록
-                            // 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
-                            DispatchQueue.global(qos: .utility).async {
-                                deliverClaudeInputs(prepared.claudeInputs, to: handle)
-                            }
+                    // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
+                    let handle = try runInTerminal(
+                        command: prepared.command, terminal: Settings.terminal,
+                        injectsClaudeInput: !prepared.claudeInputs.isEmpty
+                    )
+                    if !prepared.claudeInputs.isEmpty {
+                        // 전달 감시는 claude 기동 대기와 입력별 재시도가 모두 블로킹이라
+                        // 수 분이 걸릴 수 있다 — 직렬 execQueue와 Chrome 응답을 막지 않도록
+                        // 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
+                        DispatchQueue.global(qos: .utility).async {
+                            deliverClaudeInputs(prepared.claudeInputs, to: handle)
                         }
                     }
                 }

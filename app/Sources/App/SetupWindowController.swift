@@ -906,6 +906,7 @@ func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?
 /// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
 func warpAccessibilityHelpText() -> String {
     "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 claude 입력이 "
-        + "예약된 버튼은 탭을 열지 않고 거절됩니다(입력이 전부 병합되는 버튼과 claude 입력이 없는 "
-        + "버튼은 그대로 동작합니다). 전달 중에는 그 탭을 보고 있어야 합니다."
+        + "예약된 버튼은 탭을 열지 않고 거절됩니다 — **기본 프리셋 3종이 전부 여기 해당합니다**"
+        + "(`!` 입력은 claude 셸 모드에 타이핑해야 실행되기 때문입니다). claude 입력이 없는 버튼과 "
+        + "평문 한 줄만 예약한 버튼은 권한 없이 그대로 동작합니다. 전달 중에는 그 탭을 보고 있어야 합니다."
 }

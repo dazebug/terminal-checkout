@@ -67,7 +67,8 @@ public enum ClaudeInputBlocker: Equatable, CaseIterable {
 
 /// Must this run be rejected **before it is even attempted**? `injectsClaudeInput` is not "were
 /// claude inputs scheduled" but **"will anything be typed into the session"**
-/// (`PreparedRequest.claudeInputs`) — every shipped preset merges completely and never reaches this.
+/// (`PreparedRequest.claudeInputs`). **Every shipped preset reaches this** since round 10: their
+/// inputs are all `!`, and a `!` only runs as a command when it is typed into claude's shell mode.
 ///
 /// The state probes are `@autoclosure` because this runs inside the execQueue that holds up the
 /// Chrome response: when the answer cannot depend on state (nothing to type, not Warp) no TCC or
