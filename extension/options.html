@@ -197,11 +197,12 @@
       min-height: 3.1em;
     }
 
-    /* claude input queue: the inputs typed, in order, into the claude session the command starts */
+    /* claude input queue: the inputs handed, in order, to the claude session the command starts */
     .claude-queue { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
     .claude-queue-head { font: 600 11.5px var(--mono); color: var(--dim); margin-bottom: 9px; }
     .claude-queue-head .ret { color: var(--accent); }
     .help-inline { font: 400 11px var(--ui); color: var(--faint); }
+    .claude-hint { font: 11px/1.6 var(--ui); color: var(--faint); margin: 0 0 9px 32px; }
     .claude-warn { font: 11px var(--ui); color: var(--warn); margin: 0 0 9px 32px; }
     .claude-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
     .ci-marker { font: 11px var(--mono); color: var(--faint); width: 24px; text-align: right; flex: none; }
@@ -322,7 +323,7 @@
     <h2 class="section-prompt"><span class="prompt">❯</span> issueButtons <span class="section-where">— Issue pages</span></h2>
     <p class="help">Buttons that sit next to the status badge (Open/Closed) on an issue page (up to 3). They are configured separately from the PR buttons, and on an issue page clicking the extension icon runs the first button here. Reordering (drag <code>⠿</code>, or <code>↑</code> <code>↓</code>) and duplicating work just like they do for PR buttons.</p>
     <p class="help">Available variables: <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable.</p>
-    <p class="help">A claude input that starts with <code>!</code> is handed to the shell by claude — the default preset uses <code>gh</code> to feed claude the issue body, its comments, and the numbers of related issues and PRs.</p>
+    <p class="help">A claude input that starts with <code>!</code> is run in the shell, in the directory claude is about to start in, and its output goes into claude's opening message — the default preset uses <code>gh</code> to feed claude the issue body, its comments, and the numbers of related issues and PRs.</p>
     <div id="issue-buttons"></div>
     <div style="margin-top:10px">
       <button class="btn-secondary" id="issue-add">+ Add Button</button>

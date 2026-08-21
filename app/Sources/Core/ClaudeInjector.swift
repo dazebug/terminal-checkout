@@ -137,6 +137,35 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
     return count
 }
 
+/// argv 첫 메시지가 화면에 그려졌는가. 마커는 요청 고유라 **개수 비교가 필요 없다** — 이 요청
+/// 전에는 어느 화면에도 존재할 수 없는 문자열이므로 있음/없음으로 충분하다(그래서 Warp에서도
+/// 이 확인 자체가 그 순간의 pane 증명이 된다).
+/// 공백을 지우고 비교하는 이유는 반영 확인과 같다: TUI가 터미널 폭에서 줄바꿈한다.
+public func screenShowsArgvPrompt(screen: String?, marker: String) -> Bool {
+    guard let screen else { return false }
+    let needle = marker.filter { !$0.isWhitespace }
+    guard !needle.isEmpty else { return false }
+    return screen.filter { !$0.isWhitespace }.contains(needle)
+}
+
+/// argv 첫 메시지가 화면에 렌더될 때까지 기다린다. **바이트를 하나도 내보내지 않는다** —
+/// 렌더 전에 친 것은 argv 제출의 입력창 clear에 지워지기 때문이고(실측), 아무것도 보내지
+/// 않았으니 실패로 끝나도 지울 조각이 없다.
+///
+/// 세션 동일성을 루프 안에서 재확인하지 않는 이유: 마커가 요청 고유라 **다른 세션은 애초에
+/// 이 조건을 만족시킬 수 없다.** `ps`/`stty`가 한 번 튀었다고 포기하면 기다리면 풀릴 상태
+/// (사용자가 다른 탭을 보는 중, 신뢰 다이얼로그가 떠 있는 중)에서 꼬리를 버리게 된다.
+/// 게이트를 지난 뒤 첫 입력 앞에서 `submitClaudeInputs`가 어차피 `confirmSession`을 부른다.
+func waitUntilArgvPromptRendered(
+    marker: String, io: ClaudeSessionIO, pollInterval: TimeInterval, timeout: TimeInterval
+) -> Bool {
+    for _ in 0..<max(1, Int(timeout / pollInterval)) {
+        if screenShowsArgvPrompt(screen: io.screenText(), marker: marker) { return true }
+        io.wait(pollInterval)
+    }
+    return false
+}
+
 /// 세션 입출력 — 실제로는 osascript·wezterm cli 호출이지만, 전달 순서와 실패 복구 판정을
 /// 프로세스 없이 검증할 수 있도록 클로저로 분리한다.
 public struct ClaudeSessionIO {
@@ -243,11 +272,28 @@ struct InputBoxOwnership {
 /// 입력창에 큐잉된다.
 /// 입력마다 세션 동일성을 먼저 확인한다 — 그 사이 원래 세션이 죽고 같은 tty에 새 claude가
 /// 떴다면 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 셸 명령까지 실행된다.
+///
+/// `awaitingArgvMarker`가 있으면 **첫 입력을 치기 전에 그 마커가 화면에 뜨는 것을 먼저 본다.**
+/// 접두사를 argv로 실어 보낸 요청에서 claude는 뜨자마자 그 메시지를 제출하는데, 그 제출이
+/// 입력창을 비운다 — 그 전에 친 꼬리는 통째로 지워지고, 운이 나쁘면 [반영 확인 통과 → clear →
+/// CR] 순서가 되어 빈 CR만 나간다(실측). 준비 판정(포그라운드+raw 모드)은 이 시점보다 한참
+/// 이르러 아무것도 막지 못한다.
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
+    awaitingArgvMarker: String? = nil, argvRenderTimeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
 ) -> Int {
+    if let marker = awaitingArgvMarker, !waitUntilArgvPromptRendered(
+        marker: marker, io: io, pollInterval: 0.5, timeout: argvRenderTimeout
+    ) {
+        // 기존 "claude가 입력을 받을 상태가 되지 않음"과 같은 결로 끝낸다 — 조용히 치지 않는다.
+        // 한 바이트도 안 나갔으므로 정리(Ctrl+U)도 하지 않는다: 입력창에 있는 것은 사용자 것이다
+        checkoutLog(
+            "\(Int(argvRenderTimeout))초 내에 argv 첫 메시지가 화면에 뜨지 않아 꼬리 입력 \(inputs.count)개를 보내지 않음"
+        )
+        return 0
+    }
     // 나가는 바이트를 세어 "입력창에 우리 조각이 남아 있을 수 있는가"를 따라간다.
     // 추적을 이 함수 안에 두는 이유는 **실패 종료 경로가 여럿**이기 때문이다(입력 사이 세션
     // 확인 실패·재시도 소진). 정리를 바깥에 두면 그중 하나만 정리에 닿는다
@@ -415,8 +461,10 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// 타임아웃 내에 claude가 준비되지 않으면 아무것도 보내지 않고 포기한다(로그만).
 /// 기동 대기(기본 2분)와 입력별 재시도가 모두 블로킹이라 전체로는 수 분이 걸릴 수 있다 —
 /// 요청 처리 큐가 아닌 백그라운드 큐에서 불러야 한다.
+/// `awaitingArgvMarker`는 접두사를 argv로 보낸 요청에서만 준다 — `submitClaudeInputs` 참고.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
+    awaitingArgvMarker: String? = nil,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15
 ) {
@@ -480,7 +528,10 @@ public func deliverClaudeInputs(
         // Warp만 true — 접근성으로 읽히는 것은 "포커스된 pane"이라 우리 것이라는 보장이 없다
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
-    let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
+    let submitted = submitClaudeInputs(
+        inputs, io: io, awaitingArgvMarker: awaitingArgvMarker,
+        betweenInputTimeout: betweenInputTimeout
+    )
     checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
     // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —
     // 정리 조건은 권한이 아니라 "다 끝내지 못했다"이기 때문이다. 여기서는 진단만 남긴다:

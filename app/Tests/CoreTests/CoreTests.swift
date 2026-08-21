@@ -424,6 +424,547 @@ final class TerminalIdentifierTests: XCTestCase {
     }
 }
 
+// MARK: - claude 입력 경계 판정 (병합 접두사 / 주입 꼬리)
+// 접두사는 claude argv의 첫 메시지로 합쳐지고, 꼬리는 기존 주입 경로로 간다. 경계는 둘뿐이다:
+// ①슬래시 명령(단독 메시지라야 명령으로 해석된다 — 배너가 앞에 붙으면 불활성 텍스트가 된다)
+// ②대화형 입력 뒤에 오는 `!`(그 출력은 다음 지시문용 컨텍스트라 첫 메시지로 끌어올리면 앞
+// 지시문이 보는 맥락이 달라진다). 그 밖의 전환(명령형→명령형, 대화형→대화형, 명령형→대화형)은
+// 모두 병합한다 — 응답 N회가 1회로 합쳐지는 의미 변화를 사용자가 선택했다.
+
+final class ClaudeInputPlanTests: XCTestCase {
+    /// 배포 프리셋의 claude 입력은 전부 `!`다 — 꼬리가 공집합이라야 헬퍼·접근성이 불필요해진다
+    func testShippedPresetInputsAllMergeWithNoTail() {
+        let reviewPR = ["!gh pr view 42 --comments", "!gh pr diff 42"]
+        let readIssue = [
+            "!gh issue view 42", "!gh issue view 42 --comments",
+            "!gh api repos/o/r/issues/42/timeline --jq '[.[]|select(.event==\"cross-referenced\")]'",
+        ]
+        let startWork = ["!gh issue view 42 --comments"]
+        for inputs in [reviewPR, readIssue, startWork] {
+            let plan = claudeInputPlan(inputs)
+            XCTAssertEqual(plan.prefix, inputs)
+            XCTAssertEqual(plan.tail, [])
+        }
+    }
+
+    func testSlashCommandStartsTheTail() {
+        let plan = claudeInputPlan(["!gh pr view 1", "/review", "!gh pr diff 1"])
+        XCTAssertEqual(plan.prefix, ["!gh pr view 1"])
+        XCTAssertEqual(plan.tail, ["/review", "!gh pr diff 1"])
+    }
+
+    /// 슬래시가 첫 입력이면 접두사가 공집합 — 전부 주입(현행 동작)으로 간다
+    func testSlashCommandAtTheHeadLeavesAnEmptyPrefix() {
+        let plan = claudeInputPlan(["/review", "!gh pr diff 1"])
+        XCTAssertEqual(plan.prefix, [])
+        XCTAssertEqual(plan.tail, ["/review", "!gh pr diff 1"])
+    }
+
+    /// 경계 ②: 대화형 → `!` 전환에서만 끊는다
+    func testShellCommandAfterInteractiveStartsTheTail() {
+        let plan = claudeInputPlan(["!gh issue view 1", "설계 정리해줘", "!gh pr diff 1", "테스트 추가해줘"])
+        XCTAssertEqual(plan.prefix, ["!gh issue view 1", "설계 정리해줘"])
+        XCTAssertEqual(plan.tail, ["!gh pr diff 1", "테스트 추가해줘"])
+    }
+
+    /// 대화형 연속은 병합한다 — 사용자 결정
+    func testConsecutiveInteractiveInputsAllMerge() {
+        let inputs = ["!gh issue view 1", "설계 정리해줘", "그다음 테스트 추가해줘"]
+        let plan = claudeInputPlan(inputs)
+        XCTAssertEqual(plan.prefix, inputs)
+        XCTAssertEqual(plan.tail, [])
+    }
+
+    /// 명령형 → 대화형 전환은 경계가 아니다
+    func testInteractiveAfterShellCommandMerges() {
+        let inputs = ["!gh pr diff 1", "리뷰해줘"]
+        XCTAssertEqual(claudeInputPlan(inputs).prefix, inputs)
+    }
+
+    func testEmptyInputsGiveAnEmptyPlan() {
+        let plan = claudeInputPlan([])
+        XCTAssertEqual(plan.prefix, [])
+        XCTAssertEqual(plan.tail, [])
+    }
+
+    /// 불변식: 접두사와 꼬리를 이어붙이면 원본이다 — 유실도 중복도 없다.
+    /// 경계 규칙이 어떻게 바뀌어도 이것은 깨지면 안 되므로 무작위 배열로 훑는다.
+    func testPrefixAndTailAlwaysReconstructTheInput() {
+        var seed: UInt64 = 0x5DEE_CE66_D
+        func next(_ n: Int) -> Int {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((seed >> 33) % UInt64(n))
+        }
+        let samples = ["!gh pr view 1", "/review", "설계 정리해줘", "!echo hi", "/compact", "테스트 추가"]
+        for _ in 0..<400 {
+            let inputs = (0..<next(6)).map { _ in samples[next(samples.count)] }
+            let plan = claudeInputPlan(inputs)
+            XCTAssertEqual(plan.prefix + plan.tail, inputs, "분해가 원본을 잃었다: \(inputs)")
+        }
+    }
+}
+
+// MARK: - 명령 꼬리에 프롬프트를 붙일 수 있는가
+// 붙이는 것은 **마지막 simple command의 인자 하나**뿐이라 제어 흐름을 만들 수 없다. 그래서 오탐의
+// 최악은 "프롬프트가 조용히 누락"이지 "다른 명령이 실행"이 아니다 — 판정이 흔들리면 기본값은
+// 주입 폴백(오늘의 동작)이어야 한다.
+
+final class ClaudeCommandTailTests: XCTestCase {
+    func testTrailingClaudeMatches() {
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("z remy && claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("z remy && claude  "))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && { git checkout b || cd ../r-b; } && claude"
+        ))
+    }
+
+    /// 플래그가 하나라도 있으면 폴백이다. 값을 선택적으로 먹는 플래그가 있어서 — 실측:
+    /// `claude -p --resume "Reply with exactly: OK"` → `--resume ... Provided value
+    /// "Reply with exactly: OK" is not a UUID`. 덧붙인 프롬프트가 `--resume`의 **값**으로
+    /// 삼켜졌다. 앱은 claude의 플래그 표를 갖고 있지 않고 그 표는 버전마다 바뀌므로,
+    /// 어떤 플래그가 뒤 인자를 먹는지 판정할 방법이 없다 → 전부 폴백(오늘의 동작)
+    func testAnyFlagAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude --resume"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude -c"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude --model=sonnet --resume"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude --model sonnet"))
+    }
+
+    func testClaudeNotAtACommandPositionDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("git commit -m claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z claude-code"))
+    }
+
+    func testQuotedClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo 'claude'"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo \"claude\""))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo '&& claude'"))
+    }
+
+    func testPipeOrRedirectDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat f | claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude > out.txt"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude 2>&1"))
+    }
+
+    func testCommandContinuingAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude && echo done"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude; echo done"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude &"))
+    }
+
+    /// 주석 뒤에 붙이면 추가분까지 주석이 된다 — 조용한 누락이라 폴백으로 보낸다
+    func testCommentedClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude # 나중에"))
+    }
+
+    /// 이미 positional 프롬프트가 있으면 두 개가 되어 뜻이 갈린다
+    func testExistingPositionalPromptDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude 'do it'"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude fix-it"))
+    }
+
+    func testEmptyOrTrailingSeparatorDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(""))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && "))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude;"))
+    }
+}
+
+// MARK: - 프롬프트 조립 스크립트 (pane에서 도는 프로그램)
+// 앱이 만드는 것은 **스크립트 텍스트**다. 리터럴(배너·대화형 텍스트)은 전부 앱이 단일 인용해
+// `printf`의 인자로 넣고, `!` 본문도 단일 인용해 `sh -c`에 넘긴다 — 사용자 텍스트가 우리 스크립트의
+// **문법**이 되는 자리는 없다(본문의 문법 오류도 그 `sh -c` 안에 갇힌다). 절단은 하지 않는다.
+
+final class ClaudePromptScriptTests: XCTestCase {
+    private let ctx = "/tmp/tc-context-abcdef.txt"
+
+    func testShellInputBecomesBannerThenExecution() {
+        let body = claudePromptScriptBody(prefix: ["!gh pr view 42"], contextPath: ctx)
+        XCTAssertTrue(body.contains("'==== !gh pr view 42 ===='"), body)
+        XCTAssertTrue(body.contains("sh -c 'gh pr view 42' 2>&1"), body)
+    }
+
+    /// 대화형 입력은 **실행되지 않는다** — 리터럴로만 나가야 한다
+    func testInteractiveInputIsEmittedAsALiteralNeverExecuted() {
+        let evil = "rm -rf ~/important; echo pwned"
+        let body = claudePromptScriptBody(prefix: [evil], contextPath: ctx)
+        XCTAssertTrue(body.contains("printf '%s\\n' 'rm -rf ~/important; echo pwned'"), body)
+        XCTAssertFalse(body.contains("sh -c 'rm -rf"), body)
+    }
+
+    func testSingleQuotesInInputsAreEscaped() {
+        let body = claudePromptScriptBody(prefix: ["!echo 'hi'"], contextPath: ctx)
+        XCTAssertTrue(body.contains(#"'echo '\''hi'\'''"#), body)
+    }
+
+    /// 절단 금지: 큰 입력도 그대로 실린다
+    func testLongInputIsNotTruncated() {
+        let long = String(repeating: "가", count: 40_000)
+        let body = claudePromptScriptBody(prefix: [long], contextPath: ctx)
+        XCTAssertTrue(body.contains(long))
+    }
+
+    /// 한도를 넘으면 컨텍스트를 파일로 남기고 argv에는 포인터만 — 절단도 유실도 없다
+    func testScriptFallsBackToAFilePointerWhenOverBudget() {
+        let body = claudePromptScriptBody(prefix: ["!gh pr diff 1"], contextPath: ctx)
+        XCTAssertTrue(body.contains(ctx), body)
+        XCTAssertTrue(body.contains("getconf ARG_MAX"), body)
+        XCTAssertTrue(body.contains("env | wc -c"), body)
+        XCTAssertTrue(body.contains("cat \"$TC_CTX\""), body)
+    }
+
+    /// 꼬리가 있을 때만 마커를 싣는다 — 프리셋(꼬리 공집합)의 컨텍스트를 오염시키지 않는다
+    func testMarkerIsAbsentUnlessAsked() {
+        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx)
+        XCTAssertFalse(body.contains("terminal-checkout tc-"), body)
+    }
+
+    /// 마커는 컨텍스트 파일이 아니라 **stdout으로 직접** 나가야 한다 — 한도 초과로 본문이
+    /// 파일에 남는 갈래에서도 argv에 실려야 게이트가 볼 수 있다
+    func testMarkerGoesToStdoutNotIntoTheContextFile() {
+        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
+        let body = claudePromptScriptBody(prefix: ["!echo hi"], contextPath: ctx, marker: marker)
+        let markerLine = "printf '%s\\n' \(shellSingleQuoted(marker))"
+        let markerAt = try? XCTUnwrap(body.range(of: markerLine))
+        let blockEndAt = try? XCTUnwrap(body.range(of: "} > \"$TC_CTX\""))
+        XCTAssertNotNil(markerAt)
+        XCTAssertTrue((markerAt?.lowerBound ?? body.startIndex)
+            > (blockEndAt?.lowerBound ?? body.endIndex), body)
+    }
+
+    /// 회수는 남의 파일을 지우면 안 된다 — 이름 판정이 마지막 방어선이다
+    func testOnlyOurGeneratedNamesAreReclaimable() {
+        XCTAssertTrue(claudePromptFileIsOurs(name: "tc-prompt-a1b2c3d4.sh"))
+        XCTAssertTrue(claudePromptFileIsOurs(name: "tc-context-a1b2c3d4.txt"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-.sh"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-not-hex.sh"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-prompt-a1b2c3d4.txt"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "tc-context-a1b2c3d4.sh"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "important.sh"))
+        XCTAssertFalse(claudePromptFileIsOurs(name: "tcw-a1b2c3d4.sock"))
+    }
+
+    func testAppendedSuffixQuotesTheScriptPathAndSelfCleans() {
+        let command = appendedPromptCommand("z remy && claude", scriptPath: "/tmp/tc-prompt-ab'cd.sh")
+        XCTAssertTrue(command.hasPrefix("z remy && claude "), command)
+        XCTAssertTrue(command.contains(#"'/tmp/tc-prompt-ab'\''cd.sh'"#), command)
+        XCTAssertTrue(command.contains("command rm -f --"), command)
+    }
+}
+
+// MARK: - 조립 스크립트를 실제로 실행해 본다
+// 문자열 오라클만으로는 셸 문법 결함(따옴표 짝, 산술 치환, 리다이렉트)이 통과한다 — 이 자리에서
+// 잘못되면 pane에서 claude가 빈 프롬프트나 셸 오류를 첫 메시지로 받는다. 터미널은 띄우지 않고
+// `/bin/sh`만 부른다.
+
+final class ClaudePromptScriptExecutionTests: XCTestCase {
+    private var directory = ""
+
+    override func setUpWithError() throws {
+        directory = NSTemporaryDirectory() + "tc-script-exec-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(atPath: directory)
+    }
+
+    /// 스크립트를 실행하고 (종료 코드, stdout)을 돌려준다. stderr는 일부러 섞지 않는다 —
+    /// pane에서도 `$( )`는 stdout만 잡고 stderr는 화면으로 흘러가기 때문이다
+    private func runScript(_ body: String, name: String = "s.sh") throws -> (Int32, String) {
+        let path = directory + "/" + name
+        try body.write(toFile: path, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [path]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// 병합 결과가 실제로 [배너 + 출력 + 리터럴]로 나오고, `!`는 실행되고 대화형은 실행되지 않는다.
+    /// "실행되지 않았다"는 문자열 비교로는 못 가른다(실행돼도 출력에 같은 낱말이 남는다) —
+    /// 대화형 입력에 파일을 만드는 셸 문법을 넣고 그 파일이 없음을 본다
+    func testScriptRunsAndAssemblesTheMergedPrompt() throws {
+        let ctx = directory + "/ctx.txt"
+        let sideEffect = directory + "/should-not-exist"
+        let body = claudePromptScriptBody(
+            prefix: ["!echo one", "!echo two", "설계 정리해줘; : > \(sideEffect)"], contextPath: ctx
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.contains("==== !echo one ====\none\n"), out)
+        XCTAssertTrue(out.contains("==== !echo two ====\ntwo\n"), out)
+        XCTAssertTrue(out.contains("설계 정리해줘; : > \(sideEffect)"), out)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sideEffect), "대화형 입력이 실행됐다")
+        // 순서 보존 — 병합은 입력 순서를 바꾸지 않는다
+        XCTAssertTrue(try XCTUnwrap(out.range(of: "one")).lowerBound
+            < XCTUnwrap(out.range(of: "two")).lowerBound)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ctx), "예산 이내면 컨텍스트를 남기지 않는다")
+    }
+
+    /// `!` 본문이 실패해도 그 출력이 프롬프트에 남고 뒤 입력이 삼켜지지 않는다
+    func testFailingShellInputStillContributesItsOutput() throws {
+        let body = claudePromptScriptBody(
+            prefix: ["!echo boom >&2; exit 3", "!echo after"], contextPath: directory + "/ctx.txt"
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.contains("boom"), "2>&1로 합친 실패 출력이 빠졌다: \(out)")
+        XCTAssertTrue(out.contains("after"), out)
+    }
+
+    /// 본문의 문법 오류는 그 `sh -c` 안에 갇힌다 — 스크립트 전체가 무너지면 안 된다
+    func testSyntaxErrorInAShellInputDoesNotBreakTheScript() throws {
+        let body = claudePromptScriptBody(
+            prefix: ["!for(", "!echo survived"], contextPath: directory + "/ctx.txt"
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.contains("survived"), out)
+    }
+
+    /// 마커는 argv 메시지의 **첫 줄**이어야 한다 — TUI가 긴 메시지를 접어도 앞부분이 가장
+    /// 오래 보이고, 게이트는 그것을 본다
+    func testMarkerLeadsTheAssembledPrompt() throws {
+        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
+        let body = claudePromptScriptBody(
+            prefix: ["!echo one", "설계 정리해줘"], contextPath: directory + "/ctx.txt", marker: marker
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.hasPrefix(marker + "\n"), out)
+        XCTAssertTrue(out.contains("==== !echo one ====\none\n"), out)
+    }
+
+    /// 한도 초과 갈래에서도 마커가 argv에 실린다 — 실리지 않으면 게이트가 영영 통과하지 못해
+    /// 꼬리가 통째로 버려진다
+    func testMarkerLeadsTheOverBudgetPointerToo() throws {
+        let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
+        let ctx = directory + "/ctx.txt"
+        let body = claudePromptScriptBody(
+            prefix: ["!echo needle"], contextPath: ctx, marker: marker, argvSlack: 1_000_000_000
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.hasPrefix(marker + "\n"), out)
+        XCTAssertTrue(out.contains(claudeContextPointerInstruction), out)
+        XCTAssertFalse(out.contains("needle"), out)
+    }
+
+    /// 예산을 넘으면 절단하지 않고 파일 포인터만 싣는다 — 컨텍스트는 파일에 온전히 남는다
+    func testOverBudgetEmitsAPointerAndKeepsTheWholeContext() throws {
+        let ctx = directory + "/ctx.txt"
+        let body = claudePromptScriptBody(
+            prefix: ["!echo needle"], contextPath: ctx, argvSlack: 1_000_000_000
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(out.contains(claudeContextPointerInstruction), out)
+        XCTAssertTrue(out.contains(ctx), out)
+        XCTAssertFalse(out.contains("needle"), "포인터만 실려야 하는데 본문이 argv로 갔다: \(out)")
+        let kept = try String(contentsOfFile: ctx, encoding: .utf8)
+        XCTAssertTrue(kept.contains("needle"), kept)
+    }
+
+    /// 컨텍스트를 쓰지 못하면(디렉토리가 없다) **빈 프롬프트를 내놓지 않는다** — 빈 문자열이
+    /// argv로 가면 claude에 빈 첫 메시지가 제출된다. 실패로 끝내 부착 쪽의 `||` 안내가 뜨게 한다
+    func testUnwritableContextFailsInsteadOfProducingAnEmptyPrompt() throws {
+        let body = claudePromptScriptBody(
+            prefix: ["!echo hi"], contextPath: directory + "/missing-dir/ctx.txt"
+        )
+        let (status, out) = try runScript(body)
+        XCTAssertNotEqual(status, 0, "빈 프롬프트를 성공으로 내놓았다: \(out)")
+        XCTAssertEqual(out, "")
+    }
+
+    /// 부착된 치환이 claude의 **첫 positional 인자**가 되고, 스크립트는 그 자리에서 사라진다
+    func testAppendedSubstitutionReachesClaudeArgvAndRemovesTheScript() throws {
+        let prepared = prepareRequest(ResolvedRequest(
+            command: "claude", claudeInputs: ["!echo merged"]
+        ))
+        let script = try XCTUnwrap(prepared.temporaryPaths.first)
+        // PATH 앞에 스텁을 놓아 진짜 claude를 부르지 않는다 — argv[1]만 파일로 받아 본다
+        let stub = directory + "/claude"
+        try "#!/bin/sh\nprintf '%s' \"$1\" > \(directory)/argv1\n"
+            .write(toFile: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", prepared.command]
+        process.environment = ["PATH": directory + ":/usr/bin:/bin"]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+
+        // `$( )`가 꼬리 개행을 떼므로 블록 구분용 빈 줄은 마지막에서 사라진다
+        let argv1 = try String(contentsOfFile: directory + "/argv1", encoding: .utf8)
+        XCTAssertEqual(argv1, "==== !echo merged ====\nmerged")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: script), "스크립트가 남았다")
+    }
+
+    /// 스크립트가 이미 사라진 뒤 명령이 실행돼도 **빈 프롬프트는 나가지 않는다**
+    func testMissingScriptYieldsTheLostContextInstruction() throws {
+        let command = appendedPromptCommand(
+            "printf '%s'", scriptPath: directory + "/never-written.sh"
+        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let out = String(
+            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
+        ) ?? ""
+        process.waitUntilExit()
+        XCTAssertEqual(out, claudePromptLostInstruction)
+    }
+}
+
+// MARK: - 부착된 명령이 터미널 3종의 인용을 통과하는가
+// 변환·부착은 터미널 분기 **이전**의 Core 공통이므로 세 터미널이 같은 문자열을 받는다. 그런데
+// 그 문자열에는 `"` `$` `(` `'`가 들어 있고, iTerm2는 AppleScript 리터럴에, Warp는 TOML basic
+// string에 그것을 박아 넣는다 — 여기서 깨지면 탭이 아예 열리지 않거나 명령이 잘린 채 돈다.
+
+final class AppendedPromptPerTerminalTests: XCTestCase {
+    private let command = appendedPromptCommand("z remy && claude", scriptPath: "/tmp/tc-prompt-ab.sh")
+
+    /// AppleScript 리터럴로 실제로 파싱되는지 osascript에 물어본다 — `tell application`이 없으므로
+    /// 터미널을 건드리지 않고 권한도 필요 없다
+    func testAppleScriptLiteralParsesBackToTheSameCommand() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "return \"\(escapeForAppleScript(command))\""]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(out.trimmingCharacters(in: .newlines), command)
+    }
+
+    /// TOML basic string 안의 `"`는 하나도 남김없이 이스케이프돼야 한다 — 하나만 새도 Warp가
+    /// 파일 파싱에 실패해 탭이 열리지 않는다
+    func testTOMLEscapesEveryQuoteInTheAppendedCommand() {
+        let toml = warpTabConfigTOML(commands: [command])
+        XCTAssertTrue(toml.contains("commands = [\"\(escapeForTOMLBasicString(command))\"]"), toml)
+        var previous: Character = " "
+        for character in escapeForTOMLBasicString(command) {
+            if character == "\"" { XCTAssertEqual(previous, "\\", "이스케이프되지 않은 따옴표") }
+            previous = character
+        }
+    }
+
+    /// WezTerm은 명령을 셸 문자열이 아니라 프로세스 인자/stdin으로 넘긴다(`send-text --no-paste`,
+    /// fallback은 `/bin/bash -ic <command>`) — 재인용이 없으므로 여기서 검사할 이스케이프도 없다.
+    /// 대신 부착분이 한 줄로 유지되는 것만 본다: `send-text`는 개행을 제출로 취급한다
+    func testAppendedCommandStaysOnASingleLine() {
+        XCTAssertFalse(command.contains("\n"), command)
+    }
+}
+
+// MARK: - 요청 준비 (경계 판정 + 부착을 실제 요청에 적용)
+
+final class PreparedRequestTests: XCTestCase {
+    /// 회귀: claude 입력이 없는 요청은 명령이 **한 바이트도** 바뀌지 않는다
+    func testRequestWithoutClaudeInputsIsUntouched() {
+        let prepared = prepareRequest(ResolvedRequest(command: "z remy && claude", claudeInputs: []))
+        defer { prepared.discardTemporaryFiles() }
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, [])
+        XCTAssertEqual(prepared.temporaryPaths, [])
+    }
+
+    /// 명령 꼬리에 붙일 수 없으면 전부 주입 — 오늘의 동작
+    func testUnappendableCommandFallsBackToInjectingEverything() {
+        let inputs = ["!gh issue view 1"]
+        let prepared = prepareRequest(ResolvedRequest(command: "z remy", claudeInputs: inputs))
+        defer { prepared.discardTemporaryFiles() }
+        XCTAssertEqual(prepared.command, "z remy")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+        XCTAssertEqual(prepared.temporaryPaths, [])
+    }
+
+    func testMatchedCommandCarriesThePrefixInArgvAndLeavesOnlyTheTail() throws {
+        let prepared = prepareRequest(ResolvedRequest(
+            command: "z remy && claude",
+            claudeInputs: ["!gh issue view 1", "설계 정리해줘", "!gh pr diff 1"]
+        ))
+        defer { prepared.discardTemporaryFiles() }
+        XCTAssertTrue(prepared.command.hasPrefix("z remy && claude \"$("), prepared.command)
+        XCTAssertEqual(prepared.claudeInputs, ["!gh pr diff 1"])
+        XCTAssertEqual(prepared.temporaryPaths.count, 1)
+        let script = try XCTUnwrap(prepared.temporaryPaths.first)
+        let written = try String(contentsOfFile: script, encoding: .utf8)
+        XCTAssertTrue(written.contains("'==== !gh issue view 1 ===='"), written)
+        XCTAssertTrue(written.contains("printf '%s\\n' '설계 정리해줘'"), written)
+        XCTAssertFalse(written.contains("gh pr diff"), "꼬리는 스크립트에 들어가면 안 된다")
+    }
+
+    /// 접두사가 공집합(슬래시가 첫 입력)이면 파일을 만들지 않는다
+    func testEmptyPrefixWritesNoScript() {
+        let inputs = ["/review", "!gh pr diff 1"]
+        let prepared = prepareRequest(ResolvedRequest(command: "z r && claude", claudeInputs: inputs))
+        defer { prepared.discardTemporaryFiles() }
+        XCTAssertEqual(prepared.command, "z r && claude")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+        XCTAssertEqual(prepared.temporaryPaths, [])
+    }
+
+    /// 마커는 **꼬리가 있을 때만** 만든다. 꼬리가 없으면 주입이 없으니 볼 사람도 없고,
+    /// 프리셋의 첫 메시지에 정체불명의 줄을 하나 얹는 대가만 남는다
+    func testArgvMarkerExistsOnlyWhenATailWillBeInjected() throws {
+        let merged = prepareRequest(ResolvedRequest(
+            command: "z r && claude", claudeInputs: ["!gh pr view 1", "!gh pr diff 1"]
+        ))
+        defer { merged.discardTemporaryFiles() }
+        XCTAssertEqual(merged.claudeInputs, [])
+        XCTAssertNil(merged.argvRenderMarker)
+
+        let withTail = prepareRequest(ResolvedRequest(
+            command: "z r && claude", claudeInputs: ["!gh pr view 1", "설계 정리", "!gh pr diff 1"]
+        ))
+        defer { withTail.discardTemporaryFiles() }
+        XCTAssertEqual(withTail.claudeInputs, ["!gh pr diff 1"])
+        let marker = try XCTUnwrap(withTail.argvRenderMarker)
+        let script = try String(
+            contentsOfFile: try XCTUnwrap(withTail.temporaryPaths.first), encoding: .utf8
+        )
+        XCTAssertTrue(script.contains(shellSingleQuoted(marker)), script)
+    }
+
+    /// 요청마다 다른 마커라야 화면에서 본 것이 **이번** 요청의 렌더라고 말할 수 있다
+    /// (Warp에서는 그것이 곧 pane 증명이다)
+    func testArgvMarkerIsUniquePerRequest() throws {
+        let inputs = ["!gh pr view 1", "설계 정리", "/review"]
+        let first = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: inputs))
+        defer { first.discardTemporaryFiles() }
+        let second = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: inputs))
+        defer { second.discardTemporaryFiles() }
+        XCTAssertNotEqual(try XCTUnwrap(first.argvRenderMarker), try XCTUnwrap(second.argvRenderMarker))
+    }
+
+    func testDiscardRemovesTheScript() throws {
+        let prepared = prepareRequest(ResolvedRequest(command: "claude", claudeInputs: ["!echo hi"]))
+        let script = try XCTUnwrap(prepared.temporaryPaths.first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: script))
+        prepared.discardTemporaryFiles()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: script))
+    }
+}
+
 // MARK: - 입력 전달 순서와 실패 복구
 // 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
 // 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
@@ -445,6 +986,11 @@ private final class FakeClaudeSession {
     var presetBox = "" { didSet { box = presetBox } }
     /// 화면에 이미 떠 있는 텍스트 (다른 pane을 읽고 있는 상황을 만들 때 쓴다)
     var screenPrefix = ""
+    /// n번째 screenText 호출부터 화면에 새로 나타나는 텍스트 (argv 메시지가 뒤늦게 렌더되는
+    /// 상황을 만든다 — 실측 2.06∼3.41초)
+    var screenGains: [Int: String] = [:]
+    /// 첫 바이트가 나갈 때 화면에 이미 떠 있던 것 — "치기 전에 무엇을 봤는가"를 고정한다
+    private(set) var screenPrefixAtFirstSend: String?
     /// 제출한 입력이 화면(대화 기록)에 남게 한다
     var keepSubmittedOnScreen = false
     /// 화면 읽기가 pane 단위로 정확하지 않은 터미널(Warp)
@@ -465,6 +1011,7 @@ private final class FakeClaudeSession {
         ClaudeSessionIO(
             sendKeys: { [unowned self] keys in
                 sendCallCount += 1
+                if screenPrefixAtFirstSend == nil { screenPrefixAtFirstSend = screenPrefix }
                 if failSendAt.contains(sendCallCount) { return false }
                 keystrokes.append(keys)
                 switch keys {
@@ -481,6 +1028,7 @@ private final class FakeClaudeSession {
             },
             screenText: { [unowned self] in
                 screenCalls += 1
+                if let gained = screenGains[screenCalls] { screenPrefix += " " + gained }
                 if failScreenAt.contains(screenCalls) { return nil }
                 if screenIsForeign { return foreignScreen }
                 return screenPrefix + " " + history + "❯ " + box
@@ -493,6 +1041,75 @@ private final class FakeClaudeSession {
             screenNeedsPaneProof: screenNeedsPaneProof,
             wait: { _ in }
         )
+    }
+}
+
+// MARK: - 꼬리 시작 게이트 (argv 첫 메시지가 화면에 렌더된 뒤에야 꼬리를 친다)
+// 실측(claude 2.1.238, bare pty, 시점당 3회 전건 일치, `scratchpad/argv-timing-probe/runs/` 32런):
+// **argv 제출이 입력창을 비운다.** argv 메시지가 렌더되기 전에 타이핑한 바이트는 입력창에
+// 들어갔다가 그 clear에 지워진다(T1 0.06초·T2 첫 프레임 직후 모두 유실 3/3). 렌더 이후는
+// 보존 3/3 + CR 제출 성공. **raw 모드는 안전 신호가 아니다** — 전환은 0.1∼0.19초인데 argv
+// 렌더는 2.06∼3.41초로 65% 흔들려, 시간 기반 대기도 성립하지 않는다. 밖에서 알 수 있는
+// 신호는 "argv 메시지가 화면에 렌더됐다" 하나뿐이라 게이트가 그것을 본다.
+
+final class ClaudeArgvRenderGateTests: XCTestCase {
+    private let marker = claudeArgvRenderMarker(token: "a1b2c3d4")
+    private let tail = ["/review"]
+
+    /// 게이트의 존재 이유 — 렌더 전에는 **한 바이트도** 나가면 안 된다
+    func testNothingIsTypedBeforeTheArgvMessageRenders() throws {
+        let session = FakeClaudeSession()
+        session.screenGains = [3: marker]
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker), 1)
+        XCTAssertEqual(session.submitted, tail)
+        XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
+    }
+
+    /// 렌더를 끝내 못 보면 기존 "준비 안 됨"과 같은 결로 포기한다 — 조용히 치지 않는다.
+    /// 한 바이트도 안 나갔으므로 정리(Ctrl+U)도 나가면 안 된다: 입력창에 있는 것은 사용자 초안이다
+    func testTailIsNotTypedWhenTheArgvMessageNeverRenders() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(
+            submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker, argvRenderTimeout: 2),
+            0
+        )
+        XCTAssertEqual(session.keystrokes, [])
+    }
+
+    /// TUI가 마커를 줄바꿈해 그려도 렌더로 인정해야 한다 — 통짜 비교는 폭에 따라 영영 실패한다
+    func testWrappedMarkerStillCountsAsRendered() {
+        let session = FakeClaudeSession()
+        session.screenGains = [1: "==== terminal-checkout\n  tc-a1b2c3d4 ===="]
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker), 1)
+    }
+
+    /// 명령줄 에코에 남는 스크립트 경로(`tc-prompt-a1b2c3d4.sh`)를 렌더로 오인하면 안 된다 —
+    /// 그 에코는 claude가 뜨기도 전에 화면에 있다
+    func testScriptPathEchoIsNotMistakenForTheRenderedMessage() {
+        let session = FakeClaudeSession()
+        session.screenPrefix = "z remy && claude \"$(/bin/sh '/tmp/tc-prompt-a1b2c3d4.sh')\""
+        XCTAssertEqual(
+            submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker, argvRenderTimeout: 2),
+            0
+        )
+        XCTAssertEqual(session.keystrokes, [])
+    }
+
+    /// Warp: 마커가 요청 고유라 그 화면 읽기 자체가 그 순간의 pane 증명을 겸한다 —
+    /// 게이트를 위해 nonce를 따로 주입하지 않는다(첫 바이트가 나가기 전에 마커가 이미 보였다)
+    func testWarpGateNeedsNoNonceOfItsOwn() throws {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        session.screenGains = [2: marker]
+        _ = submitClaudeInputs(tail, io: session.io, awaitingArgvMarker: marker)
+        XCTAssertTrue(try XCTUnwrap(session.screenPrefixAtFirstSend).contains(marker))
+    }
+
+    /// 접두사가 없는 순수 주입 폴백은 argv가 없으므로 게이트 대상이 아니다 — 현행 그대로
+    func testPureInjectionFallbackIsNotGated() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(tail, io: session.io), 1)
+        XCTAssertEqual(session.submitted, tail)
     }
 }
 

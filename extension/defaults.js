@@ -26,7 +26,7 @@ const PR_PRESETS = [
   {
     name: 'Review PR (claude)', face: '🔍',
     command: 'z {repo} && claude',
-    // A leading `!` in claude hands the line to the shell — gh output piles straight into claude's context
+    // A leading `!` runs the line in the shell — gh output piles straight into claude's opening message
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
   },
 ];

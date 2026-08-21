@@ -11,9 +11,9 @@ Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository 
 
 - **Buttons where you work** — up to 3 buttons each on PR, issue, and repository pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
 - **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
-- **Claude Code hand-off** — if your command starts `claude`, up to 5 scheduled inputs are typed and submitted for you once claude is actually ready — slash commands and `!` shell-mode lines included.
+- **Claude Code hand-off** — if your command runs `claude`, up to 5 scheduled inputs are handed over for you. As many as can be merged ride along as claude's opening message — `!` lines run in the shell first so their output is already in context — and whatever can't be merged (slash commands) is typed into the session once claude is actually ready.
 - **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
-- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission only for the optional claude-input feature.
+- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission only for claude inputs that can't be merged into the opening message (slash commands) — none of the shipped presets need it.
 - **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
 
 ## How it works
@@ -29,7 +29,8 @@ flowchart LR
 
 - The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
 - **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
-- Warp has one extra piece: it has no API for sending text to a pane, so a button with scheduled claude input first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the input to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why claude input on Warp needs the Accessibility permission.
+- Merging inputs into claude's opening message happens in the app, before the terminal branch, so it works the same on all three terminals. The merged text is assembled by a short throwaway script the app writes to a temp file; the terminal only ever sees its path, and the script deletes itself as claude starts.
+- Warp has one extra piece: it has no API for sending text to a pane, so a button whose claude input **can't** be merged first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the leftover input to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why leftover claude input on Warp needs the Accessibility permission. When everything merges, no helper is launched and no permission is involved.
 
 ## Requirements
 
@@ -82,7 +83,7 @@ When the app opens, walk through the setup window in order. Native Host registra
    - This step is marked complete when the app first receives a request from the extension — press any Terminal Checkout button on GitHub once
 2. **Terminal** — choose iTerm2, WezTerm, or Warp
 3. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
-   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received the input; without it, commands still run but scheduled claude input is not delivered. Keep the tab visible during delivery.
+   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that had to be **typed** into the session; without it, commands still run but that input is not delivered. Keep the tab visible during delivery. Input that merges into claude's opening message — which is all of it for the shipped presets — never goes through this path and needs no permission.
 4. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
 Once setup completes, the window keeps only the terminal selection, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
@@ -116,7 +117,7 @@ The default command assumes the PR branch exists on `origin` — i.e. a same-rep
 
 ### Issue pages
 
-A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory, then feeds it these lines in order — a claude input starting with `!` is run in the shell by claude, so the `gh` output lands directly in claude's context:
+A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory with these lines already in its opening message — a claude input starting with `!` is run in the shell, so the `gh` output lands directly in claude's context:
 
 ```bash
 !gh issue view {number}                       # body and metadata
@@ -133,13 +134,26 @@ A button appears next to the repository name in the header. The default **Open i
 
 ### claude input
 
-If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `/review` followed by `Summarize the changes in PR {branch}`. The app types them in order only after confirming the new tab's foreground process has become claude — the delivery gates are designed to fail closed, dropping input rather than typing into a shell; if claude doesn't appear within 2 minutes, the inputs are quietly dropped. Each input is submitted only after it's confirmed as actually typed on screen, so delivery holds while claude's trust prompt for a first-time folder is up — accept within 15 seconds and it continues; take longer and delivery is abandoned from that input on.
+If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `!gh pr diff {number}` followed by `Summarize the risky parts`. They reach claude by two different routes, and the split is automatic.
+
+**Merged into the opening message (the fast route).** The app folds as many of the leading inputs as it safely can into the single prompt claude starts with. This route needs no permissions, no screen reading, and no waiting for claude to boot.
+
+- A `!` input is run in the shell — in the same directory claude is about to start in, right before it starts — and its output goes into the message under a `==== !your command ====` banner, `stderr` merged in. Commands are joined with `;`, so one failing command doesn't swallow the rest.
+- A plain-text input goes in verbatim. It is never handed to a shell.
+- Merging stops at the first **boundary**, and everything from there on takes the typed route: ① a **slash command** (it only acts as a command when it's the whole message, so merging would silently turn it into ordinary text), and ② a **`!` command that follows a plain-text input** (its output was meant as context for the instruction *after* it, so hoisting it into the opening message would change what the earlier instruction sees).
+- Two things change meaning here, on purpose. Merged inputs arrive as **one message and get one response**, not one response each. And a merged `!` is run by the **shell**, not by claude's Bash tool — so it doesn't appear in the session transcript as a tool call and claude-side hooks don't see it. The working directory is the same either way.
+- Nothing is truncated. If the assembled message would be too large for the command line, it's written to a file instead and the opening message tells claude to read that file first.
+- The merge only happens when the rendered command **ends in a bare `claude`** — no flags, no pipe or redirect, nothing after it. Flags are excluded because some of them (`--resume`) would swallow the prompt as their own value. Anything else falls back entirely to the typed route.
+
+**Typed into the session (the fallback route).** The app types the leftover inputs in order, only after confirming the new tab's foreground process has become claude — the delivery gates are designed to fail closed, dropping input rather than typing into a shell; if claude doesn't appear within 2 minutes, the inputs are quietly dropped. Each input is submitted only after it's confirmed as actually typed on screen, so delivery holds while claude's trust prompt for a first-time folder is up — accept within 15 seconds and it continues; take longer and delivery is abandoned from that input on.
+
+**When both routes are in play, the typed one waits for the merged one.** Submitting the opening message clears claude's input box, so anything typed before that message shows up on screen is wiped — and "claude is running with its tty in raw mode" happens seconds too early to protect against it (measured: raw mode at 0.1∼0.19s, the message rendering at 2.06∼3.41s). So whenever there are both a merged message and leftovers, the app watches the screen for the merged message and starts typing only once it appears. To recognise it, a short `==== terminal-checkout tc-… ====` line is added as that message's first line — **only when there are leftovers to type**, so the shipped presets never carry it. If it never appears within 2 minutes the leftovers are dropped, the same as any other not-ready failure.
 
 Known limits:
 
 - Inputs are single-line only.
-- Not delivered when WezTerm was off and a fresh process was started (fallback), or on Warp when the injection helper failed to launch or the Accessibility permission is missing — the command itself still runs.
-- **On Warp, delivery happens only while you're looking at that tab.** Warp renders only the focused tab, so the app submits input only after confirming its own tab is on screen. Switching away pauses delivery; coming back resumes it.
+- The typed route is not delivered when WezTerm was off and a fresh process was started (fallback), or on Warp when the injection helper failed to launch or the Accessibility permission is missing — the command itself still runs, opening message included.
+- **On Warp, the typed route runs only while you're looking at that tab.** Warp renders only the focused tab, so the app submits input only after confirming its own tab is on screen. Switching away pauses delivery; coming back resumes it. The merged opening message is unaffected — it never touches the screen.
 
 ## Configuration
 
@@ -191,7 +205,9 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **You denied a permission** — [Open System Settings] in the setup window → **Privacy & Security → Automation → Terminal Checkout → iTerm2**. Warp's screen reading is the **Accessibility** item on the same screen.
 
-**claude input isn't delivered on Warp** — First: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Then check the **Accessibility** permission in the setup window — without screen reading, the app gives up delivery rather than risk a wrong submission. If permission is fine, the injection helper likely failed to launch; the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`. Reinstalling (`./install.sh`) also refreshes the bundled helper.
+**claude input isn't delivered on Warp** — This only affects input that had to be typed into the session; if it merged into the opening message, permissions play no part. First: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Then check the **Accessibility** permission in the setup window — without screen reading, the app gives up delivery rather than risk a wrong submission. If permission is fine, the injection helper likely failed to launch; the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`. Reinstalling (`./install.sh`) also refreshes the bundled helper.
+
+**A claude input didn't merge into the opening message** — The command must end in a bare `claude`. A trailing flag (`claude --resume`), a redirect, a pipe, a trailing comment, or another command after it all send every input to the typed route instead. That's the old behaviour, not a failure — but on Warp it means the Accessibility permission comes back into play.
 
 **Permission prompts again after rebuilding** — Ad-hoc signing means a rebuild changes the signing identity; allow the Automation prompt once more.
 
