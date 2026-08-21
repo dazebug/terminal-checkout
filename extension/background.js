@@ -122,9 +122,11 @@ async function detectDefaultBranch(tab, owner, repo) {
 async function resolveMainBranch(repo, detectedMain) {
   const data = await chrome.storage.sync.get(['repoMainBranch', 'defaultMain']);
 
-  // 1. Per-repository override
-  const repoOverride = data.repoMainBranch?.[repo];
-  if (repoOverride) return repoOverride;
+  // 1. Per-repository override. `repo` comes out of the page URL, so it reaches this lookup as an
+  // arbitrary string — and a plain object answers `overrides['constructor']` with an inherited
+  // member, which would then be passed on as if it were a branch name. Only an own property counts.
+  const overrides = data.repoMainBranch;
+  if (overrides && Object.hasOwn(overrides, repo) && overrides[repo]) return overrides[repo];
 
   // 2. Value read off the page — the base ref on a PR, the repository's default branch on
   //    repository and issue pages
@@ -288,7 +290,9 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 // Receive messages from content.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const kind = ACTION_KIND[message.action];
+  // The action name arrives in a message, so an inherited member ("constructor", "toString") would
+  // otherwise pass the truthiness check below and then fail as "not a function" one line later
+  const kind = Object.hasOwn(ACTION_KIND, message.action) ? ACTION_KIND[message.action] : null;
   if (!kind) return;
 
   RUN_BY_KIND[kind](sender.tab, message.buttonIndex).then(() => {

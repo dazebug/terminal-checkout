@@ -113,8 +113,10 @@ const V1 = {
   claude: '{cd} && claude',
   open: '{cd}',
 };
+// Buttons carry a runtime uid in the edit state — that, not their position, is what a candidate is
+// keyed by. The helper mints one the way the options page does.
 const stored = (key, ...commands) => ({
-  [key]: commands.map((command, i) => ({ face: 'x', label: `b${i}`, command, claudeInputs: [] })),
+  [key]: commands.map((command, i) => ({ uid: `${key}#${i}`, face: 'x', label: `b${i}`, command, claudeInputs: [] })),
 });
 const plan0 = data => planMigration(data, 0);
 const ids = list => list.map(item => item.id);
@@ -175,7 +177,7 @@ test('a key that was never saved is not scanned — those buttons are the curren
 
 test('item ids are stable and carry where the button lives', () => {
   const plan = plan0(stored('issueButtons', V0.open, 'z {repo} && npm test'));
-  assert.deepEqual(ids(plan.actionable), ['issueButtons:0', 'issueButtons:1']);
+  assert.deepEqual(ids(plan.actionable), ['issueButtons#0', 'issueButtons#1']);
   assert.equal(plan.actionable[0].kind, 'issue');
 });
 
@@ -188,7 +190,7 @@ test('nothing to do at the current version', () => {
 test('applying rewrites only the selected items and copies the rest byte for byte', () => {
   const data = stored('buttons', V0.checkout, V0.claude);
   const plan = plan0(data);
-  const next = applyMigrationPlan(data, plan, ['buttons:1']);
+  const next = applyMigrationPlan(data, plan, ['buttons#1']);
   assert.equal(next.buttons[0].command, V0.checkout, 'unselected item must be untouched');
   assert.equal(next.buttons[1].command, V1.claude);
   assert.equal(data.buttons[0].command, V0.checkout, 'input must not be mutated');
@@ -201,10 +203,10 @@ test('applying nothing is a no-op, not a rewrite of everything', () => {
 });
 
 test('applying leaves every other field of the button alone', () => {
-  const data = { buttons: [{ face: '🤖', label: 'mine', command: V0.claude, claudeInputs: ['/review'] }] };
-  const next = applyMigrationPlan(data, plan0(data), ['buttons:0']);
+  const data = { buttons: [{ uid: 'u1', face: '🤖', label: 'mine', command: V0.claude, claudeInputs: ['/review'] }] };
+  const next = applyMigrationPlan(data, plan0(data), ['u1']);
   assert.deepEqual(next.buttons[0], {
-    face: '🤖', label: 'mine', command: V1.claude, claudeInputs: ['/review'],
+    uid: 'u1', face: '🤖', label: 'mine', command: V1.claude, claudeInputs: ['/review'],
   });
 });
 
@@ -305,4 +307,181 @@ test('a candidate is only rewritten while the command is still the one that was 
     'z {repo} && something else',
     'a command that changed since planning must be left alone'
   );
+});
+
+// --- Trust boundary: keys and values that arrive from a user's saved settings (class (b)) ---
+
+test('a command that names a prototype member is not a candidate', () => {
+  // `rewrites[command]` on a plain object answers for "constructor", "toString", "__proto__" and
+  // friends, which made them look like verbatim matches and then blew up on save in .trim()
+  for (const command of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+    const plan = plan0(stored('buttons', command));
+    assert.equal(plan.actionable.length, 0, `must not be a candidate: ${command}`);
+    assert.equal(plan.informational.length, 0, `must not be listed either: ${command}`);
+  }
+});
+
+test('only a non-negative integer counts as a version', () => {
+  const { normalizeVersion } = vm.runInThisContext('({ normalizeVersion })');
+  assert.equal(normalizeVersion(0), 0);
+  assert.equal(normalizeVersion(1.0), 1, '1.0 is an integer in JS and stays valid');
+  assert.equal(normalizeVersion(0.5), null, 'a fraction would skip whole steps');
+  assert.equal(normalizeVersion(-1), null);
+  assert.equal(normalizeVersion('1'), null);
+  assert.equal(normalizeVersion(NaN), null);
+  assert.equal(normalizeVersion(Infinity), null);
+  assert.equal(normalizeVersion(undefined), null);
+});
+
+test('stored and imported versions are judged by the same rule', () => {
+  // 0.5 used to pass as "valid", and `step.from >= 0.5` then skipped the 0->1 step entirely: an
+  // empty review screen, a confirming click, and the stale commands were marked as reviewed
+  assert.equal(storedSchemaVersion({ version: 0.5, buttons: [{}] }), 0);
+  assert.equal(importedSchemaVersion({ version: 0.5, buttons: [] }), 0);
+  assert.equal(storedSchemaVersion({ version: -1, buttons: [{}] }), 0);
+  assert.equal(importedSchemaVersion({ version: -1, buttons: [] }), 0);
+});
+
+test('a fractional version can never skip a step, even if one leaks in', () => {
+  // Belt and braces for the above: steps are selected by where they land, not where they start
+  const plan = planMigration(stored('buttons', V0.claude), 0.5);
+  assert.equal(plan.actionable.length, 1);
+});
+
+// --- Registry coverage, derived from the presets that exist today (P3) ---
+
+test('the registry covers exactly the current presets, pair for pair', () => {
+  // Derived rather than listed: deleting a pair, or adding a preset without one, has to fail here.
+  // This is the git-free half of the 294c46a cross-check, so it also runs on a shallow CI checkout.
+  const entry = MIGRATIONS.find(step => step.to === 1);
+  const current = new Set(
+    Object.values(BUTTON_KINDS).flatMap(kind => [...kind.presets, ...kind.defaults].map(b => b.command))
+  );
+  const expected = new Set();
+  for (const command of current) {
+    assert.ok(command.startsWith('{cd}'), `v1 preset must open with {cd}: ${command}`);
+    const old = `z {repo}${command.slice('{cd}'.length)}`;
+    assert.ok(entry.rewrites.has(old), `no registry pair for preset: ${command}`);
+    assert.equal(entry.rewrites.get(old), command);
+    expected.add(old);
+  }
+  assert.deepEqual(new Set(entry.rewrites.keys()), expected, 'registry has pairs no preset asks for');
+});
+
+// --- The prefix rule's own edge (c) ---
+
+test('an old jump with nothing after it is not a candidate', () => {
+  for (const command of ['z {repo} && ', 'z {repo} &&   ']) {
+    const plan = plan0(stored('buttons', command));
+    assert.equal(plan.actionable.length, 0, `must not rewrite: ${JSON.stringify(command)}`);
+    assert.equal(plan.informational.length, 1, `must be listed: ${JSON.stringify(command)}`);
+  }
+});
+
+// --- The preview text covers every step that is being applied ---
+
+test('the description covers all the steps between the stored version and now', () => {
+  const { migrationDescription } = vm.runInThisContext('({ migrationDescription })');
+  const text = migrationDescription(0);
+  for (const step of MIGRATIONS.filter(s => s.to > 0)) {
+    assert.ok(text.includes(step.describe), `step ${step.from}->${step.to} is missing from the preview`);
+  }
+  assert.equal(migrationDescription(SETTINGS_VERSION), '');
+});
+
+// --- Identity, not position (class (a)) ---
+// The plan is built from the edit state and applied to the edit state, and in between the user can
+// type, reorder, add and delete. An index is not a name for a button; the uid is.
+
+test('candidates are keyed by the button uid', () => {
+  const plan = plan0(stored('buttons', V0.claude));
+  assert.deepEqual(ids(plan.actionable), ['buttons#0']);
+});
+
+test('unchecking one of two identical commands survives a reorder', () => {
+  // The exact P1-2 repro: two buttons with the same command, decline the first, move the second to
+  // the front, apply. With index identity this rewrote the button the user had just declined.
+  const a = { uid: 'A', face: 'x', label: 'keep A', command: V0.claude, claudeInputs: [] };
+  const b = { uid: 'B', face: 'x', label: 'apply B', command: V0.claude, claudeInputs: [] };
+  const plan = plan0({ buttons: [a, b] });
+  const reordered = { buttons: [b, a] };
+
+  const next = applyMigrationPlan(reordered, plan, ['B']);
+  assert.equal(next.buttons[0].command, V1.claude, 'B was the one selected');
+  assert.equal(next.buttons[1].command, V0.claude, 'A was declined and must be untouched');
+});
+
+test('a button that lost its uid cannot be rewritten', () => {
+  // Defence only — the options page mints one for every button through a single funnel. But a
+  // candidate we cannot identify is one we must not apply, rather than one we apply by position.
+  const plan = plan0(stored('buttons', V0.claude));
+  const stripped = { buttons: [{ face: 'x', label: 'b0', command: V0.claude, claudeInputs: [] }] };
+  assert.equal(applyMigrationPlan(stripped, plan, ids(plan.actionable)).buttons[0].command, V0.claude);
+});
+
+test('the uid is a runtime handle and never becomes part of the stored shape', () => {
+  // If it leaked into storage it would ride storage.sync to other machines and into export files,
+  // where it means nothing and would collide with the uids minted there.
+  const { toStoredButton } = vm.runInThisContext('({ toStoredButton })');
+  const shape = toStoredButton({ uid: 'u1', face: ' 🤖 ', label: ' mine ', command: 'x', claudeInputs: [' /a ', ''] });
+  assert.deepEqual(shape, { face: '🤖', label: 'mine', command: 'x', claudeInputs: ['/a'] });
+  assert.ok(!('uid' in shape));
+});
+
+// --- The generation of a merged edit state ---
+
+test('merging sources takes the lowest generation of the two', () => {
+  // The edit state after an import is part file, part what was already on screen. Reviewing it has
+  // to answer for the oldest thing in it, or the newer half licenses the older half.
+  const { mergedSourceVersion } = vm.runInThisContext('({ mergedSourceVersion })');
+  assert.equal(mergedSourceVersion(1, 0), 0);
+  assert.equal(mergedSourceVersion(0, 1), 0);
+  assert.equal(mergedSourceVersion(1, 1), 1);
+});
+
+test('a plan over a merged edit state covers the sections the file never mentioned', () => {
+  // The P1-1 repro at the level where it is decidable: importing {"defaultMain":"main"} leaves the
+  // other sections holding their old commands, and those still have to appear in the plan.
+  const merged = {
+    ...stored('buttons', V0.checkout),
+    ...stored('issueButtons', V0.claude),
+    defaultMain: 'main',
+  };
+  const plan = plan0(merged);
+  assert.deepEqual(ids(plan.actionable).sort(), ['buttons#0', 'issueButtons#0']);
+});
+
+// --- The version floor, and snapshots that went stale mid-flight (class (c)) ---
+
+test('the floor only ever rises, and ignores values that are not versions', () => {
+  const { raiseVersionFloor } = vm.runInThisContext('({ raiseVersionFloor })');
+  assert.equal(raiseVersionFloor(0, 7), 7);
+  assert.equal(raiseVersionFloor(7, 0), 7, 'a later, lower reading must not lower the floor');
+  assert.equal(raiseVersionFloor(7, 0.5), 7);
+  assert.equal(raiseVersionFloor(7, undefined), 7);
+  assert.equal(raiseVersionFloor(0, 0), 0);
+});
+
+test('a save never writes below anything it has already seen', () => {
+  // P1-4: while the form was dirty, another machine saved version 7. An ordinary save here computed
+  // 0 from what it had loaded and wrote it — downgrading the account and bringing the notice back
+  // for everyone.
+  const { versionToWrite } = vm.runInThisContext('({ versionToWrite })');
+  assert.equal(versionToWrite({ floor: 7, live: 7, loadedVersion: 0, reviewed: false }), 7);
+  assert.equal(versionToWrite({ floor: 7, live: 7, loadedVersion: 0, reviewed: true }), 7);
+  // The floor holds even if the last read came back lower than something seen earlier
+  assert.equal(versionToWrite({ floor: 7, live: 0, loadedVersion: 0, reviewed: false }), 7);
+  // With nothing higher around, consent still promotes
+  assert.equal(versionToWrite({ floor: 0, live: 0, loadedVersion: 0, reviewed: true }), SETTINGS_VERSION);
+  assert.equal(versionToWrite({ floor: 0, live: 0, loadedVersion: 0, reviewed: false }), 0);
+});
+
+test('a snapshot that was overtaken while loading is thrown away', () => {
+  // P1-5: onChanged -> loadSettings() awaits storage, and the user types during the await. Applying
+  // the snapshot afterwards overwrites what they just typed. Checkbox changes count too — they are
+  // not "dirty", but they are the user having said something about this plan.
+  const { shouldApplyLoadedSnapshot } = vm.runInThisContext('({ shouldApplyLoadedSnapshot })');
+  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 3, dirty: false }), true);
+  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 4, dirty: false }), false);
+  assert.equal(shouldApplyLoadedSnapshot({ revisionAtStart: 3, revisionNow: 3, dirty: true }), false);
 });

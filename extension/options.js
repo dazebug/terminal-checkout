@@ -27,6 +27,10 @@ const state = {
   // `reviewed` is the consent: only it lets a save move the version forward, so an ordinary edit can
   // never swallow a pending migration (versionToSave in migrations.js).
   loadedVersion: SETTINGS_VERSION,
+  // The highest version this page has ever seen anywhere — from its own load, from a save, or from
+  // another machine's change arriving over sync. A save never writes below it, which is what stops
+  // a long-open page from downgrading an account that moved on without it.
+  versionFloor: 0,
   reviewed: false,
   plan: null,
   // Ids of the checked candidates — they start checked, so this starts as all of them.
@@ -46,13 +50,31 @@ const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
   return [kind, select];
 }));
 
+// Every button in the edit state carries a `uid`: a handle that lives only as long as this page and
+// says which button is which while they are typed over, reordered, duplicated and deleted. The
+// migration preview names its candidates by it, because an index stops meaning the same button the
+// moment any of that happens. It is dropped on the way to storage (toStoredButton).
+let uidCounter = 0;
+const nextUid = () => `b${++uidCounter}`;
+
+// The single funnel every button in the edit state passes through. An existing uid is kept — that is
+// what makes a re-normalized list still the same buttons — and anything without one is given a fresh
+// one here rather than at each call site.
 function normalizeButton(btn) {
   return {
+    uid: btn.uid ?? nextUid(),
     face: btn.face ?? btn.emoji ?? '', // emoji: compatibility with values saved before face existed
     label: btn.label || '',
     command: btn.command || '',
     claudeInputs: Array.isArray(btn.claudeInputs) ? btn.claudeInputs.map(String) : [],
   };
+}
+
+// The edit state in the shape the planner reads: what would be stored if Save were pressed now,
+// with the uids still attached. The plan is always computed against this, never against what
+// storage happens to hold — those two drift apart the moment anything is edited or imported.
+function editStateSnapshot() {
+  return Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, state.buttons[kind]]));
 }
 
 // --- Rendering ---
@@ -320,7 +342,18 @@ function serializeOverrides() {
 
 // The terminal choice is owned solely by the Terminal Checkout app (its settings window)
 async function loadSettings() {
+  // The user can act while storage is being read. Remember where the page was, so a snapshot that
+  // arrives after they typed or toggled something can be dropped instead of overwriting them.
+  const revisionAtStart = state.revision;
   const data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
+
+  const observed = storedSchemaVersion(data);
+  // The floor is recorded even when the snapshot itself is discarded: whatever version exists out
+  // there exists regardless of what this page is doing, and a later save must not write below it.
+  state.versionFloor = raiseVersionFloor(state.versionFloor, observed);
+  if (!shouldApplyLoadedSnapshot({
+    revisionAtStart, revisionNow: state.revision, dirty: state.dirty,
+  })) return;
 
   for (const { kind, storageKey, defaults } of SECTIONS) {
     const saved = data[storageKey];
@@ -329,14 +362,14 @@ async function loadSettings() {
   state.overrides = Object.entries(data.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   document.getElementById('default-main').value = data.defaultMain || 'main';
 
-  // The plan is computed against what is *stored*, not against the edit state: it describes the
-  // settings the user has, and applying it is what puts it into the edit state.
-  state.loadedVersion = storedSchemaVersion(data);
+  state.loadedVersion = observed;
   state.reviewed = false;
-  setPlan(planMigration(data, state.loadedVersion));
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderOverrides();
+  // Planned from the edit state that was just built, not from `data` — those are the same thing
+  // here, and keeping one path means they cannot fall out of step later.
+  setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
 }
 
 async function saveSettings() {
@@ -346,14 +379,9 @@ async function saveSettings() {
   const overrides = serializeOverrides();
   if (overrides.error) return showError(overrides.error);
 
+  // toStoredButton is what decides the stored shape — including dropping the runtime uid
   const cleaned = Object.fromEntries(SECTIONS.map(({ kind }) => [
-    kind,
-    state.buttons[kind].map(b => ({
-      face: b.face.trim(),
-      label: b.label.trim(),
-      command: b.command,
-      claudeInputs: b.claudeInputs.map(s => s.trim()).filter(Boolean), // empty rows are dropped silently
-    })),
+    kind, state.buttons[kind].map(toStoredButton),
   ]));
   const defaultMain = document.getElementById('default-main').value.trim() || 'main';
   const savedRevision = state.revision;
@@ -361,7 +389,20 @@ async function saveSettings() {
   // The version moves only when the user decided something (applied, declined, acknowledged, or
   // reset). Stamping the current version on every save would clear the notice for someone who only
   // renamed a tooltip, and their stale commands would never be offered again.
-  const version = versionToSave({ loadedVersion: state.loadedVersion, reviewed: state.reviewed });
+  //
+  // It also never goes below what already exists. This page may have been open for a long time,
+  // and another machine on the account can have saved a newer version in the meantime — so read the
+  // version once more, right here, and take the highest of {what we have ever seen, what is stored
+  // now, what consent asks for}. A window remains between this read and the write below; it is the
+  // narrowest we can make without a transaction, and it is recorded as a known residual.
+  const live = await chrome.storage.sync.get(VERSION_KEY);
+  const version = versionToWrite({
+    floor: state.versionFloor,
+    live: live?.[VERSION_KEY],
+    loadedVersion: state.loadedVersion,
+    reviewed: state.reviewed,
+  });
+  state.versionFloor = raiseVersionFloor(state.versionFloor, version);
 
   try {
     await chrome.storage.sync.set({
@@ -383,10 +424,14 @@ async function saveSettings() {
     return;
   }
 
-  // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed)
+  // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed). The uids
+  // are carried over: these are the same buttons, only tidied, and a candidate the user is looking
+  // at must keep its name across a save.
   document.getElementById('default-main').value = defaultMain;
   for (const { kind } of SECTIONS) {
-    state.buttons[kind] = cleaned[kind].map(normalizeButton);
+    state.buttons[kind] = cleaned[kind].map((button, index) => normalizeButton({
+      ...button, uid: state.buttons[kind][index]?.uid,
+    }));
     renderButtons(kind);
   }
   state.overrides = Object.entries(overrides.value).map(([repo, branch]) => ({ repo, branch }));
@@ -396,10 +441,7 @@ async function saveSettings() {
   // version rode along, the other machines on this account drop their notice as the change syncs.
   state.loadedVersion = version;
   state.reviewed = false;
-  setPlan(planMigration(
-    { ...Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, cleaned[kind]])), [VERSION_KEY]: version },
-    version
-  ));
+  setPlan(planMigration(editStateSnapshot(), version));
 
   clearDirty();
   showStatus('success', 'Settings saved.');
@@ -496,10 +538,15 @@ function renderMigration() {
   }
 
   const summary = migrationSummary(plan, state.selection);
-  const step = MIGRATIONS.find(entry => entry.to === plan.targetVersion);
-  document.getElementById('migration-describe').textContent = summary.reviewOnly
-    ? 'Nothing here can be rewritten safely, but these commands still use the old form:'
-    : (step?.describe || '');
+  // Every step being applied gets its say, not only the newest one — a settings object can be
+  // several generations behind, and the user is consenting to all of them at once.
+  let intro = migrationDescription(plan.fromVersion);
+  if (summary.reviewOnly) {
+    intro = summary.informationalCount
+      ? 'Nothing here can be rewritten safely, but these commands still use the old form:'
+      : 'Nothing to change — your commands are already current. Press Got it to mark them as reviewed.';
+  }
+  document.getElementById('migration-describe').textContent = intro;
 
   const actionable = document.getElementById('migration-actionable');
   const informational = document.getElementById('migration-informational');
@@ -527,10 +574,7 @@ function renderMigration() {
 // Fills the edit state with the selected rewrites. Storage is untouched until Save, exactly like
 // import — the edit state is the only thing that changes here.
 function applyMigration() {
-  const stored = Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [
-    storageKey, state.buttons[kind].map(b => ({ ...b })),
-  ]));
-  const migrated = applyMigrationPlan(stored, state.plan, state.selection);
+  const migrated = applyMigrationPlan(editStateSnapshot(), state.plan, state.selection);
   const count = state.selection.size;
 
   for (const { kind, storageKey } of SECTIONS) {
@@ -676,11 +720,12 @@ async function importSettings(file) {
 
   applyImportedSettings(imported.settings);
 
-  // An old backup gets the same review as old stored settings: the file's own generation decides,
-  // and the preview is the same one, still landing on the same Save.
-  state.loadedVersion = imported.version;
+  // The edit state is now part file, part whatever was already on screen — a file carrying only
+  // `defaultMain` leaves every button section untouched. So the generation to answer for is the
+  // *older* of the two, and the plan covers the merged whole rather than the file's keys.
+  state.loadedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
   state.reviewed = false;
-  setPlan(planMigration(imported.settings, imported.version));
+  setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
 
   const dropped = imported.skipped.length ? ` (skipped: ${imported.skipped.join(', ')})` : '';
   showStatus('info', `Settings imported. Press Save to apply.${dropped}`);
@@ -740,6 +785,9 @@ function onCardClick(e) {
     const { kind, index } = cardOf(e.target);
     if (state.buttons[kind].length >= MAX_BUTTONS) return;
     state.buttons[kind] = duplicateButton(state.buttons[kind], index);
+    // duplicateButton spreads the original, uid included — two buttons answering to the same name
+    // would make a candidate ambiguous, so the copy gets its own
+    state.buttons[kind][index + 1].uid = nextUid();
     markDirty();
     renderButtons(kind);
     // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
@@ -955,6 +1003,10 @@ document.getElementById('migration-actionable').addEventListener('change', (e) =
   const { id } = e.target.closest('.mig-item').dataset;
   if (e.target.checked) state.selection.add(id);
   else state.selection.delete(id);
+  // Choosing which candidates to accept is not a "dirty" edit — nothing to save yet — but it is the
+  // user speaking about this plan, so a snapshot that arrives from sync afterwards must not silently
+  // reset their choices back to all-checked.
+  state.revision++;
   renderMigration();
   // Re-opening after a redraw would be surprising: the panel was open, keep it open
   document.getElementById('migration-section').hidden = false;
@@ -976,7 +1028,14 @@ document.getElementById('migration-keep').addEventListener('click', () => {
 // what someone is typing right now.
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
+  // The floor is recorded unconditionally — even mid-edit, even when the change is not adopted.
+  // A version that exists on the account exists whether or not this page is ready to look at it,
+  // and the next save has to respect it rather than write the older number it happens to hold.
+  if (changes[VERSION_KEY]) {
+    state.versionFloor = raiseVersionFloor(state.versionFloor, changes[VERSION_KEY].newValue);
+  }
   if (!shouldAdoptSyncedChange(state.dirty, changes)) return;
+  // loadSettings checks again, after its await, whether the page moved on in the meantime
   loadSettings();
 });
 

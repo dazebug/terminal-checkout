@@ -399,7 +399,7 @@
     <h2 class="section-prompt"><span class="prompt">❯</span> backup <span class="section-where">— export, import, account sync</span></h2>
     <p class="help">Settings (PR, issue, and repository buttons, and the main branch) are stored in Chrome's account-synced area (<code>storage.sync</code>). This extension has a fixed ID (the manifest key), so any two Chrome profiles signed in to the <b>same Google account</b> with "Extensions" enabled in sync settings share these settings automatically. Export and import are for moving settings without an account, or for keeping a file backup.</p>
     <p class="help">Export downloads the <b>saved</b> settings as a file; import only fills in the form — nothing takes effect until you press <b>Save</b>.</p>
-    <p class="help">The file also records which generation of the presets it was written against. Importing an older backup offers the same update notice as stored settings do; a backup written by a <b>newer</b> extension is refused rather than half-read — update the extension first.</p>
+    <p class="help">The file also records which generation of the presets it was written against. Importing an older backup offers the same update notice as stored settings do — and since a file may cover only part of your settings, the notice then reviews the whole form, not just the keys the file carried. A backup written by a <b>newer</b> extension is refused rather than half-read; update the extension first.</p>
     <div style="display:flex; gap:10px; margin-top:10px">
       <button class="btn-secondary" id="export-btn">Export (JSON)</button>
       <button class="btn-secondary" id="import-btn">Import…</button>

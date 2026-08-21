@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R1 커밋(항목 1∼7 — 1·2·4·5·7 verified, 3·6 claimed: DOM 수기 검사 잔여) · 게이트 그린(드라이버 재실행 — node 56/0, swift 210/0, e2e 9 PASS) · Codex R1 검증 진행
-- 최근 검증자 판정: 미요청
+- 현재: R2 커밋(항목 8 — Codex 차단 7건 근본 수정, verified) · 게이트 그린(드라이버 재실행 — node 72/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no)** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -30,6 +30,10 @@
 
 ## 불변 원칙
 
+- **`effect`의 정의(R2 명문화).** `effect`는 딱 한 가지만 묻는다: **"어떤 앱 설정에서도 이 rewrite가 사용자를 더 나쁘게 만드는가?"** 아니면 `unconditional`, 그렇다면 `behavior-change`이고 프리뷰가 항목별로 저울질하게 만들어야 한다. 이 정의로 v0→v1은 `unconditional`이다 — base dir 미설정이면 렌더가 바이트 동일이고, 설정했다면 붙는 폴백은 **사용자가 앱에서 직접 켠 설정**의 결과이며 `{cd}`는 그 설정이 명령에 닿는 배선일 뿐이다. 정의를 적어 두지 않으면 "예전보다 더 한다"가 곧 behavior-change로 읽히므로, 이 문장이 분류의 근거다(Codex 반박 대상 — 드라이버가 다음 검증 요청에 싣는다).
+- **계획은 저장된 것이 아니라 "저장될 것"(편집 상태) 위에서 세운다.** import는 파일에 있는 키만 채우므로 나머지 섹션은 옛 command를 든 채 남고, 저장소 스냅샷으로 계획하면 그 절반이 검토 없이 승격된다. 후보의 이름은 **런타임 uid**이지 인덱스가 아니다 — 계획과 적용 사이에 타이핑·순서 변경이 일어나고, 인덱스는 그 순간 다른 버튼을 가리킨다. uid는 `toStoredButton`이 떼어 내 저장·내보내기에 절대 실리지 않는다.
+- **version은 이 페이지가 관찰한 바닥 아래로 내려가지 않는다.** 페이지는 오래 열려 있을 수 있고 그 사이 다른 기계가 계정을 앞으로 옮긴다. 저장은 쓰기 **직전에** version을 한 번 더 읽어 `max(바닥, 현재 저장값, 동의가 요구하는 값)`을 쓴다. dirty여도 version 변화는 항상 바닥에 기록한다 — 화면이 받아들일 준비가 됐는지와 무관하게 그 값은 존재한다.
+- **설정에서 온 문자열로 객체를 조회하지 않는다.** command·repo 이름·메시지 action은 전부 프로토타입 멤버 이름일 수 있다 — `Map`이나 `Object.hasOwn` 뒤에서만 찾는다(소탕 표 2).
 - **버전은 사용자의 명시적 행위로만 올라간다.** `saveSettings`가 무조건 현재 버전을 찍으면, 툴팁 하나 고치고 저장한 사용자의 마이그레이션이 조용히 소멸한다(아이콘은 사라지고 옛 command는 남는다). 이 루프에서 이 성질 하나만 지켜도 절반은 성공이다 — 테스트로 고정한다.
 - **`extension/defaults.js`가 현재 스키마 버전 상수의 단일 정본이다**(이슈 제약 5). 아이콘을 그리는 쪽도, 레지스트리도 이 상수를 본다. 레지스트리가 별도 파일로 가면 "레지스트리가 0→CURRENT의 모든 단계를 덮는가"를 테스트로 고정한다 — 상수만 올리고 항목을 빼먹는 것이 이 구조의 대표적 실패다.
 - **쓰기 경로는 [Save] 하나다.** import도 마이그레이션 적용도 편집 상태만 채운다. 이 원칙을 바꿔야 한다면 계획서에 개정으로 적고 승인을 받는다 — 슬그머니 두 번째 쓰기 경로를 만들지 않는다(`options.js:329-378`이 유일한 `storage.sync.set`).
@@ -95,7 +99,9 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | 6 | **다른 기계에서 아이콘 끄기.** `chrome.storage.onChanged` 리스너가 없다(`grep storage.onChanged extension/` → 0건) — 새로 만든다. **편집 중(dirty)이면 편집 상태를 덮지 않는다**가 핵심 제약. **red**: `shouldAdoptSyncedChange(dirty, changed)` 같은 순수 판정 함수 | claimed | `options.js:662-670`(`storage.onChanged` 리스너 신설 — 기존 0건), `migrations.js:141-149`(`shouldAdoptSyncedChange`). dirty면 채택하지 않는다(편집 중 입력 보호)를 red로 고정 | R1 |
 | 7 | **문구·문서 동기화.** `README.md:112`(수기 재적용 안내 → 아이콘 안내)·backup 절(`options.html:366`)에 version 언급, 옵션 페이지 도움말, 앱 설정 창 카드(`SetupWindowController.swift:255-261`, 한국어), `CLAUDE.md`에 불변 원칙 한 줄(버전은 명시적 행위로만 승격) | verified | `README.md:112`(수기 재적용 → 업데이트 표시 안내), `extension/options.html:401`(백업 절에 version·거부 규칙), `CLAUDE.md:42-43`(단일 쓰기 경로에 마이그레이션 추가 + 버전 승격 불변 원칙 신설), `app/Sources/App/SetupWindowController.swift:254-262`(한국어 카드 문구 → 업데이트 표시 안내) | R1 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막.
+| 8 | **R2 — Codex R1 차단(no)의 세 부류를 근본 수정.** 증상 7개를 따로 패치하지 않는다. **⒜ 계획은 항상 "저장될 것"(편집 상태) 위에서, 버튼 identity로**: 런타임 전용 `uid`(저장·내보내기에 절대 미포함), `planMigration`은 편집 상태 스냅샷에서 계산하고 후보 id는 uid, `loadedVersion`은 편집 상태를 구성한 출처 중 **가장 낮은 세대**. **⒝ 신뢰 경계**: 레지스트리를 `Map`으로(프로토타입 키 차단) + 확장 JS의 `obj[사용자문자열]` 조회 전수 소탕, version은 **음이 아닌 정수만** 신뢰하고 판정 함수 하나를 stored·imported가 공유, step 선택은 `step.to > fromVersion`. **⒞ version 바닥·동시성**: `versionFloor`(dirty여도 항상 기록), save는 `set` 직전 재조회해 `max(floor, 현재값, versionToSave)`, `loadSettings`는 await 전후 revision 대조로 스냅샷 폐기, 체크박스는 revision만 올린다. 부수: P3 커버리지 유도 테스트, 빈 suffix 제외, `effect` 정의 명문화, 잔여 3건(describe 합산·"바꿀 것 없음" 문구·echo) | verified | 아래 R2 로그 | R2 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -132,6 +138,20 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 | `tests/buttons.test.js` | 성립 — 프리셋·기본값을 고정하는 곳이라 레지스트리 교차 검사의 이웃 | 파일 읽기 | 닫음(R1) — 신설 `tests/migration.test.js`가 이웃 |
 | `extension/manifest.json` | 성립 안 함 — `options_page`는 자기 `<script>`로 로드하고, `content_scripts.js`는 defaults/layout/content 셋뿐이라 migrations.js가 낄 자리가 없다(의도대로 콘텐츠 스크립트는 마이그레이션을 모른다) | `sed -n '19,32p' extension/manifest.json` | 안전 — 변경 없음 |
 
+### 소탕 표 2 — `obj[사용자 문자열]` 조회 (R2, 부류 ⒝)
+
+키가 **사용자 설정·페이지 URL·메시지**에서 오면 평범한 객체 조회는 프로토타입 멤버를 답으로 돌려준다. 확장 JS 전체를 훑은 결과.
+
+| 지점 | 키의 출처 | 판정 |
+|:--|:--|:--|
+| `migrations.js` `step.rewrites[current]` | 저장된 command | **구멍 → 닫음(R2)**: `V0_TO_V1`을 `Map`으로. `constructor`·`toString`·`__proto__`·`valueOf`·`hasOwnProperty`가 후보로 오인되고 저장 시 `.trim()`에서 죽었다 |
+| `background.js:126` `data.repoMainBranch?.[repo]` | **페이지 URL의 repo 이름** | **구멍 → 닫음(R2)**: `Object.hasOwn` 가드. `{}` 오버라이드 맵에서 `repoMainBranch['constructor']`가 함수를 돌려주고 그것이 브랜치 이름으로 앱까지 흘러갔다. 기존 코드지만 같은 부류라 같은 라운드에서 닫는다 |
+| `background.js:293` `ACTION_KIND[message.action]` | 런타임 메시지 | **구멍 → 닫음(R2)**: `Object.hasOwn` 가드. 상속 멤버가 truthy를 통과한 뒤 `RUN_BY_KIND[함수]`가 `undefined`가 돼 다음 줄에서 죽는다 |
+| `BUTTON_KINDS[kind]`(`background.js:138`·`content.js:80`·`options.js` 다수) | `pageTypeOf`가 돌려주는 내부 열거값(`pr`/`issue`/`repo`) | 안전 — 사용자 문자열이 아니다 |
+| `data[storageKey]`·`settings[storageKey]`·`data[key]`(import 파싱) | `SETTINGS_KEYS`/`SECTIONS` — 우리 상수 | 안전 |
+| `state.buttons[kind]`·`presetTemplates[kind]`·`btn[field]`(필수 항목 검사) | 내부 열거값·`REQUIRED_FIELDS` | 안전 |
+| `Object.fromEntries(entries)`(`serializeOverrides`) | 사용자 repo 이름이 **키가 된다** | 안전 — `fromEntries`는 own property로 만든다(프로토타입 오염 아님). 읽는 쪽은 위의 `hasOwn` 가드가 받는다 |
+
 ## 라운드 로그
 
 ### R0 — `6fa5daf` (계획 초안)
@@ -167,3 +187,23 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - **6. 레지스트리를 `defaults.js`에 둘 것인가 `extension/migrations.js`로 뺄 것인가.** 이슈 제약 5는 **버전 상수**만 defaults.js로 못 박는다. 분리하면 defaults.js가 "현재의 진실"로 남고 역사 문자열은 옆방으로 가지만, 상수와 레지스트리가 갈라져 드리프트 여지가 생긴다(테스트로 막을 수는 있다). — 막는 항목: 2
 - **7. [Reset to Defaults]는 동의인가.** 현재 프리셋으로 되돌리므로 내용은 CURRENT 세대가 된다. version을 올리지 않으면 "내용은 최신인데 아이콘은 켜짐"이 되고, 올리면 "리셋이 곧 마이그레이션 동의"가 된다. — 막는 항목: 1
 - **8. 동의 단위 — 항목별인가 일괄인가.** 이슈는 동작 변화에 대해 "let the user decide per item"이라고 적었다. 항목별이면 체크박스 UI와 부분 적용 상태가 생기고, 일괄이면 단순하지만 "일부만 받기"가 불가능하다. — 막는 항목: 3
+
+### R1 — `ab9957d` (Codex 판정: 차단)
+
+- 판정 원문: **"이 구현에 합의하지 않습니다. `node --test` 56/0은 재현했지만, 통합 경로의 고심각도 결함을 놓칩니다."** 불변 원칙 ②(단일 쓰기 경로)·④(실행 경로 무지)는 통과, ①(명시적 승격·미래값 보존)·③(후보 판정 엄격성)은 **실패**.
+- P1 ×5: (1) 부분 import(`{"defaultMain":"main"}`)가 파일에 있는 키만 계획해 나머지 섹션의 옛 command를 검토 없이 version 1로 만든다 (2) 같은 command가 둘일 때 체크 해제→순서 변경→적용이 인덱스 가드를 뚫어 엉뚱한 버튼을 고친다 (3) `V0_TO_V1["constructor"]` 등 프로토타입 키가 verbatim 후보로 오인돼 저장 시 `.trim()` TypeError (4) dirty 중 원격이 version 7을 저장하면 로컬 일반 저장이 0으로 **강등** (5) `onChanged` → `loadSettings()`의 await 사이에 타이핑하면 덮어씀, 체크박스 변경은 dirty가 아니라 sync가 선택을 되돌림.
+- P2: version `0.5`를 유효로 받아 `step.from >= 0.5`가 0→1 step을 건너뛰고 빈 검토 화면 → 확인 → 옛 command가 v1로 남는다. P3: 레지스트리 커버리지 테스트가 3개 command만 봐서 쌍 하나를 지워도 통과.
+- 우리 판단: (a) 검토 세대 의미론 **수용**, (d) options 전용 로드 **수용**, (c) 접두 승격 조건부 수용 — `z {repo} && `(빈 suffix)·문법 오류 command까지 후보로 잡는 경계는 제한 요구, (b) `unconditional` 분류 **반박** — "base dir이 있으면 실제 동작 변화다. 안전한 개선으로 취급할 수는 있어도 unconditional이라는 효과 분류는 부정확", (e) echo는 race·강등 결함과 겹쳐 무해로 볼 수 없음.
+- 부류 이동: 순수 함수 단위는 전부 통과했고 결함은 **통합 경로**(스냅샷 선택·동시성·신뢰 경계)에 모였다 — R2는 이 세 부류를 근본 수정으로 닫는다.
+
+### R2 — 워킹트리(미커밋, base `ab9957d`)
+
+- 범위: 항목 8. Codex가 지목한 증상 7개를 **부류 셋**으로 묶어 근본 수정했다.
+- **⒜ 계획은 편집 상태 위에서, 버튼 identity로**: 편집 상태의 모든 버튼이 런타임 `uid`를 갖고(`options.js`의 `normalizeButton` 단일 깔때기), 후보 id가 uid가 되며(`migrations.js` `planMigration`), 적용은 uid로 찾은 뒤 command 동일성까지 확인한다. `editStateSnapshot()`이 계획의 유일한 입력이라 setPlan 호출 4곳(load·save 후·import·apply/keep)이 같은 것을 본다. import는 `mergedSourceVersion`으로 **더 낮은 세대**를 취한다. uid는 `toStoredButton`(defaults.js)이 떼어 낸다.
+- **⒝ 신뢰 경계**: `V0_TO_V1`을 `Map`으로, version은 `normalizeVersion`(음이 아닌 정수만) 하나를 stored·imported가 공유, step 선택은 `stepsFrom`의 `step.to > fromVersion`. `obj[사용자문자열]` 전수 소탕에서 **기존 코드 2건**(`background.js`의 `repoMainBranch[repo]`, `ACTION_KIND[message.action]`)도 같은 부류라 함께 닫았다 — 소탕 표 2.
+- **⒞ version 바닥·동시성**: `state.versionFloor`(load·onChanged에서 **dirty여도** 기록), 저장은 `set` 직전 `storage.sync.get(VERSION_KEY)`로 재조회해 `versionToWrite`가 `max(바닥, 현재값, versionToSave)`를 낸다. `loadSettings`는 await 전 revision을 잡고 뒤에서 `shouldApplyLoadedSnapshot`으로 대조해 늦은 스냅샷을 버린다. 체크박스 변경은 `state.revision++`(dirty 아님)이라 sync가 선택을 되돌리지 못한다. 자기 저장의 echo도 같은 가드로 무해해진다.
+- red 기록(3배치): ⒝+P3+(c) → `not ok 33∼39` 7건; ⒜ → `not ok 17·19·21·40∼45` 9건(기존 3건은 uid 도입으로 의도적으로 깨진 것); ⒞ → `not ok 46∼48` 3건. 각 배치 red 확인 후 구현.
+- **잔여(설계상 남김)**: 저장의 `get`↔`set` 사이 창은 트랜잭션 없이는 닫히지 않는다 — 그 사이 다른 기계가 더 높은 version을 쓰면 이 저장이 덮는다. 바닥·재조회로 창을 최소화했고, 피해는 "알림이 한 번 더 뜬다"이지 command 손실이 아니다.
+- 실측: `node --test` **72/0**(R1 56 → 신규 16), `swift test` 210/0, `app/build.sh` + `app/e2e.sh` PASS 9건. `node --check`로 확장 스크립트 5개 구문 확인.
+- **미검증**: DOM·클릭 경로(배지·체크박스·실제 `storage.onChanged` 수신)는 여전히 자동 게이트가 없다 — 수기 검사 목록 그대로.
+- 판정: 미요청.

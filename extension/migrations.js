@@ -15,7 +15,12 @@
 // "tidied". The 11 v0 presets collapse to 8 distinct commands — `z {repo} && claude` was shared by
 // three presets and `z {repo}` by two — and the same string always maps to the same replacement, so
 // the map needs no per-page split.
-const V0_TO_V1 = {
+//
+// A Map, not an object literal. Every lookup is keyed by a command out of someone's settings, and on
+// a plain object `rewrites['constructor']` — or 'toString', '__proto__', 'valueOf' — answers with an
+// inherited member: those commands read as verbatim matches, were offered as candidates, and then
+// threw on save. A Map has no prototype chain to fall through into.
+const V0_TO_V1 = new Map(Object.entries({
   'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }':
     '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
   'z {repo} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude':
@@ -29,7 +34,7 @@ const V0_TO_V1 = {
     '{cd} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
   'z {repo}': '{cd}',
   'z {repo} && git checkout {main} && git pull --ff-only': '{cd} && git checkout {main} && git pull --ff-only',
-};
+}));
 
 // The clause v0 opened with, and what replaces it. Kept apart from the verbatim map because the
 // prefix rule below rewrites *only* this leading clause and leaves the rest of the command alone.
@@ -40,11 +45,16 @@ const MIGRATIONS = [
   {
     from: 0,
     to: 1,
-    // Unconditional. It is tempting to call this conditional, because a user who has set a base
-    // directory gets fallbacks the old command never had — but those fallbacks come from a setting
-    // they turned on themselves in the app, not from this rewrite. With no base directory the
-    // rendered command is byte-identical; with one, the button does what that setting says it
-    // should. Neither case is worse than today, so the base directory is a note, not a verdict.
+    // `effect` answers one question and only that one: **is there any app configuration under
+    // which this rewrite leaves the user worse off?** 'unconditional' means no; 'behavior-change'
+    // means yes, and the preview must then make the user weigh it per item.
+    //
+    // By that definition this hop is unconditional. With no base directory the rendered command is
+    // byte-identical. With one, the button gains fallbacks — but those come from a setting the user
+    // switched on in the app themselves, and `{cd}` is how that setting was always meant to reach
+    // the command; the rewrite is the wiring, not the decision. Neither case is worse than today.
+    // (Without a stated definition "does more than before" would read as behavior-change, which is
+    // why the definition is written down here rather than left to taste.)
     effect: 'unconditional',
     rewrites: V0_TO_V1,
     describe:
@@ -61,10 +71,11 @@ const MIGRATIONS = [
     // guessing wrong edits a command we were told not to touch.
     promote: command => {
       if (command === V0_ENTRY_CLAUSE) return V1_ENTRY_CLAUSE;
-      if (command.startsWith(`${V0_ENTRY_CLAUSE} && `)) {
-        return V1_ENTRY_CLAUSE + command.slice(V0_ENTRY_CLAUSE.length);
-      }
-      return null;
+      if (!command.startsWith(`${V0_ENTRY_CLAUSE} && `)) return null;
+      // `z {repo} && ` with nothing after it is not a jump with a tail, it is a broken command.
+      // Rewriting it would hand back a differently broken one and claim it as an improvement.
+      if (command.slice(`${V0_ENTRY_CLAUSE} && `.length).trim() === '') return null;
+      return V1_ENTRY_CLAUSE + command.slice(V0_ENTRY_CLAUSE.length);
     },
     // Whether a command we are not going to rewrite still belongs to the old generation, and is
     // therefore worth mentioning. Without this, a custom command already written with {cd} would be
@@ -73,16 +84,23 @@ const MIGRATIONS = [
   },
 ];
 
+// A version is a non-negative **integer** or it is not a version. Anything else — a fraction, a
+// negative, a string, NaN — is a value we cannot reason about, and the one that matters is the
+// fraction: 0.5 used to pass as valid and then sat between two steps, so the whole 0->1 hop was
+// skipped and the user was shown an empty review to confirm. Stored settings and imported files are
+// judged here, together, so they cannot drift apart.
+function normalizeVersion(raw) {
+  return Number.isInteger(raw) && raw >= 0 ? raw : null;
+}
+
 // The generation a stored settings object has been reviewed against.
 //
 // A fresh profile and a legacy one both lack the version key; the only thing that tells them apart
 // is whether anything else was ever saved. Getting this backwards is expensive in both directions —
 // a new user greeted by a migration notice, or a legacy user promoted without ever seeing one.
-// A version that is present but not a number is not trusted (a hand-edited backup, a future format):
-// fall back to the same presence rule rather than believe it.
 function storedSchemaVersion(stored) {
-  const raw = stored?.[VERSION_KEY];
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
+  const version = normalizeVersion(stored?.[VERSION_KEY]);
+  if (version !== null) return version;
   const hasSettings = SETTINGS_KEYS.some(key => stored?.[key] !== undefined);
   return hasSettings ? 0 : SETTINGS_VERSION;
 }
@@ -94,6 +112,13 @@ function storedSchemaVersion(stored) {
 // A version from the future is never lowered. That can only reach us through the normal load path —
 // another machine on the account running a newer extension — because a newer *backup* is refused at
 // import (see importedSchemaVersion) rather than filled in.
+// The generation of an edit state assembled from more than one source — what was on screen plus an
+// imported file. It answers for the **oldest** thing in it: reviewing the merged state has to cover
+// the older half, or importing a current file would license stale commands that came from elsewhere.
+function mergedSourceVersion(current, incoming) {
+  return Math.min(current, incoming);
+}
+
 function versionToSave({ loadedVersion, reviewed }) {
   if (!reviewed) return loadedVersion;
   return Math.max(loadedVersion, SETTINGS_VERSION);
@@ -107,8 +132,20 @@ function versionToSave({ loadedVersion, reviewed }) {
 // `source` records how a candidate was found: 'verbatim' (it was an old preset, byte for byte) or
 // 'prefix' (it was customized, but its first clause was exactly the old jump). The preview shows
 // the difference so a user can see that we recognized their edit rather than ignoring it.
+// Steps are chosen by where they land, not where they start: `step.to > fromVersion` still picks up
+// the 0->1 hop for a version of 0.5, whereas `step.from >= 0.5` silently skipped it. normalizeVersion
+// should keep fractions out entirely — this is the second lock on the same door.
+function stepsFrom(fromVersion) {
+  return MIGRATIONS.filter(step => step.to > fromVersion);
+}
+
+// The preview's wording, covering every step being applied rather than only the last one.
+function migrationDescription(fromVersion) {
+  return stepsFrom(fromVersion).map(step => step.describe).join(' ');
+}
+
 function planMigration(stored, fromVersion) {
-  const steps = MIGRATIONS.filter(step => step.from >= fromVersion);
+  const steps = stepsFrom(fromVersion);
   const actionable = [];
   const informational = [];
 
@@ -124,7 +161,7 @@ function planMigration(stored, fromVersion) {
       let source = null;
       let behaviorChange = false;
       for (const step of steps) {
-        const verbatim = step.rewrites?.[current];
+        const verbatim = step.rewrites?.get(current);
         const promoted = verbatim === undefined ? step.promote?.(current) : verbatim;
         if (promoted === undefined || promoted === null || promoted === current) continue;
         // The first step that matched says how this entered the chain
@@ -133,7 +170,12 @@ function planMigration(stored, fromVersion) {
         current = promoted;
       }
 
-      const where = { id: `${storageKey}:${index}`, storageKey, kind, index, label: button.label || '' };
+      // A candidate is named by the button's uid, never by where it sits. The plan is built from the
+      // edit state and applied to the edit state, and in between the user can type, reorder, add and
+      // delete — an index stops meaning the same button the moment any of that happens. Without a
+      // uid we cannot name it, so we do not offer it.
+      if (typeof button.uid !== 'string' && typeof button.uid !== 'number') return;
+      const where = { id: button.uid, storageKey, kind, index, label: button.label || '' };
       if (current !== command) {
         actionable.push({
           ...where,
@@ -164,13 +206,15 @@ function applyMigrationPlan(stored, plan, selectedIds) {
     if (!selected.has(item.id)) continue;
     const list = next[item.storageKey];
     if (!Array.isArray(list)) continue;
-    // Position is not identity. The plan is built from stored settings and applied to the edit
-    // state, so a command may have been typed over or moved in between — rewrite only while the
-    // command still is the one that was planned, and otherwise leave it alone.
-    if (list[item.index]?.command !== item.from) continue;
+    // Find the button by name. `item.index` is only good for showing the user where it was.
+    const index = list.findIndex(button => button?.uid === item.id);
+    if (index === -1) continue; // deleted, or moved to another section, since planning
+    // Even the right button may no longer hold the command that was planned — someone can type over
+    // it while the preview is open. Rewrite only what was actually reviewed.
+    if (list[index].command !== item.from) continue;
     // Copy each touched array once; later hits on the same key edit the copy
     const buttons = list === stored[item.storageKey] ? list.slice() : list;
-    buttons[item.index] = { ...buttons[item.index], command: item.to };
+    buttons[index] = { ...buttons[index], command: item.to };
     next[item.storageKey] = buttons;
   }
   return next;
@@ -200,8 +244,8 @@ function migrationSummary(plan, selectedIds) {
 // half-imported — we cannot know what its keys mean, and filling the form with them would invite a
 // Save that quietly downgrades the account.
 function importedSchemaVersion(data) {
-  const raw = data?.[VERSION_KEY];
-  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return 0;
+  const raw = normalizeVersion(data?.[VERSION_KEY]);
+  if (raw === null) return 0;
   if (raw > SETTINGS_VERSION) {
     throw new Error(
       'This backup was exported by a newer version of the extension. '
@@ -220,4 +264,36 @@ function shouldAdoptSyncedChange(dirty, changes) {
   if (dirty) return false;
   const ours = new Set([...SETTINGS_KEYS, VERSION_KEY]);
   return Object.keys(changes || {}).some(key => ours.has(key));
+}
+
+// The highest version this page has ever seen, from any source. It rises and never falls.
+//
+// The floor exists because reading and writing are far apart in time: the page loads a version,
+// the user edits for a while, and another machine can save a newer one in between. Writing what was
+// loaded would then downgrade the account and bring the notice back everywhere. A reading that is
+// not a version at all changes nothing.
+function raiseVersionFloor(floor, observed) {
+  const version = normalizeVersion(observed);
+  return version === null ? floor : Math.max(floor, version);
+}
+
+// The version a save actually writes: never below the floor, never below what is in storage right
+// now, and at least what consent asks for. `live` is a fresh read taken immediately before the
+// write, which is what closes the window the floor alone cannot see — another machine's save that
+// landed after this page loaded.
+function versionToWrite({ floor, live, loadedVersion, reviewed }) {
+  return Math.max(
+    raiseVersionFloor(floor, live),
+    versionToSave({ loadedVersion, reviewed })
+  );
+}
+
+// Whether a settings snapshot read from storage may still be applied to the page.
+//
+// Between asking storage for the settings and getting them back, the user can type, toggle a
+// checkbox, or start editing. Any of that makes the snapshot older than the screen, and applying it
+// would silently undo what they just did. `revision` counts every such act — including checkbox
+// toggles, which are not "dirty" edits but are still the user speaking about this plan.
+function shouldApplyLoadedSnapshot({ revisionAtStart, revisionNow, dirty }) {
+  return !dirty && revisionAtStart === revisionNow;
 }

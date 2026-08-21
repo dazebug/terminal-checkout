@@ -158,7 +158,7 @@ Installation, terminal selection, and permissions live in the app's setup window
 
 - Reorder button cards by dragging the `⠿` handle, or focus the handle and press `↑` `↓`. [Duplicate] creates a copy right after the original (its tooltip gets a `(1)`-style suffix). This order is the order buttons appear on GitHub, and the first button is what the extension icon runs.
 - Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
-- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply.
+- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply. The file records which generation of the presets it was written against: an older backup gets the same update notice, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
 
 ### Getting into the repository
 

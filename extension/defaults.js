@@ -186,6 +186,20 @@ function isTextFace(face) {
   return /[\p{L}\p{N}]/u.test(face);
 }
 
+// The exact shape a button takes in storage, and the only place that shape is decided. The options
+// page hangs a runtime `uid` on its buttons so it can tell them apart while they are edited and
+// reordered; that handle means nothing anywhere else, so it is dropped here rather than at each call
+// site — leaked into storage it would ride storage.sync to other machines and into export files,
+// where it would collide with the uids minted there.
+function toStoredButton(button) {
+  return {
+    face: (button.face ?? '').trim(),
+    label: (button.label ?? '').trim(),
+    command: button.command ?? '',
+    claudeInputs: (button.claudeInputs || []).map(input => String(input).trim()).filter(Boolean),
+  };
+}
+
 // --- Button list editing ---
 // Only the options page uses these, but they are pure functions that know nothing about the DOM or
 // the chrome APIs, so they live here (tests/buttons.test.js).
