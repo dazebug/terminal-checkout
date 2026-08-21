@@ -122,6 +122,36 @@ function storedSchemaVersion(stored) {
   return hasSettings ? 0 : SETTINGS_VERSION;
 }
 
+// A generation newer than this extension understands can arrive two ways, and neither may be
+// papered over: from a backup file, and from the account's own storage (another machine running a
+// newer extension). Both messages have to carry the way out, or the user is simply stuck.
+const BACKUP_FROM_FUTURE_MESSAGE =
+  'This backup was exported by a newer version of the extension. '
+    + 'Update the extension (`git pull` + refresh at chrome://extensions), '
+    + 'or use Reset to Defaults to start from the current presets.';
+
+const STORED_FROM_FUTURE_MESSAGE =
+  'Your stored settings were written by a newer version of the extension, so an older backup '
+    + 'cannot be merged into them. Update the extension (`git pull` + refresh at '
+    + 'chrome://extensions) before importing.';
+
+// The generation of an edit state assembled from more than one source — what was on screen plus an
+// imported file. It answers for the **oldest** thing in it: reviewing the merged state has to cover
+// the older half, or importing a current file would license stale commands that came from elsewhere.
+//
+// Taking the minimum only means that while both sides are generations this extension understands.
+// With a stored version of 2 and a file of 0 it produced 0, and the next Save wrote that 0 down —
+// the newer machine's review demoted by a merge of a file we understood into settings we did not.
+// The precondition is checked here rather than at the call site, because it is what makes the
+// arithmetic mean anything.
+function mergedSourceVersion(current, incoming) {
+  if (current > SETTINGS_VERSION) throw new Error(STORED_FROM_FUTURE_MESSAGE);
+  // Import already refuses a newer file outright (importedSchemaVersion); this is the second lock
+  // on the same door, so the assumption cannot be quietly broken by a future caller.
+  if (incoming > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE);
+  return Math.min(current, incoming);
+}
+
 // What the version becomes on save. `reviewed` is true only after an explicit act — applying the
 // migration (in whole or in part), declining it, acknowledging that there was nothing to change, or
 // resetting to defaults. Everything else preserves what was read, which is what stops an ordinary
@@ -129,13 +159,6 @@ function storedSchemaVersion(stored) {
 // A version from the future is never lowered. That can only reach us through the normal load path —
 // another machine on the account running a newer extension — because a newer *backup* is refused at
 // import (see importedSchemaVersion) rather than filled in.
-// The generation of an edit state assembled from more than one source — what was on screen plus an
-// imported file. It answers for the **oldest** thing in it: reviewing the merged state has to cover
-// the older half, or importing a current file would license stale commands that came from elsewhere.
-function mergedSourceVersion(current, incoming) {
-  return Math.min(current, incoming);
-}
-
 function versionToSave({ loadedVersion, reviewed }) {
   if (!reviewed) return loadedVersion;
   return Math.max(loadedVersion, SETTINGS_VERSION);
@@ -274,13 +297,7 @@ function migrationSummary(plan, selectedIds) {
 function importedSchemaVersion(data) {
   const raw = normalizeVersion(data?.[VERSION_KEY]);
   if (raw === null) return 0;
-  if (raw > SETTINGS_VERSION) {
-    throw new Error(
-      'This backup was exported by a newer version of the extension. '
-        + 'Update the extension (`git pull` + refresh at chrome://extensions), '
-        + 'or use Reset to Defaults to start from the current presets.'
-    );
-  }
+  if (raw > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE);
   return raw;
 }
 
@@ -350,14 +367,55 @@ function saveConflict(loadedSnapshot, liveSnapshot) {
   );
 }
 
+// A load landed while the save was in flight, so the form on screen is no longer the one the
+// payload was built from. Writing it would store settings the user is not looking at.
+const SAVE_RELOADED_MESSAGE =
+  'This page reloaded its settings while the save was in flight, so the form no longer holds what '
+    + 'was about to be written. Check it and press Save again.';
+
+// Whether a save may start at all. Two saves in flight would each have captured the same world and
+// checked it independently, and the later write would land with information from before the earlier
+// one — one writer at a time is the only way that stays decidable.
+function shouldStartSave({ loaded, saving }) {
+  return loaded === true && saving !== true;
+}
+
 // The save as a decision, kept apart from the act of writing so it can be reasoned about on its own.
 // A refusal carries the message and writes nothing; there is no repair attempted behind the user's
 // back, because any repair here would be a guess about which of two intentions to keep.
-function planSave({ loadedSnapshot, liveSnapshot, payload }) {
-  if (saveConflict(loadedSnapshot, liveSnapshot)) {
+//
+// `capturedSnapshot` is what the store held when *this save* started, taken once and never re-read
+// from the page. That distinction is the whole fix: adoption of a remote change is not a user action
+// and bumps no revision, so a change arriving mid-save used to be pulled into `loadedSnapshot` and
+// the comparison below became S1 against S1 — no conflict, and the payload built from S0 went over
+// the top of it.
+// `changedWhileInFlight` is the same fact from the other direction. The live read can be answered
+// from before a remote write committed while the change event says it committed; the event is the
+// stronger fact, so it refuses on its own.
+function planSave({
+  capturedSnapshot, liveSnapshot, payload, generationAtStart, generationNow, changedWhileInFlight,
+}) {
+  if (changedWhileInFlight) return { refused: true, message: SAVE_CONFLICT_MESSAGE };
+  if (generationAtStart !== generationNow) return { refused: true, message: SAVE_RELOADED_MESSAGE };
+  if (saveConflict(capturedSnapshot, liveSnapshot)) {
     return { refused: true, message: SAVE_CONFLICT_MESSAGE };
   }
   return { refused: false, write: payload };
+}
+
+// Reading a file is asynchronous, and the form stays live while it happens. A file applied over
+// what was typed in that window is the same defect as a stale load answer landing on top of typing,
+// so it asks the same question — did anything happen since I started? — and refuses the same way.
+const IMPORT_STALE_MESSAGE =
+  'Edits were made while the file was being read — nothing was imported. Import again.';
+
+function planImport({
+  revisionAtStart, revisionNow, generationAtStart, generationNow, settings,
+}) {
+  if (!nothingHappenedSince(revisionAtStart, revisionNow) || generationAtStart !== generationNow) {
+    return { refused: true, message: IMPORT_STALE_MESSAGE };
+  }
+  return { refused: false, apply: settings };
 }
 
 // Whether a settings snapshot read from storage may still be applied to the page.
@@ -398,9 +456,20 @@ function shouldApplyLoadedSnapshot({
 // Dropping is never silent: `skipped` counts what went, and the caller says so. Folding quietly
 // back to defaults would look exactly like "you have no buttons", which is a lie about the user's
 // own data.
+//
+// The count is kept **per key** as well as in total. A total alone hid the case that matters most
+// for import: a file with one good button and one unreadable one imported the good one, the key was
+// present in the result, and nothing in the report said an entry had gone.
 function adoptStoredSettings(raw) {
   const settings = {};
+  const skippedByKey = {};
   let skipped = 0;
+
+  const drop = (key, count) => {
+    if (!count) return;
+    skippedByKey[key] = (skippedByKey[key] || 0) + count;
+    skipped += count;
+  };
 
   for (const { storageKey } of Object.values(BUTTON_KINDS)) {
     const value = raw?.[storageKey];
@@ -408,29 +477,28 @@ function adoptStoredSettings(raw) {
     // The same validator the content script and the service worker use (defaults.js) — one shape
     // verdict for every reader
     const adopted = adoptStoredButtons(value);
-    skipped += adopted.skipped;
+    drop(storageKey, adopted.skipped);
     settings[storageKey] = adopted.buttons;
   }
 
-  if (raw?.defaultMain !== undefined) {
-    if (typeof raw.defaultMain === 'string') settings.defaultMain = raw.defaultMain;
-    else skipped += 1;
-  }
+  // Also shared with the service worker (defaults.js), which resolves {main} from these two keys.
+  // Asked one key at a time so each answers for its own losses rather than a combined total.
+  const asDefault = adoptStoredMainBranch({ defaultMain: raw?.defaultMain });
+  if (asDefault.defaultMain !== undefined) settings.defaultMain = asDefault.defaultMain;
+  drop('defaultMain', asDefault.skipped);
 
-  if (raw?.repoMainBranch !== undefined) {
-    const map = raw.repoMainBranch;
-    if (map && typeof map === 'object' && !Array.isArray(map)) {
-      // Only string branches. A non-string value would reach the app as a branch name.
-      const entries = Object.entries(map).filter(([, branch]) => typeof branch === 'string');
-      skipped += Object.keys(map).length - entries.length;
-      settings.repoMainBranch = Object.fromEntries(entries);
-    } else {
-      // `Object.entries('abc')` would otherwise have produced override rows named 0, 1 and 2
-      skipped += 1;
-    }
-  }
+  const asOverrides = adoptStoredMainBranch({ repoMainBranch: raw?.repoMainBranch });
+  if (asOverrides.overrides !== undefined) settings.repoMainBranch = asOverrides.overrides;
+  drop('repoMainBranch', asOverrides.skipped);
 
-  return { settings, skipped };
+  return { settings, skipped, skippedByKey };
+}
+
+// One sentence per key that lost something, so the report names what went and where.
+function describeSkipped(skippedByKey) {
+  return Object.entries(skippedByKey).map(([key, count]) => (count === 1
+    ? `1 entry in ${key} was unreadable and skipped`
+    : `${count} entries in ${key} were unreadable and skipped`));
 }
 
 // --- One signal for "the user said something" ---
@@ -451,6 +519,20 @@ function nothingHappenedSince(revisionAtStart, revisionNow) {
 // Guarding the state change instead of the listeners is what makes that route irrelevant.
 function shouldAcceptUserAction(loaded) {
   return loaded === true;
+}
+
+// An interaction is "may I?" and then "do it", in that order. Keeping the two apart is how they got
+// swapped: [+ Add Button] pushed the button onto the edit state and called the guard afterwards, so
+// the guard could only ever refuse a change that had already happened — and [+ Add Override], the
+// card inputs, delete, duplicate, reorder and the review checkboxes were all built the same way.
+//
+// The order is not a convention to remember at fourteen call sites; it is this function, and the
+// change is a closure so there is nowhere for a mutation to sit ahead of the guard. Returns whether
+// the change ran, because a caller that reports "done" also has to know.
+function userAction(accept, change) {
+  if (!accept()) return false;
+  change();
+  return true;
 }
 
 // A load can fail — storage.sync rejects, and it did so silently: the page stayed unloaded and inert

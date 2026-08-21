@@ -601,7 +601,7 @@ test('a save onto a settings object that moved is refused, not merged', () => {
     version: versionToSave({ loadedVersion: 0, reviewed: false }),
   };
 
-  const outcome = planSave({ loadedSnapshot: loadedByA, liveSnapshot: savedByB, payload: payloadFromA });
+  const outcome = planSave({ capturedSnapshot: loadedByA, liveSnapshot: savedByB, payload: payloadFromA });
   assert.equal(outcome.refused, true);
   assert.equal(outcome.write, undefined, 'nothing may be written');
   assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
@@ -616,7 +616,7 @@ test('a save onto a settings object that moved is refused, not merged', () => {
 test('a save onto the settings we loaded goes through unchanged', () => {
   const snapshot = { buttons: [{ command: 'z {repo}' }], version: 0 };
   const payload = { buttons: [{ command: 'z {repo}' }], version: 0, defaultMain: 'main' };
-  const outcome = planSave({ loadedSnapshot: snapshot, liveSnapshot: { ...snapshot }, payload });
+  const outcome = planSave({ capturedSnapshot: snapshot, liveSnapshot: { ...snapshot }, payload });
   assert.equal(outcome.refused, false);
   assert.equal(outcome.write, payload);
 });
@@ -776,4 +776,176 @@ test('a failed load leaves the page shut, and says how to reopen it', () => {
   assert.equal(shouldAcceptUserAction(false), false);
   assert.match(LOAD_FAILED_MESSAGE, /could not|failed/i);
   assert.match(LOAD_FAILED_MESSAGE, /retry/i);
+});
+
+// --- An async task settles against the world it started in (class (a)) ---
+// Save, load, import and adoption are all "read something, come back later, change the page". The
+// world moves in between: another device saves, a sync event is adopted, the user types. Each of
+// them therefore captures what it started from and settles against that capture, never against
+// `state` — which is precisely what the adoption underneath a save had rewritten.
+
+const { planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE, shouldStartSave } =
+  vm.runInThisContext('({ planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE, shouldStartSave })');
+
+test('a save writes against the world it started in, not the one adoption left behind', () => {
+  // Codex R5 P1, exactly. Clean page, Save pressed: the payload is built from S0 and the live read
+  // goes out. While it is pending another device saves S1; onChanged adopts it, so `loadedSnapshot`
+  // becomes S1 — and the pre-write comparison was S1 against S1, saw no conflict, and wrote S0 over
+  // S1. Adoption is not a user action and bumps no revision, so nothing else caught it either.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const S1 = { buttons: [{ command: '{cd}' }], version: 1 };
+  const outcome = planSave({
+    capturedSnapshot: S0, // what the save started from — not what the page holds now
+    liveSnapshot: S1,
+    payload: { buttons: [{ command: 'z {repo}' }], version: 0 },
+  });
+  assert.equal(outcome.refused, true, 'S0 must not be written over S1');
+  assert.equal(outcome.write, undefined);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+});
+
+test('a change that arrived during the save refuses it even if the live read raced', () => {
+  // The live get can be answered from before the remote write landed, while the change event says
+  // it landed. The event is the stronger fact: the store moved, so this payload is stale.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const outcome = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, changedWhileInFlight: true,
+  });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+});
+
+test('a save whose page reloaded under it is refused rather than written', () => {
+  // A load that landed mid-save replaced the edit state on screen; the payload describes what was
+  // there before it. Writing it would store something the user is no longer looking at.
+  const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
+  const outcome = planSave({
+    capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0,
+    generationAtStart: 1, generationNow: 2,
+  });
+  assert.equal(outcome.refused, true);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
+  assert.match(SAVE_RELOADED_MESSAGE, /save again/i);
+});
+
+test('only one save is in flight at a time', () => {
+  // Two saves started from the same captured world would both pass their own check and the later
+  // write would win with information from before the earlier one landed.
+  assert.equal(shouldStartSave({ loaded: true, saving: false }), true);
+  assert.equal(shouldStartSave({ loaded: true, saving: true }), false);
+  assert.equal(shouldStartSave({ loaded: false, saving: false }), false);
+});
+
+test('a synced change is held, not adopted, while a save is in flight', () => {
+  // Adoption during a save is what replaced the snapshot the save was comparing against. A save in
+  // flight is unsaved work like any other.
+  const saving = true;
+  assert.equal(shouldAdoptSyncedChange(false || false || saving, { buttons: {} }), false);
+});
+
+test('an import that finished reading after the form moved is refused, not applied', () => {
+  // `file.text()` is awaited with the form live. Applying the file over what was typed in that
+  // window is the same defect as a stale load answer landing on top of typing.
+  const refused = planImport({
+    revisionAtStart: 4, revisionNow: 5, generationAtStart: 1, generationNow: 1, settings: { defaultMain: 'x' },
+  });
+  assert.equal(refused.refused, true);
+  assert.equal(refused.apply, undefined);
+  assert.equal(refused.message, IMPORT_STALE_MESSAGE);
+  assert.match(IMPORT_STALE_MESSAGE, /import again/i);
+
+  const reloaded = planImport({
+    revisionAtStart: 4, revisionNow: 4, generationAtStart: 1, generationNow: 2, settings: {},
+  });
+  assert.equal(reloaded.refused, true, 'a load that landed mid-read replaced the form too');
+});
+
+test('an import onto a form that did not move is applied', () => {
+  const settings = { defaultMain: 'master' };
+  const outcome = planImport({
+    revisionAtStart: 4, revisionNow: 4, generationAtStart: 1, generationNow: 1, settings,
+  });
+  assert.equal(outcome.refused, false);
+  assert.equal(outcome.apply, settings);
+});
+
+test('an older backup is refused while the stored settings come from the future', () => {
+  // Stored version 2 (a newer extension on the account) + a {"version": 0} backup used to merge to
+  // 0 through Math.min, and the next Save then wrote that 0 down — the newer machine's decision
+  // demoted by a file we understood and settings we did not.
+  assert.throws(() => mergedSourceVersion(SETTINGS_VERSION + 1, 0), error => {
+    assert.match(error.message, /newer version of the extension/i);
+    assert.match(error.message, /chrome:\/\/extensions/);
+    return true;
+  });
+});
+
+test('merging two generations this extension understands still takes the oldest', () => {
+  assert.equal(mergedSourceVersion(1, 0), 0);
+  assert.equal(mergedSourceVersion(0, 1), 0);
+  assert.equal(mergedSourceVersion(SETTINGS_VERSION, SETTINGS_VERSION), SETTINGS_VERSION);
+});
+
+// --- The guard comes before the change (class (b)) ---
+
+const { userAction } = vm.runInThisContext('({ userAction })');
+const { appendButton } = vm.runInThisContext('({ appendButton })');
+
+test('a user action is the guard and then the change, never the other way round', () => {
+  let changed = false;
+  assert.equal(userAction(() => false, () => { changed = true; }), false);
+  assert.equal(changed, false, 'a refused action must not have changed anything');
+  assert.equal(userAction(() => true, () => { changed = true; }), true);
+  assert.equal(changed, true);
+});
+
+test('the add handler cannot change the edit state before the first load', () => {
+  // Codex R5, unresolved from R4: `pr-add.click()` pushed the button onto the edit state and called
+  // touch() afterwards, so the guard could only ever refuse a change that had already happened.
+  // Same shape for add-override, the card inputs, delete, duplicate, reorder and the checkboxes.
+  const page = { buttons: [] };
+  const add = loaded => userAction(
+    () => shouldAcceptUserAction(loaded),
+    () => { page.buttons = appendButton(page.buttons, BUTTON_KINDS.pr); }
+  );
+
+  assert.equal(add(false), false);
+  assert.deepEqual(page.buttons, [], 'nothing may be added before there are settings');
+  assert.equal(add(true), true);
+  assert.equal(page.buttons.length, 1);
+});
+
+// --- One validator, every reader (class (c)) ---
+
+const { adoptStoredMainBranch } = vm.runInThisContext('({ adoptStoredMainBranch })');
+
+test('a stored override that is not a string is not a branch name', () => {
+  // The service worker looked these up with Object.hasOwn only, so `{widget: 42}` sent `main=42`
+  // to the app, and a stored string "abc" answered `Object.hasOwn("abc", "0")` — making "a" the
+  // main branch of a repository called `0`.
+  assert.deepEqual(adoptStoredMainBranch({ repoMainBranch: { widget: 42 } }).overrides, {});
+  assert.equal(adoptStoredMainBranch({ repoMainBranch: { widget: 42 } }).skipped, 1);
+
+  const asString = adoptStoredMainBranch({ repoMainBranch: 'abc' });
+  assert.equal(asString.overrides, undefined, 'a string is not an override map');
+  assert.equal(asString.skipped, 1);
+
+  assert.deepEqual(adoptStoredMainBranch({ repoMainBranch: { a: 'main', b: 7 } }).overrides, { a: 'main' });
+  assert.equal(adoptStoredMainBranch({ defaultMain: 42 }).defaultMain, undefined);
+  assert.equal(adoptStoredMainBranch({ defaultMain: 'master' }).defaultMain, 'master');
+  assert.deepEqual(adoptStoredMainBranch({}), { defaultMain: undefined, overrides: undefined, skipped: 0 });
+});
+
+test('a bad entry inside a good key is counted per key, not silently dropped', () => {
+  // A file with one unreadable button and one good one imported the good one and said nothing: the
+  // key was present in `settings`, so it never reached the "skipped keys" list.
+  const { adoptStoredSettings, describeSkipped } = vm.runInThisContext('({ adoptStoredSettings, describeSkipped })');
+  const adopted = adoptStoredSettings({
+    buttons: [{ face: 'x', label: 'good', command: '{cd}', claudeInputs: [] }, { command: 42 }],
+  });
+  assert.equal(adopted.settings.buttons.length, 1);
+  assert.deepEqual(adopted.skippedByKey, { buttons: 1 });
+  assert.deepEqual(describeSkipped({ buttons: 1 }), ['1 entry in buttons was unreadable and skipped']);
+  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['2 entries in issueButtons were unreadable and skipped']);
+  assert.deepEqual(describeSkipped({}), []);
 });

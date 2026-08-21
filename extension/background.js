@@ -121,11 +121,15 @@ async function detectDefaultBranch(tab, owner, repo) {
 // Resolving the main branch: storage override → detected from the page → global default
 async function resolveMainBranch(repo, detectedMain) {
   const data = await chrome.storage.sync.get(['repoMainBranch', 'defaultMain']);
+  // Storage is not our data here either. The same validator the options page uses (defaults.js)
+  // decides what counts as a branch: `{widget: 42}` used to send `main=42` to the app, and a stored
+  // string "abc" answered `Object.hasOwn("abc", "0")` — making "a" the branch of a repository
+  // called `0`. One shape verdict for every reader.
+  const { defaultMain, overrides } = readStoredMainBranch(data);
 
   // 1. Per-repository override. `repo` comes out of the page URL, so it reaches this lookup as an
   // arbitrary string — and a plain object answers `overrides['constructor']` with an inherited
   // member, which would then be passed on as if it were a branch name. Only an own property counts.
-  const overrides = data.repoMainBranch;
   if (overrides && Object.hasOwn(overrides, repo) && overrides[repo]) return overrides[repo];
 
   // 2. Value read off the page — the base ref on a PR, the repository's default branch on
@@ -133,7 +137,7 @@ async function resolveMainBranch(repo, detectedMain) {
   if (detectedMain) return detectedMain;
 
   // 3. Global default
-  return data.defaultMain || DEFAULT_MAIN;
+  return defaultMain || DEFAULT_MAIN;
 }
 
 async function loadButtons(kind) {

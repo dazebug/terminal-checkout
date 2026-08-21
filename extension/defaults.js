@@ -263,8 +263,57 @@ function readableButtonFields(entry) {
   if (!isText(entry.face) || !isText(entry.emoji)) return false;
   if (!isText(entry.label) || !isText(entry.command)) return false;
   if (entry.claudeInputs === undefined) return true;
-  return Array.isArray(entry.claudeInputs)
-    && entry.claudeInputs.every(input => typeof input === 'string');
+  if (!Array.isArray(entry.claudeInputs)) return false;
+  // A hole is not a string, and `every` does not visit it: `new Array(1)` answered "all strings"
+  // and the missing slot came back out of buttonFields as the literal "undefined". Comparing the
+  // own-key count with the length is what tells a hole from a value.
+  if (Object.keys(entry.claudeInputs).length !== entry.claudeInputs.length) return false;
+  return entry.claudeInputs.every(input => typeof input === 'string');
+}
+
+// --- The main-branch settings, validated once for every reader ---
+// The override lookup is keyed by a repository name taken straight out of a page URL, and whatever
+// comes back is handed to the app as a branch name. Only the options page checked the shape, so the
+// service worker sent `main=42` from a stored `{widget: 42}`, and a stored string "abc" answered
+// `Object.hasOwn("abc", "0")` — making "a" the main branch of a repository called `0`. The same
+// verdict now serves the options page (load and import) and the service worker.
+function adoptStoredMainBranch(raw) {
+  let skipped = 0;
+
+  let defaultMain;
+  if (raw?.defaultMain !== undefined) {
+    if (typeof raw.defaultMain === 'string') defaultMain = raw.defaultMain;
+    else skipped += 1;
+  }
+
+  let overrides;
+  const map = raw?.repoMainBranch;
+  if (map !== undefined) {
+    if (map && typeof map === 'object' && !Array.isArray(map)) {
+      const entries = Object.entries(map).filter(([, branch]) => typeof branch === 'string');
+      skipped += Object.keys(map).length - entries.length;
+      overrides = Object.fromEntries(entries);
+    } else {
+      // `Object.entries('abc')` would otherwise have produced overrides named 0, 1 and 2
+      skipped += 1;
+    }
+  }
+
+  return { defaultMain, overrides, skipped };
+}
+
+// What the service worker reads through: same verdict, plus a line in the console where there is no
+// status line to put it in (the counterpart of readStoredButtons).
+function readStoredMainBranch(raw) {
+  const adopted = adoptStoredMainBranch(raw);
+  if (adopted.skipped) {
+    console.warn(
+      `Terminal Checkout: ${adopted.skipped} stored main-branch `
+        + `${adopted.skipped === 1 ? 'value was' : 'values were'} unreadable and skipped — `
+        + 'open the options page to repair.'
+    );
+  }
+  return adopted;
 }
 
 // What the content script and the service worker read through: validate, say out loud what was
@@ -297,6 +346,20 @@ function toStoredButton(button) {
 // --- Button list editing ---
 // Only the options page uses these, but they are pure functions that know nothing about the DOM or
 // the chrome APIs, so they live here (tests/buttons.test.js).
+
+// A new array with one more button on the end, taking the first preset face this section is not
+// already using so two buttons never look the same. At the cap it hands the same array back — the
+// caller has nothing to change and must not report an edit.
+//
+// It is a function rather than the body of the click handler because the handler is a guard and
+// then a change, and that order is what a test has to be able to reach: [+ Add Button] used to push
+// the button onto the edit state and ask afterwards whether it was allowed to.
+function appendButton(buttons, { presets, defaults }) {
+  if (buttons.length >= MAX_BUTTONS) return buttons;
+  const used = new Set(buttons.map(button => button.face));
+  const face = presets.map(preset => preset.face).find(f => !used.has(f)) || defaults[0].face;
+  return [...buttons, adoptButton({ face, label: 'New Button', command: '' })];
+}
 
 // A new array with button `from` moved "before" card `insertBefore`, indexed against the original.
 // The item is removed before it is spliced back in, so moving it later pulls the destination one

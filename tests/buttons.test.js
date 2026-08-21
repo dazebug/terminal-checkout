@@ -243,3 +243,40 @@ test('adoptStoredButtons: one bad field does not take the good entries with it',
   assert.equal(skipped, 1);
   assert.deepEqual(buttons, [{ face: 'y', label: 'good', command: '{cd} && claude', claudeInputs: ['/review'] }]);
 });
+
+test('adoptStoredButtons: a hole in claudeInputs is not a string', () => {
+  // `new Array(1).every(...)` is true — every skips holes — so a sparse array passed as "all
+  // strings" and the missing slot became the literal "undefined" at the next Save.
+  const sparse = new Array(1);
+  assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: sparse }]).skipped, 1);
+  const withHole = ['a', , 'b']; // eslint-disable-line no-sparse-arrays
+  assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: withHole }]).skipped, 1);
+  assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: ['a', 'b'] }]).skipped, 0);
+});
+
+// --- Adding a button ---
+// Split out of the click handler so the guard-then-change order the handler is made of can be
+// tested (tests/migration.test.js): the handler used to push the button and ask afterwards.
+
+test('appendButton: the new button takes the first preset face not already in use', () => {
+  const { appendButton } = vm.runInThisContext('({ appendButton })');
+  const kind = BUTTON_KINDS.pr;
+  const first = appendButton([], kind);
+  assert.equal(first.length, 1);
+  assert.equal(first[0].face, kind.presets[0].face);
+  assert.equal(appendButton(first, kind)[1].face, kind.presets[1].face);
+  assert.equal(first[0].command, '', 'a new button starts empty, not on a preset');
+  assert.ok(first[0].uid, 'it enters the edit state with a uid of ours');
+});
+
+test('appendButton: leaves the original array alone and stops at the cap', () => {
+  const { appendButton, MAX_BUTTONS } = vm.runInThisContext('({ appendButton, MAX_BUTTONS })');
+  const kind = BUTTON_KINDS.pr;
+  const original = [];
+  appendButton(original, kind);
+  assert.deepEqual(original, []);
+
+  let list = [];
+  for (let i = 0; i < MAX_BUTTONS; i++) list = appendButton(list, kind);
+  assert.equal(appendButton(list, kind), list, 'at the cap it hands the same array back');
+});
