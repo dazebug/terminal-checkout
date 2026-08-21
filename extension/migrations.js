@@ -272,9 +272,15 @@ function planMigration(stored, fromVersion) {
 // A new settings object with the selected candidates rewritten. Everything else — unselected
 // candidates, other fields of the same button, keys we never looked at — is carried over untouched,
 // and the input is never mutated: the caller still needs the original to show the "from" side.
+//
+// `applied` is how many were actually rewritten, which is not how many were checked: a candidate
+// whose button was deleted, moved, or typed over since the preview was built is skipped by the
+// guards below. Reporting the checkbox count instead said "2 commands updated" for one rewrite and
+// one silent skip — the number has to come from the loop that does the work.
 function applyMigrationPlan(stored, plan, selectedIds) {
   const selected = new Set(selectedIds);
   const next = { ...stored };
+  let applied = 0;
   for (const item of plan.actionable) {
     if (!selected.has(item.id)) continue;
     const list = next[item.storageKey];
@@ -289,8 +295,9 @@ function applyMigrationPlan(stored, plan, selectedIds) {
     const buttons = list === stored[item.storageKey] ? list.slice() : list;
     buttons[index] = { ...buttons[index], command: item.to };
     next[item.storageKey] = buttons;
+    applied += 1;
   }
-  return next;
+  return { settings: next, applied };
 }
 
 // Which candidates start checked. Only the ones nothing can go wrong with: a behavior change is
@@ -494,6 +501,32 @@ function planImport({
     return { refused: true, message: IMPORT_STALE_MESSAGE };
   }
   return { refused: false, apply: settings };
+}
+
+// One file at a time — the same rule the save follows, for the same reason.
+//
+// Two files chosen in quick succession both captured revision 0. Whichever `file.text()` resolved
+// first applied and bumped the revision, and the guard above then refused the other: the file picked
+// *second* lost to the one picked first, and nothing said so. Superseding instead — apply only the
+// newest and drop the overtaken one — was the alternative, and it was rejected because the earlier
+// import's own application moves the revision, so the newer one would need to be told which bumps to
+// ignore. That is a second concurrency model living beside the save's. Refusing the second pick
+// keeps one rule on this page, and unlike the old behaviour it says out loud what happened.
+const IMPORT_BUSY_MESSAGE = 'A settings file is already being read — try again in a moment.';
+
+function shouldStartImport({ loaded, importing }) {
+  return loaded === true && importing !== true;
+}
+
+// Everything that has not reached storage yet, in one definition.
+//
+// `dirty` alone was the test on the way out of the page, and it missed a review: unchecking a
+// candidate types nothing, so the tab closed without a word and the decision went with it. The sync
+// path asks this same question to decide whether a remote change may be adopted, and passes `saving`
+// as false there on purpose — leaving mid-write loses the write, but a remote change arriving
+// mid-write is deferred rather than refused, which is a different answer to a different question.
+function hasUnsavedWork({ dirty, reviewTouched, saving }) {
+  return dirty === true || reviewTouched === true || saving === true;
 }
 
 // Whether a settings snapshot read from storage may still be applied to the page.

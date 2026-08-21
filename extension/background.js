@@ -148,6 +148,27 @@ async function loadButtons(kind) {
   return readStoredButtons(data[storageKey], defaults);
 }
 
+// The button a click meant, or a refusal.
+//
+// This is a *second* read: the page did its own when it drew the button, and the settings can have
+// moved in between — another device saved, someone reordered the list — or the page may be showing
+// something its own read never returned. Running whatever now sits at that index would run a command
+// the user never saw, so a click brings a fingerprint of what was drawn and it has to match.
+//
+// The command still comes from here, from storage, never from the message: the fingerprint can only
+// cause a refusal, not introduce a command of its own.
+//
+// `shown` is absent only on the extension-icon path, which draws nothing — there is no rendered
+// button for it to disagree with, and "the first button for this page" is the whole of the request.
+async function clickedButton(kind, index, shown) {
+  const button = (await loadButtons(kind))[index];
+  if (!button) throw new Error(`Button index ${index} not found`);
+  if (shown !== undefined && buttonFingerprint(button) !== shown) {
+    throw new Error(BUTTON_CHANGED_ERROR);
+  }
+  return button;
+}
+
 // Send a message to the native host. The app reports variable validation failures and terminal
 // launch failures as a normal {success:false, error} response rather than an exception, so we have
 // to throw here for the failure to surface on the button
@@ -176,12 +197,11 @@ async function runButton(button, variables) {
 }
 
 // Run a custom command (PR page)
-async function executeCommand(tab, buttonIndex) {
+async function executeCommand(tab, buttonIndex, shown) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'pr') throw new Error('Not a GitHub PR page');
 
-  const button = (await loadButtons('pr'))[buttonIndex];
-  if (!button) throw new Error(`Button index ${buttonIndex} not found`);
+  const button = await clickedButton('pr', buttonIndex, shown);
 
   // Extract the branch and the base branch from the DOM
   const results = await chrome.scripting.executeScript({
@@ -215,12 +235,11 @@ async function executeCommand(tab, buttonIndex) {
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
 // variables isn't passed — if a template uses one, the app rejects it with
 // "Variable {branch} not provided"
-async function executeIssueCommand(tab, buttonIndex) {
+async function executeIssueCommand(tab, buttonIndex, shown) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'issue') throw new Error('Not a GitHub issue page');
 
-  const button = (await loadButtons('issue'))[buttonIndex];
-  if (!button) throw new Error(`Issue button index ${buttonIndex} not found`);
+  const button = await clickedButton('issue', buttonIndex, shown);
 
   const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
   console.log(`Executing issue command: repo=${target.repo}, number=${target.number}, main=${main}`);
@@ -234,13 +253,12 @@ async function executeIssueCommand(tab, buttonIndex) {
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
 // number, so only {repo}, {owner}, and {main} are passed
-async function executeRepoCommand(tab, buttonIndex) {
+async function executeRepoCommand(tab, buttonIndex, shown) {
   // Repository buttons are also attached to the header of PR and issue pages, so don't check kind
   const target = parseGitHubUrl(tab.url);
   if (!target) throw new Error('Not a GitHub repo page');
 
-  const button = (await loadButtons('repo'))[buttonIndex];
-  if (!button) throw new Error(`Repo button index ${buttonIndex} not found`);
+  const button = await clickedButton('repo', buttonIndex, shown);
 
   const main = await resolveMainBranch(target.repo, await detectDefaultBranch(tab, target.owner, target.repo));
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
@@ -288,6 +306,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     return;
   }
   try {
+    // No fingerprint: nothing was drawn for this click, so there is no rendered button that could
+    // disagree with what is stored. "The first button for this page" is the whole of the request.
     await RUN_BY_KIND[target.kind](tab, 0);
   } catch (error) {
     console.error('Error executing command:', error); // an icon click has no button to show the failure on
@@ -305,8 +325,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!kind) return;
   // The index picks a button out of an array; anything that is not one is not a request we can serve
   if (!Number.isInteger(message.buttonIndex)) return;
+  // A click from a page always says which button it drew. Only the extension-icon path may omit it,
+  // and that one never comes through here.
+  if (typeof message.shown !== 'string') return;
 
-  RUN_BY_KIND[kind](sender.tab, message.buttonIndex).then(() => {
+  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown).then(() => {
     sendResponse({ success: true });
   }).catch((error) => {
     sendResponse({ success: false, error: error.message });

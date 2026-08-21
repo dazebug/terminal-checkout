@@ -274,12 +274,40 @@ function readableButtonFields(entry) {
   if (!isText(entry.label) || !isText(entry.command)) return false;
   if (entry.claudeInputs === undefined) return true;
   if (!Array.isArray(entry.claudeInputs)) return false;
-  // A hole is not a string, and `every` does not visit it: `new Array(1)` answered "all strings"
-  // and the missing slot came back out of buttonFields as the literal "undefined". Comparing the
-  // own-key count with the length is what tells a hole from a value.
-  if (Object.keys(entry.claudeInputs).length !== entry.claudeInputs.length) return false;
-  return entry.claudeInputs.every(input => typeof input === 'string');
+  // Every index has to exist and hold a string. `every` alone is no use — it does not visit a hole,
+  // so `new Array(1)` answered "all strings" and the missing slot came back out of buttonFields as
+  // the literal "undefined". Counting own keys instead was no better: one stray property
+  // (`arr.note = 'x'`) makes the count match the length again by coincidence and the hole passes.
+  // Asking each index whether it is actually there is the only form that answers the question.
+  for (let i = 0; i < entry.claudeInputs.length; i++) {
+    if (!Object.hasOwn(entry.claudeInputs, i)) return false;
+    if (typeof entry.claudeInputs[i] !== 'string') return false;
+  }
+  return true;
 }
+
+// --- What was drawn versus what will run ---
+// A click reaches the service worker as an index, and the service worker reads storage again to find
+// out what that index means. Between those two reads the settings can have moved — another device
+// saved, someone reordered — or the page may be showing something its own read never returned. The
+// command that then runs is one the user never saw.
+//
+// So a click carries a fingerprint of the button as it was drawn, and the service worker runs it
+// only if what it now reads is that same button. The fingerprint is a comparison key and nothing
+// more: the command still comes from storage and never from the message, so a message can only ever
+// cause a refusal, never introduce a command of its own. That is the same shape as the app owning
+// the terminal choice — the side that executes keeps the single source of truth.
+//
+// Both sides reach a button through adoptStoredButtons, so both fingerprint the same normalized
+// shape, and buttonFields writes its keys in a fixed order, which makes the JSON stable.
+function buttonFingerprint(button) {
+  return JSON.stringify(buttonFields(button));
+}
+
+// What a mismatch reports. It reaches the user on the button itself, through the {success:false}
+// response the content script already inspects, so it has to say what to do next.
+const BUTTON_CHANGED_ERROR =
+  'This button no longer matches your saved settings — reload the page and try again.';
 
 // --- The main-branch settings, validated once for every reader ---
 // The override lookup is keyed by a repository name taken straight out of a page URL, and whatever

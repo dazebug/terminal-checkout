@@ -47,7 +47,7 @@ function createRepoButton(buttonConfig, index) {
     button.disabled = true;
 
     try {
-      await runButtonCommand('execute_repo_command', index);
+      await runButtonCommand('execute_repo_command', index, buttonConfig);
       button.textContent = phases.done;
       setTimeout(() => {
         button.textContent = face;
@@ -67,15 +67,29 @@ function createRepoButton(buttonConfig, index) {
 }
 
 // Run a single button. sendMessage does not reject when the background returns {success:false}, so
-// without inspecting the response a rejected command would still show up as success on the button
-async function runButtonCommand(action, index) {
-  const response = await chrome.runtime.sendMessage({ action, buttonIndex: index });
+// without inspecting the response a rejected command would still show up as success on the button.
+//
+// The index says which button; the fingerprint says which button it *was* when it was drawn. The
+// service worker reads storage again for the command, and refuses if the two disagree — so what
+// runs is always what was on screen (buttonFingerprint in defaults.js).
+async function runButtonCommand(action, index, config) {
+  const response = await chrome.runtime.sendMessage({
+    action, buttonIndex: index, shown: buttonFingerprint(config),
+  });
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
 // Button configs per page type (BUTTON_KINDS in defaults.js is the single source of truth for the
 // storage keys).
-// If storage is empty or unreadable, draw the defaults — the buttons should never vanish entirely
+//
+// Returns null when storage could not be read at all. Drawing the defaults there looked harmless
+// and was not: the service worker does its own read when the button is clicked, so a page showing
+// our presets would have run whatever the user actually had saved. Nothing is drawn instead, and the
+// one-second poll retries — a read that fails now usually succeeds a moment later, and until it does
+// the honest answer is that we do not know what this user's buttons are.
+//
+// A read that *succeeds* still falls back to the defaults for a value it cannot use (readStoredButtons):
+// there both sides read the same storage and reach the same verdict, so what is drawn is what runs.
 async function loadButtonConfigs(kind) {
   const { storageKey, defaults } = BUTTON_KINDS[kind];
   try {
@@ -83,8 +97,9 @@ async function loadButtonConfigs(kind) {
     // Stored buttons are validated here too, not only on the options page: an entry another device
     // wrote as null would otherwise throw while drawing and take the whole button row with it
     return readStoredButtons(data[storageKey], defaults);
-  } catch {
-    return defaults;
+  } catch (error) {
+    console.warn('Terminal Checkout: could not read your buttons, will retry —', error);
+    return null;
   }
 }
 
@@ -146,7 +161,7 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.disabled = true;
 
     try {
-      await runButtonCommand(action, index);
+      await runButtonCommand(action, index, buttonConfig);
       button.textContent = '✅';
       setTimeout(() => {
         button.textContent = originalText;
@@ -213,6 +228,7 @@ async function tryInsertPRButtons() {
   if (!headBranchLink) return false;
 
   const buttons = await loadButtonConfigs('pr');
+  if (!buttons) return false; // read failed; the poll retries rather than drawing something that would refuse
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -265,6 +281,7 @@ async function tryInsertIssueButtons() {
   if (!row) return false;
 
   const buttons = await loadButtonConfigs('issue');
+  if (!buttons) return false;
 
   // While awaiting, another trigger (the poll, the MutationObserver, a turbo event) may have
   // inserted them first
@@ -298,6 +315,7 @@ async function tryInsertRepoButtons() {
   if (!anchor) return false;
 
   const buttons = await loadButtonConfigs('repo');
+  if (!buttons) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice

@@ -195,7 +195,7 @@ test('nothing to do at the current version', () => {
 test('applying rewrites only the selected items and copies the rest byte for byte', () => {
   const data = stored('buttons', V0.checkout, V0.claude);
   const plan = plan0(data);
-  const next = applyMigrationPlan(data, plan, ['buttons#1']);
+  const { settings: next } = applyMigrationPlan(data, plan, ['buttons#1']);
   assert.equal(next.buttons[0].command, V0.checkout, 'unselected item must be untouched');
   assert.equal(next.buttons[1].command, V1.claude);
   assert.equal(data.buttons[0].command, V0.checkout, 'input must not be mutated');
@@ -204,12 +204,12 @@ test('applying rewrites only the selected items and copies the rest byte for byt
 
 test('applying nothing is a no-op, not a rewrite of everything', () => {
   const data = stored('buttons', V0.checkout);
-  assert.equal(applyMigrationPlan(data, plan0(data), []).buttons[0].command, V0.checkout);
+  assert.equal(applyMigrationPlan(data, plan0(data), []).settings.buttons[0].command, V0.checkout);
 });
 
 test('applying leaves every other field of the button alone', () => {
   const data = { buttons: [{ uid: 'u1', face: '🤖', label: 'mine', command: V0.claude, claudeInputs: ['/review'] }] };
-  const next = applyMigrationPlan(data, plan0(data), ['u1']);
+  const { settings: next } = applyMigrationPlan(data, plan0(data), ['u1']);
   assert.deepEqual(next.buttons[0], {
     uid: 'u1', face: '🤖', label: 'mine', command: V1.claude, claudeInputs: ['/review'],
   });
@@ -308,7 +308,7 @@ test('a candidate is only rewritten while the command is still the one that was 
   const plan = plan0(data);
   const edited = { buttons: [{ ...data.buttons[0], command: 'z {repo} && something else' }] };
   assert.equal(
-    applyMigrationPlan(edited, plan, ids(plan.actionable)).buttons[0].command,
+    applyMigrationPlan(edited, plan, ids(plan.actionable)).settings.buttons[0].command,
     'z {repo} && something else',
     'a command that changed since planning must be left alone'
   );
@@ -411,7 +411,7 @@ test('unchecking one of two identical commands survives a reorder', () => {
   const plan = plan0({ buttons: [a, b] });
   const reordered = { buttons: [b, a] };
 
-  const next = applyMigrationPlan(reordered, plan, ['B']);
+  const { settings: next } = applyMigrationPlan(reordered, plan, ['B']);
   assert.equal(next.buttons[0].command, V1.claude, 'B was the one selected');
   assert.equal(next.buttons[1].command, V0.claude, 'A was declined and must be untouched');
 });
@@ -421,7 +421,7 @@ test('a button that lost its uid cannot be rewritten', () => {
   // candidate we cannot identify is one we must not apply, rather than one we apply by position.
   const plan = plan0(stored('buttons', V0.claude));
   const stripped = { buttons: [{ face: 'x', label: 'b0', command: V0.claude, claudeInputs: [] }] };
-  assert.equal(applyMigrationPlan(stripped, plan, ids(plan.actionable)).buttons[0].command, V0.claude);
+  assert.equal(applyMigrationPlan(stripped, plan, ids(plan.actionable)).settings.buttons[0].command, V0.claude);
 });
 
 test('the uid is a runtime handle and never becomes part of the stored shape', () => {
@@ -672,7 +672,7 @@ test('a review the user has touched blocks a remote change from resetting it', (
   assert.equal(shouldAdoptSyncedChange(false || reviewTouched, { defaultMain: {} }), false);
 
   // The selection therefore still says "no", and applying honours it
-  assert.equal(applyMigrationPlan(data, plan, selection).buttons[0].command, V0.claude);
+  assert.equal(applyMigrationPlan(data, plan, selection).settings.buttons[0].command, V0.claude);
 });
 
 // --- Stored settings are as untrusted as an imported file (class (b)) ---
@@ -1104,4 +1104,51 @@ test('the report says what Save is going to do about what it skipped', () => {
   // the next Save writes them out of existence.
   assert.match(SKIP_CONSEQUENCE, /saving will remove/i);
   assert.match(SKIP_CONSEQUENCE, /export/i);
+});
+
+// --- One page-changing task at a time, and one definition of "unsaved" (R8) ---
+
+const { shouldStartImport, IMPORT_BUSY_MESSAGE, hasUnsavedWork } =
+  vm.runInThisContext('({ shouldStartImport, IMPORT_BUSY_MESSAGE, hasUnsavedWork })');
+
+test('a second import while one is still being read is refused, and says why', () => {
+  // Two files chosen in quick succession both captured revision 0. Whichever `file.text()` finished
+  // first applied and bumped the revision; the other was then refused by the revision guard — so the
+  // file the user picked *second* lost to the one they picked first, silently.
+  assert.equal(shouldStartImport({ loaded: true, importing: false }), true);
+  assert.equal(shouldStartImport({ loaded: true, importing: true }), false);
+  assert.equal(shouldStartImport({ loaded: false, importing: false }), false);
+  assert.match(IMPORT_BUSY_MESSAGE, /already being read|in progress/i);
+  assert.match(IMPORT_BUSY_MESSAGE, /again/i, 'a refusal has to say what to do next');
+});
+
+test('leaving with a decided-but-unsaved review is leaving unsaved work', () => {
+  // The repro: open the notice, uncheck a candidate, close the tab. Nothing was typed, so `dirty`
+  // was false and beforeunload said nothing — the decision went with the tab.
+  assert.equal(hasUnsavedWork({ dirty: false, reviewTouched: true }), true);
+  assert.equal(hasUnsavedWork({ dirty: true, reviewTouched: false }), true);
+  assert.equal(hasUnsavedWork({ dirty: false, reviewTouched: false }), false);
+  // Leaving mid-write is losing work too, but a remote change during a save is deferred rather than
+  // refused, so the sync path asks the same question without this term.
+  assert.equal(hasUnsavedWork({ dirty: false, reviewTouched: false, saving: true }), true);
+  assert.equal(hasUnsavedWork({ dirty: false, reviewTouched: false, saving: false }), false);
+});
+
+test('the applied count is what was actually rewritten, not what was checked', () => {
+  // applyMigrationPlan skips a candidate whose command changed since the preview was built, but the
+  // message counted the checkboxes — "2 commands updated" for one rewrite and one skip.
+  const a = { uid: 'A', face: 'x', label: 'a', command: V0.claude, claudeInputs: [] };
+  const b = { uid: 'B', face: 'x', label: 'b', command: V0.checkout, claudeInputs: [] };
+  const plan = plan0({ buttons: [a, b] });
+  assert.equal(plan.actionable.length, 2);
+
+  // B was typed over while the preview was open, so only A can be rewritten
+  const edited = { buttons: [a, { ...b, command: 'z {repo} && something else' }] };
+  const outcome = applyMigrationPlan(edited, plan, ['A', 'B']);
+  assert.equal(outcome.applied, 1, 'one was rewritten, one was left alone');
+  assert.equal(outcome.settings.buttons[0].command, V1.claude);
+  assert.equal(outcome.settings.buttons[1].command, 'z {repo} && something else');
+
+  assert.equal(applyMigrationPlan({ buttons: [a, b] }, plan, ['A', 'B']).applied, 2);
+  assert.equal(applyMigrationPlan({ buttons: [a, b] }, plan, []).applied, 0);
 });

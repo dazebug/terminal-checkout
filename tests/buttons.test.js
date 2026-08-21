@@ -306,3 +306,60 @@ test('adoptStoredButtons: claude inputs past the limit make the whole entry unus
   assert.equal(skipped, 1);
   assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: claudeInputs.slice(0, MAX_CLAUDE_INPUTS) }]).skipped, 0);
 });
+
+// --- What was clicked has to be what was shown ---
+// The page draws a button and sends only its index; the service worker then reads storage again and
+// runs whatever sits at that index *now*. Between those two reads the settings can have changed —
+// or the page may have drawn defaults because its own read failed — and the command that runs is
+// then one the user never saw. The click carries a fingerprint of the button that was drawn so the
+// two reads can be compared.
+
+test('buttonFingerprint: the same stored button fingerprints the same on both sides', () => {
+  const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
+  const stored = { face: '⏏️', label: 'Checkout', command: '{cd} && git fetch', claudeInputs: ['/a'] };
+  // Both readers reach the button through adoptStoredButtons, so both fingerprint the normalized shape
+  const [drawn] = adoptStoredButtons([stored]).buttons;
+  const [reread] = adoptStoredButtons([stored]).buttons;
+  assert.equal(buttonFingerprint(drawn), buttonFingerprint(reread));
+});
+
+test('buttonFingerprint: a button replaced under the page does not match what was drawn', () => {
+  // The repro: the page drew the default Checkout Branch button because its own read failed, and
+  // storage in fact held someone else's custom command at index 0.
+  const { buttonFingerprint, BUTTON_KINDS } = vm.runInThisContext('({ buttonFingerprint, BUTTON_KINDS })');
+  const [drawn] = adoptStoredButtons(BUTTON_KINDS.pr.defaults).buttons;
+  const [reread] = adoptStoredButtons([
+    { face: '⚠️', label: 'Remote custom', command: 'echo REMOTE', claudeInputs: [] },
+  ]).buttons;
+  assert.notEqual(buttonFingerprint(drawn), buttonFingerprint(reread));
+});
+
+test('buttonFingerprint: a remote reorder is caught at the index that was clicked', () => {
+  const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
+  const A = { face: 'a', label: 'A', command: '{cd} && echo A', claudeInputs: [] };
+  const B = { face: 'b', label: 'B', command: '{cd} && echo B', claudeInputs: [] };
+  const drawn = adoptStoredButtons([A, B]).buttons;
+  const reread = adoptStoredButtons([B, A]).buttons;
+  assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(reread[0]));
+  // Every field the user could see or that decides what runs is part of it
+  const { buttons: [inputsChanged] } = adoptStoredButtons([{ ...A, claudeInputs: ['/extra'] }]);
+  assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(inputsChanged));
+  const { buttons: [labelChanged] } = adoptStoredButtons([{ ...A, label: 'A renamed' }]);
+  assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(labelChanged));
+});
+
+test('the refusal a mismatch produces tells the user how to fix it', () => {
+  const { BUTTON_CHANGED_ERROR } = vm.runInThisContext('({ BUTTON_CHANGED_ERROR })');
+  assert.match(BUTTON_CHANGED_ERROR, /reload/i);
+});
+
+test('adoptStoredButtons: a hole hidden behind an extra property is still a hole', () => {
+  // Object.keys(['ok', <hole>]) with a stray `note` property has the same length as the array, so
+  // the count check passed by coincidence and `every` skipped the hole. The missing slot then
+  // vanished at the next Save — two scheduled inputs became one.
+  const claudeInputs = new Array(2);
+  claudeInputs[0] = 'ok';
+  claudeInputs.note = 'extra';
+  assert.equal(claudeInputs.length, Object.keys(claudeInputs).length, 'the coincidence this relies on');
+  assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs }]).skipped, 1);
+});

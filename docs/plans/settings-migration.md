@@ -2,8 +2,8 @@
 
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-settings-migration` (브랜치 `settings-migration`)
 - 시작 커밋: `6fa5daf` (#32 머지 직후 main)
-- 현재: R7 커밋(항목 13 — 신호 처분 단일화·load⟂save 상호 배제·applied generation·결정 9 반영 축소 ⒝·storage 실패 소탕, verified) · 게이트 그린(드라이버 재실행 — node 131/0, swift 210/0, e2e 9 PASS) · Codex 재검증 대기
-- 최근 검증자 판정: **차단(no) ×6** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
+- 현재: R8 커밋(항목 14 — 화면=실행 지문 대조·import 직렬화·이탈 경고 단일 술어·결정 9 하위 조항 초안, verified) · 게이트 그린(드라이버 재실행 — node 139/0, swift 210/0, e2e 9 PASS) · 현행 세대 실측 1,978B(프리셋 전체 + 오버라이드 2건 기준, 드라이버 — 조항 2·4 병기용) · Codex 재검증 대기
+- 최근 검증자 판정: **차단(no) ×7** — 스레드 `01a02426-85b3-78c2-b3a6-94f89eef4214`
 
 이슈 #31 — "Versioned settings with a consented migration path for stale saved buttons". 직전 루프(#30/#32)가 **"저장된 command 마이그레이션은 비목표"**로 명시적으로 미뤄 둔 것(`docs/plans/base-dir-fallback.md:24`)을 이번에 정면으로 다룬다. 그때 남긴 우회책은 문구 2곳뿐이다 — `README.md:112`와 설정 창 카드(`SetupWindowController.swift:255-261`)가 "옵션 페이지에서 프리셋을 다시 적용하라"고 손으로 시킨다.
 
@@ -93,6 +93,12 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
    - 시드 이후 옛 네임스페이스가 더 편집됐으면(스냅샷과 상이) 채택 시 **기존 동의 패널 방식**으로 차이를 보여 주고 반영/유지를 고르게 한다. 반영하지 않아도 그 편집은 옛 네임스페이스에 그대로 남는다 — 가시적 잔존 > 조용한 삭제.
    - 효과: 구버전 기기는 스큐 중에도 **자기 세대 데이터로 완전 동작**한다. 모양뿐 아니라 **command 문법도** 그렇다 — 옛 앱이 모르는 새 문법이 옛 기기에서 실행되는 일이 없다.
    - **지금 구현할 코드는 없다.** 우리가 최신 세대라 채택 로직의 상대가 없다 — v2를 만드는 미래 버전이 구현한다. 계약의 정본은 이 계획 파일이고, 항목 7에서 `CLAUDE.md`/`README.md`로 승계한다.
+   - **하위 조항 (R8 초안 — ⚠ 사용자 확정 대기, v2 구현 전에 확정돼야 한다).** Codex R7: "결정 9 자체를 철회하라는 뜻은 아닙니다. 다만 v2 구현 전에 다음은 명문화되어야 합니다." 아래는 우리 쪽 제안이고, **채택 여부는 사용자 몫**이다.
+     1. **seed 경쟁.** 두 기기가 동시에 "v2 없음"을 보고 각각 seed하면 나중 `set`이 상대의 동의 선택을 덮는다. *제안*: seed는 동의 직후 **존재를 한 번 더 확인하고** 쓴다(있으면 그것을 채택으로 전환). 그래도 남는 창은 `storage.sync`에 CAS가 없는 한 닫히지 않으므로, 이 계획서가 이미 서술한 **잔여 LWW와 같은 부류**로 명시한다 — 없앤 척하지 않는다.
+     2. **부분 존재 오인.** 여러 키가 따로 sync되면 `v2.buttons`만 먼저 도착해 "v2가 있다"로 오인될 수 있다. *제안*: **세대당 단일 storage 키**(한 세대 = 한 객체). `set`이 키 단위로 원자적이므로 부분 존재가 구조적으로 불가능해지고, 1의 창도 함께 좁아진다. 한도는 `QUOTA_BYTES_PER_ITEM` 8KB — **현행 세대 실측 병기 필요**(버튼 3키 + `defaultMain` + `repoMainBranch` + `version`의 JSON 크기).
+     3. **pre-consent 런타임.** 새 기기에서 동의 전 content/background가 무엇을 읽는가. *제안*: **직전 세대 네임스페이스를 read-only로 계속 읽는다** — 그것이 결정 9의 목적 그대로다(동의 전까지 기존대로 동작). 기본값 폴백은 배제한다: 커스텀이 사라진 것처럼 보이고, 그 화면으로 실행하면 R8 ⒜가 막 닫은 "보인 것 ≠ 실행되는 것"이 세대 축으로 재발한다.
+     4. **quota.** 영구 보존 + 세대 무한 증가. *제안*: 세대당 단일 키 몇 KB × `QUOTA_BYTES` 100KB이면 수십 세대까지 여유 — **실측 병기 필요**. 압박이 실제로 생기면 "가장 오래된 세대를 Export 안내 후 **동의 삭제**"를 트리거로만 기록하고, 지금은 만들지 않는다.
+     5. **세대 건너뛰기·백업 범위.** v1 기기가 v3로 직행하면 시드 출처가 모호하다. *제안*: **존재하는 가장 새로운 옛 세대**에서 `stepsFrom` 체인으로 시드한다(레지스트리가 0→CURRENT 전 구간을 덮는다는 기존 red가 그대로 보증한다). Export/import는 **현행 세대만** 다룬다고 명시한다 — 백업 파일에 세대를 섞으면 "미래 백업 거부"(결정 5)의 판정 대상이 무엇인지 흐려진다.
    - **따름정리 — 격리(quarantine) UI·[Discard] 폐기.** "못 읽는 entry"의 유일한 현실적 생성기는 **기기 간 버전 갈림**인데 위 계약이 그것을 구조적으로 없앤다. 남는 것은 손 편집과 우리 자신의 버그뿐이고, 거기에는 skip + 경고면 충분하다는 사용자 판단. 손 편집에 대해서는 **"자기가 덮어써서 생긴 일은 자기 책임으로 인지할거야"**(사용자, 2026-08-22) — devtools 등으로 사용자 자신이 저장값을 덮어 생긴 손상은 사용자 책임 영역이고, 확장이 그로부터 사용자를 보호할 의무는 없다. 따라서 R7의 축소된 ⒝ 4건 중 **기본값 미충전과 경고 문구는 사용자 보호 장치가 아니라 ① 우리 자신의 필터 버그 대비와 ② "조용한 삭제 대신 가시적 결과"를 위한 최소 장치**로 남긴다.
 
 계획서 언어는 한국어 유지(선례 준수 — 라인 42의 근거 그대로).
@@ -118,9 +124,11 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 
 | 12 | **R6 — Codex R5 차단(no)의 세 부류.** **⒜ 비동기 작업은 시작 시점의 세계 위에서만 정산한다**: Save가 `loadedSnapshot`·`loadGeneration`·`revision`을 불변 캡처하고 `planSave`가 캡처본·세대·"인플라이트 중 변경 도착" 셋으로 판정, Save 직렬화(`shouldStartSave` + 버튼 disabled)와 **Save 중 adoption 보류**(stale 표시만 하고 정산 뒤 재평가), import는 `planImport`로 같은 술어를 통과, `mergedSourceVersion`이 전제(양쪽 ≤ CURRENT)를 스스로 검사해 미래 저장 version + 구버전 백업을 거부. **⒝ 가드가 변이보다 먼저다**: `userAction(accept, change)` 하나로 순서를 구조화하고 진입점 전부를 `edit`/`review`/`editAndReview`로 감쌌다 — [+ Add Button]의 본문은 `appendButton`(순수)로 갈라 테스트가 닿는다. **⒞ 검증기 공유 범위**: `adoptStoredMainBranch`/`readStoredMainBranch`를 `defaults.js`에 두고 options·background가 공유, `skippedByKey`로 entry 단위 유실을 import·load 메시지까지 전파, `claudeInputs`의 hole을 불량으로 | agreed | 아래 R6 로그 · Codex R6: "7건은 모두 막혔습니다" | R6 |
 
-| 13 | **R7 — Codex R6 차단(no)의 세 부류.** **⒜ 도착한 신호는 버리지 않는다**: `classifyStorageChange` 하나가 `onChanged`의 분기를 대신해 `ignore`/`defer`/`banner`/`adopt`를 정하고, `ignore`가 아닌 모든 경로가 `markStale()`을 거친다. 로드 전 도착분은 **보류**(P1-B), Save는 `staleAtStart`를 latch해 **이미 도착한 변경**을 알고(P1-A 자물쇠 2), `appliedGeneration`이 **적용된** load를 센다(자물쇠 3), `shouldStartSave`에 `loading` 축을 더해 load in-flight 중에는 Save가 **시작조차 하지 않는다**(자물쇠 1). 폐기된 load 응답과 `settleSave`의 stale 해제도 신호를 잃지 않는다(P3-B). **⒝ 읽을 수 없는 저장값**(결정 9로 격리 UI 폐기 후 축소): 미래 version 보유 시 **Save 거부**(`planSave`), 걸러진 entry가 있는 키는 **기본값으로 채우지 않음**(`seedFromStorage`), 경고에 **결과 명시**(`SKIP_CONSEQUENCE`), 상한(`MAX_BUTTONS`/`MAX_CLAUDE_INPUTS`) 판정을 **공유 검증기 한 곳**으로 옮기고 import의 조용한 자르기 제거. **⒞ storage 호출 실패**: Save의 live get·Export의 get에 catch 신설, 나머지 5개 호출의 처분을 소탕 표 12로 고정 | verified | 아래 R7 로그 | R7 |
+| 13 | **R7 — Codex R6 차단(no)의 세 부류.** **⒜ 도착한 신호는 버리지 않는다**: `classifyStorageChange` 하나가 `onChanged`의 분기를 대신해 `ignore`/`defer`/`banner`/`adopt`를 정하고, `ignore`가 아닌 모든 경로가 `markStale()`을 거친다. 로드 전 도착분은 **보류**(P1-B), Save는 `staleAtStart`를 latch해 **이미 도착한 변경**을 알고(P1-A 자물쇠 2), `appliedGeneration`이 **적용된** load를 센다(자물쇠 3), `shouldStartSave`에 `loading` 축을 더해 load in-flight 중에는 Save가 **시작조차 하지 않는다**(자물쇠 1). 폐기된 load 응답과 `settleSave`의 stale 해제도 신호를 잃지 않는다(P3-B). **⒝ 읽을 수 없는 저장값**(결정 9로 격리 UI 폐기 후 축소): 미래 version 보유 시 **Save 거부**(`planSave`), 걸러진 entry가 있는 키는 **기본값으로 채우지 않음**(`seedFromStorage`), 경고에 **결과 명시**(`SKIP_CONSEQUENCE`), 상한(`MAX_BUTTONS`/`MAX_CLAUDE_INPUTS`) 판정을 **공유 검증기 한 곳**으로 옮기고 import의 조용한 자르기 제거. **⒞ storage 호출 실패**: Save의 live get·Export의 get에 catch 신설, 나머지 5개 호출의 처분을 소탕 표 12로 고정 | agreed | 아래 R7 로그 · Codex R7: "R7의 R6 잔여 6건은 모두 현재 코드에서 차단됩니다" | R7 |
 
-의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤.
+| 14 | **R8 — Codex R7 차단(no)의 세 부류.** **⒜ 클릭된 것은 화면에 보인 그것이다**: 클릭이 index만 보내고 background가 storage를 다시 읽어 실행하던 것을, content가 **그린 버튼의 지문**(`buttonFingerprint`)을 함께 보내고 background가 재조회 값과 대조해 불일치면 `{success:false, error}`로 거부하도록 했다(대안 ② 채택 — 근거는 R8 로그). content의 "get 실패 → 기본값 그리기" 폴백은 **아무것도 그리지 않고 폴링 재시도**로 바꿨다. **⒝ 페이지 단위 비동기 작업은 하나씩**: `shouldStartImport`로 import 직렬화 + 사유 표시. **⒞ 이탈 경고도 단일 술어**: `hasUnsavedWork`가 `dirty`·`reviewTouched`·`saving`을 함께 보고 `beforeunload`가 그것을 쓴다. 부수: `claudeInputs`의 hole 판정을 인덱스 실재 검사로, `applyMigrationPlan`이 **실제 적용 건수**를 반환하고 메시지가 그것을 쓴다. 문서: 결정 9 하위 조항 5건(**사용자 확정 대기**) | verified | 아래 R8 로그 | R8 |
+
+의존: 1 → 2 → 3 → {4, 5}; 6은 1 뒤 어디든; 7은 마지막; 8은 R1 판정 뒤; 9는 R2 판정 뒤; 10은 R3 판정 뒤; 11은 R4 판정 뒤; 12는 R5 판정 뒤; 13은 R6 판정 뒤; 14는 R7 판정 뒤.
 
 수기 검사(자동 게이트가 없는 것 — 항목 3·6):
 
@@ -139,6 +147,12 @@ v0 문자열은 11개 프리셋에서 **중복을 걷어내면 8쌍**이다(`z {
 - [ ] `buttons`의 유일한 항목을 `claudeInputs: "!secret"`로 손 편집한 뒤 옵션 페이지를 열면 **기본 버튼이 그려지지 않고** PR 섹션이 빈 채로 남으며, 상태 줄에 사유 + "Saving will remove them — use Export (JSON) first…"가 뜬다
 - [ ] `version`을 미래 값(2)으로 손 편집하면 로드·표시·Export는 되고 [Save]만 거부된다("… must not write over them")
 - [ ] 버튼 4개짜리 백업을 가져오면 3개만 들어오는 것이 아니라 "1 entry in buttons could not be used and was skipped"가 함께 뜬다
+- [ ] GitHub 페이지를 열어 버튼을 그린 뒤 다른 기기(또는 devtools)에서 `buttons[0]`을 다른 command로 바꾸고 **새로고침 없이** 클릭하면 ❌와 "This button no longer matches your saved settings — reload the page and try again."이 뜨고 **아무 명령도 실행되지 않는다**
+- [ ] `[A,B]`를 그린 뒤 저장값을 `[B,A]`로 바꾸고 첫 버튼을 클릭해도 같은 거부가 뜬다(B가 실행되지 않는다)
+- [ ] content의 `storage.sync.get`이 실패하도록 흉내 내면 버튼이 **그려지지 않고** 콘솔에 재시도 경고가 남으며, 복구되면 1초 안에 버튼이 나타난다
+- [ ] 확장 아이콘 클릭은 지문 없이도 계속 동작한다(첫 버튼 실행)
+- [ ] 설정 파일을 고르고 읽는 동안 곧바로 다른 파일을 고르면 "A settings file is already being read — try again in a moment."이 뜨고, 폼에는 **먼저 고른 파일**이 반영된다(두 번째가 조용히 무시되지 않는다)
+- [ ] 업데이트 배지를 열어 체크박스만 해제한 뒤 탭을 닫으면 브라우저가 이탈 경고를 띄운다(타이핑을 한 적이 없어도)
 - [ ] 첫 로드가 끝나기 전에 다른 기기가 저장하면, 로드 직후 자동으로 다시 읽어 그 값이 화면에 온다(옛 값이 그대로 남지 않는다)
 - [ ] 다른 기기 저장 직후(재조회가 도는 동안) Save를 누르면 "Settings are being re-read — press Save again in a moment."가 뜨고 아무것도 기록되지 않는다
 - [ ] Save 대기 중 다른 기기가 저장 + 그 사이 카드에 타이핑 → 저장은 끝나되 stale 배너가 남아 있다(사라지지 않는다)
@@ -333,7 +347,23 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 | `options.js` `exportSettings`의 get | 백업을 못 만든다 | **구멍 → 닫음(R7)**: catch → `Could not export: …`. 하필 "설정을 잃지 않으려고" 누르는 경로였다 |
 | `background.js` `resolveMainBranch`의 get | 오버라이드를 못 읽는다 | 안전(의도) — 잡지 않고 전파해 버튼/콘솔에 실패로 뜬다. 여기서 `DEFAULT_MAIN`으로 폴백하면 `master` 저장소에서 `main`을 체크아웃하는, 보이지 않는 **틀린 브랜치**가 된다 |
 | `background.js` `loadButtons`의 get | 버튼을 못 읽는다 | 안전(의도) — 전파. 폴백하면 사용자의 커스텀 command 대신 **기본 command가 실행**된다 |
-| `content.js` `loadButtonConfigs`의 get | 그릴 설정을 못 읽는다 | 안전 — try/catch → 기본값으로 **그리기만** 한다. 클릭은 background가 저장소를 다시 읽으므로 틀린 command가 실행되지는 않는다 |
+| `content.js` `loadButtonConfigs`의 get | 그릴 설정을 못 읽는다 | **R7의 판정이 틀렸다 → 고침(R8)**: "background가 다시 읽으니 안전"은 정반대였다 — 다시 읽기 때문에 **화면과 실행이 갈렸다**. 이제 catch는 `null`을 돌려 **아무것도 그리지 않고**, 1초 폴링이 재시도한다(`console.warn` 1줄). 소탕 표 13 |
+
+### 소탕 표 13 — 렌더 → 실행 (R8, 부류 ⒜)
+
+원칙: **클릭된 것은 화면에 보인 그것이어야 한다.** 클릭은 index만 실어 보냈고 실행 측은 storage를 **다시 읽었다** — 그 두 read 사이에 원격 저장·reorder가 끼거나 렌더 측 read가 실패하면 화면에 없던 command가 돌았다. 이제 클릭이 **그린 버튼의 지문**(`buttonFingerprint` = 정규화된 `buttonFields`의 JSON)을 함께 보내고, 실행 측은 재조회 값의 지문이 같을 때만 실행한다.
+
+| 경로 | 렌더 주체 | 실행 시 조회 | 화면 = 실행인가 |
+|:--|:--|:--|:--|
+| PR 버튼(`execute_command`) | `content.js` `tryInsertPRButtons` | `clickedButton('pr', i, shown)` | ✓ 지문 대조 — 다르면 `{success:false, error: BUTTON_CHANGED_ERROR}` |
+| 이슈 버튼(`execute_issue_command`) | `tryInsertIssueButtons` | `clickedButton('issue', …)` | ✓ 같음 |
+| 저장소 헤더 버튼(`execute_repo_command`) | `tryInsertRepoButtons` | `clickedButton('repo', …)` | ✓ 같음 — PR·이슈 페이지 헤더에도 붙지만 같은 경로다 |
+| claude 입력 예약 | 위 세 경로에 실림 | 같은 `button.claudeInputs` | ✓ 지문에 `claudeInputs`가 포함돼 있어, 대조를 통과한 버튼의 예약 입력은 화면에 있던 그것이다 |
+| **확장 아이콘 클릭** | **없음** — content 렌더를 거치지 않는다 | `RUN_BY_KIND[kind](tab, 0)`, `shown` 없음 | **해당 없음(의도)**: 보인 버튼이 없으므로 어긋날 대상도 없다. 요청 자체가 "이 페이지의 첫 버튼"이고, service worker 단독 조회가 그 전부다. `onMessage` 경로는 `shown`을 **필수**로 요구하므로 이 예외가 메시지로 새지 않는다 |
+| 렌더 측 get 실패 | `loadButtonConfigs` → `null` | — | ✓ **아무것도 그리지 않는다**. 기본값을 그리면 실행 측이 사용자의 실제 저장값을 돌린다(P1 재현). 폴링이 재시도하므로 대개 1초 안에 복구된다 |
+| 렌더 측이 읽었으나 **못 쓰는 값**이 있었다 | `readStoredButtons` → 기본값 폴백 | 같은 검증기로 같은 판정 | ✓ 양쪽이 같은 저장소를 같은 규칙으로 읽어 같은 결론에 도달하므로 지문이 일치한다(R7의 폴백 유지 근거는 여기서 성립한다) |
+
+**신뢰 경계**: 지문은 **비교 키일 뿐 command의 출처가 아니다.** 실행할 문자열은 여전히 storage에서만 나오므로, 메시지는 거부를 유발할 수는 있어도 **없던 command를 들여올 수는 없다**. 덧붙여 `manifest.json`에 `externally_connectable`이 없어(확인: `grep -n externally_connectable extension/` → 0건) 웹 페이지는 `chrome.runtime.sendMessage`에 닿지 못하고, 콘텐츠 스크립트는 격리 월드에서 돌아 페이지 JS가 `chrome.runtime`을 볼 수 없다.
 
 ### 소탕 표 8 — 버튼 필드별 규칙 (R5, 부류 ⒝)
 
@@ -509,9 +539,9 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 판단 6건 중 2·5·6 수용, 3·4 조건부 수용(위 P3-B), **1 반박**: "최종 get∼set LWW 창 자체는 CAS 없이는 제거할 수 없습니다 … 다만 현재 코드는 그 창 외에도 **이미 도착한 event와 완료된 load를 Save가 모르는** P1 경계를 갖습니다. load 적용 세대·원격 변경 latch·초기 event 보류가 필요합니다."
 - 부류 이동: 캡처·가드 순서·검증기 공유는 섰고, 남은 것은 **도착한 신호의 유실**(이벤트를 버리거나 배너를 지우는 분기), **읽을 수 없는 저장값의 무동의 덮어쓰기**, **storage 호출 실패 처리**다.
 
-### R7 — 워킹트리(미커밋, base `ff1184a`) · 항목 13
+### R7 — `2d13019` (Codex 판정: 차단) · 항목 13
 
-- 범위: Codex R6 차단 6건 전부 — **⒜(도착 신호 불유실) P1-A·P1-B·P3-B**, **⒝(읽을 수 없는 저장값) P1-C·P3-A**, **⒞(storage 실패 처리) P2**. R5 7건은 재검증에서 전부 통과했으므로 건드리지 않았다.
+- 범위: Codex R6 차단 6건 전부(base `ff1184a`) — **⒜(도착 신호 불유실) P1-A·P1-B·P3-B**, **⒝(읽을 수 없는 저장값) P1-C·P3-A**, **⒞(storage 실패 처리) P2**. R5 7건은 재검증에서 전부 통과했으므로 건드리지 않았다.
 - **⒝의 설계가 라운드 중 두 번 바뀌었다.** 초안은 격리(quarantine) 패널 + [Discard] 동의였고 red 5건까지 썼다가, 드라이버 보류 지시로 테스트 파일을 R6 상태로 절단했으며(코드는 그때까지 한 줄도 쓰지 않았다), 이어 **결정 9**로 격리 자체가 폐기되고 축소된 4건으로 확정됐다. 그 근거는 결정 9에 있다 — 요지는 "못 읽는 entry"의 유일한 현실적 생성기가 기기 간 버전 갈림이고 그것을 네임스페이스 계약이 구조적으로 없앤다는 것, 그리고 손 편집은 사용자 책임 영역이라는 것. 그래서 남은 장치는 **사용자 보호가 아니라 우리 자신의 필터 버그 대비**이고, 목표는 "조용한 삭제 대신 가시적 결과"다.
 - 자리: `migrations.js:378`(`SAVE_LOADING_MESSAGE`)·`:386`(`shouldStartSave`에 `loading` 축)·`:414`(`planSave` 3문·`stale` 반환)·`:441`(`classifyStorageChange`), `options.js:41-46`(`appliedGeneration`·`loadsInFlight`)·`:135`(`editsInProgress`)·`:143`(`isOurOwnWrite`의 로드 전 가드)·`:155`(`adoptDeferredChange`)·`:171`(`markStale`)·`:507-516`(in-flight 카운터)·`:527-535`(폐기된 응답의 배너 판정)·`:553`(`appliedGeneration++`)·`:565`(첫 로드 뒤 재질의)·`:586`(시작 게이트)·`:615`(`staleAtStart` latch)·`:641-650`(live get catch)·`:672`(`settleSave`의 조건부 stale 해제)·`:960-967`(export catch).
 - **⒜-1 P1-A는 자물쇠 셋으로 닫았다.** 드라이버 지시대로 상위 고도 대안 둘을 먼저 검토했고 **둘 다 채택**했다. 근거: ①`loading` 축(**Save를 시작하지 않는다**)은 흔한 경우를 거절이 아니라 "잠시 후 다시"로 만들고, 그 창을 없앤다. ②`appliedGeneration`(**적용을 센다**)은 ①이 놓칠 수 있는 나머지를 구조적으로 막는다 — ①은 "`loadSettings()`를 부르는 곳이 전부 어디인가"라는 열거에 기대는데, 그 열거는 R4에서 이미 한 번 썩었다(컨트롤 열거 → 루트 `inert`). 그리고 ③ `staleAtStart` latch: 이벤트는 이미 도착했으므로 read 순서와 무관하게 참이다. Codex가 지적한 대로 **불변 원칙이 저장소 read 순서에 기대면 안 되기 때문에** ③이 정본이고 ①②는 그 위의 구조다.
@@ -529,4 +559,31 @@ Save·load·import·adoption이 쓰는 술어는 **`nothingHappenedSince` 하나
 - 실측: `node --test` **131/0**(R6 118 → 신규 13: `migration.test.js` 11 + `buttons.test.js` 2), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
 - **잔여**: get↔set 창은 그대로다 — 이번에도 **탐지**만 늘렸다(latch + 적용 세대 + 시작 게이트). 이벤트도 안 오고 read도 옛 값을 주는 순간은 남는다. 그리고 결정 9의 네임스페이스 계약은 **문서만 있고 코드는 없다**(구현 주체는 v2를 만드는 미래 버전) — 지금 코드에 있는 것은 계약 위반에 대한 보험 한 줄뿐이다.
 - **미검증**: DOM·비동기 실동작에 자동 게이트가 없다 — 순수 술어만 red로 고정했고, 실제 `onChanged` 수신·`loadsInFlight` 타이밍·두 get의 실패 주입·빈 섹션 렌더는 수기 검사 8항목으로 남겼다. Codex의 P1-A 하니스(`loadApplies:true, saveRefused:false`)를 그대로 재현하는 통합 테스트는 **만들지 않았다**(chrome API 스텁이 없다).
+- **Codex 판정: 차단(no).** R6 6건 **전부 차단 확인** → 항목 13 agreed. 판단 6건 중 1 조건부 수용(잔여 창 정의를 "운영상 범위"로 수용), 3(background get 전파)·4(read 순서 판단) 수용, 5 부분 수용(문서 전용은 맞되 계약 조항이 부족), **2 반박** — `readStoredButtons`의 기본값 폴백 자체는 수용하되 "**content는 get 실패 시 기본값을 그리고 background는 나중에 다른 snapshot을 읽으므로 화면과 실행 command가 달라질 수 있다**".
+- 신규 P1: **화면에 보인 버튼 ≠ 실행되는 command.** content의 첫 get이 `reject(new Error('temporary storage failure'))` → 기본 `Checkout Branch`를 그림 → 클릭은 **index만** 보내고 background가 storage를 **다시 읽어** 그 시점 값 `{face:'⚠️', label:'Remote custom', command:'echo REMOTE'}`의 index 0을 실행 → 화면은 Checkout Branch, 실행은 `echo REMOTE`. 원격 reorder(`[A,B]` 그린 뒤 `[B,A]` 저장)로도 같은 어긋남.
+- 신규 P2 ×2: (1) **동시 import에서 먼저 끝난 파일이 이긴다** — A·B 연속 선택 시 둘 다 revision 0을 캡처하고, A의 `file.text()`가 먼저 끝나 적용(revision 1)하면 B가 revision 가드에 걸려 **마지막에 고른 B 대신 A가 폼에 남는다**. (2) **`beforeunload`가 `dirty`만 검사** — 배지를 열고 체크박스만 해제하면 `dirty=false`·`reviewTouched=true`라 탭을 닫아도 경고가 없고 선택이 소실된다.
+- 신규 P3 ×2: (1) `const ci=new Array(2); ci[0]='ok'; ci.note='extra'` → `Object.keys(ci).length === ci.length`가 **우연히** 성립하고 `every`는 hole을 건너뛰어 `skipped=0`으로 통과 — 이후 hole이 사라져 입력이 유실된다. (2) `applyMigration`이 동일성 가드로 일부를 건너뛰고도 `selection.size`로 "N commands updated"를 보고한다.
+- 결정 9는 철회 대상이 아니지만 "v2 구현 전에 명문화돼야 할" 5건(seed 경쟁·부분 존재 오인·pre-consent 런타임·quota·세대 건너뛰기)이 지적됐다 — 아래 「결정 9 하위 조항」 초안.
+- 부류 이동: 옵션 페이지의 동시성·신뢰 경계는 섰고, 남은 것은 **렌더와 실행이 서로 다른 스냅샷을 본다**는 것(옵션 페이지 밖, 실행 경로), 그리고 페이지 단위 비동기 작업(import)·이탈 경고의 **단일 술어 미적용**이다.
+
+### R8 — 워킹트리(미커밋, base `2d13019`) · 항목 14
+
+- 범위: Codex R7 차단 5건 전부 — ⒜ P1(화면≠실행), ⒝ P2(동시 import), ⒞ P2(`beforeunload`), ⒟ P3 ×2(hole 판정·적용 건수) — 과 ⒠ 결정 9 하위 조항 5건(문서). R6 6건은 재검증에서 전부 통과했으므로 건드리지 않았다. **이 라운드에서 처음으로 옵션 페이지 밖(`content.js`·`background.js`)을 고쳤다.**
+- 자리: `defaults.js:282-286`(인덱스 실재 검사)·`:303`(`buttonFingerprint`)·`:309`(`BUTTON_CHANGED_ERROR`), `content.js:75-80`(지문 동봉)·`:93-104`(get 실패 → `null`)·`:231`·`:284`·`:318`(그리지 않고 반환), `background.js:163`(`clickedButton`)·`:200`·`:238`·`:256`(실행자 시그니처)·`:330`(`shown` 필수)·`:308`(아이콘 경로의 예외 주석), `migrations.js:283`(`applied` 카운터)·`:515-518`(`IMPORT_BUSY_MESSAGE`·`shouldStartImport`)·`:528`(`hasUnsavedWork`), `options.js:66`(`importing`)·`:146`(`wouldLoseWork`)·`:903-916`(실제 적용 건수 메시지)·`:1046`(import 직렬화)·`:1441`(`beforeunload`).
+- **⒜ 대안 ②(지문 대조)를 택했다. ①(그린 버튼 전체를 실어 보내고 재조회 안 함)은 기각.** 근거 셋:
+  1. **신뢰 경계를 넓히지 않는다.** ①이면 실행될 command 문자열이 **메시지에서** 온다 — 그 순간 "실행되는 것은 storage에 있는 것"이라는 성질이 사라지고, 메시지 경로의 어떤 버그든 임의 명령 실행으로 승격된다. ②는 지문을 **비교 키로만** 쓰므로 메시지가 할 수 있는 최대치가 **거부**다. 이것은 CLAUDE.md의 "앱이 터미널 선택의 단일 정본"과 같은 모양이다 — **실행하는 쪽이 정본을 쥔다**.
+  2. **어긋남을 숨기지 않는다.** ①이면 저장값이 바뀐 뒤의 클릭이 **낡은 command를 조용히 실행**한다. ②는 거부 + "reload the page"로 사실을 표면화한다 — 리포 철학(보이는 실패 > 조용한 오작동) 그대로.
+  3. 위조 가능성은 **둘 다 문제가 아니다**(확인함): `manifest.json`에 `externally_connectable`이 없어 웹 페이지는 `chrome.runtime.sendMessage`에 닿지 못하고, 콘텐츠 스크립트는 격리 월드라 페이지 JS가 `chrome.runtime`을 볼 수 없다. 즉 ①을 기각한 이유는 **외부 위조가 아니라 내부 경계**다.
+  - 지문은 정규화된 `buttonFields`의 JSON이다 — 양쪽 다 `adoptStoredButtons`를 거치므로 같은 모양이 나오고 키 순서가 고정이라 안정적이다. `face`·`label`·`command`·`claudeInputs` 전부를 넣었다: 앞의 둘은 **사용자가 본 것**, 뒤의 둘은 **실행되는 것**이고, 둘 중 하나만 지키면 "보인 것이 실행된다"는 약속의 절반만 지키는 셈이다. 대가는 원격 툴팁 수정만으로도 클릭이 한 번 거부되는 것 — 새로고침 한 번이고, 복구 방법이 메시지에 있다.
+  - **`{success:false}` 규칙 재확인**(CLAUDE.md): 거부는 `throw` → `onMessage`의 `.catch`가 `{success:false, error}`로 응답 → `runButtonCommand`가 `response?.success`를 검사해 다시 throw → 버튼에 ❌. 새 경로를 만들었지만 이 체인 밖으로 나가지 않는다. **실행 경로의 version 무지**도 그대로다(`grep VERSION_KEY|SETTINGS_VERSION extension/content.js extension/background.js` → 0건).
+  - **content의 "get 실패 → 기본값" 폴백은 폐기**했다. R7에서 유지 근거로 적은 "background가 다시 읽으니 안전"이 정확히 거꾸로였다 — 다시 읽기 때문에 갈렸다. 이제 아무것도 그리지 않고 1초 폴링이 재시도한다(자가 복구). 반면 **읽기는 성공했는데 못 쓰는 값이 있어 기본값으로 떨어지는 폴백은 유지**한다: 그 경우 양쪽이 같은 저장소를 같은 검증기로 읽어 같은 결론에 도달하므로 지문이 일치한다. R7 결정의 살아남은 절반이다.
+- **⒝ 직렬화를 택했다(supersede 기각).** supersede하려면 "먼저 끝난 import 자신의 적용이 올린 revision"을 나중 import가 무시하도록 예외를 둬야 하는데, 그러면 Save가 쓰는 동시성 모델 옆에 **두 번째 모델**이 생긴다. 직렬화는 `shouldStartSave`와 같은 규칙("페이지를 바꾸는 비동기 작업은 하나씩")의 재사용이고, 요구 조건("마지막 파일이 남거나, 남지 못하면 이유가 표시된다")의 후자를 만족한다 — 옛 동작과의 차이는 **조용하지 않다**는 것이다. 실사용에서 이 경쟁이 나려면 파일 선택 대화상자를 두 번 여는 사이에 `file.text()`(256KB 이하)가 끝나지 않아야 하므로, 잃는 것은 사실상 없다.
+- **⒞ 이탈 경고도 같은 술어.** `hasUnsavedWork({dirty, reviewTouched, saving})` 하나를 두고, 동기화 경로는 `saving`을 빼고(그쪽은 `defer`라는 별도의 답이 있다) 이탈 경로는 넣어서 부른다. **Save 중 이탈의 처분**: 경고한다 — 쓰기가 끝나지 않았을 수 있고, 사용자가 잃는 것이 실제로 있다.
+- **⒟-1 hole 판정**: `Object.keys(arr).length === arr.length` 비교를 **인덱스 실재 검사**(`Object.hasOwn(arr, i)` 전수)로 바꿨다. 옛 방식은 여분 프로퍼티 하나(`arr.note='x'`)로 개수가 우연히 맞아떨어져 hole이 통과했다 — "구멍이 있는가"를 묻지 않고 대리 지표를 물어본 대가다.
+- **⒟-2 적용 건수**: `applyMigrationPlan`이 `{settings, applied}`를 돌려주고 메시지가 `applied`를 쓴다. 건너뛴 것이 있으면 "N changed since the preview was built and were left alone."을 덧붙인다 — 숫자만 고치면 **왜 적은지**가 여전히 안 보인다.
+- red 기록(2배치): `buttons.test.js` → `not ok 35∼38`(`ReferenceError`: `buttonFingerprint`·`BUTTON_CHANGED_ERROR`) + `not ok 39 - adoptStoredButtons: a hole hidden behind an extra property is still a hole`(AssertionError). `migration.test.js` → `# ReferenceError: shouldStartImport is not defined` → `not ok 3`. 각 확인 후 구현.
+- `applyMigrationPlan`의 반환 모양 변경으로 기존 테스트 7건이 깨졌고(`not ok 62·63·64·75·84·85·104`) 전부 `.settings.buttons`로 갱신했다 — 삭제한 테스트는 없다.
+- 실측: `node --test` **139/0**(R7 131 → 신규 8: `buttons.test.js` 5 + `migration.test.js` 3), `swift test --package-path app` 210/0, `./app/build.sh` + `./app/e2e.sh` PASS 9건. `node --check` 확장 스크립트 5개, `git diff --check` 통과.
+- **잔여**: `get`↔`set` 창은 그대로. 지문 대조는 **두 read 사이의 어긋남을 탐지**할 뿐 저장소 자체의 원자성을 주지 않는다 — 재조회와 실행 사이의 창(마이크로초 단위)은 남고, 거기서 바뀐 값은 이번에도 잡히지 않는다. 결정 9의 계약은 여전히 문서뿐이고, 하위 조항 5건은 **사용자 확정 대기** 상태다.
+- **미검증**: ⒜의 실동작(실제 원격 변경 후 클릭, content get 실패 주입, 아이콘 클릭 경로)은 자동 게이트가 없다 — 순수 함수(`buttonFingerprint` 일치·불일치)만 red로 고정했고 나머지는 수기 검사 7항목으로 남겼다. `chrome.runtime.sendMessage`/`onMessage` 왕복을 태우는 통합 테스트는 **만들지 않았다**(chrome API 스텁이 없다). ⒝⒞도 순수 술어까지만이다.
 - 판정: 미요청.

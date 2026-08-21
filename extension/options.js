@@ -60,6 +60,10 @@ const state = {
   // A remote change that arrived during a save, held rather than dropped — once the save settles
   // the page is clean again and the change should land.
   deferredChange: null,
+  // A settings file is being read. One at a time: two in flight both captured the same revision, and
+  // whichever finished reading first applied and disqualified the other, so the file chosen second
+  // lost to the one chosen first with nothing said.
+  importing: false,
   // Set the moment the user engages with the migration preview. Checking boxes is not a "dirty"
   // edit — nothing has been typed — but it is unsaved work all the same, and re-planning underneath
   // it silently restores the choices they just made.
@@ -131,9 +135,18 @@ function updateSavingGate() {
 }
 
 // Unsaved work that a remote change must never overwrite: text typed, and a review being decided.
-// A save in flight is handled on its own axis — it does not overwrite anything, it defers.
+// A save in flight is handled on its own axis — a change arriving then is deferred, not refused.
 function editsInProgress() {
-  return state.dirty || state.reviewTouched;
+  return hasUnsavedWork({ dirty: state.dirty, reviewTouched: state.reviewTouched });
+}
+
+// Unsaved work that leaving the page would lose — the same definition, plus the write still in
+// flight. Asking `dirty` alone here let a decided review go with the tab: unchecking a candidate
+// types nothing, so the browser said nothing on the way out.
+function wouldLoseWork() {
+  return hasUnsavedWork({
+    dirty: state.dirty, reviewTouched: state.reviewTouched, saving: state.saving,
+  });
 }
 
 // Our own write, whether or not it has been recorded as the loaded snapshot yet — the change event
@@ -884,15 +897,23 @@ function renderMigration() {
 function applyMigration() {
   if (!requireLoaded()) return;
   editAndReview(() => {
-    const migrated = applyMigrationPlan(editStateSnapshot(), state.plan, state.selection);
-    const count = state.selection.size;
+    // `applied` is what was actually rewritten, not what was checked: a candidate whose button was
+    // deleted, moved, or typed over while the preview was open is skipped, and counting checkboxes
+    // reported those skips as successes.
+    const { settings: migrated, applied } = applyMigrationPlan(
+      editStateSnapshot(), state.plan, state.selection
+    );
+    const declined = state.selection.size - applied;
 
     for (const { kind, storageKey } of SECTIONS) {
       state.buttons[kind] = migrated[storageKey].map(button => reshapeButton(button, button.uid));
       renderButtons(kind);
     }
     markReviewed();
-    showStatus('info', `${count} command${count === 1 ? '' : 's'} updated in the form. Press Save to apply.`);
+    const missed = declined > 0
+      ? ` ${declined} changed since the preview was built and ${declined === 1 ? 'was' : 'were'} left alone.`
+      : '';
+    showStatus('info', `${applied} command${applied === 1 ? '' : 's'} updated in the form.${missed} Press Save to apply.`);
   });
 }
 
@@ -1020,6 +1041,12 @@ async function importSettings(file) {
   // An import that landed before the load answered would be merged into an empty edit state and
   // then compared against a snapshot we do not have yet
   if (!requireLoaded()) return;
+  // One file at a time. Two in flight both captured the same revision, and whichever finished
+  // reading first applied and disqualified the other — so the file chosen *second* lost, silently.
+  if (!shouldStartImport({ loaded: state.loaded, importing: state.importing })) {
+    showStatus('error', IMPORT_BUSY_MESSAGE);
+    return;
+  }
   if (file.size > MAX_IMPORT_BYTES) {
     showStatus('error', 'The settings file is too large (256KB max).');
     return;
@@ -1031,37 +1058,42 @@ async function importSettings(file) {
   const revisionAtStart = state.revision;
   const generationAtStart = state.loadGeneration;
 
-  let imported;
-  let mergedVersion;
+  state.importing = true;
   try {
-    imported = parseImportedSettings(await file.text());
-    // Refused here rather than merged: with stored settings from the future, taking the minimum
-    // hands an old generation to content a newer extension wrote, and the next Save records it.
-    mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
-  } catch (error) {
-    showStatus('error', `Could not import: ${error.message}`);
-    return;
+    let imported;
+    let mergedVersion;
+    try {
+      imported = parseImportedSettings(await file.text());
+      // Refused here rather than merged: with stored settings from the future, taking the minimum
+      // hands an old generation to content a newer extension wrote, and the next Save records it.
+      mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
+    } catch (error) {
+      showStatus('error', `Could not import: ${error.message}`);
+      return;
+    }
+
+    const outcome = planImport({
+      revisionAtStart,
+      revisionNow: state.revision,
+      generationAtStart,
+      generationNow: state.loadGeneration,
+      settings: imported.settings,
+    });
+    if (outcome.refused) {
+      showStatus('error', outcome.message);
+      return;
+    }
+
+    // Refused only if the page stopped being loaded under us; nothing was filled in, so nothing is
+    // reported as imported either.
+    if (!applyImportedSettings(outcome.apply, mergedVersion)) return;
+
+    const notes = [...imported.unreadable];
+    if (imported.skipped.length) notes.push(`skipped: ${imported.skipped.join(', ')}`);
+    showStatus('info', `Settings imported. Press Save to apply.${notes.length ? ` (${notes.join('; ')})` : ''}`);
+  } finally {
+    state.importing = false;
   }
-
-  const outcome = planImport({
-    revisionAtStart,
-    revisionNow: state.revision,
-    generationAtStart,
-    generationNow: state.loadGeneration,
-    settings: imported.settings,
-  });
-  if (outcome.refused) {
-    showStatus('error', outcome.message);
-    return;
-  }
-
-  // Refused only if the page stopped being loaded under us; nothing was filled in, so nothing is
-  // reported as imported either.
-  if (!applyImportedSettings(outcome.apply, mergedVersion)) return;
-
-  const notes = [...imported.unreadable];
-  if (imported.skipped.length) notes.push(`skipped: ${imported.skipped.join(', ')}`);
-  showStatus('info', `Settings imported. Press Save to apply.${notes.length ? ` (${notes.join('; ')})` : ''}`);
 }
 
 let statusTimer = null;
@@ -1429,7 +1461,7 @@ importInput.addEventListener('change', () => {
 // The manifest uses options_page (a full tab), so the leave-site warning dialog actually appears.
 // Switching to options_ui (embedded) makes the browser suppress it.
 window.addEventListener('beforeunload', (e) => {
-  if (!state.dirty) return;
+  if (!wouldLoseWork()) return;
   e.preventDefault();
   e.returnValue = '';
 });
