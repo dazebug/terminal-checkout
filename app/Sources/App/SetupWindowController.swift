@@ -225,8 +225,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     /// Where repositories live. `z {repo}` silently does nothing when zoxide's DB has never
     /// recorded that repository (issue #30); with this set, the command falls back to
-    /// `cd <base>/<repo>` and then to cloning. The value is stored as typed and everything else —
-    /// validation, `~` expansion, clause assembly — happens in Core.
+    /// `cd <base>/<repo>` and then to cloning. Validation, `~` expansion, and clause assembly all
+    /// live in Core — this card stores the **normalized** result (echoed back into the field) and
+    /// only words the rejection reasons.
     private func buildBaseDirCard() -> NSView {
         baseDirField.placeholderString = "예: ~/Codes"
         baseDirField.font = Theme.mono(11.5)

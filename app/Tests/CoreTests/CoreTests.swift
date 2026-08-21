@@ -2094,9 +2094,9 @@ final class UninstallScriptSyncTests: XCTestCase {
 // MARK: - extension/defaults.js ↔ Swift: names the app fills in
 // The name of an app-provided variable exists twice: `repoEntryVariable` here and `APP_VARIABLES`
 // in `extension/defaults.js`. Neither side can catch the other drifting at runtime, and the damage
-// is asymmetric but total either way — rename it only in Swift and every preset renders `{cd}`
-// literally into the shell; rename it only in JS and the app rejects every button with "Unknown
-// variable". This test is the only thing that turns that drift into a red.
+// is total either way: rename the name on one side alone and every preset dies with a
+// "Variable {…} not provided" rejection (`renderCommand` never passes an unresolved placeholder
+// through) — visible, but shipped. This test turns that drift into a red before it ships.
 //
 // **Limit**: it reads the array literal out of the file's text. Computing `APP_VARIABLES` at
 // runtime, or spelling it across several statements, would slip past this guard.
