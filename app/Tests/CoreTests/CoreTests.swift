@@ -3867,6 +3867,25 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertTrue(exists(path))
     }
 
+    /// A file written with the **legacy header** is still reclaimed. Every other fixture here uses
+    /// `warpTabConfigTOML`, which writes today's token, so without this one the whole reclaim path
+    /// would only ever be exercised against the new marker — and the files actually at risk are the
+    /// ones already on disk carrying the old one.
+    func testTabConfigWrittenByAnOlderBuildIsStillRemoved() {
+        let legacy = warpTabConfigLegacyHeader + " — 탭이 열리면 지웁니다.\nname = \"Terminal Checkout\"\n"
+        let path = write("terminal-checkout-deadbeef.toml", legacy, ageSeconds: 600)
+        reclaimStaleWarpTabConfigs(in: directory)
+        XCTAssertFalse(exists(path), "a Tab Config from an older build was left behind")
+    }
+
+    /// The same for the scheduled single-file delete, which reaches the verdict through an fd.
+    func testRemoveByPathAlsoAcceptsTheLegacyHeader() {
+        let legacy = warpTabConfigLegacyHeader + "\nname = \"Terminal Checkout\"\n"
+        let path = write("terminal-checkout-cafebabe.toml", legacy, ageSeconds: 0)
+        removeWarpTabConfigIfOurs(path: path)
+        XCTAssertFalse(exists(path), "the scheduled delete stopped recognising an older build's file")
+    }
+
     /// A fixed-name file left by an early build of this branch is reclaimed too, when its contents are ours
     func testLegacyFixedNameTabConfigIsRemoved() {
         let path = write(
@@ -3893,6 +3912,44 @@ private func repoFileContents(_ name: String) throws -> String {
     return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
 }
 
+/// The Tab Config marker is a **permanent machine protocol** (D38): a language-neutral token that
+/// will not change again, plus a human-readable line below it that may.
+///
+/// Both headers have to be recognised, and for different reasons. The new one is what we write now.
+/// The old one is Korean and sits in files already on users' disks — if `warpTabConfigIsOurs` stopped
+/// matching it, the app would never reclaim them and `uninstall.sh` would never delete them.
+final class WarpTabConfigMarkerTests: XCTestCase {
+    func testTheHeaderTokenCarriesNoNaturalLanguage() {
+        // The whole point of the change: a marker that can never need translating again.
+        XCTAssertTrue(
+            warpTabConfigHeader.unicodeScalars.allSatisfy { $0.isASCII },
+            "the marker has to stay language-neutral: \(warpTabConfigHeader)"
+        )
+    }
+
+    func testContentFromAnOlderBuildIsStillOurs() {
+        // A file written before the token change, verbatim as it appeared on disk.
+        let old = warpTabConfigLegacyHeader + " — 탭이 열리면 지웁니다.\nname = \"Terminal Checkout\"\n"
+        XCTAssertTrue(warpTabConfigIsOurs(contents: old), "an older build's file stopped being reclaimable")
+    }
+
+    func testContentWeWriteNowIsOurs() {
+        XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigTOML(commands: ["z remy"])))
+    }
+
+    func testSomebodyElsesFileIsNotOurs() {
+        XCTAssertFalse(warpTabConfigIsOurs(contents: "name = \"my workspace\"\n"))
+    }
+
+    /// The human-readable explanation lives on its **own** line, so translating it later can never
+    /// touch the token the reclaim verdict matches on.
+    func testTheExplanationIsOnItsOwnLine() {
+        let toml = warpTabConfigTOML(commands: ["z remy"])
+        let first = toml.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        XCTAssertEqual(String(first), warpTabConfigHeader, "the first line has to be the token alone")
+    }
+}
+
 final class UninstallScriptSyncTests: XCTestCase {
     func testUninstallScriptSweepsWithTheSameConstants() throws {
         let script = try repoFileContents("uninstall.sh")
@@ -3901,6 +3958,10 @@ final class UninstallScriptSyncTests: XCTestCase {
             warpHelperSocketPrefix + "*.sock",
             warpTabConfigPrefix + "*.toml",
             warpTabConfigHeader,
+            // The old header stays a reclaim target: files written before the token change are
+            // still on users' disks, and dropping it from either side (here or `warpTabConfigIsOurs`)
+            // orphans them permanently
+            warpTabConfigLegacyHeader,
             warpTabConfigLegacyStem + ".toml",
             warpHelperExecutableName,
             // Round 4: uninstall swept the helper sockets but left the prompt directories, which

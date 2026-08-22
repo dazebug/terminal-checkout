@@ -57,10 +57,12 @@ for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
         fi
     fi
 done
-# The header below must equal `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
-# UninstallScriptSyncTests enforces the match (the app still writes this header in Korean)
+# The two headers below must equal `warpTabConfigHeader` and `warpTabConfigLegacyHeader` in
+# app/Sources/Core/WarpControl.swift — UninstallScriptSyncTests enforces both matches.
+# The first is a permanent machine protocol and will not change again; the second is what earlier
+# builds wrote and is kept so their files are still collected here.
 for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do
-    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -q '^# Terminal Checkout이 자동 생성합니다'; then
+    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -qE '^(#!terminal-checkout/tab-config/v1|# Terminal Checkout이 자동 생성합니다)'; then
         rm -f "$toml"
     fi
 done
