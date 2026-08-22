@@ -4,6 +4,7 @@ import Core
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: HostServer?
     private var setupWindow: SetupWindowController?
+    private var languageObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Takes the user somewhere that explains a rejection. The extension shows a failure as a
@@ -18,6 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Installer.autoSetup()
         Settings.refreshToolAvailability()
         setupMainMenu()
+        // The menu bar is built once, so its titles keep whatever language they were built in
+        // until something rebuilds them (item 9). Registered here rather than inside
+        // `setupMainMenu` so that building and re-building stay one call each
+        languageObserver = NotificationCenter.default.addObserver(
+            forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.setupMainMenu() }
         // relay가 백그라운드로 띄운 경우(--background)에는 창을 열지 않는다
         if !CommandLine.arguments.contains("--background") {
             showSetupWindow()

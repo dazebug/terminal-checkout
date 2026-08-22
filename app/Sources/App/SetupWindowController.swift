@@ -86,13 +86,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
+    /// The two stacks that are **filled** rather than created — a rebuild appends to them unless
+    /// the builders clear first, which is the one way replacing the view tree can double a window
+    var refillableSectionsForTesting: [NSStackView] { [permissionSection, accessibilitySection] }
+
     var statusLabelsForTesting: [NSTextField] {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
             permissionStatusLabel, accessibilityStatusLabel, testResultLabel,
         ]
     }
-    private let requestPermissionButton = NSButton(title: "iTerm2 권한 요청", target: nil, action: nil)
+    /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
+    /// a title set here would be the one string in this window that kept its old language. The
+    /// title is set in the builder instead, where a rebuild reads it again — and it lives in
+    /// exactly one place, so item 11 has one site to move rather than two to keep in step.
+    private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
@@ -194,7 +202,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // 우리 문자열은 재시작을 기다리지 않는다(D14) — 언어가 바뀌면 이 창이 다시 그린다
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
-        ) { [weak self] _ in self?.refresh() }
+        ) { [weak self] _ in self?.rebuildForLanguageChange() }
     }
 
     deinit {
@@ -215,6 +223,31 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         installFeedbackLabel.isHidden = true
         testResultLabel.isHidden = true
         onClose?()
+    }
+
+    /// **The window is built once, and `refresh()` rewrites only the status lines.** Everything
+    /// else — card titles, section headings, help paragraphs, button and radio titles, the picker's
+    /// `auto` entry — is created in `buildContent()` and never touched again, so a language change
+    /// would leave the whole window in the old language while three labels moved. That is the shape
+    /// round 1 meant by "a lookup function alone does not switch anything": the lookup has to be
+    /// *reached* again, and nothing reaches it.
+    ///
+    /// Rebuilding the content is the mechanism, rather than a second pass that re-sets each string:
+    /// a re-set pass has to name every string, so it is wrong the moment item 10 or 11 adds one,
+    /// and it would be wrong silently. This is correct for strings that do not exist yet.
+    ///
+    /// It runs **only on a language change**, not on every `refresh()` — refresh runs on window
+    /// activation and on every socket request, and replacing the view tree that often would fight
+    /// the user for focus and for their place in the window.
+    ///
+    /// State survives because the views that hold it are stored properties: the base-directory
+    /// field, the status labels and the pipeline strip are re-parented into the new stack rather
+    /// than recreated, so what the user has typed is still there afterwards.
+    func rebuildForLanguageChange() {
+        guard let window = window else { return }
+        window.contentView = buildContent()
+        window.contentView?.layoutSubtreeIfNeeded()
+        refresh()
     }
 
     // MARK: - UI 구성
@@ -481,6 +514,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func buildPermissionSection() {
+        // Idempotent: it fills a **stored** stack, so building a second time would append a second
+        // copy of everything rather than replace it. `toolsList` already clears for the same reason
+        permissionSection.arrangedSubviews.forEach { $0.removeFromSuperview() }
         permissionSection.orientation = .vertical
         permissionSection.alignment = .leading
         permissionSection.spacing = 9
@@ -490,6 +526,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다."
         ))
         permissionSection.addArrangedSubview(permissionStatusLabel)
+        requestPermissionButton.title = "iTerm2 권한 요청"
         requestPermissionButton.target = self
         requestPermissionButton.action = #selector(requestPermission)
         requestPermissionButton.bezelStyle = .rounded
@@ -503,6 +540,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// 초기화 중 버린 입력이 "전달됨"으로 기록되므로(실측), 이 권한 없이는 claude 입력을
     /// 전달하지 않는다 — 명령 실행과는 무관하다는 것을 문구로 갈라 준다.
     private func buildAccessibilitySection() {
+        // Idempotent: it fills a **stored** stack, so building a second time would append a second
+        // copy of everything rather than replace it. `toolsList` already clears for the same reason
+        accessibilitySection.arrangedSubviews.forEach { $0.removeFromSuperview() }
         accessibilitySection.orientation = .vertical
         accessibilitySection.alignment = .leading
         accessibilitySection.spacing = 9
@@ -692,15 +732,27 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "v\($0)" } ?? "dev"
     }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
+    /// A formatter is expensive enough to keep, and keeping one is exactly how this line stayed
+    /// Korean: it was a `static let` built once with `Locale(identifier: "ko_KR")`, so the language
+    /// was frozen into the value and no lookup function could ever have thawed it. **The language
+    /// is now part of the key.** A cache whose key omits the thing that varies is not a cache.
+    ///
+    /// Measured: `Locale(identifier:)` takes the tags we resolve as they are — `zh-Hans` gives
+    /// 1小时前 and `zh-Hant` 1小時前, so no ICU-style rewriting is needed on the way in.
+    private static var relativeFormatterCache: (tag: String, formatter: RelativeDateTimeFormatter)?
+
+    static func relativeFormatter(for tag: String) -> RelativeDateTimeFormatter {
+        if let cached = relativeFormatterCache, cached.tag == tag { return cached.formatter }
         let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.locale = Locale(identifier: tag)
         formatter.dateTimeStyle = .named
+        relativeFormatterCache = (tag, formatter)
         return formatter
-    }()
+    }
 
     private func relative(_ date: Date) -> String {
-        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+        Self.relativeFormatter(for: AppLocalization.resolvedTag())
+            .localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: - 터미널 선택
