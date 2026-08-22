@@ -117,6 +117,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private var guideBlock: NSView!
     private var utilityRow: NSView!
+    private var languagePopUp: NSPopUpButton!
+    private var languageRestartButton: NSButton!
+    private var languageNoteLabel: NSTextField!
+    private var languageObserver: NSObjectProtocol?
     /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
     private var forceShowInstall = false
     private var requestObserver: (any NSObjectProtocol)?
@@ -187,10 +191,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
+        // 우리 문자열은 재시작을 기다리지 않는다(D14) — 언어가 바뀌면 이 창이 다시 그린다
+        languageObserver = NotificationCenter.default.addObserver(
+            forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.refresh() }
     }
 
     deinit {
-        for observer in [requestObserver, toolsObserver].compactMap({ $0 }) {
+        for observer in [requestObserver, toolsObserver, languageObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -232,6 +240,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         stack.addArrangedSubview(chromeCard)
         stack.addArrangedSubview(extensionCard)
+        stack.addArrangedSubview(languageCard())
         stack.addArrangedSubview(terminalCard())
         stack.addArrangedSubview(baseDirCard)
         stack.addArrangedSubview(toolsCard)
@@ -367,6 +376,77 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: 카드 — 상시 (터미널 선택·테스트)
+
+    // MARK: 카드 — 언어
+
+    /// **The app owns the language and the extension follows** (D8): the picker is here because the
+    /// setup window is what a user sees *before* the extension exists, so an extension-side picker
+    /// would have no answer at the one moment it is first needed.
+    ///
+    /// The entries are each written in their own language, which is what a language menu does
+    /// everywhere: a user who has landed in a language they cannot read has to be able to find
+    /// their way out of it. Only the `auto` line is in the window's language, and item 11 moves it
+    /// into the catalogue with the rest of this window.
+    private func languageCard() -> NSView {
+        languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        languagePopUp.addItem(withTitle: "시스템 언어를 따름")
+        languagePopUp.lastItem?.representedObject = automaticLocalePreference
+        for tag in supportedLocales {
+            languagePopUp.addItem(withTitle: languageMenuTitles[tag] ?? tag)
+            languagePopUp.lastItem?.representedObject = tag
+        }
+        languagePopUp.target = self
+        languagePopUp.action = #selector(languageChanged)
+
+        // Half of the change lands now and half on the next launch (D14), so the button that closes
+        // that gap sits next to the control that opens it rather than in a menu somewhere
+        languageRestartButton = button("지금 다시 시작", #selector(restartForLanguage))
+        languageNoteLabel = helpLabel("", width: setupContentWidth - 28)
+
+        let row = NSStackView(views: [languagePopUp, languageRestartButton])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 10
+        return card("언어", [row, languageNoteLabel])
+    }
+
+    /// Each language in its own script. Not a catalogue lookup on purpose — these read the same
+    /// whatever language the window is in, which is the point of a language menu.
+    private var languageMenuTitles: [String: String] {
+        ["en": "English", "ko": "한국어", "ja": "日本語", "zh-Hans": "简体中文", "zh-Hant": "繁體中文"]
+    }
+
+    @objc private func languageChanged() {
+        guard let choice = languagePopUp.selectedItem?.representedObject as? String else { return }
+        Settings.language = choice
+        refresh()
+    }
+
+    /// **The picker asks, it does not decide.** Whether a restart is safe right now is item 13's
+    /// question — there is asynchronous claude input delivery in flight to consider, and a Warp
+    /// helper whose only defence is its lifetime. Until that lands the gate answers yes, and the
+    /// hole is deliberate rather than forgotten: the seam is here so item 13 has one place to fill.
+    @objc private func restartForLanguage() {
+        guard LocaleRestartGate.isSafeNow() else {
+            languageNoteLabel.stringValue = languageNote(restartBlocked: true)
+            return
+        }
+        let app = Bundle.main.bundlePath
+        // A detached `open` after this process exits: relaunching from inside a terminating app
+        // races the old instance's socket, and the new one would fail to bind
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", app]
+        try? task.run()
+        NSApp.terminate(nil)
+    }
+
+    private func languageNote(restartBlocked: Bool = false) -> String {
+        if restartBlocked {
+            return "claude 입력을 전달하는 중이라 지금은 다시 시작하지 않습니다. 전달이 끝난 뒤 다시 눌러 주세요."
+        }
+        return "앱이 그리는 문자열은 즉시 바뀝니다. 시스템 대화상자(파일 선택·경고)는 다음 실행부터 이 언어로 뜹니다."
+    }
 
     private func terminalCard() -> NSView {
         itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
@@ -665,6 +745,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 상태 갱신
 
     private func refresh() {
+        // The picker follows the stored value rather than its own last click: a second window, or a
+        // value written before this launch, has to show through
+        let language = Settings.language
+        let index = languagePopUp.itemArray.firstIndex {
+            $0.representedObject as? String == language
+        }
+        languagePopUp.selectItem(at: index ?? 0)
+        languageNoteLabel.stringValue = languageNote()
+
         let manifest = Installer.manifestState()
         let folder = Installer.extensionState()
         let evidence = Settings.lastRequestAt
