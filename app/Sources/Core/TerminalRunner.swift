@@ -441,7 +441,7 @@ public func runInWezTerm(
     }
 
     // Fallback: a new WezTerm process = a new window (with no mux there is no window to attach to).
-    // It does not wait for exit, and since the pane cannot be identified there is no handle either — which is why a run with input to type cannot come here. Nothing has been spawned yet, so there is no side effect to undo
+    // It does not wait for exit, and since the pane cannot be identified there is no handle either — which is why a run with input to type cannot come here. The fallback process has not been spawned yet, so there is no side effect to undo
     if let rejection = wezTermFallbackRejection(injectsClaudeInput: injectsClaudeInput) {
         throw rejection
     }

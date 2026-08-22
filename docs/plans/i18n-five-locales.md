@@ -99,6 +99,7 @@
 - **재시작은 진행 중 전달을 끊지 않는다**(D20). Warp 헬퍼의 유일한 방어선이 수명이라는 CLAUDE.md의 신뢰 경계가 그 이유다.
 - **테스트 오라클은 호스트 기계 언어에 의존하지 않는다.** `Bundle(path: <상위>/<loc>.lproj)`만 결정적이고, 카탈로그 정합은 Bundle을 거치지 않고 파일을 읽는다.
 - **주석 번역은 「왜」를 보존한다.** 실측 수치와 기각된 대안을 요약하지 말고 같은 사실을 영어로 옮긴다.
+- **주석의 주장은 같은 파일·`CLAUDE.md`·실측과 어긋나지 않는다**(D56). 번역이 세기를 강화하는 것은 이 부류의 **부분집합**일 뿐이다 — 원본이 이미 어긋나 있던 자리는 번역↔원본 대조로는 영원히 안 잡힌다. 그래서 소탕은 **양방향 필수**다: ① 영어의 절대어법(`never`·`always`·`guarantee`·`successfully`…)을 원본과 대조 ② 한국어 **목적 구문**(`∼하지 않기 위한/위해서`)을 역방향으로 대조 — 목적이 보증으로 바뀌는 **정확한 언어적 형태**다. 그리고 ③ 모든 주장을 같은 파일의 다른 곳·`CLAUDE.md`·실측값과 대조한다. **실측과 추론의 구분도 같은 규칙**이다(clear 시퀀스는 `!`만 실측, `/`·`#`는 추론이라고 명시돼 있다).
 - **하드랩 금지 · 물결표**: 문단은 한 논리 줄, 범위는 `∼`(U+223C).
 - **TDD**: 게이트를 먼저 써서 red를 눈으로 확인하고 구현으로 green을 만든다.
 - **라운드마다**: `cd app && swift test` · `node --test` · `app/build.sh` · `app/e2e.sh` 전부 그린. 기준선 swift 351(1 skipped) · node 158 · e2e 9 PASS.
@@ -147,6 +148,7 @@
 | 24 | **`ja` + `zh-Hans` + `zh-Hant` 카탈로그 본문.** 모델 번역 초벌을 그대로 싣는다(사용자 결정). 게이트가 보장하는 것은 키·플레이스홀더 정합뿐이고 **번역 품질은 잡지 못한다** — 고지는 항목 25 | 번역본 | `app/Sources/App/Resources/{ja,zh-Hans,zh-Hant}.lproj/*`, `extension/_i18n/{ja,zh-Hans,zh-Hant}.js`, `extension/_locales/{ja,zh_CN,zh_TW}/messages.json` | 23 | todo | | |
 | 25 | **문서.** `README.md:80` 노트 블록 제거 · `install.sh:99`·`:101` gloss 제거(#24 체크박스) · `docs/new-terminal-checklist.md:135`의 로그 인용 갱신(**이미 낡았다** — 인용 `입력 N개 중 M개 전달` ↔ 실제 `claude(pid …) 입력 N개 중 M개 보냄(수신은 확인하지 않는다)`) · 새 로케일 추가 시 손댈 지점 목록 · **PR 본문·README에 "기계 번역 초벌, 개선 PR 환영" 명시** · **언어 전환의 재시작 경계·TCC 잔여·수렴 전 두 언어 구간을 README에 기록** · **D25 레거시 헤더 인식 코드를 언제 지울지 트리거 조건** · **`CLAUDE.md`의 "Extension-install completion is judged by a recorded socket request" 문장을 D26 범위로 갱신** · `CLAUDE.md`에 이번 실측 반영 · `docs/context/`에 i18n 결정 항목 추가 | 문서 | `README.md`, `install.sh`, `docs/new-terminal-checklist.md`, `CLAUDE.md`, `docs/context/*` | 1, 2, 4, 23 | todo | | |
 
+| 26 | **주석의 주장 정정(R2 증분 리뷰, D56).** 6건 — `WarpControl.swift:16`(보증→목적) · `WarpControl`의 `reclaimStaleWarpTabConfigs` 목적절 2개 · `ClaudeInjector.swift:60`(수신→렌더, 화면이 우리 pane임을 전제로) · `:197`(Ctrl+U 성공→화면 관측) · `ClaudeInjector`의 `expecting` 목적절 · `TerminalRunner`의 fallback spawn 모호성. **동작 변경 없음 — 주석뿐** | 영어화 | `app/Sources/Core/{WarpControl,ClaudeInjector,TerminalRunner}.swift` | 1 | verified | 게이트 4종 그린(swift `Executed 351 tests, with 1 test skipped and 0 failures` · node `# pass 158 / # fail 0` · `build.sh` → `Build complete: …` · `e2e.sh` PASS 9). `git diff --stat` → 3파일 12줄(+계획). 범위 밖 무변경: `git diff --stat app/Tests extension/ tests/ app/Sources/App app/Sources/WarpHelper app/Sources/Relay` → 빈 출력. 소탕 양방향: 번역이 추가한 절대어법 **79건** 순방향 대조(수정 1) + 한국어 목적 구문 **8건** 역방향 대조(수정 2 추가) + 나머지 주장을 `:191`·`:201`·`CLAUDE.md`와 대조(수정 3). 나머지 73건은 원본과 세기가 같다 | `<이 커밋>` |
 - 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶이고, 파일 집합이 겹치지 않는 부류만 따로 승격할 수 있다. 승격 칸에는 커밋 해시를 적는다
 - `의존`: 다른 항목의 계약(시그니처·불변식·생성물·호출 순서)을 전제하면 그 번호를 적는다. 그 항목에 정정(A′)이 오면 이 항목의 근거를 다시 낸 뒤에야 최종 리뷰에 들어간다
 - **게이트 항목(7·12·20)은 red를 먼저 내고 green은 카탈로그가 찬 뒤**다 — `의존`에 최종 카탈로그 항목이 들어 있는 것은 그 뜻이다
@@ -208,6 +210,7 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | D53 | 목표 문구 "중간 상태를 남기지 않는다"가 우리가 명시적으로 받아들인 최종적 일관성 구간·전진 전용 롤백과 모순된다 | **수용 — "각 상태 전이가 원자적이다"로 고친다.** 관측 가능한 중간 상태가 없다고 주장하지 않는다 | 검증자 §3 | 없음 |
 | D54 | **게이트 오류 3건**: ⑥이 `Localizable.strings`만 바이트 대조하고 `InfoPlist.strings`는 존재만 봐서 **손상된 파일이 통과한다** · ⑦이 "8가지"라면서 6+3을 나열하고 **미지 로케일·잘못된 세대 필드**가 빠졌다 · 항목 14가 `install.sh` 포함을 조건부로 두는데 그 경로에 `rm -rf` 뒤 `ditto`가 있다. 그리고 테스트 이름만으로는 공허한 통과를 막지 못한다 | **전부 수용.** ⑥ → 소스 `.lproj`의 **모든 파일**을 바이트 대조하고 **파일 집합 일치**를 요구한다. ⑦ → 미지 로케일 응답과 형식 오류 세대 필드를 케이스로 추가하고 수를 맞춘다(13건). 항목 14 → `install.sh`를 **필수**로 넣는다. 테스트는 이름 옆에 **무엇을 단언하는지**까지 항목 근거 칸에 적는다 — 콜백이 돌아온 것은 단언이 아니다 | 검증자 §3·§4 | 없음 |
 | D55 | **항목 21의 `Commands updated … %2$s`가 D36을 어긴다** — `%2$s`가 로컬라이즈된 조각이면 우리가 방금 구조로 금지한 조각 조립이다 | **수용 — 「누락 있음」/「누락 없음」 두 갈래를 각각 완결된 메시지 ID로 고른다.** 플레이스홀더는 스칼라 값이나 **선언된 완결 치환**에만 쓴다 | 검증자 §3. **우리가 우리 규칙을 어긴 자리**라 그대로 둘 수 없다 | 없음 |
+| D56 | 이 부류는 「번역이 주장을 강화한 자리」다 | **기각 — 부류는 「주석의 주장이 같은 파일·`CLAUDE.md`·실측과 어긋나는 자리」이고, 번역 강화는 그 부분집합이다.** 남은 영어화 항목(3)과 이후 모든 번역에 **양방향 소탕**을 적용하고, 불변 원칙으로도 올린다 | 규정을 바꾼 것은 실측이다: 검증자가 낸 표본 4건 중 **번역이 실제로 강화한 것은 1건뿐**(`WarpControl.swift:16` — 한국어 `지우지 않기 **위한** 마지막 확인이다`(목적) → 영어 `is never removed`(보증), 같은 파일 `:366`의 잔여 경쟁과 모순). **2건은 원본 한국어가 이미 모순됐고 번역이 충실히 옮긴 것**(`ClaudeInjector.swift:60`의 원본 `반영 확인이 비로소 claude의 **수신**을 뜻하게 된다` ↔ `:191`·CLAUDE.md · `:197`의 원본 `우리가 **성공적으로 비웠거나**(Ctrl+U)` ↔ `:201`·CLAUDE.md의 "the clear succeeded라고 쓰지 마라"). 1건은 영어 표현만 모호(`TerminalRunner`의 fallback spawn). 소탕은 두 방향으로 돌렸다 — 번역이 **추가한** 절대어법 79건을 원본과 대조(수정 1건), 한국어 **목적 구문** 8건을 역방향 대조(수정 2건 추가: `reclaimStaleWarpTabConfigs`의 목적절 2개, `ClaudeInjector`의 `expecting` 목적절). **`∼하지 않기 위한/위해서`가 목적이 보증으로 바뀌는 정확한 언어적 형태**이고, 역방향 대조는 순방향이 놓친 것을 잡는다 — 항목 3·11이 이 패턴을 그대로 쓴다 | **양방향 소탕이 필수다 — 한쪽만 돌리면 원본에서 물려받은 모순이 남는다.** 로그 문자열의 세기는 이번 소탕에서 뺐다(아래 소탕 표의 근거) — **검증받지 않은 판단**이라 다음 리뷰에 싣는다 |
 
 ## 전수 소탕 표
 
@@ -226,6 +229,11 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | Core 로그 44 | 영어화 완료(항목 1) | **명시적으로 영어인 진단 표면**(D27). 전부 `checkoutLog`/`timeline?.step` |
 | `ClaudeInputBlocker.message` 3 | 영어화 완료(항목 1) | 확장 콘솔에만 닿는다(`content.js:165-181`, 이슈 #29) |
 | `warpTabConfigFailed` 2 | 영어화 완료(항목 1) — **D3의 전제가 깨지는 자리** | 확장 콘솔뿐 아니라 **설치 안내 창에도 뜬다**: `testTerminal` → `runInTerminal(.warp)` → `runInWarp` → `writeNewFile`가 던지면 `SetupWindowController.swift:1000`이 `실패: %@`로 렌더한다. D3의 근거는 "창에 뜨는 사유는 타입으로 넘긴다"였는데 이 갈래는 문자열을 그대로 싣는다 — D11이 이미 허용한 부류라 결론(영어)은 바뀌지 않는다 |
+| **주석의 주장이 같은 파일·`CLAUDE.md`·실측과 어긋나는 자리**(D56 부류, `00c7a70`+`f73c361` 전수) | 6건 수정 완료 · 나머지 안전 | 방법 둘: ① 번역으로 **추가된** 주석 줄에서 절대어법(`never`·`always`·`guarantee`·`ensure`·`impossible`·`proves`·`successfully`·`must not`·`cannot`) **79건**을 뽑아 원본 한국어와 대조 ② 한국어 **목적 구문**(`위한`·`위해서`) **8건**을 역방향으로 대조. 수정 6건 — `WarpControl.swift:16`(보증→목적) · `WarpControl` `reclaimStaleWarpTabConfigs` 목적절 2개 · `ClaudeInjector.swift:60`(수신→렌더) · `:197`(Ctrl+U 성공→화면 관측) · `ClaudeInjector`의 `expecting` 목적절 · `TerminalRunner`의 fallback spawn 모호성. 나머지 73건은 한국어와 세기가 같다(`never mixed` ← `섞지 않는다`, `no guarantee it is ours` ← `보장이 없다`, `guarantees` ← `보장한다`) |
+| **로그 문자열의 주장 세기** | **검사 대상에서 뺐다 — 검증받지 않은 판단** | 근거: 로그는 **사실 보고**(무엇이 일어났는가)이지 **계약 서술**(무엇이 보장되는가)이 아니라서 같은 잣대를 대면 오탐만 는다. 반대로 **계약을 말하는 로그가 있다면 그것 자체가 발견**이므로, 이 판단이 틀리면 소탕이 아니라 그 로그 줄이 결함이다. 다음 증분 리뷰 본문에 싣는다 |
+| `ClaudeInputPlan.swift` · `BaseDirectory.swift`의 절대어법 | **미검사** | 원래 영어라 「번역」 부류 밖이었으나, **D56의 새 정의(주장이 어긋나는 자리)로는 범위 안**이다. 절대어법 스캔 111건 중 상당수가 이 두 파일에 있다. 이번 승격에서는 하지 않았다 |
+| **실측 ↔ 추론 구분** | 안전 | `ClaudeInjector.swift:31`이 "Only `!` was measured … but that is inference, not measurement"로 그대로 보존됐다. 실측 수치(0.1∼0.19s · 13개 pane 중 3개 · 20회 측정 59/14/9ms · 0.5∼0.7초 · 134∼143ms)도 전부 남아 있다 |
+| **원본 한국어가 이미 다른 곳과 모순되던 자리**(D56의 본체 — 번역 강화는 부분집합) | 2건 수정 완료 — **번역 손실이 아니다** | `ClaudeInjector.swift:60`(원본 `반영 확인이 비로소 claude의 수신을 뜻하게 된다`)과 `:197`(원본 `우리가 성공적으로 비웠거나(Ctrl+U)`)은 번역이 충실했고 **한국어가 이미** `:191`·`:201`·`CLAUDE.md`와 모순됐다. 영어↔한국어 대조로는 안 잡히고 각 주장을 `CLAUDE.md`와 대조해야 나온다 — 항목 3·11의 소탕은 두 방향을 다 돌린다 |
 | `Relay/main.swift`의 `replyError` 2 | 영어화 완료(항목 2) | Chrome이 받는 `error` 값 → **확장 콘솔**. 확장이 이 문자열을 문자 그대로 비교하는 코드는 없다(`grep` 0건) — `background.js:239`는 값을 그대로 던지기만 한다 |
 | `WarpHelper/main.swift` 문자열 11 | 영어화 완료(항목 2) | 전부 `checkoutLog`/`fail` → **앱 로그**. tty에는 읽지도 쓰지도 않는다(파일 서문의 불변) |
 | `build.sh`의 완료 출력 · `e2e.sh`의 통과·실패 출력 | 영어화 완료(항목 2) | **터미널 stdout / CI 로그**. 인용·grep하는 곳 0건이라 단독으로 바꿀 수 있었다 |
@@ -291,6 +299,17 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 - 수정: 수용 D48∼D55(드라이버 문서의 D39∼D46이 각각 D48·D49·D50·D51·D52·D53·D54·D55가 됐다 — D47을 항목 1에서 이미 쓴 탓에 8칸 밀렸다). 목표 문구·게이트 ⑥⑦·항목 5·8·14·15·16·19·21 개정, 테스트 이름 정밀화를 각 근거 칸에 반영
 - 실측: 항목 1 승격(`00c7a70`) 게이트 4종 그린 — swift 351(1 skipped)/0 · node 158/0 · `build.sh` · `e2e.sh` 9 PASS
 - 판정: `behavior-free Core Englishing may continue, but the first locale implementation should not start from 95f586b unchanged`
+
+### R2
+
+#### 증분 리뷰 — `00c7a70` (번역 손실 수색) · 승격 01:04 · 리뷰 01:04∼01:13 · 왕복 1 · 원문 `<스크래치패드>/review-3-response.md`
+
+- 차단: P1 3건 — 영어가 한국어보다 강하게 말하는 자리(`WarpControl.swift:16` 보증 ↔ `:366` 잔여 경쟁 · `ClaudeInjector.swift:60` 수신 증명 ↔ `:191`·CLAUDE.md · `:197` Ctrl+U를 증거로 ↔ `:201`·CLAUDE.md) + P2 1건(`TerminalRunner`의 fallback spawn 모호성). 기계적 주장(마커 2줄만 남음·실측값·기각된 대안·실측↔추론 구분 보존·옮긴 주석 1건)은 통과
+- 수정: 항목 26으로 6건 수정(표본 4 + 소탕 추가 2), D56 신설 후 **부류 정의를 재작성** — 드라이버가 「번역이 강화한 자리」로 규정한 것을 에이전트 실측(4건 중 1건만 해당)에 따라 **「주장이 같은 파일·CLAUDE.md·실측과 어긋나는 자리」**로 넓히고 번역 강화를 부분집합으로 두었다. 불변 원칙으로도 승격
+- 실측: 절대어법 79건 순방향 · 목적 구문 8건 역방향 · 게이트 4종 그린. `ClaudeInjector.swift:31`의 실측↔추론 구분과 수치 6종(0.1∼0.19s · 13 pane 중 3 · 59/14/9ms · 0.5∼0.7s · 134∼143ms) 보존 확인
+- 판정: `① Partly closed.` → 항목 26 `verified`
+
+**미회신**: D3 근거 정정에 대한 질문(창에 닿는 문자열 2건을 타입 사유로 바꿀지, 기록된 잔여로 둘지)에 검증자가 답하지 않았다 — 침묵은 합의가 아니므로 다음 리뷰 본문에 다시 싣는다. 로그 문자열의 세기를 소탕에서 뺀 판단도 함께 싣는다.
 
 ## 열린 질문
 

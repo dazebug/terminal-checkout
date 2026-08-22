@@ -57,7 +57,7 @@ public func ttyIsRawMode(sttyOutput: String) -> Bool? {
 }
 
 /// The claude's PID when it is in a state to accept input, otherwise nil. The foreground being claude is not enough on its own: right after the shell execs claude the tty is still canonical (icanon+echo), so typing is echoed by the kernel rather than by claude. `screenReflectsNewInput` mistakes that echo for the screen reflecting the input, and a CR sent too early is lost when claude switches to raw mode and redraws — the first input is never submitted and hangs in the input box as text. A 1-second poll usually steps over this canonical window (0.1∼1s after the exec) and happens to work, but a slow claude start loses the first input — polling tightly enough to aim at the canonical window lost the first of three inputs 100% of the time (measured on WezTerm).
-/// In raw mode the kernel echo is off, so text on screen after this gate has passed was drawn by claude itself — which is what finally makes the reflection check mean claude received it.
+/// In raw mode the kernel echo is off, so text on screen after this gate has passed was drawn by claude itself — which is what finally lets the reflection check mean **claude rendered those bytes**, and only where the screen is known to be our pane. Whether claude *received* the message is a different question, and one nothing outside the TUI can answer (`InputBoxOwnership`).
 /// The returned PID is used to check that later inputs go to the same session.
 /// Neither signal can be used alone: zsh's zle also leaves the tty in raw mode while the shell waits at its prompt (measured), so going by raw mode alone types straight into the shell. Treating the ps check as redundant and removing it brings back the very shell mistyping this exists to prevent.
 public func acceptingClaudePID(psOutput: String, sttyOutput: String) -> Int? {
@@ -194,7 +194,7 @@ func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: I
 /// This type deals only with (ii):
 ///  - Bytes may already be in even when a send comes back as a failure (the helper can inject part of a write and then error). So it is raised by the **attempt**, not the result — otherwise the remaining fragment cannot be erased.
 ///  - **A CR does not lower it.** Writing a CR to the tty and the TUI processing it as a submission are different things, and if it was not processed the body is still sitting in the box. Lowering it here is how residue got appended to the next input and submitted as one line (reviewer reproduction: `"/review!git status"`).
-///  - Only **evidence** lowers it: either we cleared it successfully (Ctrl+U), or the screen showed that ours is not there.
+///  - Only **evidence** lowers it: the screen showed our marker disappear after a clear (Ctrl+U), or the screen showed that ours is not there. Writing the Ctrl+U is not itself evidence — see `recordSendAttempt`.
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
 
@@ -684,7 +684,7 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
 }
 
 /// Waits until claude can accept input and returns its PID. nil on timeout.
-/// With `expecting` given, only that PID is accepted — so the remaining inputs never pour into a claude that came up on the same tty after the original session died. Once a new session has taken the place, the condition is never satisfied, so it waits out the timeout and ends as nil (sending nothing).
+/// With `expecting` given, only that PID is accepted — the point being to keep the remaining inputs from pouring into a claude that came up on the same tty after the original session died. Once a new session has taken the place, the condition is never satisfied, so it waits out the timeout and ends as nil (sending nothing).
 /// How long the fast phase of the startup poll lasts, and how often it looks.
 ///
 /// claude reaches raw mode 0.1∼0.19s after the shell execs it (measured), so a 1s tick threw away

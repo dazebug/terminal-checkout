@@ -13,7 +13,7 @@ public let warpTabConfigPrefix = "terminal-checkout-"
 /// The fixed name early builds of this branch used — kept only as a reclaim target.
 let warpTabConfigLegacyStem = "terminal-checkout"
 
-/// The mark that identifies a file as generated. It is the last check before deleting, so a user file is never removed.
+/// The mark that identifies a file as generated. It is the last check before deleting, and it is there to keep a user file from being removed — a purpose, not a guarantee: `removeWarpTabConfigIfOurs` below documents the window in which one still could be.
 public let warpTabConfigHeader = "# Terminal Checkout이 자동 생성합니다"
 
 public func warpTabConfigStem(token: String) -> String { warpTabConfigPrefix + token }
@@ -387,7 +387,7 @@ func removeWarpTabConfigIfOurs(path: String) {
 }
 
 /// When the app dies before deleting its own Tab Config, the file survives and piles up in Warp's `+` menu.
-/// The age is checked so another request's file, which is opening right now, is not deleted; the contents are checked so a user file whose name collides is not deleted either.
+/// The age is checked in order not to delete another request's file that is opening right now, and the contents are checked in order not to delete a user file whose name collides. Both are reasons for the checks, not promises about their outcome — the residual window is in `removeWarpTabConfigIfOurs`.
 func reclaimStaleWarpTabConfigs(
     in directory: String = warpTabConfigDirectory(), olderThan age: TimeInterval = 300
 ) {
