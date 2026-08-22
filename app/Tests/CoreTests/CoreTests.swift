@@ -568,10 +568,32 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(acceptingClaudePID(psOutput: shellFg, sttyOutput: Self.sttyRawOutput))
     }
 
-    func testAcceptsInputFallsBackToForegroundWhenSttyUnavailable() {
-        // Where stty cannot be read, the ps gate alone lets it through so delivery is not cut off entirely
-        XCTAssertEqual(acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: ""), 200)
+    /// **An unreadable stty does not open the gate** (round 7 review). It used to: the verdict was
+    /// `ttyIsRawMode(...) ?? true`, so "cannot tell" was treated as "raw" and delivery proceeded on
+    /// the ps gate alone — the one thing `CLAUDE.md` says gate ② exists to prevent, since in the
+    /// canonical window right after the exec the kernel echo is mistaken for claude rendering and
+    /// the first input is lost.
+    ///
+    /// The fallback was deliberate when it was written (`20d7617`): the raw-mode check was new, and
+    /// falling back to the previous ps-only behaviour meant it could not regress anyone. That is a
+    /// migration argument, and it expired. Measured since: a **live tty always reports the token** —
+    /// `icanon` in canonical mode, `-icanon` in raw — and stty only fails to produce one when the
+    /// tty is gone or is not a terminal, in which case `ps -t` finds nothing either and the first
+    /// guard has already refused. So the branch is not "an environment where stty does not work";
+    /// it is "the tty we are about to type into cannot be read", which is not a state to type in.
+    func testAnUnreadableSttyDoesNotOpenTheGate() {
+        XCTAssertNil(
+            acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: ""),
+            "a claude in the foreground is not enough — gate ② has to have been passed, not skipped"
+        )
         XCTAssertNil(acceptingClaudePID(psOutput: "100 Ss+  -zsh", sttyOutput: ""))
+        // Output that exists but says nothing about the line discipline is the same "cannot tell"
+        XCTAssertNil(acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: "speed 9600 baud;"))
+        // And the two states that *are* readable keep answering as before
+        XCTAssertEqual(
+            acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: Self.sttyRawOutput), 200
+        )
+        XCTAssertNil(acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: Self.sttyCanonicalOutput))
     }
 
     // Finds a pane's tty in `wezterm cli list --format json`
@@ -3604,6 +3626,51 @@ final class WarpForegroundUnknownTests: XCTestCase {
             warpInjectWatchDecision(pending: 0, foreground: .expected, budgetExpired: false),
             .delivered
         )
+    }
+}
+
+/// The two remaining places a safety check reduced an unreadable answer to a safe-looking one
+/// (round 7 review). Both are the shape gate ②'s `?? true` had: the fold is invisible because the
+/// type has nowhere to keep "could not tell".
+final class WarpUnknownFoldTests: XCTestCase {
+    /// `tcgetsid` and `getsid` both answer **-1 on failure**, so a raw `==` compared two failures as
+    /// equal and the helper concluded the tty was still its own — while holding an fd it could not
+    /// identify. Requiring both to be positive is the whole fix.
+    func testTwoFailedSessionLookupsAreNotAMatch() {
+        XCTAssertTrue(warpTTYSessionIsOurs(ttySID: 4242, ourSID: 4242))
+        XCTAssertFalse(warpTTYSessionIsOurs(ttySID: 4242, ourSID: 99))
+        XCTAssertFalse(warpTTYSessionIsOurs(ttySID: -1, ourSID: -1), "two failed lookups read as a match")
+        XCTAssertFalse(warpTTYSessionIsOurs(ttySID: 0, ourSID: 0))
+        XCTAssertFalse(warpTTYSessionIsOurs(ttySID: -1, ourSID: 4242))
+        XCTAssertFalse(warpTTYSessionIsOurs(ttySID: 4242, ourSID: -1))
+    }
+
+    /// A negative pending count is a malformed answer, not an empty queue. `pending <= 0` reported
+    /// it as delivery — success derived from a number that means nothing.
+    func testANegativeQueueCountIsNotDelivery() {
+        for pending in [-1, -512] {
+            XCTAssertNotEqual(
+                warpInjectWatchDecision(pending: pending, foreground: .expected, budgetExpired: false),
+                .delivered, "\(pending)"
+            )
+            XCTAssertNotEqual(
+                warpInjectWatchDecision(pending: pending, foreground: .unknown, budgetExpired: false),
+                .delivered, "\(pending)"
+            )
+        }
+        // Zero is still delivery when the foreground is confirmed — the fix narrows nothing else
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 0, foreground: .expected, budgetExpired: false), .delivered
+        )
+    }
+
+    /// The diagnosis comes from the value rather than from a ternary that had to be right about
+    /// which states could reach it: `.expected` used to be worded "could not be read".
+    func testEveryForegroundStateWordsItself() {
+        XCTAssertEqual(WarpForeground.expected.diagnosis, "the foreground is the reader we aimed at")
+        XCTAssertEqual(WarpForeground.different.diagnosis, "the foreground was a different process group")
+        XCTAssertEqual(WarpForeground.unknown.diagnosis, "the foreground could not be read")
+        XCTAssertEqual(Set([WarpForeground.expected, .different, .unknown].map(\.diagnosis)).count, 3)
     }
 }
 

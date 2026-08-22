@@ -53,7 +53,10 @@ public enum WarpInjectWatch: Equatable {
 public func warpInjectWatchDecision(
     pending: Int, foreground: WarpForeground, budgetExpired: Bool
 ) -> WarpInjectWatch {
-    if pending <= 0 { return foreground == .expected ? .delivered : .drainedWithoutConfirmedReader }
+    // `== 0` and not `<= 0`: a negative count is a malformed answer, not an empty queue, and
+    // reading it as success would report delivery from a number that means nothing (round 7
+    // review). It falls through to the branches below, which is the fail-closed direction.
+    if pending == 0 { return foreground == .expected ? .delivered : .drainedWithoutConfirmedReader }
     if foreground != .expected { return .readerUnconfirmed(pending: pending) }
     return budgetExpired ? .queueNotEmptyAtDeadline(pending: pending) : .keepWaiting
 }
@@ -86,6 +89,29 @@ public enum WarpForeground: Equatable {
     /// **Not the same as `different`**: it is the absence of an answer, and it is fail-closed for
     /// the same reason — what cannot be told apart must not be injected into.
     case unknown
+
+    /// How a diagnostic words this state. Exhaustive on purpose: the caller used to spell it as
+    /// `foreground == .different ? … : …`, which maps `.expected` onto "could not be read" and was
+    /// only correct because no reachable branch passed `.expected` to it. **A switch keeps that
+    /// from being an argument about reachability** — adding a fourth state, or reaching this from a
+    /// new site, becomes a compile error instead of a wrong sentence (round 7 review).
+    public var diagnosis: String {
+        switch self {
+        case .expected: return "the foreground is the reader we aimed at"
+        case .different: return "the foreground was a different process group"
+        case .unknown: return "the foreground could not be read"
+        }
+    }
+}
+
+/// Is this tty still the one our session owns?
+///
+/// The raw comparison was `tcgetsid(ttyFD) == getsid(0)`, and both calls return **-1 on failure** —
+/// so two failed lookups compared equal and the helper concluded the tty was still ours (round 7
+/// review). Requiring both to be positive is what makes the failure fail-closed; the name says
+/// "ours" rather than "changed" because an unreadable pair is not evidence of a change.
+public func warpTTYSessionIsOurs(ttySID: pid_t, ourSID: pid_t) -> Bool {
+    ttySID > 0 && ourSID > 0 && ttySID == ourSID
 }
 
 public func warpForeground(foregroundPGID: Int32, expectedPGID: Int32) -> WarpForeground {

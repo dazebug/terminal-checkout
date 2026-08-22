@@ -106,7 +106,8 @@ private final class HelperState {
     func stopReason() -> WarpHelperStop? {
         warpHelperStopReason(
             // tty numbers get reused — once the pane closes and a new session takes the same number, the session id differs. This comparison is the only signal that keeps a helper from being attached to somebody else's tty
-            ttySessionMatches: tcgetsid(ttyFD) == getsid(0),
+            // Through `warpTTYSessionIsOurs` because both calls answer -1 on failure, and -1 == -1 read as "still ours"
+            ttySessionMatches: warpTTYSessionIsOurs(ttySID: tcgetsid(ttyFD), ourSID: getsid(0)),
             idleSeconds: Date().timeIntervalSince(lastActivity),
             aliveSeconds: Date().timeIntervalSince(startedAt),
             idleLimit: idleTimeout,
@@ -132,10 +133,10 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
         if let stop = state.stopReason() { return .err(stop.description) }
         // Immediately before writing, "the process that will read this tty right now" is checked. The app's gate only sees the state before the request was sent, so if claude ended in between, the shell reads our bytes.
         // It is two syscalls, cheaper than a `ps` round trip, and it runs in the same process as the injection, so the window is microseconds
-        switch warpForeground(foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)) {
+        let foreground = warpForeground(foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID))
+        switch foreground {
         case .expected: break
-        case .different: return .err("the foreground is a different process group")
-        case .unknown: return .err("the foreground could not be read")
+        case .different, .unknown: return .err(foreground.diagnosis)
         }
         guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
         let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
@@ -152,14 +153,13 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
             if index > sent, (index - sent) % foregroundRecheckStride == 0 {
                 // Same check as the one before the write, and the same three answers: "somebody
                 // else" and "could not be read" stop the write alike but are not the same finding
-                switch warpForeground(
+                let midWrite = warpForeground(
                     foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
-                ) {
+                )
+                switch midWrite {
                 case .expected: break
-                case .different:
-                    return .err("the foreground became a different process group after \(index - sent) bytes")
-                case .unknown:
-                    return .err("the foreground could not be read after \(index - sent) bytes")
+                case .different, .unknown:
+                    return .err("\(midWrite.diagnosis) after \(index - sent) bytes")
                 }
             }
             var value = CChar(bitPattern: all[index])
@@ -192,12 +192,9 @@ private func watchUntilRead(
         let foreground = warpForeground(
             foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
         )
-        // What the two non-expected states are called when they are written down. The verdict does
-        // not distinguish them — both are failures — but a diagnosis that called an unreadable
-        // lookup "somebody else" would be reporting a fact nobody established
-        let seen = foreground == .different
-            ? "the foreground was a different process group"
-            : "the foreground could not be read"
+        // The wording comes from the value itself (an exhaustive switch), so no branch here has to
+        // be right about which states can reach it
+        let seen = foreground.diagnosis
         switch warpInjectWatchDecision(
             pending: pending, foreground: foreground, budgetExpired: Date() >= deadline
         ) {

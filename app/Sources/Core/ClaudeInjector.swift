@@ -47,7 +47,7 @@ public func claudeForegroundPID(psOutput: String) -> Int? {
 }
 
 /// Decides from `stty -f <tty> -a` output whether the tty is in raw mode.
-/// nil means "cannot tell" (stty failed, or the output format changed) — which lets the caller carry on with the ps gate alone.
+/// nil means "cannot tell" (stty failed, or the output format changed), and the caller treats that as **not ready** — see `acceptingClaudePID`.
 /// `-icanon` contains `icanon` as a substring, so the comparison has to be token by token.
 public func ttyIsRawMode(sttyOutput: String) -> Bool? {
     let tokens = sttyOutput.split(whereSeparator: { $0.isWhitespace })
@@ -62,8 +62,15 @@ public func ttyIsRawMode(sttyOutput: String) -> Bool? {
 /// Neither signal can be used alone: zsh's zle also leaves the tty in raw mode while the shell waits at its prompt (measured), so going by raw mode alone types straight into the shell. Treating the ps check as redundant and removing it brings back the very shell mistyping this exists to prevent.
 public func acceptingClaudePID(psOutput: String, sttyOutput: String) -> Int? {
     guard let pid = claudeForegroundPID(psOutput: psOutput) else { return nil }
-    // When it cannot be told, carry on with the ps gate alone — an unreadable stty is not a reason to abandon delivery entirely
-    guard ttyIsRawMode(sttyOutput: sttyOutput) ?? true else { return nil }
+    // **"Cannot tell" is not "raw".** This used to be `?? true`, which let an unreadable stty skip
+    // gate ② and carry on with the ps gate alone. That was deliberate when the gate was added
+    // (`20d7617`): the check was new, and falling back to the previous ps-only behaviour meant it
+    // could not regress anyone. The argument was about the migration and it has expired — measured
+    // since, a **live tty always reports the token** (`icanon` canonical, `-icanon` raw), and stty
+    // fails to produce one only when the tty is gone or is not a terminal. In that state `ps -t`
+    // finds nothing either, so the guard above has already returned. What is left is "the tty we
+    // are about to type into cannot be read", and typing there is what gate ② exists to stop.
+    guard ttyIsRawMode(sttyOutput: sttyOutput) == true else { return nil }
     return pid
 }
 
