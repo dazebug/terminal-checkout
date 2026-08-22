@@ -2,6 +2,8 @@
 
 Why this repository keeps a `docs/context/` at all, and how the tooling around it is installed.
 
+**Note on sources:** an entry cites ledger ids and `file:line` while the work it describes is still on a branch, and PR numbers once that work is merged — this repository squash-merges, so a branch hash recorded before the merge stops resolving afterwards.
+
 ## The skill is vendored into the repository
 
 **Type:** decision

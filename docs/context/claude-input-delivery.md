@@ -109,6 +109,66 @@ Every wait in the delivery loop reads before it sleeps, and the sleep is shorten
 
 **Rejected alternative — shorten the deadlines instead.** The deadlines are what wait out "the user has not looked at the tab yet", which on Warp is a design constraint rather than a delay to remove. The waiting moved into the attempt count instead: more attempts, each shorter, so a marker claude's initialisation swallowed is abandoned in ~2s rather than holding the budget for 5.
 
+## An unreadable `stty` used to open gate ②
+
+**Type:** decision
+**Status:** superseded
+**Evidence:** confirmed
+**Source:** PR #3 (`20d7617`), which introduced both the gate and the fallback; superseded by ledger D75 in `docs/plans/i18n-five-locales.md`
+**Revisit when:** never on its own — it is here so the replacement is read as an expiry rather than as a discovery
+
+The commit that added gate ② also added a way past it: when `stty` could not be read, the check was treated as undecidable and delivery continued on the `ps` check alone. The commit body says so twice — "stty를 읽지 못하면 판정 불가로 보고 기존처럼 ps만으로 진행한다", and "iTerm2 경로는 미검증이나, stty 조회 실패 시 ps만으로 폴백하므로 회귀 위험은 없다". A test named `testAcceptsInputFallsBackToForegroundWhenSttyUnavailable` then pinned it, so the fallback was the documented behaviour rather than an oversight.
+
+**It was a regression-safety argument, not a measurement.** At the moment the gate was introduced, the argument was that a new check must not take away delivery that already worked. That is a claim about the change, not about what an unreadable `stty` means — which is what the next entry measures.
+
+## Gate ② stays closed when raw mode cannot be decided
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured against live and dead ptys)
+**Source:** ledger D75 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/ClaudeInjector.swift:52` and `:73`
+**Revisit when:** a terminal appears where `stty` cannot be read while the tty is genuinely usable
+
+`ttyIsRawMode(...) ?? true` became `== true`: an undecidable raw-mode check no longer opens the gate.
+
+**Reason, measured.** A live pty always answers — `icanon` in canonical mode, `-icanon` in raw mode. The cases where `stty` produces no token at all are a tty that does not exist, a closed pty, and a file that is not a terminal, and in every one of those `ps -t` is empty too, so the first gate has already refused. What is left for "could not read `stty`" to mean is "the tty we are about to type into cannot be read", which is precisely the state gate ② exists to stop: without it, the kernel echo in the canonical window right after `exec` gets mistaken for claude rendering the input, and the first input is lost.
+
+**Cost, not hidden.** If `stty` is unreadable for good, polling now runs to its deadline and the log does not say why.
+
+**Rejected alternative — widen it into three states** the way the foreground check was widened. "Not raw" and "could not tell" take the same action here, and nothing today distinguishes them in what it says either, so a third state would be a shape with no consumer.
+
+## The foreground check has three states, and `unknown` is not `different`
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** ledger D70, D76 and D77 in `docs/plans/i18n-five-locales.md`; `WarpForeground` in `app/Sources/Core/WarpHelperProtocol.swift:83-91`, its `diagnosis` at `:98`, `app/Sources/WarpHelper/main.swift:110`
+**Revisit when:** a caller appears that needs to act differently on `.different` and `.unknown`, rather than only to say something different
+
+A single `Bool` gave "another process group was observed" and "the lookup failed" the same value, and the diagnostic built on it then said something false — `.drainedByOther` names a reader that nothing had identified.
+
+**The safety truth table is unchanged.** `.different` and `.unknown` both refuse, and only `.expected` succeeds. What the split changed is what the code *says*, not what it *does*.
+
+**Rejected alternative — wording discipline**, where every false path is only allowed to claim "could not confirm". That holds exactly as long as the next caller remembers it. A three-state enum makes the compiler ask instead, and the old `Bool` function was deleted rather than left beside it, because leaving it leaves the collapsing path open.
+
+**Closed with it, same class.** `tcgetsid` and `getsid` both return `-1` on failure, so two failures compared equal and read as "still our tty" while holding an fd the helper could not identify. And a watch decision written as `pending <= 0` turned a negative — that is, malformed — queue count into successful delivery; it is `== 0` now, and a malformed count falls through to the fail-closed branches.
+
+## Non-ASCII text changes normalization when it crosses `Process.arguments`
+
+**Type:** constraint
+**Status:** open
+**Evidence:** confirmed (measured; the fix is not written)
+**Source:** ledger D73 and item 31 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/TerminalRunner.swift:239`
+**Revisit when:** the iTerm2 branch stops going through `osascript -e`, or a user reports a message arriving in a form they did not type
+
+Measured by reading codepoints with AppleScript's `id of`: text handed to `osascript -e` arrives **decomposed** (NFD — `4361 4453 4527 4352 4456`), while the same text read from a script file or from stdin arrives **composed** (NFC — `49444 44228`). So a claude message a user wrote in Korean or Japanese reaches the iTerm2 path in a different form from the one they typed.
+
+**The first probe was wrong, and that is worth recording.** AppleScript's `count of characters` counts grapheme clusters, so it answered `2` for both forms and measured nothing at all. The generalization drawn from it — that this is a rule about non-ASCII in shell and path strings generally — was too broad as well.
+
+**It is a boundary rule, not a path rule.** The site that bites is the free-text message in `runInITerm`'s `osascript -e`. The WezTerm fallback and the Warp helper path carry ASCII today, and `uninstall.sh` is safe in normal operation because its script comes from a file and `$HOME` from the environment.
+
+**Unmeasured.** What iTerm2 itself received. The measurement stops at the codepoints the AppleScript interpreter was handed.
+
 ## Residuals kept rather than closed
 
 **Type:** constraint
