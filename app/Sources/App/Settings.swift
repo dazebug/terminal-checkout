@@ -58,6 +58,18 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "toolAvailability") }
     }
 
+    /// 같은 확인의 다른 사실: 그 이름이 **실행 파일**로 풀리는가. 병합 경로는 `command claude`로
+    /// 부르므로 함수·별칭뿐인 설치에서는 병합이 성립하지 않는다.
+    static var toolExecutables: [String: Bool]? {
+        get { UserDefaults.standard.dictionary(forKey: "toolExecutables") as? [String: Bool] }
+        set { UserDefaults.standard.set(newValue, forKey: "toolExecutables") }
+    }
+
+    /// 확인 **전**에는 참으로 본다 — 앱이 방금 떠서 아직 로그인 셸을 못 물어본 순간에 병합을
+    /// 꺼 버리면, 흔한 설치(실행 파일)에서 프리셋이 느려지거나 Warp에서는 권한 없이 거절까지
+    /// 간다. 반대 방향의 오판은 pane에 command not found 한 줄로 드러나고 다음 확인에서 고쳐진다
+    static var claudeIsExecutable: Bool { toolExecutables?["claude"] ?? true }
+
     /// 앱 실행 때마다 다시 확인한다 — 사용자가 그 사이 도구를 설치했을 수 있다.
     /// 확인에 실패하면(셸이 응답하지 않음) 직전 결과를 그대로 둔다.
     static func refreshToolAvailability() {
@@ -66,7 +78,8 @@ enum Settings {
                 checkoutLog("도구 확인 실패 — 로그인 셸이 응답하지 않음")
                 return
             }
-            toolAvailability = result
+            toolAvailability = result.available
+            toolExecutables = result.executable
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .terminalCheckoutToolsChecked, object: nil)
             }

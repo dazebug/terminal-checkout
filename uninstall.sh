@@ -26,11 +26,35 @@ if pgrep -f 'terminal-checkout-warp-helper --serve' >/dev/null 2>&1; then
 fi
 # Delete only what the app itself would recognize: for sockets, only things that really are
 # sockets (anyone can drop a regular file or a symlink under the same name); for Tab Configs,
-# only files carrying the header we write
+# only files carrying the header we write.
+# The `/` before the glob is explicit: `$TMPDIR` carries a trailing slash on macOS but nothing
+# guarantees it, and without one the pattern would silently match nothing
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
-for sock in "${TMPDIR:-/tmp}"tcw-*.sock /tmp/tcw-*.sock; do
-    if [ -S "$sock" ] && [ ! -L "$sock" ]; then
+for sock in "${TMPDIR:-/tmp}"/tcw-*.sock /tmp/tcw-*.sock; do
+    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.sock$ ]]; then
         rm -f "$sock"
+    fi
+done
+# The prompt working directories hold the assembled opening message — PR and issue bodies, and
+# whatever a `!` input printed. The running app reclaims them by age; an uninstall takes them,
+# but still only directories (never links) whose name is our prefix plus an 8 character hex token.
+# One exception: a `handed-to-claude` marker means a claude session was told to read that context
+# file, and those sessions belong to the user, not to the app being removed — deleting the file
+# out from under a session that is still running would break it in a way nothing explains. Those
+# are reported instead, with the command to remove them
+KEPT_CONTEXTS=()
+for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
+    if [ -d "$dir" ] && [ ! -L "$dir" ] && [[ "${dir##*/}" =~ ^tc-prompt-[0-9a-f]{8}$ ]]; then
+        # The marker is dropped by a running pane, so it can appear between the test and the
+        # removal. The window cannot be closed from a script; what we can do is look again
+        # **after** the attempt, so a directory that survived is reported rather than silently
+        # skipped
+        if [ ! -e "$dir/handed-to-claude" ]; then
+            rm -rf "$dir"
+        fi
+        if [ -e "$dir" ]; then
+            KEPT_CONTEXTS+=("$dir")
+        fi
     fi
 done
 # The header below must equal `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
@@ -80,6 +104,14 @@ if [ "$LEGACY_FOUND" = false ]; then
 fi
 
 echo ""
+if [ ${#KEPT_CONTEXTS[@]} -gt 0 ]; then
+    echo "Kept ${#KEPT_CONTEXTS[@]} context file(s) a claude session was told to read:"
+    for dir in "${KEPT_CONTEXTS[@]}"; do
+        echo "      $dir"
+    done
+    echo "      Remove them once those sessions are done: rm -rf <path>"
+    echo ""
+fi
 echo "=== Uninstall complete! ==="
 echo ""
 echo "Please remove the Chrome extension yourself from chrome://extensions."

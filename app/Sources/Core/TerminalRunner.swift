@@ -6,6 +6,10 @@ public enum TerminalError: Error, CustomStringConvertible {
     case warpNotFound
     case warpTabConfigFailed(String)
     case timeout(String)
+    /// An undeliverable input we already know about **before** creating a tab. Identified by
+    /// type, not by string — it reaches the extension as an `error` string, but inside the app
+    /// this value is what tells the reasons apart
+    case claudeInputNotDeliverable(ClaudeInputBlocker)
 
     public var description: String {
         switch self {
@@ -14,8 +18,139 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
         case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
+        case .claudeInputNotDeliverable(let blocker): return blocker.message
         }
     }
+}
+
+// MARK: - claude input preconditions (what we know is undeliverable before opening a tab)
+
+/// Why scheduled input cannot be delivered. Only reasons knowable **before any side effect**
+/// belong here — whichever point in the run establishes them.
+public enum ClaudeInputBlocker: Equatable, CaseIterable {
+    /// The screen cannot be read on Warp — no way to confirm claude received the input
+    case warpAccessibility
+    /// The in-pane injection helper could not be prepared (missing from the bundle, or the
+    /// socket path exceeds the 104-byte limit)
+    case warpHelperUnavailable
+    /// WezTerm has no mux to spawn into, so the run would fall back to a fresh process whose
+    /// pane cannot be addressed — `send-text` and `get-text` both need a mux pane id
+    case wezTermSessionUnavailable
+
+    /// Is the setup window the place to fix this? It holds the Accessibility card and the install
+    /// state, so it answers the two Warp reasons. It has no WezTerm control on it — bringing it
+    /// forward for "start WezTerm first" takes focus away from Chrome and shows nothing to do.
+    public var setupWindowCanHelp: Bool {
+        switch self {
+        case .warpAccessibility, .warpHelperUnavailable: return true
+        case .wezTermSessionUnavailable: return false
+        }
+    }
+
+    /// Each reason implies a **different next action**. One shared wording would send a user who
+    /// needs to grant a permission off to reinstall instead
+    public var message: String {
+        switch self {
+        case .warpAccessibility:
+            return "Warp에 claude 입력을 넣으려면 손쉬운 사용 권한이 필요합니다 —"
+                + " Terminal Checkout 설정 창에서 허용하세요."
+        case .warpHelperUnavailable:
+            return "Warp 주입 헬퍼를 준비하지 못했습니다 — ./install.sh로 다시 설치하세요."
+        // Two ways to land here — no mux at all, and a mux whose spawn attempts all failed — so
+        // the wording covers both rather than asserting the first
+        case .wezTermSessionUnavailable:
+            return "WezTerm에서 claude 입력을 넣을 pane을 잡지 못했습니다 —"
+                + " WezTerm 창이 떠 있는지 확인한 뒤 다시 누르세요."
+        }
+    }
+}
+
+/// Must this run be rejected **before it is even attempted**? `injectsClaudeInput` is not "were
+/// claude inputs scheduled" but **"will anything be typed into the session"**
+/// (`PreparedRequest.claudeInputs`). **Every shipped preset reaches this** since round 10: their
+/// inputs are all `!`, and a `!` only runs as a command when it is typed into claude's shell mode.
+///
+/// The state probes are `@autoclosure` because this runs inside the execQueue that holds up the
+/// Chrome response: when the answer cannot depend on state (nothing to type, not Warp) no TCC or
+/// filesystem lookup happens at all.
+///
+/// The switch has no `default`, so adding a terminal turns into a compile error right here. That
+/// is a prompt to decide, **not a proof that every reason is knowable this early**: WezTerm
+/// returns nil here and still rejects later, because whether a pane can be addressed is only
+/// known once the mux has been asked (`wezTermFallbackRejection`). A new terminal has to be
+/// walked through `docs/new-terminal-checklist.md`, not just through this switch.
+public func claudeInputBlocker(
+    terminal: Terminal, injectsClaudeInput: Bool,
+    accessibilityTrusted: @autoclosure () -> Bool,
+    injectionHelperReady: @autoclosure () -> Bool
+) -> ClaudeInputBlocker? {
+    guard injectsClaudeInput else { return nil }
+    switch terminal {
+    // iTerm2 and WezTerm read exactly their own screen by session or pane id, so they need no
+    // extra permission. (iTerm2's Automation permission is a precondition of running the command
+    // at all — without it osascript fails and the request is already rejected.) WezTerm's own
+    // blocker cannot be evaluated yet — see `wezTermFallbackRejection`
+    case .iterm, .wezterm: return nil
+    case .warp:
+        guard accessibilityTrusted() else { return .warpAccessibility }
+        guard injectionHelperReady() else { return .warpHelperUnavailable }
+        return nil
+    }
+}
+
+/// The rejection to raise instead of taking the WezTerm fallback, or nil to take it.
+///
+/// The fallback starts a **new WezTerm process**: no mux, so no pane id, so `.none` for a session
+/// handle and nothing to type into. That used to be a log line while the response said
+/// `{success:true}`. It is raised at the fallback boundary rather than in `claudeInputBlocker`
+/// because that is the first moment it is known.
+///
+/// "Before any side effect" is exact for the common way in — no mux found, and asking the mux
+/// neither spawns nor writes. The other way in is a mux that answered but whose spawn attempts all
+/// failed; a `wezterm cli spawn` that timed out **may** have opened a tab whose id we never read.
+/// Not measured, and it does not change the decision (rejecting is still better than running with
+/// the input dropped), but the claim is narrower than the branch.
+func wezTermFallbackRejection(injectsClaudeInput: Bool) -> TerminalError? {
+    guard injectsClaudeInput else { return nil }
+    return claudeInputRejection(.wezTermSessionUnavailable)
+}
+
+/// The helper line to put in front of the user's command in the Tab Config, plus the socket the
+/// app will talk to it on. Nil when nothing will be typed into the session.
+///
+/// **This is the last check before the side effect, and that is the point.** `runInTerminal`
+/// already asked `claudeInputBlocker`, but between that answer and the Tab Config being written
+/// the permission can be revoked or a reinstall can replace the bundle. The old code logged
+/// "권한이 없어 헬퍼를 띄우지 않음 — 명령만 실행한다" and carried on, which is a `{success:true}`
+/// with the input silently dropped. It is separated from `runInWarp` so the decision can be
+/// exercised without launching Warp — the passing branch of `runInWarp` has side effects, so unit
+/// tests stay off it.
+func warpInjectionSetup(
+    token: String, injectsClaudeInput: Bool,
+    accessibilityTrusted: @autoclosure () -> Bool = accessibilityIsTrusted(),
+    helperExecutable: () -> String? = warpHelperExecutablePath,
+    socketPath: (String) -> String? = warpHelperSocketPath(token:)
+) throws -> (line: String, socket: String)? {
+    guard injectsClaudeInput else { return nil }
+    guard accessibilityTrusted() else { throw claudeInputRejection(.warpAccessibility) }
+    guard let executable = helperExecutable(), let socket = socketPath(token) else {
+        throw claudeInputRejection(.warpHelperUnavailable)
+    }
+    return (warpHelperCommand(executable: executable, socketPath: socket), socket)
+}
+
+/// Hook that brings forward a window explaining the rejection. The App target installs it;
+/// `--headless-server` has no `AppDelegate`, so it stays nil and e2e never opens a window.
+public enum ClaudeInputGuidance {
+    public static var present: ((ClaudeInputBlocker) -> Void)?
+}
+
+/// Puts rejection and explanation through **one door**, so that however many rejection sites
+/// appear, none of them can become "a ❌ with the reason nowhere" — the extension only sends the
+/// `error` string to the console (issue #29).
+public func claudeInputRejection(_ blocker: ClaudeInputBlocker) -> TerminalError {
+    if blocker.setupWindowCanHelp { ClaudeInputGuidance.present?(blocker) }
+    return .claudeInputNotDeliverable(blocker)
 }
 
 /// 서브프로세스 실행 헬퍼 (타임아웃 + stdin 주입 + 파이프 데드락 방지)
@@ -81,9 +216,19 @@ public func runProcess(
 public func runInTerminal(
     command: String, terminal: Terminal, injectsClaudeInput: Bool = false
 ) throws -> TerminalSessionHandle {
+    // An undeliverable input known **before** any side effect rejects the whole request. Opening
+    // the tab and dropping the tail answers `{success:true}`, so the button shows ✅ and the user
+    // is left with a claude session that has no context
+    if let blocker = claudeInputBlocker(
+        terminal: terminal, injectsClaudeInput: injectsClaudeInput,
+        accessibilityTrusted: accessibilityIsTrusted(),
+        injectionHelperReady: warpInjectionHelperIsReady()
+    ) {
+        throw claudeInputRejection(blocker)
+    }
     switch terminal {
     case .iterm: return try runInITerm(command)
-    case .wezterm: return try runInWezTerm(command)
+    case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
     case .warp: return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
     }
 }
@@ -126,21 +271,13 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
     reclaimDeadWarpHelperSockets()
 
     let token = warpHelperToken()
-    var socketPath: String?
-    var commands = [command]
-    if injectsClaudeInput {
-        // 손쉬운 사용 권한이 없으면 claude가 입력을 받았는지 확인할 수 없어 어차피 보내지
-        // 않는다(`deliverClaudeInputs`). 그럴 때 헬퍼를 띄우면 아무도 붙지 않는 프로세스가
-        // 유휴 타임아웃까지 pane에 남고, 사용자에게는 정체 모를 명령 한 줄이 더 보인다
-        if !accessibilityIsTrusted() {
-            checkoutLog("손쉬운 사용 권한이 없어 Warp 주입 헬퍼를 띄우지 않음 — 명령만 실행한다")
-        } else if let helper = warpHelperExecutablePath(), let path = warpHelperSocketPath(token: token) {
-            commands.insert(warpHelperCommand(executable: helper, socketPath: path), at: 0)
-            socketPath = path
-        } else {
-            checkoutLog("Warp 주입 헬퍼를 준비하지 못함 — 명령만 실행하고 claude 입력은 포기")
-        }
-    }
+    // 사전조건을 부수효과 **직전**에 한 번 더 본다 — `runInTerminal`의 판정과 여기 사이에
+    // 권한이 회수되거나 재설치가 번들을 갈아 끼울 수 있고, 그때 예전 코드는 로그만 남기고
+    // 명령을 실행해 `{success:true}`로 답했다(입력은 조용히 증발). 여기서 던지면 탭도 열리지
+    // 않는다 — 아직 아무것도 만들지 않았다
+    let injection = try warpInjectionSetup(token: token, injectsClaudeInput: injectsClaudeInput)
+    let socketPath = injection?.socket
+    let commands = [injection?.line, command].compactMap { $0 }
 
     let stem = warpTabConfigStem(token: token)
     let path = warpTabConfigPath(stem: stem)
@@ -303,9 +440,13 @@ public func findWezTermFocusedWindow(cli: String, env: [String: String]) -> Stri
     return wezTermFocusedWindowID(clientsJSON: Data(clients.stdout.utf8), listJSON: Data(list.stdout.utf8))
 }
 
-/// WezTerm에서 지금 보고 있는 창에 새 탭을 열고 명령 실행 (spawn 실패 시 새 프로세스 fallback)
+/// WezTerm에서 지금 보고 있는 창에 새 탭을 열고 명령 실행 (spawn 실패 시 새 프로세스 fallback).
+/// `injectsClaudeInput`이면 그 fallback으로는 갈 수 없다 — pane을 지목할 수 없어 입력이
+/// 사라지기 때문이다(`wezTermFallbackRejection`).
 @discardableResult
-public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
+public func runInWezTerm(
+    _ command: String, injectsClaudeInput: Bool = false
+) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
 
     if let sock = findWezTermSocket() {
@@ -327,7 +468,11 @@ public func runInWezTerm(_ command: String) throws -> TerminalSessionHandle {
     }
 
     // fallback: 새 WezTerm 프로세스 = 새 창 (mux가 없으면 붙을 창도 없다).
-    // 종료를 기다리지 않으며, pane을 특정할 수 없어 핸들도 없다
+    // 종료를 기다리지 않으며, pane을 특정할 수 없어 핸들도 없다 — 그래서 타이핑할 입력이
+    // 예약돼 있으면 여기로 갈 수 없다. 아직 spawn 전이라 되돌릴 부수효과가 없다
+    if let rejection = wezTermFallbackRejection(injectsClaudeInput: injectsClaudeInput) {
+        throw rejection
+    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
     process.arguments = ["start", "--", "/bin/bash", "-ic", "\(command); exec bash"]

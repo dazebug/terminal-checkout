@@ -24,9 +24,24 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 
 /// 입력을 제출하는 키. LF가 아니라 CR이어야 하는 이유는 `submitClaudeInputs`에 있다.
 let claudeSubmitKey = "\r"
-/// 입력창을 비우는 키(Ctrl+U). pane 증명 표식 지우기·재타이핑 전 클리어·전달 중단 후 정리가
-/// 모두 같은 키를 쓴다.
-let claudeClearInputKey = "\u{15}"
+/// 입력창을 비우는 **시퀀스**: Ctrl+U(0x15) 다음 Backspace(0x7F). 표식 지우기·입력 전 클리어·
+/// 전달 종료 정리가 전부 이 한 상수를 쓰므로, 여기만 고치면 모든 자리에 적용된다.
+/// iTerm2는 바이트가 아니라 AppleScript로 받지만 그 스크립트도 이 상수에서 유도한다
+/// (`appleScriptCharacters(of:)`) — 21·127을 따로 적어 두었던 동안에는 이 문장이 거짓이었고,
+/// 상수를 바꿔도 iTerm2만 옛 시퀀스로 조용히 남았다.
+///
+/// **Backspace가 왜 붙는가 — 실측(2.1.238, pty).** Ctrl+U는 claude의 `!` 셸 모드를 벗어나지
+/// 못한다: `!text`에서 Ctrl+U를 보내면 글자만 지워지고 **`!`가 남는다.** 화면상으로는 빈
+/// 입력창처럼 보여 사라짐 확인도 통과하는데, 그 뒤에 친 평문이 **셸 명령으로 제출·실행됐다**
+/// (`command not found: tcq3hello`). Ctrl+U 뒤 Backspace 한 번이 그 `!`를 지우고, 그다음 평문은
+/// 일반 메시지로 제출된다(같은 실측). 빈 입력창에 Backspace를 여러 번 보내도 부작용은 없었다.
+///
+/// **순서가 중요하다**: 글자가 남아 있는 입력창에서 Backspace는 마지막 한 글자만 지우므로,
+/// 반드시 Ctrl+U로 비운 **뒤에** 와야 한다.
+///
+/// 측정 범위는 `!`뿐이다. `/`·`#` 프리픽스도 한 글자라 같은 시퀀스로 지워질 것으로 보지만,
+/// 그것은 추정이고 재지 않았다.
+let claudeClearInputKey = "\u{15}\u{7F}"
 
 /// `ps -t <tty> -o pid=,stat=,comm=` 출력에서 포그라운드 프로세스 그룹(stat에 `+`)인
 /// claude의 PID를 돌려준다. 없으면 nil. 셸이 프롬프트에 있으면 셸 자신이 `+`라서 nil이 된다 —
@@ -99,6 +114,10 @@ public func paneProofToken() -> String {
 }
 
 /// 화면 반영 확인용 프로브. 긴 입력은 화면에서 어딘가 잘리거나 접히므로 앞부분만 쓴다.
+///
+/// **앞 24자로 충분한가 — 실측(2.1.238, pty).** 4,000자짜리 한 줄을 입력창에 넣어도 composer가
+/// 세로로 자라며 전체를 보여 주고, 앞 24자가 화면에 남는다. 병합된 `!` 줄(프리셋 기준 ∼300자)은
+/// 그보다 한참 짧다. 그래서 프로브를 뒤쪽 조각으로 바꾸거나 병합 상한을 낮출 이유가 없다.
 public func claudeInputProbe(_ input: String) -> String {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     return String(trimmed.prefix(24))
@@ -215,38 +234,66 @@ private func send(_ keys: String, io: ClaudeSessionIO, kind: SendKind = .typing)
 /// `weSentSomething`이 false면 아무것도 하지 않는다 — 우리가 한 바이트도 보내지 못했다면
 /// 입력창에 있는 것은 **사용자가 치던 초안**뿐이고, 그걸 Ctrl+U로 지우는 것은 우리가 고치려던
 /// 피해를 우리가 일으키는 것이다.
+///
+/// 한 번 실패했다고 포기하지 않는다 — 터미널 CLI 호출은 실제로 한 번씩 실패하고(같은 실측이
+/// 재타이핑 재시도의 근거다), 그때 잔여가 조용히 남는다. Ctrl+U는 여러 번 보내도 결과가 같다.
 @discardableResult
-func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool) -> Bool {
+func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: Int = 3) -> Bool {
     guard weSentSomething else { return false }
-    return send(claudeClearInputKey, io: io, kind: .cleanup)
+    for _ in 0..<attempts where send(claudeClearInputKey, io: io, kind: .cleanup) { return true }
+    return false
 }
 
 /// **지금 claude 입력창에 우리 조각이 남아 있을 수 있는가** — 정리(Ctrl+U)를 보낼지 가르는 상태.
-/// "과거에 성공한 적 있는가"가 아니다:
+///
+/// 두 질문을 **섞지 않는다**(라운드 7):
+///  - **(i) claude가 그 메시지를 받았는가** — 증명하지 않는다. TUI 밖에서 성립시킬 수 없고,
+///    안전 속성도 아니다. 그래서 로그도 "전달"이 아니라 "보냄"이다.
+///  - **(ii) 입력창이 비어 있는가** — **안전 속성이다.** 다음 바이트를 어디에 쓰는지와 정리를
+///    보낼지가 여기에 달렸다. 모르면 "비었다"고 가정하지 않는다.
+///
+/// 이 타입은 (ii)만 다룬다:
 ///  - 전송이 실패로 돌아와도 바이트는 이미 들어갔을 수 있다(헬퍼가 일부만 넣고 err).
-///    그래서 결과가 아니라 **시도**로 세운다 — 아니면 남은 조각을 못 지운다
-///  - CR·클리어가 나갔으면 입력창은 비었다. 거기서 내리지 않으면, 다음 입력을 시작도 못 한 채
-///    끝났을 때 정리가 **사용자 초안**을 지운다
+///    그래서 결과가 아니라 **시도**로 올린다 — 아니면 남은 조각을 못 지운다
+///  - **CR은 내리지 않는다.** tty에 CR을 쓴 것과 TUI가 그것을 제출로 처리한 것은 다른 일이고,
+///    처리되지 않았으면 본문은 입력창에 그대로 있다. 여기서 내렸던 탓에 잔여가 다음 입력과
+///    한 줄로 붙어 제출됐다(검증자 재현: `"/review!git status"`)
+///  - 내려가는 것은 **증거**뿐이다: 우리가 성공적으로 비웠거나(Ctrl+U), 화면이 우리 것이
+///    거기 없다고 보여 줬을 때
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
 
-    mutating func recordSend(keys: String, sent: Bool) {
+    /// 바이트를 내보내려 **시도했다**. 결과도 종류도 보지 않는다: 실패로 돌아온 전송의 바이트도
+    /// 이미 들어가 있을 수 있고(헬퍼가 일부만 넣고 err), CR·Ctrl+U가 쓰였다는 것은 TUI가 그것을
+    /// 처리했다는 뜻이 아니다. 내려가는 것은 관찰뿐이다(`recordInputBoxIsFreeOfOurs`).
+    mutating func recordSendAttempt() {
         mayHoldOurs = true
-        if sent, keys == claudeSubmitKey || keys == claudeClearInputKey { mayHoldOurs = false }
     }
+
+    /// 화면이 **우리 입력이 어디에도 없다**를 보여 줬다 — 입력창이 그것을 들고 있지 않다.
+    mutating func recordInputBoxIsFreeOfOurs() { mayHoldOurs = false }
 }
 
-/// 준비된 claude 세션에 입력을 순서대로 제출하고, 제출에 성공한 개수를 돌려준다.
+/// 준비된 claude 세션에 입력을 순서대로 보내고, **CR까지 내보낸 개수**를 돌려준다 —
+/// claude가 그것을 메시지로 만들었는지는 세지 않는다(밖에서 확인할 수 없고, 라운드 6에서
+/// 그 확인을 요구사항에서 뺐다). 그래서 로그도 「전달」이 아니라 「보냄」이다.
 /// 각 입력은 [개행 없이 타이핑 → 화면 반영 확인 → CR로 제출] 순서로 보낸다:
 /// LF(\n)는 제출로 인식되지 않고, 게이트를 통과한 뒤에도 TUI가 입력을 아직 그리지 못하는
 /// 순간이 있기 때문이다 (둘 다 WezTerm 실측). 첫 입력을 처리하는 동안 나머지는 claude
 /// 입력창에 큐잉된다.
 /// 입력마다 세션 동일성을 먼저 확인한다 — 그 사이 원래 세션이 죽고 같은 tty에 새 claude가
 /// 떴다면 남은 입력은 무관한 세션의 것이고, `!…` 입력이면 셸 명령까지 실행된다.
+///
+/// A session that gets typed input never also carries an argv opening message
+/// (`prepareRequest` merges all inputs or none), so there is no startup submission racing us for
+/// the input box. That invariant is what lets this function trust "the CR went out" — with both
+/// routes in one session it did **not**: the argv submission clears the box and a wiped input was
+/// recorded as delivered. What remains of that lesson is `inputBoxAfterSubmit`.
 @discardableResult
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
-    betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2
+    betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2,
+    timeline: DeliveryTimeline? = nil
 ) -> Int {
     // 나가는 바이트를 세어 "입력창에 우리 조각이 남아 있을 수 있는가"를 따라간다.
     // 추적을 이 함수 안에 두는 이유는 **실패 종료 경로가 여럿**이기 때문이다(입력 사이 세션
@@ -255,32 +302,56 @@ public func submitClaudeInputs(
     var tracked = io
     tracked.sendKeys = { keys in
         let sent = io.sendKeys(keys)
-        ownership.recordSend(keys: keys, sent: sent)
+        ownership.recordSendAttempt()
         return sent
     }
 
-    var submitted = 0
-    for (index, input) in inputs.enumerated() {
-        if index > 0 { tracked.wait(0.4) }
+    var sent = 0
+    delivery: for (index, input) in inputs.enumerated() {
+        // 입력 사이의 고정 대기(0.4s)는 없앴다 — 다음 입력의 표식 실험이 "지금 입력창이 어떤
+        // 상태인가"를 **관찰**하므로, 자고 나서 가정하는 것보다 빠르고 강하다. 표식이 아직
+        // 안 뜨면 그 실험이 마감까지 기다린다
         guard tracked.confirmSession(betweenInputTimeout) else {
             checkoutLog("처음 준비된 claude 세션이 입력을 받을 상태가 아니라 남은 입력 \(inputs.count - index)개를 보내지 않음")
             break
         }
-        guard typeAndSubmit(input, io: tracked, retryConfirmTimeout: retryConfirmTimeout) else {
+        let outcome = typeAndSubmit(
+            input, io: tracked, retryConfirmTimeout: retryConfirmTimeout,
+            // 관찰로만 내려간다 — 쓰기 성공은 증거가 아니다
+            boxObservedEmpty: { ownership.recordInputBoxIsFreeOfOurs() },
+            timeline: timeline, label: "입력 \(index + 1)/\(inputs.count)"
+        )
+        switch outcome {
+        case .sentAndBoxIsFreeOfOurs:
+            sent += 1
+            ownership.recordInputBoxIsFreeOfOurs()
+        case .sentButBoxUnknown:
+            sent += 1
+        case .leftInTheInputBox:
+            // 이어서 다음 입력을 치면 두 입력이 한 줄로 붙어 제출된다 — 이것이 계속 갈 때의
+            // 실제 피해다. 잔여는 아래 정리가 지운다(소유권은 CR로 내려가지 않는다)
+            checkoutLog("CR을 보냈는데 입력이 입력창에 그대로 남아 있음 — 남은 \(inputs.count - index - 1)개를 보내지 않음")
+            break delivery
+        case .gaveUp:
             checkoutLog("claude 입력 전송 실패 — 남은 \(inputs.count - index)개 중단")
-            break
+            break delivery
         }
-        submitted += 1
     }
-    // 다 끝내지 못한 채 나가면 입력창에 우리 조각이 남아 있을 수 있다. **화면으로 확인하지
-    // 못했을 뿐 바이트는 이미 우리 tty에 들어가 있다** — 주입은 포커스와 무관하기 때문이다.
-    // 지우지 않으면 사용자가 나중에 누른 Enter가 그것을 제출한다(`!…`면 셸 명령까지 실행된다).
-    // 조건이 "권한 상실"이 아니라 여기인 이유가 그것이다: 권한이 멀쩡해도 반영 확인은 실패한다
-    if submitted < inputs.count,
-       clearAbandonedInput(io: tracked, weSentSomething: ownership.mayHoldOurs) {
-        checkoutLog("전달을 끝내지 못해 claude 입력창에 남았을 우리 조각을 지움")
+    // **규칙의 나머지 절반**: 마지막 입력 뒤에는 "다음 입력 전에 비우기"가 없으므로 여기서
+    // 비운다. 화면으로 확인하지 못했을 뿐 바이트는 이미 우리 tty에 들어가 있고(주입은 포커스와
+    // 무관하다), 지우지 않으면 사용자가 나중에 누른 Enter가 그것을 제출한다(`!…`면 셸 명령까지
+    // 실행된다). 정상적으로 끝난 전달에서도 나가는 이유는 (i)과 (ii)를 섞지 않기 때문이다 —
+    // CR을 썼다는 것은 입력창이 비었다는 증거가 아니다.
+    // **그 대가**(수용, 이슈 #16): 전달 도중·직후에 사용자가 치기 시작한 초안이 지워질 수 있다.
+    // 반대쪽 손실은 우리 `!` 한 줄이 입력창에 남아 사용자의 Enter로 **실행**되는 것이라 대칭이
+    // 아니다. 지우지 않고 남기려면 "입력창이 비었다"를 증명해야 하는데 그것이 (ii)이고,
+    // 우리가 가진 신호로는 성립하지 않는다
+    if clearAbandonedInput(io: tracked, weSentSomething: ownership.mayHoldOurs) {
+        checkoutLog("claude 입력창에 남았을 우리 조각을 지움")
+    } else if ownership.mayHoldOurs {
+        checkoutLog("claude 입력창 정리 실패 — 우리 입력 조각이 남아 있을 수 있음(Enter를 누르면 그대로 제출된다)")
     }
-    return submitted
+    return sent
 }
 
 /// 타이핑 → 화면 반영 확인 → 제출. 게이트를 통과했어도 claude TUI가 아직 입력을 그리지
@@ -294,101 +365,316 @@ public func submitClaudeInputs(
 /// 15초를 기다린 뒤 찍힌다). 어느 호출이 실패했는지까지는 좁히지 못했다.
 /// 다만 재타이핑 전에는 세션 동일성을 다시 확인한다 — 실패가 "세션이 죽었다"였을 수도 있어,
 /// 확인 없이 다시 치면 그 tty에 새로 뜬 claude에 입력이 흘러든다.
+///
+/// **재시도는 CR을 보내기 전까지만 있다.** CR이 한 번이라도 나갔으면 그 입력은 다시 치지
+/// 않는다 — 전송 호출이 실패를 보고했어도 바이트는 들어갔을 수 있고, 그때 재타이핑하면 같은
+/// 메시지가 두 번 제출된다(`!` 입력이면 사용자 명령이 두 번 실행된다). 이 경계 뒤의 실패는
+/// 전부 "전달을 멈추고 보고"로 끝나며, 입력창에 남았을 조각은 호출자의 정리가 지운다.
 private func typeAndSubmit(
-    _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval
-) -> Bool {
-    let maxAttempts = 5
+    _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval,
+    boxObservedEmpty: () -> Void = {},
+    timeline: DeliveryTimeline? = nil, label: String = ""
+) -> SubmitOutcome {
+    // Attempts, not the deadline, are what wait out "the user has not looked at the tab yet":
+    // 12 × the ~2s appearance window is ~25s of patience for a slow watcher, while a marker
+    // claude swallowed at startup is abandoned after ~2s instead of blocking the whole budget
+    // (see the appearance deadline in `proveOurPaneAndEmptyBox`)
+    let maxAttempts = 12
     for attempt in 1...maxAttempts {
         guard io.canConfirmScreen() else {
             checkoutLog("화면을 확인할 수단이 사라져 더 치지 않음 — 남은 조각은 정리한다")
-            return false
+            return .gaveUp
         }
         if attempt > 1 {
-            guard io.confirmSession(retryConfirmTimeout) else { return false }
+            guard io.confirmSession(retryConfirmTimeout) else { return .gaveUp }
         }
-        // 읽히는 화면이 우리 pane인지 먼저 증명한다. 실패는 대개 "사용자가 다른 탭·앱을
-        // 보고 있다"이므로 오류가 아니라 대기다 — 다음 시도에서 다시 본다
-        var proved = true
-        if io.screenNeedsPaneProof {
-            proved = proveOurPane(io: io)
-            if !proved {
-                checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
-            }
+        // **표식 하나로 세 가지를 얻는다**(`proveOurPaneAndEmptyBox` 참고): ① 읽히는 화면이
+        // 우리 pane이라는 증명 ② 우리가 친 것이 뜨는 그 자리가 **입력창**이라는 귀속
+        // ③ 그 Ctrl+U를 TUI가 실제로 **처리했다**는 확인
+        guard proveOurPaneAndEmptyBox(io: io, attempt: attempt, of: maxAttempts) else { continue }
+        // The gap on this line is the one the app does not control: on Warp the proof only passes
+        // while the user is looking at that tab, so a large number here is the answer "you were
+        // on another tab", not a bug to fix
+        timeline?.step("\(label) pane 증명 통과 (시도 \(attempt)/\(maxAttempts))")
+        // 여기서 입력창은 **비어 있음이 관찰된** 상태다 — 쓰기 성공이 아니라 관찰이다
+        boxObservedEmpty()
+        guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
+            checkoutLog("화면 조회 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+            continue
         }
-        // 입력창을 비운다. pane 증명을 했으면 표식이 남아 있고, 재시도면 이전 조각이 남아
-        // 있다 — 남은 것 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은 입력이 제출된다.
-        // 증명이 실패했을 때도 반드시 지운다: 표식을 남기면 사용자가 그것을 제출하게 된다
-        if io.screenNeedsPaneProof || attempt > 1 {
-            guard send(claudeClearInputKey, io: io) else {
-                checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
-                io.wait(1.0)
-                continue
-            }
-            io.wait(1.0)
-        }
-        guard proved else { continue }
-        // 타이핑 직전 화면을 찍어 둔다 — "이미 떠 있던 텍스트"와 "우리가 방금 친 것"을
-        // 가르는 유일한 수단이다(`screenReflectsNewInput`)
-        let before = io.screenText()
+        // 본문은 **한 번만** 친다. 실험을 본문으로 하던 때는, 그 시험 타이핑이 화면에 뜬 순간
+        // 사용자가 Enter를 누르면 명령이 실행되고 우리는 그것을 모른 채 다시 쳐서 CR을 보내
+        // **`!` 명령이 두 번 실행됐다**(검증자 재현). 표식이 대신 맞으면 제출되는 것은 무해한
+        // 한 줄이고, 사용자 Enter가 세어지지 않는다는 사실은 그대로여도 피해가 없다
         guard send(text, io: io) else {
             checkoutLog("타이핑 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
             continue
         }
-
-        var reflected = false
+        var reflected: String?
         var failure = "입력이 화면에 반영되지 않음"
-        for _ in 0..<5 {
-            io.wait(0.4)
+        // Same read-cost compensation as `poll` — a 137ms Warp read on top of a full interval
+        // sleep stretched this "2 second" window to ~3.8s of wall clock. The wait comes before
+        // the read here, so it is the **previous** iteration's read that gets subtracted
+        var lastReadCost: TimeInterval = 0
+        for attempt in 0..<13 { // 0.15s × 13 ≈ 2s, the same deadline as before
+            if attempt > 0 { io.wait(max(0, screenPollInterval - lastReadCost)) }
+            let readStarted = Date()
             guard let screen = io.screenText() else {
                 failure = "화면 조회 실패"
                 break
             }
-            if screenReflectsNewInput(before: before, after: screen, input: text) {
-                reflected = true
+            lastReadCost = Date().timeIntervalSince(readStarted)
+            // **At least** one more, not exactly one more: claude may draw our line a second time
+            // (the hint-line behaviour the attribution experiment exists for), and demanding an
+            // exact count made the button do nothing at all — five typings, no CR, no message
+            // (reviewer reproduction). Only the *disappearance* check needs an exact count, where
+            // "some of it is still there" has to fail
+            if probeCount(of: text, in: screen) >= baseline + 1 {
+                reflected = screen
                 break
             }
         }
-        if reflected {
-            if submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) { return true }
-            failure = "제출(CR) 전송 실패"
+        if let reflected {
+            timeline?.step("\(label) 본문 반영 확인")
+            guard submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) else {
+                // **A CR that went out may have landed even when the call reports failure** — the
+                // helper can inject part of a write and then error. So this input is never typed
+                // again: retyping is the only move that can submit the same message twice, and
+                // with a `!` input that runs the user's command twice. Resending the CR is fine
+                // (a CR into an empty box does nothing, measured) and `submitConfirmedInput`
+                // already did that; once those are exhausted, delivery stops here
+                checkoutLog("제출(CR) 전송 실패 — 이미 CR을 보낸 입력은 다시 치지 않고 전달을 멈춤")
+                return .gaveUp
+            }
+            // 첫 입력의 이 줄에 찍히는 「총」이 사용자가 체감하는 수치다 — 버튼 클릭에서
+            // 첫 제출까지
+            timeline?.step("\(label) 제출(CR) 전송")
+            switch inputBoxAfterSubmit(io: io, whenTyped: reflected, text: text) {
+            case .stillHoldsOurInput:
+                timeline?.step("\(label) 사후 확인: 입력이 입력창에 남음")
+                return .leftInTheInputBox
+            case .ourInputIsGone:
+                timeline?.step("\(label) 사후 확인: 입력창에 우리 것 없음")
+                // The box is not holding ours. Whether claude took the message or the transcript
+                // merely scrolled it out of view is question (i), which we do not ask
+                return .sentAndBoxIsFreeOfOurs
+            case .unknown:
+                timeline?.step("\(label) 사후 확인: 입력창 상태 알 수 없음")
+                return .sentButBoxUnknown
+            }
         }
         checkoutLog("\(failure) — 재시도 (\(attempt)/\(maxAttempts))")
+    }
+    return .gaveUp
+}
+
+/// 한 입력을 처리한 결과. 갈래가 나뉘는 축은 **(ii) 입력창이 비었는가**이지 (i) claude가
+/// 받았는가가 아니다 — 후자는 확인하지 않는다.
+private enum SubmitOutcome {
+    /// CR을 썼고, 화면이 **우리 입력이 어디에도 없다**를 보여 줬다 — 입력창에 우리 것은 없다
+    case sentAndBoxIsFreeOfOurs
+    /// CR을 썼지만 입력창 상태를 볼 수 없었다(못 읽음·우리 pane이 아님·해석 불가).
+    /// 다음 입력 전 클리어와 마지막 정리가 이 상태를 덮는다
+    case sentButBoxUnknown
+    /// 화면이 "우리 텍스트가 입력창에 그대로 있다"를 보여 줬다 — 잔여가 확실하다
+    case leftInTheInputBox
+    /// CR을 내보내지 못했다
+    case gaveUp
+}
+
+/// What the screen says about the **input box** right after the CR.
+///
+/// **This is not a submission check, on purpose (round 6).** Nothing outside the TUI can prove a
+/// message exists — two rounds of trying produced a check that was wrong in both directions, and
+/// the property was never a safety property anyway. What this feature has to guarantee is that our
+/// bytes do not leak into another session (the three gates and the pane proof), that nothing is
+/// submitted twice (a CR-ed input is never retyped) and that we leave no residue behind. Only the
+/// last one needs the screen, and it needs one operational answer: **may the next input be typed?**
+/// If our text is still in the box, typing the next one appends to it and both go in as a single
+/// mangled line — that is the whole damage carrying on can do.
+///
+/// The region compared is **from our input to the end of the screen**, i.e. everything the box can
+/// occupy. A change above it — a spinner, streaming output, a clock — says nothing about the box,
+/// and treating it as if it did is what made a whole-screen comparison report a stuck input as
+/// submitted (reviewer reproduction). Three samples, because the TUI may not have redrawn yet
+/// right after the CR, and the answer is taken from the last readable one.
+enum InputBoxAfterSubmit: Equatable {
+    /// Our input is still exactly where we typed it. The one state that changes what we do:
+    /// delivery stops and the residue is handed to the single cleanup point
+    case stillHoldsOurInput
+    /// Our input is nowhere on screen, so the box is not holding it. Submitted, or scrolled out of
+    /// view — indistinguishable, and nothing downstream depends on the difference
+    case ourInputIsGone
+    /// Unreadable, not our pane (Warp reads whichever pane has focus), or a change we cannot
+    /// interpret. Carry on: not knowing is not a failure
+    case unknown
+}
+
+/// How long the box may look frozen before we believe it. **Not measured for a CR redraw** — the
+/// only adjacent measurement in this repository is claude's first-message render, 2.06∼3.41s
+/// (`docs/new-terminal-checklist.md`), so anything shorter is a guess. Being generous is the safe
+/// direction here: the safety of the next input rests on the clear we send **before typing**, not
+/// on this look, so a slow answer costs nothing, while a hasty "it is stuck" drops the inputs that
+/// were still to come (reviewer reproduction R3).
+private let inputBoxLookDeadline: TimeInterval = 3.6
+
+func inputBoxAfterSubmit(
+    io: ClaudeSessionIO, whenTyped: String, text: String
+) -> InputBoxAfterSubmit {
+    // Warp's screen is whichever pane has focus, so "unchanged" there is not about our box. The
+    // pane proof is only valid up to the moment the body is typed, and re-proving here would mean
+    // typing bytes into a box a submission may have just emptied
+    guard !io.screenNeedsPaneProof else { return .unknown }
+    let probe = claudeInputProbe(text).filter { !$0.isWhitespace }
+    guard !probe.isEmpty else { return .unknown }
+    // **The probe has to identify our copy, and only ours.** claude draws hint lines, a permission
+    // indicator and a context meter *below* the box, and `screenTail` takes the last occurrence —
+    // so a probe that also appears down there pins the tail forever and a submission that went
+    // through reads as "still in the box" (reproduced: input `y` against "bypass permissions on",
+    // and `/review` against a "try /review" hint; both dropped every later input). When the probe
+    // is not unique we cannot tell the copies apart, so we do not judge
+    guard probeOccurrences(of: probe, in: whenTyped) == 1,
+          let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
+    var last = InputBoxAfterSubmit.unknown
+    _ = poll(io: io, within: inputBoxLookDeadline) {
+        // A read we could not make says nothing. It used to end the look, which threw away what
+        // the earlier reads had already established (reviewer reproduction R5)
+        guard let screen = io.screenText() else { return false }
+        guard let tail = screenTail(from: probe, in: screen) else {
+            last = .ourInputIsGone
+            return false
+        }
+        if tail != typedTail {
+            last = .unknown
+            return true // 움직였다 — 더 볼 것이 없다
+        }
+        last = .stillHoldsOurInput
+        return false
+    }
+    return last
+}
+
+/// Types a throwaway marker, waits for it to appear, **clears the box and waits for it to go
+/// away**. One experiment, three answers, and the canonical version of what used to be two
+/// half-overlapping mechanisms (the Warp pane proof and round 8's body experiment):
+///
+///  1. **The screen is our pane.** A random marker can only reach the tty we injected it into, so
+///     seeing it appear rules out reading someone else's pane — the Warp requirement, now applied
+///     everywhere because the other two answers need it anyway.
+///  2. **What appears is in the input box.** Seeing our text on screen does not say where it is;
+///     claude draws the same string in hint lines below the box. Text that **disappears when the
+///     box is cleared** was in the box — the only attribution obtainable from outside.
+///  3. **The TUI processed our Ctrl+U.** AppleScript and the wezterm CLI report that the terminal
+///     accepted the write, never that claude acted on it; the disappearance is the only evidence.
+///
+/// **Why a marker and not the body** (round 9, the regression this replaces): the experiment types
+/// something and leaves it on screen for a moment. If the user presses Enter right then — on Warp
+/// they are watching that tab by design — *they* submit whatever is in the box. With the body in
+/// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
+/// retypes and submits: the user's command runs **twice**. With a marker, that stray Enter submits
+/// one inert line and the body is still typed exactly once.
+///
+/// The marker is alphanumeric for the same reason `paneProofToken` always was: `/`, `!` and `@`
+/// mean something to the input box.
+private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int) -> Bool {
+    guard let before = io.screenText() else {
+        checkoutLog("화면 조회 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    let marker = paneProofToken()
+    guard send(marker, io: io) else {
+        checkoutLog("표식 전송 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    // 마감이 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고, 그건 기다리면
+    // 풀리는 상태이기 때문이다 (Warp 실측). 대신 **먼저 읽는다** — 이미 그려져 있으면 즉시 통과
+    // 2s, not longer: both field timelines show the same shape — a marker typed right after raw
+    // mode gets swallowed by claude's initialisation and will NEVER appear, so every extra second
+    // here is spent waiting on a dead marker (5s cost the first message ~4s in both runs). The
+    // patience for "the user is not looking at the tab yet" lives in the attempt count, not in
+    // this deadline — a fresh marker every ~2s answers faster in both cases
+    let appeared = poll(io: io, within: 2.0) {
+        guard let after = io.screenText() else { return false }
+        return screenReflectsNewInput(before: before, after: after, input: marker)
+    }
+    guard appeared else {
+        checkoutLog("읽히는 화면이 우리 pane이 아님 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    guard send(claudeClearInputKey, io: io) else {
+        checkoutLog("입력창 클리어 실패 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    let baseline = probeCount(of: marker, in: before)
+    guard waitUntilProbeCount(baseline, of: marker, io: io) else {
+        // 표식이 사라지지 않았다 — 우리가 본 것이 입력창이 아니었거나, TUI가 Ctrl+U를 처리하지
+        // 않았다. 둘 다 "CR을 보내면 안 된다"로 같다
+        checkoutLog("표식이 입력창에서 지워지는 것을 확인하지 못함 — 재시도 (\(attempt)/\(maxAttempts))")
+        return false
+    }
+    return true
+}
+
+/// How long to leave between two screen reads while waiting for something.
+///
+/// Bounded below by what one read costs — spend less and the polling is mostly reader startup.
+/// Measured on this machine, 20 calls each: **osascript 59ms** (iTerm2's screen read), **wezterm
+/// cli 14ms**, **ps+stty 9ms** (the session gate). Warp's Accessibility read could not be measured
+/// without launching Warp, so it is assumed no cheaper than osascript. 0.15s keeps every known
+/// reader under half the interval.
+let screenPollInterval: TimeInterval = 0.15
+
+/// Waits for `ready`, **reading before it sleeps**.
+///
+/// The old shape slept a fixed interval before every read, so a screen that was already drawn
+/// still cost the full interval — and there are four such waits per input (marker appears, marker
+/// gone, body reflected, post-CR look), which was 1.7s of pure sleeping on the happy path.
+/// Deadlines are unchanged or longer; only the sampling moved. Nothing was dropped from what gets
+/// checked: the same reads, the same conditions, just asked sooner.
+private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: () -> Bool) -> Bool {
+    // Counted rather than clock-driven so the fake, whose `wait` is a no-op, still terminates.
+    // The sleep is **shortened by what the read itself cost**. Reads are not free — a Warp
+    // Accessibility read measures 134∼143ms in the field, close to the interval itself — and
+    // sleeping the full interval on top of that made every deadline here take nearly twice its
+    // stated wall clock, because the attempt count assumes an iteration costs one interval.
+    // With the compensation it does, whichever terminal is reading
+    let attempts = max(1, Int((deadline / screenPollInterval).rounded()))
+    for attempt in 0..<attempts {
+        let readStarted = Date()
+        if ready() { return true }
+        if attempt < attempts - 1 {
+            io.wait(max(0, screenPollInterval - Date().timeIntervalSince(readStarted)))
+        }
     }
     return false
 }
 
-/// 읽히는 화면이 우리 pane인지 증명한다. 우리 tty에만 들어가는 난수를 하나 넣고 그것이
-/// 화면에 **새로** 뜨는지 본다 — 뜨면 지금 읽히는 화면이 우리 pane이다. 다른 pane에 같은
-/// 난수가 같은 순간 나타날 확률은 무시할 수 있다.
-/// 표식은 여기서 지우지 않는다 — 성공·실패 경로가 갈리면 정리를 빠뜨리므로 호출자가
-/// 한 자리에서 Ctrl+U로 지운다.
-/// 폴링이 반영 확인보다 넉넉한 이유는 실패의 대부분이 "사용자가 잠깐 다른 탭을 보는 중"이고,
-/// 그건 기다리면 풀리는 상태이기 때문이다.
-///
-/// **증명은 본문 타이핑 시점까지만 유효하다.** 증명 뒤 [Ctrl+U → 1초 → 타이핑 → 반영 확인]
-/// 사이에 사용자가 탭을 옮기면, 본문 반영 확인은 다시 남의 화면을 읽게 된다. 그 창을 없애려면
-/// CR 직전에 증명을 다시 태워야 하는데, 그때 입력창에는 본문이 들어 있어 표식을 덧붙이면
-/// 제출에 섞인다. 표식을 본문 뒤에 붙였다 지우는 안도 검토했지만, **지웠음을 확인하는 화면
-/// 읽기가 다시 같은 문제를 갖는다** — 남의 화면에서는 표식도 안 보이므로 "지워졌다"가 거짓
-/// 양성이 되고, 그러면 `본문+표식`이 그대로 제출된다. 유실보다 나쁜 결과라 택하지 않았다.
-///
-/// 남는 창의 크기와 피해: 창은 위 구간(대략 1∼3초, 폴링 간격 0.4초). 그 안에서 피해가
-/// 생기려면 ①사용자가 정확히 그때 탭을 옮기고 ②그 pane이 우리 프로브(입력 앞 24자)를
-/// **새로** 얻고 ③claude가 우리 본문을 그리지 못하고 버려야 한다 — 셋이 모두 겹쳐야 한다.
-/// 그때의 결과는 **빈 CR 한 번**이다: 바이트는 CR을 포함해 전부 우리 tty로만 가므로
-/// (`sendKeys`의 `.warp` 갈래 → 헬퍼 TIOCSTI, 합성 키 입력·AX 쓰기 경로는 코드에 없다)
-/// 남의 pane 내용이 제출될 수는 없고, 우리 pane의 입력창이 비어 있어 아무 일도 일어나지
-/// 않는다. 앱 로그에는 전달된 것으로 남으므로 그 한 건이 유실된다.
-private func proveOurPane(io: ClaudeSessionIO) -> Bool {
-    guard let before = io.screenText() else { return false }
-    let token = paneProofToken()
-    guard send(token, io: io) else { return false }
-    for _ in 0..<10 {
-        io.wait(0.5)
-        guard let after = io.screenText() else { continue }
-        if screenReflectsNewInput(before: before, after: after, input: token) { return true }
+private func waitUntilProbeCount(
+    _ wanted: Int, of text: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
+) -> Bool {
+    poll(io: io, within: deadline) {
+        guard let screen = io.screenText() else { return false }
+        return probeCount(of: text, in: screen) == wanted
     }
-    return false
+}
+
+/// How many times the input's probe appears on the screen, whitespace removed on both sides —
+/// the TUI reflows and pads what it draws (`screenReflectsNewInput` normalises the same way).
+func probeCount(of input: String, in screen: String) -> Int {
+    probeCount(claudeInputProbe(input).filter { !$0.isWhitespace }, in: screen)
+}
+
+private func probeOccurrences(of probe: String, in screen: String) -> Int {
+    probeCount(probe, in: screen)
+}
+
+/// The screen from the **last** occurrence of the probe to the end, whitespace removed. The last
+/// occurrence is the input box's copy — the transcript is above it — and whitespace is dropped for
+/// the same reason `screenReflectsNewInput` drops it: the TUI reflows and pads what it draws.
+private func screenTail(from probe: String, in screen: String) -> String? {
+    let squeezed = screen.filter { !$0.isWhitespace }
+    guard let found = squeezed.range(of: probe, options: .backwards) else { return nil }
+    return String(squeezed[found.lowerBound...])
 }
 
 /// 화면에 뜬 것이 확인된 입력을 CR로 제출한다. 전송이 실패하면 재타이핑이 아니라 CR만 다시
@@ -418,7 +704,8 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
-    betweenInputTimeout: TimeInterval = 15
+    betweenInputTimeout: TimeInterval = 15,
+    timeline: DeliveryTimeline? = nil
 ) {
     guard !inputs.isEmpty else { return }
     // Warp 헬퍼는 pane에 남아 떠도는 프로세스가 되면 안 된다 — 어느 경로로 끝나든 종료시킨다
@@ -445,6 +732,8 @@ public func deliverClaudeInputs(
             return
         }
         ttyPath = warpHelperTTY(socket: socket)
+        // 헬퍼 대기는 최대 20초까지 늘어날 수 있다 — 이 줄의 「+」가 그중 실제로 쓴 시간이다
+        timeline?.step(ttyPath == nil ? "Warp 주입 헬퍼 대기 실패" : "Warp 주입 헬퍼 준비")
     case .none:
         checkoutLog("claude 입력 전달 불가 — 세션 핸들 없음")
         return
@@ -458,9 +747,13 @@ public func deliverClaudeInputs(
     guard let claudePID = waitUntilClaudeAcceptsInput(
         ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
     ) else {
+        timeline?.step("claude 기동 대기 시간 초과")
         checkoutLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
         return
     }
+    // 이 줄의 「+」가 cd + 셸 rc + claude 부팅에 걸린 시간이다 — 전면 프로세스가 claude가 되고
+    // tty가 raw mode로 바뀔 때까지이며, 앱이 줄일 수 없는 구간이라 여기가 크면 원인은 밖에 있다
+    timeline?.step("claude 준비 (pid \(claudePID))")
 
     let io = ClaudeSessionIO(
         sendKeys: { keys in sendKeys(keys, to: handle, expectedPID: claudePID) },
@@ -480,15 +773,18 @@ public func deliverClaudeInputs(
         // Warp만 true — 접근성으로 읽히는 것은 "포커스된 pane"이라 우리 것이라는 보장이 없다
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
-    let submitted = submitClaudeInputs(inputs, io: io, betweenInputTimeout: betweenInputTimeout)
-    checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(submitted)개 전달")
+    let sent = submitClaudeInputs(
+        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline
+    )
+    timeline?.step("전달 종료 — 입력 \(inputs.count)개 중 \(sent)개 보냄")
+    checkoutLog("claude(pid \(claudePID)) 입력 \(inputs.count)개 중 \(sent)개 보냄(수신은 확인하지 않는다)")
     // 입력창에 남았을 조각의 정리는 `submitClaudeInputs`가 실패 종료 경로 한 자리에서 한다 —
     // 정리 조건은 권한이 아니라 "다 끝내지 못했다"이기 때문이다. 여기서는 진단만 남긴다:
     // Warp에서 전달이 멎는 가장 흔한 이유가 권한 회수인데, 무엇을 허용해야 하는지 로그에
     // 없으면 사용자가 알 수 없다. 이 문구가 권한을 지목할 수 있는 것은 `canConfirmScreen`이
     // false가 될 수 있는 터미널이 현재 Warp뿐이라서다(`screenNeedsPaneProof`) —
     // 확인 수단이 권한이 아닌 터미널이 붙으면 문구를 함께 갈라야 한다
-    if submitted < inputs.count, !io.canConfirmScreen() {
+    if sent < inputs.count, !io.canConfirmScreen() {
         checkoutLog("전달 도중 화면을 확인할 수단이 사라짐 — 앱 설정 창에서 손쉬운 사용 권한을 허용하세요")
     }
 }
@@ -509,18 +805,30 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
 /// `expecting`을 주면 그 PID일 때만 인정한다 — 원래 세션이 죽은 뒤 같은 tty에 새로 뜬
 /// claude에 남은 입력을 흘리지 않기 위해서다. 새 세션이 자리를 차지했으면 영영 만족하지
 /// 않으므로 타임아웃까지 기다렸다 nil로 끝난다(입력은 보내지 않는다).
+/// How long the fast phase of the startup poll lasts, and how often it looks.
+///
+/// claude reaches raw mode 0.1∼0.19s after the shell execs it (measured), so a 1s tick threw away
+/// most of a second before the first input every single time. One probe is `ps` + `stty` ≈ 9ms
+/// (measured, 20 calls each), so 0.15s is ~6% duty — cheap enough to keep up for the first ten
+/// seconds, which covers a normal start with room to spare. After that the tab is either slow
+/// (a big repository, a first-run trust prompt) or never coming, and the old 1s tick is right.
+private let claudeStartupFastPhase: TimeInterval = 10
+private let claudeStartupFastInterval: TimeInterval = 0.15
+
 private func waitUntilClaudeAcceptsInput(
     ttyName: String, ttyPath: String, pollInterval: TimeInterval, timeout: TimeInterval,
     expecting: Int? = nil
 ) -> Int? {
-    let deadline = Date().addingTimeInterval(timeout)
+    let started = Date()
+    let deadline = started.addingTimeInterval(timeout)
     while true {
         if let pid = probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath),
            expecting == nil || pid == expecting {
             return pid
         }
         if Date() >= deadline { return nil }
-        Thread.sleep(forTimeInterval: pollInterval)
+        let fast = Date().timeIntervalSince(started) < claudeStartupFastPhase
+        Thread.sleep(forTimeInterval: fast ? min(claudeStartupFastInterval, pollInterval) : pollInterval)
     }
 }
 
@@ -561,9 +869,17 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
         // 다른 pane·다른 앱으로 샐 수 없다. 합성 키 입력을 쓰지 않는 이유가 이것이다.
         // 기대 PID를 함께 보내 헬퍼가 "지금 이 tty를 읽을 프로세스"까지 확인하게 한다 —
         // 우리는 보내기 전만 볼 수 있고, 큐에 넣은 뒤 누가 읽는지는 거기서만 정해진다
-        guard case .ok? = warpHelperRequest(
+        let answer = warpHelperRequest(
             .inject(expectedPID: Int32(expectedPID), bytes: Data(text.utf8)), socket: socket
-        ) else { return false }
+        )
+        guard case .ok? = answer else {
+            // The reason matters in the field: the first send after claude reaches raw mode
+            // failed once in a measured run and cost that delivery 8 seconds, and without this
+            // line the log could not say whether the helper refused (reader-gate mismatch),
+            // died, or never answered
+            checkoutLog("Warp 헬퍼 전송 거절/실패 — 응답: \(answer.map(String.init(describing:)) ?? "없음")")
+            return false
+        }
         return true
     case .none:
         return false

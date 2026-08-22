@@ -14,6 +14,8 @@ const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, dupl
 const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
   vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf, APP_VARIABLES })');
 const { adoptStoredButtons } = vm.runInThisContext('({ adoptStoredButtons })');
+const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
+  vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -162,6 +164,22 @@ test('pageTypeOf: reserved paths in the owner position are not repositories', ()
 test('pageTypeOf: no verdict without a repository name', () => {
   assert.equal(pageTypeOf('/'), null);
   assert.equal(pageTypeOf('/dazebug'), null);
+});
+
+// Every preset that carries claude inputs is `!`-only, so its whole run merges into ONE typed
+// line (one type/submit cycle, one model turn). That property lives in the Swift join gate, so
+// nothing on this side would notice a preset drifting out of the shape — and a preset gaining a
+// slash command or plain text silently multiplies its delivery cycles. Deliberately narrow.
+test('presets carrying claude inputs stay a single mergeable run', () => {
+  const withInputs = [...PR_PRESETS, ...ISSUE_PRESETS, ...REPO_PRESETS]
+    .filter(p => (p.claudeInputs || []).length > 0);
+  assert.ok(withInputs.length >= 3, 'presets carrying claude inputs disappeared');
+  for (const preset of withInputs) {
+    assert.match(preset.command, /(^|&&|\|\||;|\(|\{|\s)\s*claude$/, preset.name);
+    for (const input of preset.claudeInputs) {
+      assert.ok(input.startsWith('!'), `${preset.name}: ${input} — not a \`!\` input`);
+    }
+  }
 });
 
 // --- Reading a stored button array ---

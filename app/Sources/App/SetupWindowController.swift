@@ -4,13 +4,94 @@ import Core
 /// 설치·터미널 선택·권한·테스트를 한 화면에서 처리하는 설정 창.
 /// 디자인: 설정 창 자체가 터미널 세션 — 섹션은 프롬프트(❯), 상태는 종료 코드처럼 색으로 읽힌다.
 /// 노출은 상태 기반: 완료된 설정 항목의 카드는 사라지고 파이프라인 스트립의 점으로만 남는다.
+/// Card width. File scope so the status-label factory below can use it before `self` exists.
+let setupContentWidth: CGFloat = 560
+/// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
+let setupTextWidth: CGFloat = setupContentWidth - 28
+
+/// The settings stack, which sizes its window to itself.
+///
+/// Why the stack and not the window controller: the size has three preconditions a caller has to
+/// get right *every* time — apply the visibility changes, let the constraint pass settle, then
+/// measure — and one that forgets leaves the window shorter than its content, at which point the
+/// engine breaks a constraint and the cards overlap instead of merely clipping. Measuring at the
+/// end of this view's own `layout()` satisfies all three by construction: that runs after the
+/// pass, and any change to a card, a label or a section's `isHidden` already dirties this view.
+/// A section added later is covered without anyone remembering the rule.
+///
+/// Why not hook the enclosing scroll view instead: flipping `isHidden` deep in the tree never
+/// marks *it* dirty — its own frame does not change — so its `layout()` simply would not run
+/// (measured: exactly one call, at construction). The dirty view is the one whose arrangement
+/// changed, so that is the one that has to do the measuring.
+///
+/// The screen matters as much as the content: this window is `isMovableByWindowBackground`, so it
+/// is easy to leave near the bottom edge, and a window that grows past the edge gets its frame
+/// clamped by AppKit — handing the stack less height than it asked for. So growth is paired with
+/// moving the window back inside the visible frame; and when the content genuinely cannot fit the
+/// screen, the enclosing scroll view takes over rather than the layout being squeezed.
+final class FittedContentStackView: NSStackView {
+    /// The size we last asked the window for. Without it, a clamped request (content taller than
+    /// the screen) would be re-issued on every pass and layout would never settle.
+    private var lastRequestedSize: NSSize?
+    /// Stands in for the screen so a test can exercise the clamp without depending on whichever
+    /// display it happens to run on.
+    var visibleFrameOverride: NSRect?
+
+    override func layout() {
+        super.layout()
+        guard let window, window.contentView != nil else { return }
+        var target = fittingSize
+        let visible = visibleFrameOverride ?? (window.screen ?? NSScreen.main)?.visibleFrame
+        if let visible { target.height = min(target.height, visible.height) }
+        guard lastRequestedSize != target else { return }
+        lastRequestedSize = target
+        window.setContentSize(target)
+        if let visible { Self.moveInside(visible, window) }
+    }
+
+    /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
+    /// and off the screen. Slide the window back rather than letting AppKit clamp the height.
+    private static func moveInside(_ visible: NSRect, _ window: NSWindow) {
+        var frame = window.frame
+        frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - frame.height))
+        frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.width))
+        if frame.origin != window.frame.origin { window.setFrameOrigin(frame.origin) }
+    }
+}
+
+/// Every status line in the window is built here.
+///
+/// Declaring one with `NSTextField(labelWithString:)` and styling it later is how
+/// `accessibilityStatusLabel` ended up in the wrong font and unable to wrap: it sat in the same
+/// property block as its four siblings but was missed by the styling loop in `buildContent`, so a
+/// long status clipped at the card edge instead of flowing onto a second line. Styling at
+/// construction removes the chance to forget.
+func makeStatusLabel(font: NSFont) -> NSTextField {
+    let label = NSTextField(labelWithString: "")
+    label.font = font
+    label.usesSingleLineMode = false
+    label.cell?.wraps = true
+    label.cell?.isScrollable = false
+    label.maximumNumberOfLines = 0
+    label.preferredMaxLayoutWidth = setupTextWidth
+    return label
+}
+
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
-    private let manifestStatusLabel = NSTextField(labelWithString: "")
-    private let extensionStatusLabel = NSTextField(labelWithString: "")
-    private let installFeedbackLabel = NSTextField(labelWithString: "")
-    private let permissionStatusLabel = NSTextField(labelWithString: "")
-    private let accessibilityStatusLabel = NSTextField(labelWithString: "")
-    private let testResultLabel = NSTextField(labelWithString: "")
+    private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
+    private let permissionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let accessibilityStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
+    /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
+    /// was one member silently missing out.
+    var statusLabelsForTesting: [NSTextField] {
+        [
+            manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
+            permissionStatusLabel, accessibilityStatusLabel, testResultLabel,
+        ]
+    }
     private let requestPermissionButton = NSButton(title: "iTerm2 권한 요청", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
@@ -23,6 +104,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
+    /// The scroll view's document — what the window height is measured from.
+    private(set) var rootStack: FittedContentStackView!
     private var chromeCard: NSView!
     private var extensionCard: NSView!
     private var toolsCard: NSView!
@@ -31,7 +114,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// user may want to change, not an install step that completes and disappears.
     private var baseDirCard: NSView!
     private let baseDirField = NSTextField(string: "")
-    private let baseDirStatusLabel = NSTextField(labelWithString: "")
+    private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private var guideBlock: NSView!
     private var utilityRow: NSView!
     /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
@@ -68,7 +151,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ]
     }
 
-    private let contentWidth: CGFloat = 560
     private let terminalRadioWidth: CGFloat = 120
     private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
 
@@ -93,6 +175,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
+        // Settle the layout before centring: the window is sized from inside the layout pass, so
+        // centring the initial 600x640 frame would leave it off-centre once the real height lands.
+        window.contentView?.layoutSubtreeIfNeeded()
         window.center()
         cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
@@ -127,7 +212,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - UI 구성
 
     private func buildContent() -> NSView {
-        let stack = NSStackView()
+        let stack = FittedContentStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -153,16 +238,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(testCard())
         stack.addArrangedSubview(utilityRow)
 
-        for label in [manifestStatusLabel, extensionStatusLabel, permissionStatusLabel, testResultLabel,
-                      baseDirStatusLabel] {
-            label.font = Theme.mono(11.5)
-            configureWrapping(label)
-        }
-        configureWrapping(installFeedbackLabel)
-        installFeedbackLabel.font = Theme.ui(11.5)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: setupContentWidth + 40).isActive = true
 
-        stack.widthAnchor.constraint(equalToConstant: contentWidth + 40).isActive = true
-        return stack
+        let scroll = NSScrollView()
+        scroll.drawsBackground = true
+        scroll.backgroundColor = Theme.bg
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay // no gutter, so the stack keeps its full width
+        scroll.documentView = stack
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+        ])
+        rootStack = stack
+        return scroll
     }
 
     private func header() -> NSView {
@@ -186,7 +277,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         row.addView(title, in: .leading)
         row.addView(cursor, in: .leading)
         row.addView(version, in: .trailing)
-        row.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        row.widthAnchor.constraint(equalToConstant: setupContentWidth).isActive = true
         return row
     }
 
@@ -236,7 +327,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // Save on focus loss as well as Enter — nobody should close the window wondering
         // whether it was saved
         baseDirField.cell?.sendsActionOnEndEditing = true
-        baseDirField.widthAnchor.constraint(equalToConstant: contentWidth - 28 - 110).isActive = true
+        baseDirField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
 
         let row = NSStackView(views: [baseDirField, button("폴더 선택…", #selector(chooseBaseDirectory))])
         row.orientation = .horizontal
@@ -289,7 +380,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         radioColumn.spacing = 7
         radioColumn.widthAnchor.constraint(equalToConstant: terminalRadioWidth).isActive = true
 
-        terminalNoteLabel = helpLabel("", width: contentWidth - 28 - terminalRadioWidth - 18)
+        terminalNoteLabel = helpLabel("", width: setupContentWidth - 28 - terminalRadioWidth - 18)
         let radioRow = NSStackView(views: [radioColumn, terminalNoteLabel])
         radioRow.orientation = .horizontal
         radioRow.alignment = .top
@@ -337,11 +428,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         accessibilitySection.spacing = 9
         accessibilitySection.addArrangedSubview(hairline())
         accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
-        accessibilitySection.addArrangedSubview(helpLabel(
-            "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 버튼 명령은 "
-                + "새 탭에서 그대로 실행되지만, 예약한 claude 입력은 전달되지 않습니다. "
-                + "전달 중에는 그 탭을 보고 있어야 합니다."
-        ))
+        accessibilitySection.addArrangedSubview(helpLabel(warpAccessibilityHelpText()))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
             button("손쉬운 사용 권한 요청", #selector(requestAccessibility)),
@@ -409,7 +496,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             inner.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
             inner.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
             inner.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
-            box.widthAnchor.constraint(equalToConstant: contentWidth),
+            box.widthAnchor.constraint(equalToConstant: setupContentWidth),
         ])
         return box
     }
@@ -432,19 +519,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = Theme.ui(11.5)
         label.textColor = Theme.textDim
-        label.preferredMaxLayoutWidth = width ?? (contentWidth - 28)
+        label.preferredMaxLayoutWidth = width ?? (setupContentWidth - 28)
         if let width {
             label.widthAnchor.constraint(equalToConstant: width).isActive = true
         }
         return label
-    }
-
-    private func configureWrapping(_ label: NSTextField) {
-        label.usesSingleLineMode = false
-        label.cell?.wraps = true
-        label.cell?.isScrollable = false
-        label.maximumNumberOfLines = 0
-        label.preferredMaxLayoutWidth = contentWidth - 28
     }
 
     private func button(_ title: String, _ action: Selector) -> NSButton {
@@ -496,7 +575,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let label = NSTextField(wrappingLabelWithString: line)
             label.font = Theme.ui(11.5)
             label.textColor = Theme.textDim
-            label.preferredMaxLayoutWidth = contentWidth - 28 - 14
+            label.preferredMaxLayoutWidth = setupContentWidth - 28 - 14
             text.addArrangedSubview(label)
         }
 
@@ -524,7 +603,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         line.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             line.heightAnchor.constraint(equalToConstant: 1),
-            line.widthAnchor.constraint(equalToConstant: contentWidth - 28),
+            line.widthAnchor.constraint(equalToConstant: setupContentWidth - 28),
         ])
         return line
     }
@@ -548,12 +627,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func terminalChanged() {
         if weztermRadio.state == .on {
-            Settings.terminal = .wezterm
+            select(terminal: .wezterm)
         } else if warpRadio.state == .on {
-            Settings.terminal = .warp
+            select(terminal: .warp)
         } else {
-            Settings.terminal = .iterm
+            select(terminal: .iterm)
         }
+    }
+
+    /// Stores the choice and brings every dependent control back in sync. `terminalChanged` maps
+    /// radio → terminal and `updateTerminalControls` maps terminal → radio, so this is the single
+    /// place the two directions meet — and the seam tests drive the window through.
+    func select(terminal: Terminal) {
+        Settings.terminal = terminal
         updateTerminalControls()
         refresh()
     }
@@ -574,14 +660,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 + "멈췄다가 돌아오면 이어집니다."
         }
         terminalNoteLabel.stringValue = note
-    }
-
-    private func resizeToFit() {
-        guard let window, let contentView = window.contentView else { return }
-        let fitting = contentView.fittingSize
-        if abs(window.contentRect(forFrameRect: window.frame).height - fitting.height) > 1 {
-            window.setContentSize(fitting)
-        }
     }
 
     // MARK: - 상태 갱신
@@ -637,7 +715,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             apply(
                 accessibilityGranted
                     ? .ok("허용됨")
-                    : .warning("허용 안 됨 — 명령은 실행되지만 claude 입력은 전달되지 않습니다"),
+                    : .warning("허용 안 됨 — claude 입력이 예약된 버튼은 거절됩니다"),
                 to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
             )
         }
@@ -651,7 +729,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             socketAlive: socketAlive, permission: permission,
             accessibilityGranted: accessibilityGranted
         ))
-        resizeToFit()
+        // No resize call here on purpose: the content view resizes the window from inside its
+        // own layout pass, which is the only moment the measurement is valid.
     }
 
     /// Redraws the base directory card from what is stored. The field is not touched while the
@@ -704,15 +783,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let configured = (try? normalizedBaseDirectory(Settings.baseDirectory)) != nil
         let missing = toolAdvice(baseDirectoryConfigured: configured)
             .filter { availability[$0.name] == false }
-        toolsCard.isHidden = missing.isEmpty
+        let wrapperAdvice = claudeWrapperAdvice(
+            available: availability, executable: Settings.toolExecutables
+        )
+        toolsCard.isHidden = missing.isEmpty && wrapperAdvice == nil
         toolsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for tool in missing {
-            let label = NSTextField(wrappingLabelWithString: "● \(tool.name) \(tool.advice)")
-            label.font = Theme.mono(11.5)
-            label.textColor = tool.critical ? Theme.err : Theme.warn
-            label.preferredMaxLayoutWidth = contentWidth - 28
-            toolsList.addArrangedSubview(label)
+            addToolLine("● \(tool.name) \(tool.advice)", critical: tool.critical)
         }
+        if let wrapperAdvice { addToolLine("● \(wrapperAdvice)", critical: false) }
+    }
+
+    private func addToolLine(_ text: String, critical: Bool) {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = Theme.mono(11.5)
+        label.textColor = critical ? Theme.err : Theme.warn
+        label.preferredMaxLayoutWidth = setupContentWidth - 28
+        toolsList.addArrangedSubview(label)
     }
 
     private func pipelineNodes(
@@ -748,9 +835,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.ok
                 terminalDetail = "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
             } else {
-                // 명령 실행은 되므로 오류가 아니라 경고다 — claude 입력만 막힌다
+                // claude 입력이 없는 버튼은 그대로 도므로 오류가 아니라 경고다
                 terminalColor = Theme.warn
-                terminalDetail = "손쉬운 사용 권한 없음 — 명령은 실행되고 claude 입력은 전달되지 않음"
+                terminalDetail = "손쉬운 사용 권한 없음 — claude 입력이 예약된 버튼은 탭을 열지 않고 거절됨"
             }
         }
         return [
@@ -832,7 +919,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 .error("저장하지 않았습니다 — \(baseDirectoryReason(error))"),
                 to: baseDirStatusLabel
             )
-            resizeToFit()
+            // FittedContentStackView.layout() re-measures on the label change — no manual resize
             return
         }
         refresh()
@@ -901,7 +988,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         testResultLabel.stringValue = "실행 중…"
         testResultLabel.textColor = Theme.textDim
         testResultLabel.isHidden = false
-        resizeToFit()
         DispatchQueue.global().async { [weak self] in
             var failure: Error?
             do {
@@ -944,4 +1030,36 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             alert.runModal()
         }
     }
+}
+
+/// What to say when claude can be called but does **not** resolve to an executable — an install
+/// that is only a shell function or an alias.
+///
+/// The merge path launches `command claude`, which skips functions and aliases, so those setups
+/// take the typed route instead. All the user sees otherwise is that delivery got slower, or — on
+/// Warp without the Accessibility permission — that the button now refuses outright, with the
+/// reason nowhere on screen (independent reviewer, round 7).
+///
+/// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
+/// line already says that one, and saying it twice reads as two different problems.
+///
+/// It does **not** name the cause as "a function or an alias": the same answer comes from a
+/// relative `PATH` entry and from a file without the executable bit (both measured), and a card
+/// that asserts the wrong cause sends people to fix the wrong thing (round 8).
+func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
+    guard available?["claude"] == true, executable?["claude"] == false else { return nil }
+    return "claude를 실행 파일로 찾지 못해 claude 입력을 병합하지 못합니다"
+        + " (함수·별칭으로만 설치됐거나, PATH에 상대 경로 항목이 있거나, 실행 권한이 없는 경우입니다)"
+        + " — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다."
+}
+
+/// What the Accessibility card says. It used to promise that the command would still run without
+/// the permission and only the claude input would be missing — the app does the opposite: a button
+/// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
+/// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
+func warpAccessibilityHelpText() -> String {
+    "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 claude 입력이 "
+        + "예약된 버튼은 탭을 열지 않고 거절됩니다 — **기본 프리셋 3종이 전부 여기 해당합니다**"
+        + "(`!` 입력은 claude 셸 모드에 타이핑해야 실행되기 때문입니다). claude 입력이 없는 버튼과 "
+        + "평문 한 줄만 예약한 버튼은 권한 없이 그대로 동작합니다. 전달 중에는 그 탭을 보고 있어야 합니다."
 }

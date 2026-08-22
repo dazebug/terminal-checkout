@@ -6,6 +6,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindow: SetupWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Takes the user somewhere that explains a rejection. The extension shows a failure as a
+        // single ❌ and the reason string only reaches the console (issue #29), so this window is
+        // the only channel the app has. Rejections come off the socket queue, hence the hop to
+        // main. The headless server (`--headless-server`) never builds this delegate, so the hook
+        // stays nil there — which is why e2e does not open a window
+        ClaudeInputGuidance.present = { [weak self] _ in
+            DispatchQueue.main.async { self?.showSetupWindow() }
+        }
         startServer()
         Installer.autoSetup()
         Settings.refreshToolAvailability()

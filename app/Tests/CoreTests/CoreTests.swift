@@ -308,6 +308,23 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
+    /// **Reproduction (reviewer P2-6)**: command substitution drops NUL silently — `"pre\0post"`
+    /// was submitted as `prepost`. The injection path cannot put that byte into a tty either.
+    /// Since neither route can deliver it faithfully, **reject the request** instead of quietly
+    /// altering it
+    func testNULInInputsIsRejected() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["pre\u{0}post"],
+        ]))
+    }
+
+    func testNULInTheCommandIsRejected() {
+        XCTAssertThrowsError(try resolveRequest([
+            "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],
+        ]))
+    }
+
     // MARK: {cd} — the shell fragment the app assembles and fills in
 
     // For a user with no base directory the command must be byte-identical to before this change
@@ -635,7 +652,10 @@ final class ClaudeInjectorTests: XCTestCase {
 final class ClaudeControlKeyTests: XCTestCase {
     func testControlKeysAreTheExpectedBytes() {
         XCTAssertEqual(Array(claudeSubmitKey.utf8), [0x0D])
-        XCTAssertEqual(Array(claudeClearInputKey.utf8), [0x15])
+        // Ctrl+U **and** a Backspace, in that order: Ctrl+U alone leaves claude's `!` shell mode
+        // behind (measured), and Backspace is what removes the prefix. The order matters — on a
+        // box that still holds text, Backspace would only take its last character
+        XCTAssertEqual(Array(claudeClearInputKey.utf8), [0x15, 0x7F])
     }
 }
 
@@ -664,12 +684,1297 @@ final class TerminalIdentifierTests: XCTestCase {
     }
 }
 
+// MARK: - claude input preconditions (a known-undeliverable input rejects the request)
+// Opening the tab and giving up only on the input answers success, so the button shows ✅ and the
+// user is left with a claude session that has no context. **The argv track narrowed the
+// condition**: what the judgement looks at is not "were claude inputs scheduled" but "is there a
+// **tail** left after merging" (`PreparedRequest.claudeInputs`). Only what is knowable **before**
+// any side effect belongs here — a failure after the tab exists has nothing to undo, so it is
+// logged instead.
+
+final class ClaudeInputPreconditionTests: XCTestCase {
+    override func tearDown() {
+        ClaudeInputGuidance.present = nil // 훅은 전역이라 테스트 간에 새면 안 된다
+        super.tearDown()
+    }
+
+    /// iTerm2 and WezTerm read exactly their own screen by session or pane id, so they need no
+    /// extra permission. (iTerm2's Automation permission is needed to run the command at all —
+    /// without it osascript fails and the request is already rejected.)
+    func testITermIsNeverBlockedBeforeLaunch() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .iterm, injectsClaudeInput: true,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    /// WezTerm is not "never undeliverable" — it is "not decidable **here**". Whether a pane can
+    /// be addressed is only known once the mux has been asked, which is inside `runInWezTerm`
+    func testWezTermIsNotDecidedBeforeLaunch() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .wezterm, injectsClaudeInput: true,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    /// **Round 4**: with no mux to spawn into, `runInWezTerm` starts a fresh process, and a pane
+    /// in it cannot be addressed — `send-text`/`get-text` both need a mux pane id, so a scheduled
+    /// input is dropped **after** the command has already run and the answer was `{success:true}`.
+    /// Nothing has been spawned at that point, so it is a rejection like any other, raised at the
+    /// fallback boundary through the same door
+    func testWezTermFallbackWithScheduledInputIsRejectedBeforeSpawning() throws {
+        var seen: [ClaudeInputBlocker] = []
+        ClaudeInputGuidance.present = { seen.append($0) }
+
+        let rejection = try XCTUnwrap(wezTermFallbackRejection(injectsClaudeInput: true))
+        guard case TerminalError.claudeInputNotDeliverable(let blocker) = rejection else {
+            return XCTFail("전용 거절 케이스여야 한다: \(rejection)")
+        }
+        XCTAssertEqual(blocker, .wezTermSessionUnavailable)
+        // …and the setup window stays where it is: it has no WezTerm control on it, so taking
+        // focus away from Chrome to show it would explain nothing (`setupWindowCanHelp`)
+        XCTAssertEqual(seen, [])
+    }
+
+    /// A button with nothing to type keeps the fallback — starting WezTerm for someone who does
+    /// not have it running is the whole point of that branch
+    func testWezTermFallbackWithoutScheduledInputStillRuns() {
+        XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false))
+    }
+
+    /// Regression: a Warp button with **no tail** still runs without the permission, exactly as
+    /// it does today. Every shipped preset is in that case — this gate must not take back what
+    /// the argv track won.
+    func testWarpWithoutATailIsNotBlocked() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: false,
+            accessibilityTrusted: false, injectionHelperReady: false
+        ))
+    }
+
+    func testWarpWithoutAccessibilityIsBlockedBeforeAnyTabOpens() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: false, injectionHelperReady: true
+            ),
+            .warpAccessibility
+        )
+    }
+
+    func testWarpWithoutInjectionHelperIsBlocked() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: true, injectionHelperReady: false
+            ),
+            .warpHelperUnavailable
+        )
+    }
+
+    func testWarpWithEverythingReadyIsNotBlocked() {
+        XCTAssertNil(claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: true,
+            accessibilityTrusted: true, injectionHelperReady: true
+        ))
+    }
+
+    /// With both missing, name the permission — that is what the user has to do first, whereas
+    /// the helper wording sends them to reinstall (which fixes nothing if it is a permission).
+    func testAccessibilityIsReportedBeforeHelperWhenBothAreMissing() {
+        XCTAssertEqual(
+            claudeInputBlocker(
+                terminal: .warp, injectsClaudeInput: true,
+                accessibilityTrusted: false, injectionHelperReady: false
+            ),
+            .warpAccessibility
+        )
+    }
+
+    /// This judgement runs inside the execQueue that holds up the Chrome response — a TCC or
+    /// filesystem lookup on a request that cannot be blocked is button latency for nothing. So
+    /// state is only queried for Warp with a tail.
+    func testStateIsNotQueriedWhenTheAnswerCannotDependOnIt() {
+        var queries = 0
+        func probe() -> Bool {
+            queries += 1
+            return true
+        }
+        _ = claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: false,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        _ = claudeInputBlocker(
+            terminal: .iterm, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        _ = claudeInputBlocker(
+            terminal: .wezterm, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        XCTAssertEqual(queries, 0)
+        // With the permission it goes on to the helper (2 lookups); without it, it stops there (1)
+        _ = claudeInputBlocker(
+            terminal: .warp, injectsClaudeInput: true,
+            accessibilityTrusted: probe(), injectionHelperReady: probe()
+        )
+        XCTAssertEqual(queries, 2)
+    }
+
+    /// Each reason implies a different next action, so the wording has to differ — sharing one
+    /// would send a user who needs to grant a permission off to reinstall.
+    func testEachBlockerTellsADifferentNextAction() {
+        let messages = ClaudeInputBlocker.allCases.map(\.message)
+        XCTAssertFalse(messages.contains(where: \.isEmpty))
+        XCTAssertEqual(Set(messages).count, messages.count, "\(messages)")
+    }
+
+    /// The setup window is only brought forward for reasons it can actually do something about.
+    /// Stealing focus from Chrome to show a window with no WezTerm control on it is noise, and the
+    /// hook used to ignore the reason entirely
+    func testOnlyBlockersTheSetupWindowCanActOnBringItForward() {
+        XCTAssertTrue(ClaudeInputBlocker.warpAccessibility.setupWindowCanHelp)
+        XCTAssertTrue(ClaudeInputBlocker.warpHelperUnavailable.setupWindowCanHelp)
+        XCTAssertFalse(ClaudeInputBlocker.wezTermSessionUnavailable.setupWindowCanHelp)
+    }
+
+    // MARK: The last check before the side effect (round 4, TOCTOU)
+
+    /// **Round 4**: what `runInTerminal` checked can be gone by the time the Tab Config is
+    /// written — the permission revoked, the helper removed by a reinstall. That branch used to
+    /// log and run the command with no helper, which answers `{success:true}` with the input
+    /// dropped: the exact symptom this loop exists to remove. Checked again as late as possible,
+    /// it rejects
+    func testWarpInjectionSetupRejectsWhenThePermissionWentAwayAfterTheEarlierCheck() {
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: false,
+            helperExecutable: { "/x/helper" }, socketPath: { _ in "/tmp/tcw.sock" }
+        )) { error in
+            guard case TerminalError.claudeInputNotDeliverable(.warpAccessibility) = error else {
+                return XCTFail("권한 상실은 전용 거절이어야 한다: \(error)")
+            }
+        }
+    }
+
+    func testWarpInjectionSetupRejectsWhenTheHelperWentAway() {
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { nil }, socketPath: { _ in "/tmp/tcw.sock" }
+        )) { error in
+            guard case TerminalError.claudeInputNotDeliverable(.warpHelperUnavailable) = error else {
+                return XCTFail("헬퍼 실종은 전용 거절이어야 한다: \(error)")
+            }
+        }
+        XCTAssertThrowsError(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { "/x/helper" }, socketPath: { _ in nil }
+        ))
+    }
+
+    /// A button with nothing to type never touches any of this — no permission, no helper line
+    func testWarpInjectionSetupIsSkippedEntirelyWithoutScheduledInput() throws {
+        var probed = false
+        XCTAssertNil(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: false,
+            accessibilityTrusted: { probed = true; return false }(),
+            helperExecutable: { probed = true; return nil }, socketPath: { _ in nil }
+        ))
+        XCTAssertFalse(probed)
+    }
+
+    func testWarpInjectionSetupReturnsTheHelperLineAndItsSocket() throws {
+        let setup = try XCTUnwrap(try warpInjectionSetup(
+            token: "a1b2c3d4", injectsClaudeInput: true,
+            accessibilityTrusted: true,
+            helperExecutable: { "/x/warp helper" }, socketPath: { "/tmp/tcw-\($0).sock" }
+        ))
+        XCTAssertEqual(setup.socket, "/tmp/tcw-a1b2c3d4.sock")
+        XCTAssertEqual(
+            setup.line, warpHelperCommand(executable: "/x/warp helper", socketPath: setup.socket)
+        )
+    }
+
+    /// Rejection and explanation go through one door — the contract that keeps any new rejection
+    /// site from becoming "a ❌ with the reason nowhere".
+    func testRejectionNotifiesTheGuidanceHookWithTheSameBlocker() {
+        var seen: [ClaudeInputBlocker] = []
+        ClaudeInputGuidance.present = { seen.append($0) }
+
+        let error = claudeInputRejection(.warpHelperUnavailable)
+
+        XCTAssertEqual(seen, [.warpHelperUnavailable])
+        guard case .claudeInputNotDeliverable(let blocker) = error else {
+            return XCTFail("전달 불가 거절은 전용 케이스여야 한다 — 문자열로 식별하면 안 된다")
+        }
+        XCTAssertEqual(blocker, .warpHelperUnavailable)
+    }
+
+    /// The headless server (`--headless-server`) installs no hook — the rejection still has to go out
+    func testRejectionWithoutAHookStillThrows() {
+        ClaudeInputGuidance.present = nil
+        XCTAssertEqual(
+            errorMessage(claudeInputRejection(.warpAccessibility)),
+            ClaudeInputBlocker.warpAccessibility.message
+        )
+    }
+
+    /// **Wiring**: the judgement has to be the first line of `runInTerminal` for the rejection to
+    /// beat the tab. A correct decision function with no wiring leaves the reproduced defect
+    /// exactly as it was (the prefix runs and the answer is `{success:true}`). On a machine where
+    /// the permission is granted this call would really open a Warp tab, so it skips there — the
+    /// rule that agents and CI do not launch Warp comes first.
+    func testRunInTerminalRejectsBeforeOpeningAnyTab() throws {
+        try XCTSkipIf(
+            accessibilityIsTrusted(),
+            "손쉬운 사용이 허용된 환경 — 이 경로는 실제로 Warp 탭을 연다"
+        )
+        XCTAssertThrowsError(
+            try runInTerminal(command: "claude", terminal: .warp, injectsClaudeInput: true)
+        ) { error in
+            guard case TerminalError.claudeInputNotDeliverable(let blocker) = error else {
+                return XCTFail("탭을 열기 전에 전용 거절이 나와야 한다: \(error)")
+            }
+            XCTAssertEqual(blocker, .warpAccessibility)
+        }
+    }
+
+    // The regression that a missing tail must **not** be rejected is covered as a pure function
+    // by `testWarpWithoutATailIsNotBlocked`. Checking it through `runInTerminal` instead passes
+    // the judgement, falls through to `runInWarp` and **really opens a Warp tab** (done once by
+    // mistake in this round) — the passing branch has side effects, so unit tests stay off it.
+
+    /// The shape in which the rejection reaches the extension — it only turns the button into a ❌
+    /// on `{success:false}` (content.js `runButtonCommand`), so if this response shape breaks the
+    /// failure goes quiet again.
+    func testHandleRequestReportsClaudeInputRejectionAsFailure() {
+        let resp = handleRequest(
+            json: [
+                "command_template": "z {repo} && claude",
+                "variables": ["repo": "remy"],
+                "claude_inputs": ["!gh pr view 1"],
+            ],
+            run: { _ in throw TerminalError.claudeInputNotDeliverable(.warpAccessibility) }
+        )
+        XCTAssertEqual(resp["success"] as? Bool, false)
+        XCTAssertEqual(resp["error"] as? String, ClaudeInputBlocker.warpAccessibility.message)
+    }
+}
+
+// MARK: - claude input boundary
+// The split is still computed as prefix/tail, but since round 4 only **one bit of it is used**:
+// an empty tail means the whole list merges into claude's opening message, and anything else
+// means the whole list is typed (`prepareRequest`). The split itself is what the boundary rule
+// defines, and it is what the property test can pin — no input lost or duplicated on the way to
+// that answer. There are only two boundaries: (1) a line the input box reads specially — a slash
+// command or a `#` memory line, which are only read that way as a whole message (put a banner in
+// front and it becomes inert text); (2) a `!` that follows an interactive input, whose output was
+// meant as context for the *next* instruction, so hoisting it into the opening message changes
+// what the earlier one sees. Every other transition merges — the user chose the change in meaning
+// from N responses to one.
+
+final class ClaudeInputPlanTests: XCTestCase {
+    /// **The rule this round is built on (user decision).** A `!` input has to reach claude's own
+    /// shell mode, so it is **typed**, never pre-run and pasted: measured on 2.1.238, `claude --
+    /// '!echo x'` arrives as an ordinary message and claude then runs it through its Bash tool —
+    /// which can stop for a permission prompt, is a model judgement rather than a shell fact, and
+    /// costs a turn. What the merge buys instead is **cycles**: a run of `!` inputs becomes one
+    /// typed line joined with `;`, so three inputs are one type/submit cycle rather than three.
+    func testARunOfShellInputsBecomesOneTypedLine() {
+        let typed = claudeTypedInputs(["!gh pr view 42", "!gh pr diff 42", "!git status"])
+        XCTAssertEqual(typed.count, 1, "연속 ! 입력이 한 사이클로 합쳐지지 않았다")
+        XCTAssertEqual(
+            typed.first,
+            "!/bin/echo '==== !gh pr view 42 ===='; gh pr view 42;"
+                + " /bin/echo '==== !gh pr diff 42 ===='; gh pr diff 42;"
+                + " /bin/echo '==== !git status ===='; git status"
+        )
+    }
+
+    /// `;` and not `&&`: each `!` used to run on its own, so a failure never stopped the next one.
+    /// Keeping that is what makes the merge equivalent to what the user had (their correction)
+    func testTheRunIsJoinedWithSemicolonsSoAFailureDoesNotStopTheRest() {
+        let typed = claudeTypedInputs(["!false", "!echo after"])
+        XCTAssertEqual(typed.count, 1)
+        XCTAssertFalse(try XCTUnwrap(typed.first).contains("&&"))
+        XCTAssertTrue(
+            try XCTUnwrap(typed.first).contains("; /bin/echo '==== !echo after ===='; echo after")
+        )
+    }
+
+    /// A lone `!` keeps its own shape — the banners exist to tell merged outputs apart, and with
+    /// one command claude's shell mode already shows what ran
+    func testASingleShellInputIsTypedAsItWas() {
+        XCTAssertEqual(claudeTypedInputs(["!gh issue view 1"]), ["!gh issue view 1"])
+    }
+
+    /// A run ends at the first input that is not a `!`, and everything keeps its order
+    func testRunsAreBrokenByOtherInputsAndOrderIsKept() {
+        XCTAssertEqual(
+            claudeTypedInputs(["!a", "!b", "설계 정리해줘", "/review", "!c", "!d"]),
+            [
+                "!/bin/echo '==== !a ===='; a; /bin/echo '==== !b ===='; b",
+                "설계 정리해줘",
+                "/review",
+                "!/bin/echo '==== !c ===='; c; /bin/echo '==== !d ===='; d",
+            ]
+        )
+    }
+
+    /// Nothing may be lost or reordered on the way into the merged line — the property that
+    /// mattered when the split was prefix/tail, restated for the new shape
+    func testEveryInputSurvivesTheConversionInOrder() {
+        let alphabet = ["!a", "!b", "plain", "/slash", "# memo", "!c"]
+        for _ in 0..<400 {
+            let inputs = (0..<Int.random(in: 0...6)).map { _ in alphabet.randomElement()! }
+            let joined = claudeTypedInputs(inputs).joined(separator: "\n")
+            var cursor = joined.startIndex
+            for input in inputs {
+                // the body of a `!` input appears with its `!` either kept (lone) or turned into
+                // a banner + body (merged), so look for the text after the `!`
+                let needle = input.hasPrefix("!") ? String(input.dropFirst()) : input
+                guard let found = joined.range(of: needle, range: cursor..<joined.endIndex) else {
+                    return XCTFail("\(inputs) → \(joined): \(input) 유실")
+                }
+                cursor = found.lowerBound // 순서 보존 (같은 입력이 반복될 수 있어 상한만 민다)
+            }
+        }
+    }
+
+    /// **Reproduction (round 11, Codex — blocking).** Joining bodies with `; ` is only sound if
+    /// each body *ends* where it looks like it ends. Three shapes break that, and all three are a
+    /// preset edit away (`# note` on a `gh` line, `npm run watch &`, a heredoc):
+    ///
+    ///  1. an unquoted `#` comments out the rest of the **merged line**, banners included
+    ///  2. a trailing `&` produces `… &; …`, a syntax error that kills the whole line
+    ///  3. `<<` swallows what follows as heredoc content
+    ///
+    /// Delivery is asynchronous, so the button still shows success. The fix is not a shell parser:
+    /// a run merges only when **every** body is provably safe to join, and otherwise each input is
+    /// typed on its own — slower, and exactly what it says.
+    func testARunIsTypedSeparatelyWhenJoiningWouldChangeMeaning() {
+        for run in [
+            ["!printf '%s\n' one # note", "!printf '%s\n' two"],
+            ["!sleep 0.01 &", "!printf '%s\n' two"],
+            ["!cat <<EOF\nheredoc\nEOF", "!printf '%s\n' two"],
+            ["!echo 'unterminated", "!printf '%s\n' two"],
+            ["!echo one \\", "!printf '%s\n' two"],
+            // …and three more the independent reviewer measured, all of which abort the whole
+            // line rather than just their own command:
+            ["!echo a;", "!printf '%s\n' two"],        // `…;; …` is a parse error
+            ["!", "!printf '%s\n' two"],               // an empty body gives `; ;`
+            ["!   ", "!printf '%s\n' two"],            // the request trims this one to `!`
+            ["!echo ====", "!printf '%s\n' two"],      // zsh expands a word starting with `=`
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+        }
+    }
+
+    /// …and the shipped presets — plain `gh` invocations — must still merge, or the round-10 win
+    /// is gone
+    func testTheShippedPresetRunsStillMerge() {
+        for run in [
+            ["!gh pr view 42 --comments", "!gh pr diff 42"],
+            [
+                "!gh issue view 42", "!gh issue view 42 --comments",
+                "!gh api repos/o/r/issues/42/timeline --jq '[.[]|select(.event==\"cross-referenced\")]'",
+            ],
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run).count, 1, "\(run) 이 병합되지 않았다")
+        }
+    }
+
+    /// **Measured (Q2b)**: separate `!` submissions do **not** share shell state — `!export X=1`
+    /// then `!echo $X` prints nothing, because each `!` is a fresh eval. Merging them with `;`
+    /// does share it, and that is a real difference in what runs: `["!cd sub", "!rm -rf build"]`
+    /// deletes `./build` when typed separately and `sub/build` when merged. Deleting the wrong
+    /// directory is the failure class this loop treats as blocking, so a body that changes shell
+    /// state is not merged — it costs a cycle, and the shipped presets (read-only `gh`) never hit it
+    func testABodyThatChangesShellStateIsNotMerged() {
+        for run in [
+            ["!cd sub", "!rm -rf build"],
+            ["!export TOKEN=x", "!gh pr view 1"],
+            ["!TOKEN=x gh pr view 1", "!gh pr diff 1"],
+            ["!git fetch && cd ../worktree", "!gh pr diff 1"],
+            ["!source .env", "!gh pr view 1"],
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 을 합쳤다")
+        }
+        // …and the read-only shapes the presets actually use still merge
+        XCTAssertEqual(claudeTypedInputs(["!gh pr view 1", "!gh pr diff 1"]).count, 1)
+    }
+
+    /// The merged line runs in **claude's** `!` shell, which is zsh-family (measured: a missing
+    /// command reports `(eval):1: command not found`). A word starting with `=` is harmless in bash
+    /// and an expansion error in zsh that takes the whole line with it, which is exactly the
+    /// difference merging must not create — so the gate rejects it for every shell
+    func testAWordThatOnlyZshWouldExpandStopsTheMerge() {
+        XCTAssertFalse(claudeBodyJoinsSafely("echo ===="))
+        XCTAssertFalse(claudeBodyJoinsSafely("=ls"))
+        XCTAssertTrue(claudeBodyJoinsSafely("gh pr view 42 --jq '.title=\"x\"'"))
+    }
+
+    /// **Reproduction (round 13, Codex — blocking).** The gate used to call a `#` a comment only
+    /// when a **space** came before it, so a `#` right after a separator was read as literal text
+    /// and the run merged. It is a comment there too, and it swallows the rest of the merged line —
+    /// banners and every later body included. Measured, all three shells, `echo one;# note; echo two`
+    /// prints `one` and **exits 0**: the second input disappears with no error anywhere, and the
+    /// button still reports success because delivery is asynchronous.
+    ///
+    /// `&&` and `|` are the same position: zsh takes `echo one&&# note` as `one` alone (exit 0),
+    /// bash and dash as a syntax error that runs nothing at all.
+    func testAnOperatorBeforeAHashIsNotProofThatItIsLiteral() {
+        for run in [
+            ["!echo one;# note", "!echo two"],
+            ["!echo one&&# note", "!echo two"],
+            ["!echo one|# note", "!echo two"],
+            ["!echo one; # note", "!echo two"], // the round-11 shape, still folded
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+        }
+    }
+
+    /// The same guard was the only thing standing behind `=`, and it misread that position for the
+    /// same reason: `echo one;=tcnosuchcmd` puts the word at a command position, where zsh expands
+    /// it and **aborts the rest of the line** (measured: `one` prints, `two` never does)
+    func testAnOperatorBeforeAnEqualsIsNotProofThatItIsLiteralEither() {
+        XCTAssertEqual(
+            claudeTypedInputs(["!echo one;=tcnosuchcmd", "!echo two"]),
+            ["!echo one;=tcnosuchcmd", "!echo two"]
+        )
+    }
+
+    /// **The gate now makes no judgement about position at all**, and that is the point: a rule of
+    /// the form "this `#` is provably not a comment" has produced two silent-loss defects, and the
+    /// gate is a whitelist, so the answer is to stop proving. The price is over-folding, which
+    /// costs a type/submit cycle and never correctness — pinned here so it stays visible.
+    func testTheGateFoldsEveryUnquotedHashAndEqualsIncludingLiteralOnes() {
+        XCTAssertFalse(claudeBodyJoinsSafely("echo a#b"))        // literal in every shell, folded
+        XCTAssertFalse(claudeBodyJoinsSafely("gh pr list --state=open")) // legal, folded
+        // …and quoting still merges, which is what keeps the shipped presets on the fast path
+        XCTAssertTrue(claudeBodyJoinsSafely("gh api x --jq '[.[]|select(.event==\"y\")]'"))
+        XCTAssertTrue(claudeBodyJoinsSafely("echo '#not a comment'"))
+        // A backslash-escaped one is data too — and measured to be disarmed: zsh reports a plain
+        // `command not found` for `\=tcnosuchcmd` instead of expanding it
+        XCTAssertTrue(claudeBodyJoinsSafely("echo a\\#b"))
+    }
+
+    /// The trailing-operator rule had no mirror and an incomplete list. Both edges of a body are
+    /// spliced onto `; `, so an operator on either side is a parse error that runs **nothing** on
+    /// the whole line (measured in zsh, bash and dash; zsh alone tolerates a leading `;`, and the
+    /// gate is conservative across shells for the same reason the `=` rule is)
+    func testABodyThatDoesNotStartOrEndWhereItLooksLikeItDoesIsNotMerged() {
+        for run in [
+            ["!echo one >", "!echo two"],   // `… >; …` — parse error
+            ["!echo one <", "!echo two"],
+            ["!;echo hi", "!echo two"],     // `…; ;echo hi` — parse error in bash and dash
+            ["!|cat", "!echo two"],
+            ["!&& echo hi", "!echo two"],
+            ["!& echo hi", "!echo two"],
+        ] {
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+        }
+    }
+
+    /// **Reproduction (PR #36 review, Codex).** The separator cases consumed `;` and `|` one
+    /// character at a time, so a malformed separator *sequence* — an empty command between two
+    /// separators — passed the gate: `["!echo one ||| echo two", "!echo later"]` merged, the whole
+    /// line died as a parse error in zsh, bash AND dash (measured), and `later` never ran, while
+    /// separate submissions run it. Separators are now read as tokens: `|`, `||`, `&&` and a
+    /// single `;` are valid only after a command word; anything else folds the run.
+    func testMalformedSeparatorSequencesDoNotMerge() {
+        for body in [
+            "echo one ||| echo two", "echo one ||; echo two", "echo one |; echo two",
+            "echo one ;; echo two", "echo one ; ; echo two", "echo one ;| echo two",
+            "echo one && ; echo two", "echo one ; && echo two", "echo one | | echo two",
+        ] {
+            XCTAssertFalse(claudeBodyJoinsSafely(body), "\(body) 를 안전하다고 판정했다")
+        }
+        // …and every valid separator shape still merges — the gate must not fold real pipes
+        for body in [
+            "echo one | wc -l", "echo one || echo two", "gh pr view 1 && gh pr diff 1",
+            "echo one; echo two", "gh api x --jq '.[]|.n'", "echo 'a ||| b'",
+        ] {
+            XCTAssertTrue(claudeBodyJoinsSafely(body), "\(body) 를 접었다")
+        }
+    }
+
+    /// **Reproduction (round 13, independent reviewer — 162 merged/separate runs in bash and zsh,
+    /// 47 divergences).** Two families were missing from the state-word list:
+    ///  - `exit` and `return` end the eval. Merged, `…; exit 0; …` prints nothing after itself and
+    ///    **exits 0** (measured, zsh and bash for `exit`, zsh for `return`), so every later body
+    ///    disappears with no error — the same silence as the `#` case
+    ///  - words with no partner on the list: `setopt` had no `unsetopt`, `hash` no `unhash`, and
+    ///    the name-binding family (`enable`/`disable`, `unfunction`, `autoload`, `zmodload`) and
+    ///    the emulation switch (`emulate`) were absent altogether
+    ///
+    /// The list is not a claim of completeness — it is the second line, behind "anything the scan
+    /// cannot read folds" — but a *missing partner* is a hole with no argument behind it.
+    func testWordsThatEndTheLineOrRebindNamesAreNotMerged() {
+        for body in [
+            "exit 0", "return 0",
+            "unsetopt nomatch", "unhash gh", "unfunction gh", "emulate sh",
+            "disable echo", "enable -n echo", "zmodload zsh/pcre", "autoload -Uz compinit",
+            "let x", "integer n", "float f", "read answer",
+        ] {
+            XCTAssertFalse(claudeBodyJoinsSafely(body), body)
+        }
+        // …and the shipped shapes are untouched
+        XCTAssertTrue(claudeBodyJoinsSafely("gh pr diff 42"))
+    }
+
+    /// **Reproduction (round 14, independent reviewer).** The two scanners in this file disagreed
+    /// about the same words: the append scanner folds `if`/`for`/`while`/`until`/`select` as
+    /// "grammar we do not model", while the join gate waved them through. Both halves of that
+    /// grammar bite on a merged line, and both were measured:
+    ///  - the grammar the scan cannot see belongs to the **whole line**, not to one body:
+    ///    `for i in 1 2 do echo x; done` (one `;` missing) is a parse error in zsh and bash, and
+    ///    neither the body before it nor the one after it runs
+    ///  - a *well-formed* compound still leaks: `for i in 1 2; do :; done` leaves `i=2` behind
+    ///    (measured, both shells), and later bodies on the merged line read it, while separate `!`
+    ///    submissions never could — item 117's class, reached through a word the gate did not fold
+    ///
+    /// So the keyword set lives in one constant that both scanners read.
+    func testCompoundCommandKeywordsFoldInBothScanners() {
+        for keyword in shellCompoundCommandKeywords {
+            XCTAssertFalse(claudeBodyJoinsSafely("echo x \(keyword) y"), keyword)
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt("\(keyword) && claude"), keyword)
+        }
+        XCTAssertEqual(
+            claudeTypedInputs(["!for i in 1 2 do echo x; done", "!gh pr diff 1"]),
+            ["!for i in 1 2 do echo x; done", "!gh pr diff 1"]
+        )
+        // …and the shipped preset run still merges — its `select` sits inside the `--jq` quotes,
+        // which the scan skips whole
+        XCTAssertEqual(
+            claudeTypedInputs([
+                "!gh issue view 42",
+                "!gh api repos/o/r/issues/42/timeline --jq '[.[]|select(.event==\"x\")]'",
+            ]).count,
+            1
+        )
+    }
+
+    /// A state-changing word does not stop being one because an operator or a backslash is stuck to
+    /// it. `cd>/dev/null` really changes directory (measured: `cd /tmp; cd>/dev/null; pwd` prints
+    /// `$HOME`), and so does `\c\d /usr` — both are the wrong-directory class of item 117, reached
+    /// through a word the scan was splitting in the wrong place
+    func testAStateChangingWordIsSeenThroughARedirectionOrAnEscape() {
+        XCTAssertFalse(claudeBodyJoinsSafely("cd>/dev/null"))
+        XCTAssertFalse(claudeBodyJoinsSafely("cd</dev/null"))
+        XCTAssertFalse(claudeBodyJoinsSafely("\\c\\d sub"))
+        XCTAssertEqual(
+            claudeTypedInputs(["!cd>/dev/null", "!rm -rf build"]),
+            ["!cd>/dev/null", "!rm -rf build"]
+        )
+    }
+
+    /// The merged line reaches Warp as **one** injection payload, and the helper refuses anything
+    /// over 8 KiB. Merging is the optimisation, so it is what gives way: a run that would exceed
+    /// the ceiling is typed input by input — not a promise that each of them is short, since a single
+    /// input has no limit of its own, only that the merge stops adding to it. Nothing is truncated
+    func testARunTooLongToInjectInOnePieceIsTypedSeparately() {
+        let long = "!gh api " + String(repeating: "x", count: 2500)
+        XCTAssertEqual(claudeTypedInputs([long, long]), [long, long])
+    }
+
+    /// The banner cannot be hijacked by the body before it. `echo` is a shell builtin a body could
+    /// redefine (`echo() { :; }`), and the merged line runs the bodies **before** the later
+    /// banners — so the banner calls it by absolute path, which no function or alias can take over
+    func testTheBannerCannotBeRedefinedByABody() {
+        let merged = try? XCTUnwrap(claudeTypedInputs(["!echo one", "!echo two"]).first)
+        XCTAssertEqual(merged?.contains("/bin/echo '==== !echo one ===='"), true, merged ?? "nil")
+        XCTAssertEqual(merged?.contains("; echo '===="), false, merged ?? "nil")
+    }
+
+    /// Why the gate exists, shown in a real shell: the line we would have produced for the comment
+    /// case runs only the first command, and the second never happens
+    func testTheUnsafeJoinReallyLosesTheSecondCommandInARealShell() throws {
+        let joined = "printf '%s\n' one # note; /bin/echo '==== two ===='; printf '%s\n' two"
+        let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
+        XCTAssertEqual(result.stdout, "one\n", "재현이 성립하지 않는다: \(result.stdout)")
+    }
+
+    /// The same, for the three shapes round 13 adds. None of them merely loses its own command:
+    /// the rest of the merged line — later banners and bodies included — is either swallowed by a
+    /// comment or never parses
+    func testTheJoinsAddedInRoundThirteenAlsoRunNothingAfterThem() throws {
+        for (label, joined) in [
+            ("hash after a separator",
+             "/bin/echo one;# note; /bin/echo '==== two ===='; /bin/echo two"),
+            ("body ending in a redirection",
+             "/bin/echo one >; /bin/echo '==== two ===='; /bin/echo two"),
+            ("body starting with a separator",
+             "/bin/echo one; ;/bin/echo hi; /bin/echo '==== two ===='; /bin/echo two"),
+        ] {
+            let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
+            XCTAssertFalse(
+                result.stdout.contains("two"), "\(label): 재현이 성립하지 않는다 — \(result.stdout)"
+            )
+        }
+    }
+
+    /// Plain text is just a message, so the whole list rides in argv when that is all there is —
+
+    /// and only then (see the plan's dissent: mixing argv with typing in one session brings back
+    /// the measured startup-clear race that round 4 removed)
+    func testAllPlainTextBecomesTheOpeningMessage() {
+        XCTAssertEqual(claudeArgvOpeningMessage(["설계 정리해줘"]), "설계 정리해줘")
+        // **Exactly one.** Joining several with blank lines produced a message the newline guard
+        // in `prepareRequest` then rejected, so two plain inputs could never ride argv — the join
+        // was dead code pretending to be a feature (round 11, Codex). Several plain inputs are
+        // typed, which is visible and needs no shell-specific quoting of newlines
+        XCTAssertNil(claudeArgvOpeningMessage(["설계 정리해줘", "그다음 테스트 추가"]))
+        XCTAssertNil(claudeArgvOpeningMessage(["설계 정리해줘", "!git status"]))
+        XCTAssertNil(claudeArgvOpeningMessage(["!git status"]))
+        XCTAssertNil(claudeArgvOpeningMessage(["/review"]))
+        XCTAssertNil(claudeArgvOpeningMessage([]))
+    }
+}
+
+final class ClaudeCommandTailTests: XCTestCase {
+    func testTrailingClaudeMatches() {
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("z remy && claude"))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("z remy && claude  "))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && { git checkout b || cd ../r-b; } && claude"
+        ))
+    }
+
+    /// One flag is enough to fall back, because some flags optionally take a value — measured:
+    /// `claude -p --resume "Reply with exactly: OK"` → `--resume ... Provided value
+    /// "Reply with exactly: OK" is not a UUID`. The appended prompt was swallowed as the **value**
+    /// of `--resume`. The app has no table of claude's flags and that table changes between
+    /// versions, so there is no way to tell which flags eat the next argument → fall back.
+    func testAnyFlagAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude --resume"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude -c"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude --model=sonnet --resume"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude --model sonnet"))
+    }
+
+    func testClaudeNotAtACommandPositionDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("git commit -m claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z claude-code"))
+    }
+
+    func testQuotedClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo 'claude'"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo \"claude\""))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo '&& claude'"))
+    }
+
+    func testPipeOrRedirectDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat f | claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude > out.txt"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude 2>&1"))
+    }
+
+    func testCommandContinuingAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude && echo done"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude; echo done"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude &"))
+    }
+
+    /// Appending after a comment comments out the addition too — a silent loss, so fall back
+    func testCommentedClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude # 나중에"))
+    }
+
+    // The next five are all **reproductions from the external reviewer**. A token heuristic only
+    // looks at the last segment, and even when that segment looks like `claude` the syntax before
+    // it changes the meaning entirely — these are what disproved "the worst a misjudgement can do
+    // is lose the prompt silently" (comment = loss, heredoc = breakage, function definition =
+    // **unintended execution**).
+
+    /// Reproduction: a comment mid-command swallows the rest. The last token is `claude` but it
+    /// never runs
+    func testCommentEarlierInTheCommandDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo ready # && claude"))
+    }
+
+    /// Reproduction: the final `claude` is a heredoc **terminator**. Appending an argument changes
+    /// the terminator, and the shell either hangs waiting for input or fails
+    func testHeredocDelimiterThatLooksLikeClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat <<claude\nstuff\nclaude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("cat <<'EOF'\nx\nEOF\nclaude"))
+    }
+
+    /// Reproduction (the worst one): a shell function defined earlier captures the name `claude`,
+    /// and the **plain-text input we appended is executed as a shell command.** Not a silent loss
+    /// — arbitrary execution
+    func testFunctionDefinitionCapturingTheNameDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude() { /bin/sh -c \"$1\"; }\nclaude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude() ( /bin/sh -c \"$1\" )\nclaude"))
+    }
+
+    // The next block is **round 4**: both external reviewers, independently, got a plain-text
+    // input executed as a shell command through the *keyword* form of a function definition,
+    // which has no `(` for a "word followed by `(`" rule to see. Enumerating definition syntaxes
+    // is what let that through, so the judgement moved up to command-position words.
+
+    /// Reproduction (both reviewers created a sentinel file with these): bash/zsh `function name`
+    /// needs no parentheses, and zsh even accepts a brace-only body
+    func testKeywordFunctionDefinitionDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("function claude { eval \"$@\"; }; claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(
+            "function claude { shift; /bin/sh -c \"$1\"; }; claude"
+        ))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("function claude { echo hi }; claude"))
+    }
+
+    /// Reproduction: `{ }` has to stay allowed (a shipped preset uses it), so a definition can be
+    /// **hidden inside the group**. Judging every command position catches it wherever it sits
+    func testFunctionDefinitionHiddenInsideAGroupDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(
+            "{ function claude { eval \"$@\"; }; } && claude"
+        ))
+    }
+
+    /// Everything that can bind the name `claude` to something else has to run as a **builtin or
+    /// keyword in this same shell**, so it is visible in command position
+    func testNameRebindingBuiltinsFold() {
+        for command in [
+            "alias claude='sh -c' && claude",
+            "unalias claude; claude",
+            "eval 'alias claude=sh' && claude",
+            "source ./evil.sh && claude",
+            ". ./evil.sh && claude",
+            "hash -p /tmp/evil claude && claude",
+            "autoload -Uz claude && claude",
+            "trap 'alias claude=sh' DEBUG && claude",
+            "enable -f ./evil.so claude && claude",
+            "PATH=/tmp/evil:/usr/bin && claude",
+            "export PATH=/tmp/evil:/usr/bin; claude",
+            "declare -x PATH=/tmp/evil; claude",
+        ] {
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt(command), command)
+        }
+    }
+
+    /// A command modifier keeps the rebinding in **this** shell instead of a child, so it can
+    /// carry one of the words above behind it
+    func testCommandModifiersThatKeepRebindingInThisShellFold() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("builtin eval 'alias claude=sh' && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("command eval x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("time eval x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("! eval x && claude"))
+    }
+
+    /// Quoting does not stop a builtin (`'eval' x` runs eval) and an expansion hides the name
+    /// entirely — a command name we cannot read as plain text folds
+    func testCommandNameWeCannotReadAsTextFolds() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("'eval' 'alias claude=sh' && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("\"eval\" x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("$RUNNER build && claude"))
+    }
+
+    /// Compound commands are grammar this scanner does not model (it models one flat chain of
+    /// simple commands). It folds rather than guess — `then`, `do` and friends open command
+    /// positions that a flat segment scan does not see
+    func testCompoundCommandsFold() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("if true; then function claude { :; }; fi; claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("for f in a b; do echo x; done && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("while true; do break; done && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("case x in y) echo z;; esac && claude"))
+    }
+
+    /// **Reproduction (round 5, both reviewers, sentinel confirmed)**: reading only the *first*
+    /// word of a segment as the command position is wrong. A redirection (`> /dev/null eval …`)
+    /// and a zsh precommand modifier (`noglob`, `nocorrect`, `-`) both sit in front of the command
+    /// name, so the scanner read `/dev/null` / `noglob` as the command and never saw the `eval`
+    /// behind it — a plain-text claude input then ran as a shell command
+    func testWordsInFrontOfTheCommandNameCannotHideARebinding() {
+        for command in [
+            "> /dev/null eval 'claude() { shift; /bin/sh -c \"$1\"; }' && claude",
+            "noglob eval 'claude() { :; }' && claude",
+            "nocorrect eval 'claude() { :; }' && claude",
+            "- eval 'claude() { :; }' && claude",
+            "2>/dev/null eval x && claude",
+        ] {
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt(command), command)
+        }
+    }
+
+    /// A word we cannot read is not safe just because something precedes it — that something may
+    /// be a modifier, which is exactly what we stopped trying to enumerate
+    func testAWordWeCannotReadFoldsWhereverItSits() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("noglob 'eval' 'claude() { :; }' && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("$RUNNER eval x && claude"))
+    }
+
+    /// zsh's `zmodload` is bash's `enable` — the pair was asymmetric. It is also the only way to
+    /// make `claude` a **builtin**, and `command` does not bypass builtins (it bypasses functions
+    /// and aliases), so this is the one rebinding the structural half cannot answer
+    func testModuleLoadingFolds() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("zmodload zsh/parameter && claude"))
+    }
+
+    /// An assignment with a subscript is still an assignment — zsh's `functions[claude]=…` rebinds
+    /// the name, and the name check used to stop at the first `[`
+    func testSubscriptedAssignmentCountsAsAnAssignment() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("functions[claude]=x && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("PATH[1]=/tmp && claude"))
+    }
+
+    /// The price of not looking for the command position: an ordinary **argument** spelled like one
+    /// of those words folds too. That is the safe direction — the request falls back to typing,
+    /// which is what it did before the merge existed — and the shipped presets are unaffected
+    /// (`testGroupsAndSubshellsInShippedPresetsStillMatch`)
+    func testAFoldWordUsedAsAnArgumentAlsoFolds() {
+        // The common shapes that lose the merge, pinned so the cost stays visible. On Warp without
+        // the Accessibility permission these are not merely slower: everything then has to be
+        // typed, and a button that cannot be delivered is refused (README "Known limits")
+        for command in [
+            "git add . && claude",
+            "echo function && claude",
+            "export FOO=1 && claude",
+            "ANTHROPIC_MODEL=opus claude",
+            "source ~/.nvm/nvm.sh && claude",
+            "direnv exec . claude",
+        ] {
+            XCTAssertFalse(commandAcceptsAppendedClaudePrompt(command), command)
+        }
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt("git add -A && claude"))
+    }
+
+    /// Whitespace that is not a space or a tab is not a word separator to the shell: `claude\r`
+    /// is a **different command name** and fails with "command not found" once we append to it
+    func testExoticWhitespaceAfterClaudeDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude\r"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude\u{00A0}"))
+    }
+
+    /// Appending after a backgrounding `&` makes the argument **the next command**
+    func testBackgroundOperatorDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("sleep 1 & claude"))
+    }
+
+    /// Command substitution, backticks, line continuations and newlines all change the structure
+    /// the judgement reads — any one of them folds it
+    func testSubstitutionsAndLineContinuationsDoNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo $(date) && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo `date` && claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo a \\\n&& claude"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("echo a\nclaude"))
+    }
+
+    /// Regression: the groups and subshells in the shipped presets are **not function
+    /// definitions** — folding on those would cost `Start Work on Issue` (a preset that has claude
+    /// inputs) its argv track
+    func testGroupsAndSubshellsInShippedPresetsStillMatch() {
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && { git checkout b || cd ../r-b; } && claude"
+        ))
+        XCTAssertTrue(commandAcceptsAppendedClaudePrompt(
+            "z r && git fetch origin && ([ -d ../r-issue-1 ] || git worktree add -f ../r-issue-1"
+                + " -b issue-1 origin/main) && cd ../r-issue-1 && claude"
+        ))
+    }
+
+    /// With a positional prompt already there, ours would be a second one and the meaning splits
+    func testExistingPositionalPromptDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude 'do it'"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("claude fix-it"))
+    }
+
+    func testEmptyOrTrailingSeparatorDoesNotMatch() {
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt(""))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && "))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude;"))
+    }
+}
+
+// MARK: - Does the appended command survive each terminal's quoting?
+// Conversion and appending are Core work that happens **before** the terminal branch, so all three
+// terminals receive the same string. It carries the user's own text in single quotes, and iTerm2
+// embeds it in an AppleScript literal while Warp embeds it in a TOML basic string — break it here
+// and the tab either never opens or runs a truncated command.
+
+final class AppendedPromptPerTerminalTests: XCTestCase {
+    private let command = appendedPromptCommand(
+        "z remy && claude", message: "설계 정리해줘 — it's \"quoted\" $HOME `now`"
+    )
+
+    /// Asks osascript whether it really parses as an AppleScript literal — with no
+    /// `tell application` it touches no terminal and needs no permission
+    func testAppleScriptLiteralParsesBackToTheSameCommand() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "return \"\(escapeForAppleScript(command))\""]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(out.trimmingCharacters(in: .newlines), command)
+    }
+
+    /// Every `"` inside a TOML basic string has to be escaped — one leaking is enough for Warp to
+    /// fail parsing the file, and then no tab opens
+    func testTOMLEscapesEveryQuoteInTheAppendedCommand() {
+        let toml = warpTabConfigTOML(commands: [command])
+        XCTAssertTrue(toml.contains("commands = [\"\(escapeForTOMLBasicString(command))\"]"), toml)
+        var previous: Character = " "
+        for character in escapeForTOMLBasicString(command) {
+            if character == "\"" { XCTAssertEqual(previous, "\\", "이스케이프되지 않은 따옴표") }
+            previous = character
+        }
+    }
+
+    /// WezTerm passes the command as process arguments or stdin rather than as a shell string, so
+    /// there is no re-quoting to check. What matters instead is that it stays on one line:
+    /// `send-text` treats a newline as a submission (which is also why a message containing one
+    /// never gets appended — `prepareRequest`)
+    func testAppendedCommandStaysOnASingleLine() {
+        XCTAssertFalse(command.contains("\n"), command)
+    }
+
+    /// The message is the user's text and it is **never evaluated**: single-quoted, with the
+    /// quotes inside escaped the only way a POSIX shell allows
+    func testTheMessageIsSingleQuotedSoTheShellNeverEvaluatesIt() throws {
+        let hostile = "don't; touch /tmp/tc-should-not-exist $(id) `id`"
+        let line = appendedPromptCommand("printf '%s'", message: hostile)
+        let result = try runProcess("/bin/sh", ["-c", line], timeout: 10)
+        // `printf '%s'` reapplies its format per argument, so the two arrive back to back
+        XCTAssertEqual(result.stdout, "--" + hostile, "본문이 셸에서 평가됐다")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "/tmp/tc-should-not-exist"))
+    }
+}
+
+// MARK: - Request preparation (the new rules applied to a real request)
+
+final class PreparedRequestTests: XCTestCase {
+    /// Regression: a request with no claude inputs has its command changed by **not one byte**
+    func testRequestWithoutClaudeInputsIsUntouched() {
+        let prepared = prepareRequest(ResolvedRequest(command: "z remy && claude", claudeInputs: []))
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, [])
+    }
+
+    /// **The shipped presets are all `!`, so they are all typed now** — one cycle for the whole
+    /// run, and the command is left exactly as the user wrote it. This is the round-10 reversal:
+    /// those buttons need the Warp Accessibility permission again
+    func testShippedPresetInputsAreTypedAsOneMergedLine() {
+        let prepared = prepareRequest(ResolvedRequest(
+            command: "z remy && claude",
+            claudeInputs: ["!gh pr view 42 --comments", "!gh pr diff 42"]
+        ))
+        XCTAssertEqual(prepared.command, "z remy && claude", "명령이 바뀌었다")
+        XCTAssertEqual(prepared.claudeInputs.count, 1)
+        XCTAssertEqual(
+            prepared.claudeInputs.first,
+            "!/bin/echo '==== !gh pr view 42 --comments ===='; gh pr view 42 --comments;"
+                + " /bin/echo '==== !gh pr diff 42 ===='; gh pr diff 42"
+        )
+    }
+
+    /// Plain text, and nothing else, rides in argv — no substitution, no temp file
+    func testAllPlainTextRidesInArgv() {
+        let prepared = prepareRequest(ResolvedRequest(
+            command: "z remy && claude", claudeInputs: ["설계 정리해줘"]
+        ))
+        XCTAssertEqual(prepared.command, "z remy && command claude -- '설계 정리해줘'")
+        XCTAssertEqual(prepared.claudeInputs, [])
+    }
+
+    /// **Never both in one session** (the plan's dissent): the argv message's own submission
+    /// clears the input box seconds after claude starts, and anything typed before that render is
+    /// wiped (measured). A list that mixes plain text with anything else is typed in full
+    func testAMixedListIsTypedInFullRatherThanSplitBetweenArgvAndTyping() {
+        let prepared = prepareRequest(ResolvedRequest(
+            command: "z remy && claude", claudeInputs: ["설계 정리해줘", "!git status"]
+        ))
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, ["설계 정리해줘", "!git status"])
+    }
+
+    /// A newline in the message would end the command line early — iTerm2 writes it with
+    /// `write text`, WezTerm with `send-text`, and both read a newline as "run it now"
+    func testAMessageWithANewlineIsTypedInsteadOfAppended() {
+        let inputs = ["첫 줄\n둘째 줄"]
+        let prepared = prepareRequest(ResolvedRequest(command: "z remy && claude", claudeInputs: inputs))
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+    }
+
+    /// A command that cannot take the append types instead — today's behaviour
+    func testUnappendableCommandFallsBackToTyping() {
+        let inputs = ["설계 정리해줘"]
+        let prepared = prepareRequest(ResolvedRequest(command: "z remy", claudeInputs: inputs))
+        XCTAssertEqual(prepared.command, "z remy")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+    }
+
+    /// **Round 6 (independent reviewer)**: with `claude` installed only as a function or an alias,
+    /// `command claude` would fail with "command not found" while the setup window still shows ✅
+    func testMergingNeedsAClaudeExecutableNotJustAWrapper() {
+        let inputs = ["설계 정리해줘"]
+        let prepared = prepareRequest(
+            ResolvedRequest(command: "z remy && claude", claudeInputs: inputs),
+            claudeIsExecutable: false
+        )
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+    }
+
+    /// csh and tcsh: the appended text is a parse error that takes the whole line with it, so the
+    /// login shell has to be POSIX-family before anything is appended
+    func testANonPOSIXLoginShellFallsBackToTyping() {
+        let inputs = ["설계 정리해줘"]
+        let prepared = prepareRequest(
+            ResolvedRequest(command: "z remy && claude", claudeInputs: inputs),
+            loginShell: "/bin/tcsh"
+        )
+        XCTAssertEqual(prepared.command, "z remy && claude")
+        XCTAssertEqual(prepared.claudeInputs, inputs)
+    }
+
+    /// The sweep that clears what **older builds** left in the temp directory runs for every
+    /// request, not only the ones that would have created something
+    func testEveryRequestReclaimsWhatOlderBuildsLeftBehind() throws {
+        let directory = NSTemporaryDirectory() + claudePromptDirectoryPrefix + "ffffffff"
+        try? FileManager.default.removeItem(atPath: directory)
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try "old".write(
+            toFile: directory + "/" + legacyContextFileName, atomically: true, encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-7 * 3600)], ofItemAtPath: directory
+        )
+        _ = prepareRequest(ResolvedRequest(command: "z remy", claudeInputs: []))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory))
+    }
+}
+
+/// What an **older build** wrote into each request's directory. The app has no constant for it
+/// any more — nothing creates these files since round 10 — but the sweep still has to recognise
+/// and clear what those installations left behind.
+private let legacyContextFileName = "context.txt"
+
+final class ClaudePromptReclaimTests: XCTestCase {
+    private var root = ""
+
+    override func setUpWithError() throws {
+        root = NSTemporaryDirectory() + "tc-reclaim-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(atPath: root)
+    }
+
+    @discardableResult
+    private func makeDirectory(
+        _ name: String, ageHours: Double, files: [String] = [legacyContextFileName]
+    ) throws -> String {
+        let path = root + "/" + name
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        for file in files { try "x".write(toFile: path + "/" + file, atomically: true, encoding: .utf8) }
+        let old = Date().addingTimeInterval(-ageHours * 3600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: path)
+        return path
+    }
+
+    func testStaleLeftoverDirectoryIsReclaimed() throws {
+        let path = try makeDirectory("tc-prompt-a1b2c3d4", ageHours: 7)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testFreshDirectoryIsLeftAlone() throws {
+        let path = try makeDirectory("tc-prompt-a1b2c3d5", ageHours: 1)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// **Reproduction (round 5, Codex)**: age alone cannot tell "has not been used yet" from "died
+    /// unused". With `sleep 21601 && claude` the script is still waiting to run six hours later,
+    /// and another request's sweep reclaimed it — the command then started claude with the
+    /// lost-context notice. The script's own presence is the observation: it deletes itself as it
+    /// runs, so **still there** means nothing has consumed it
+    func testAScriptThatHasNotRunYetSurvivesTheShortAge() throws {
+        let path = try makeDirectory(
+            "tc-prompt-b1b2c3d4", ageHours: 7,
+            files: [claudePromptScriptName, legacyContextFileName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// It is still reclaimed eventually — a tab that never opened must not leak forever
+    func testAScriptThatNeverRanIsReclaimedEventually() throws {
+        let path = try makeDirectory(
+            "tc-prompt-b1b2c3d5", ageHours: 24 * 8, files: [claudePromptScriptName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// A context handed to claude because it was over budget has to survive past six hours — the
+    /// session reads it then. Deleting it leaves claude unable to find the file it was told to read
+    func testContextHandedToClaudeSurvivesTheShortAge()
+        throws {
+        let path = try makeDirectory(
+            "tc-prompt-a1b2c3d6", ageHours: 30,
+            files: [legacyContextFileName, claudePromptHandoffName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    func testContextHandedToClaudeIsReclaimedEventually() throws {
+        let path = try makeDirectory(
+            "tc-prompt-a1b2c3d7", ageHours: 24 * 8,
+            files: [legacyContextFileName, claudePromptHandoffName]
+        )
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// Upper-case hex is not a name we write (`%08x`) and not a name `uninstall.sh` matches. Both
+    /// sides have to agree on which names are ours — reclaiming one we never wrote is deleting
+    /// somebody else's directory
+    func testUpperCaseHexIsNotOneOfOurNames() throws {
+        let path = try makeDirectory("tc-prompt-ABCDEF01", ageHours: 100)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// **Reproduction (round 7, Codex)**: `Character.isNumber` is Unicode-wide, so a token of
+    /// Arabic-Indic digits passed as "hex" and the sweep would have deleted a directory we never
+    /// wrote. Ours are ASCII `[0-9a-f]`, because that is what `%08x` and `uninstall.sh` produce
+    func testUnicodeDigitsAreNotHexAndNotOurNames() throws {
+        // Measured (`Character` predicates): `١` is `isNumber` but not `isHexDigit` — that is the
+        // one the old `isNumber ||` test let through — while the fullwidth `０` and `ｆ` **are**
+        // `isHexDigit`, which is why the ASCII test is the one doing the work now
+        for name in ["tc-prompt-١٢٣٤abcd", "tc-prompt-０１２３abcd"] {
+            let path = try makeDirectory(name, ageHours: 100)
+            reclaimStaleClaudePromptDirectories(in: root)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path), name)
+        }
+        // The same class, same fix, in the helper socket names
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-０１２３abcd.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-١٢٣٤abcd.sock"))
+        XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-a1b2c3d4.sock"))
+    }
+
+    /// **Reproduction (round 7, Codex)**: the re-check before removal compared whole seconds, so a
+    /// pane that started consuming the directory inside the same second was missed. Every form of
+    /// consumption bumps the directory's mtime — the comparison has to see sub-second changes
+    func testADirectoryConsumedWithinTheSameSecondIsLeftAlone() throws {
+        let path = try makeDirectory("tc-prompt-c0ffee01", ageHours: 7)
+        var sampled = stat()
+        XCTAssertEqual(lstat(path, &sampled), 0)
+        let sameSecond = Date(timeIntervalSince1970: TimeInterval(sampled.st_mtimespec.tv_sec))
+            .addingTimeInterval(0.4)
+        reclaimStaleClaudePromptDirectories(in: root, justBeforeRemoving: { consumed in
+            try? FileManager.default.setAttributes(
+                [.modificationDate: sameSecond], ofItemAtPath: consumed
+            )
+        })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// Someone else's entries are never touched, whatever their age, and symlinks are never
+    /// followed — following one would delete the whole directory it points at
+    func testForeignEntriesAndSymlinksAreNeverTouched() throws {
+        let foreign = try makeDirectory("important-a1b2c3d4", ageHours: 100)
+        let victim = try makeDirectory("victim", ageHours: 100)
+        let link = root + "/tc-prompt-deadbeef"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: victim)
+        reclaimStaleClaudePromptDirectories(in: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: foreign))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: victim))
+    }
+}
+
 // MARK: - 입력 전달 순서와 실패 복구
 // 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
 // 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
 
 /// claude 세션 흉내. 입력창(box)에 타이핑된 것을 화면에 그대로 비추고, CR을 받으면
 /// 제출로 처리해 입력창을 비운다.
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+// MARK: - 전달 단계 계측 (라운드 15)
+// A successful delivery used to log one line, at the end. When a real run took 86 seconds between
+// the tab opening and the first submission, nothing in the log could say where they went — helper
+// wait, claude startup, or the user not looking at the tab. These pin the shape of the stopwatch
+// and the fact that the delivery loop actually drives it.
+
+final class DeliveryTimelineTests: XCTestCase {
+    /// Every step reports **both** numbers: the gap from the previous step (which stage was slow)
+    /// and the total since the request arrived (the metric this round exists for — button press to
+    /// the first CR).
+    func testEachStepReportsTheGapFromThePreviousStepAndTheTotal() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        var lines: [String] = []
+        let timeline = DeliveryTimeline(now: { clock }, emit: { lines.append($0) })
+        timeline.step("요청 수신")
+        clock = clock.addingTimeInterval(3.2)
+        timeline.step("Warp 탭 생성")
+        clock = clock.addingTimeInterval(86)
+        timeline.step("claude 준비")
+        XCTAssertEqual(lines, [
+            "요청 수신 (+0.0s, 총 0.0s)",
+            "Warp 탭 생성 (+3.2s, 총 3.2s)",
+            "claude 준비 (+86.0s, 총 89.2s)",
+        ])
+    }
+
+    /// The stopwatch is only worth anything if the delivery loop drives it. One input has to log
+    /// its pane proof, its reflection check and its submission — that split is what tells a slow
+    /// claude apart from a user who is looking at another tab.
+    func testTheDeliveryLoopLogsEveryStepOfAnInput() {
+        let session = FakeClaudeSession()
+        var lines: [String] = []
+        // A frozen clock, so this pins the **shape** of the output rather than its timings
+        let timeline = DeliveryTimeline(
+            now: { Date(timeIntervalSince1970: 0) }, emit: { lines.append($0) }
+        )
+        XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline), 1)
+        XCTAssertEqual(lines, [
+            "입력 1/1 pane 증명 통과 (시도 1/12) (+0.0s, 총 0.0s)",
+            "입력 1/1 본문 반영 확인 (+0.0s, 총 0.0s)",
+            // The "총" on this line is the number the user is complaining about: press to submit
+            "입력 1/1 제출(CR) 전송 (+0.0s, 총 0.0s)",
+            "입력 1/1 사후 확인: 입력창 상태 알 수 없음 (+0.0s, 총 0.0s)",
+        ])
+    }
+
+    /// The attempt counter is the whole point of the pane-proof line: on Warp the proof only
+    /// passes while the user is looking at that tab, so "통과 (시도 3/5)" with a large gap is the
+    /// evidence for telling them so, rather than a defect to chase
+    func testThePaneProofLineCarriesHowManyAttemptsItTook() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        session.failScreenAt = [1] // 첫 시도의 화면 조회 실패 → 두 번째 시도에서 통과
+        var lines: [String] = []
+        let timeline = DeliveryTimeline(
+            now: { Date(timeIntervalSince1970: 0) }, emit: { lines.append($0) }
+        )
+        _ = submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline)
+        XCTAssertTrue(
+            lines.contains { $0.hasPrefix("입력 1/1 pane 증명 통과 (시도 2/12)") }, "\(lines)"
+        )
+    }
+
+    /// No timeline, no lines — the tests above are the only callers that pass one, and every other
+    /// test in this file must keep running against an unchanged loop.
+    func testWithoutATimelineNothingIsEmitted() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io), 1)
+        XCTAssertEqual(session.submitted, ["!gh pr diff 1"])
+    }
+}
+
 private final class FakeClaudeSession {
     private(set) var keystrokes: [String] = []
     private(set) var submitted: [String] = []
@@ -685,14 +1990,53 @@ private final class FakeClaudeSession {
     var presetBox = "" { didSet { box = presetBox } }
     /// 화면에 이미 떠 있는 텍스트 (다른 pane을 읽고 있는 상황을 만들 때 쓴다)
     var screenPrefix = ""
-    /// 제출한 입력이 화면(대화 기록)에 남게 한다
-    var keepSubmittedOnScreen = false
+    /// 입력창 **아래**에 claude TUI가 그리는 것들 — 힌트 줄, 권한 표시, 컨텍스트 %, 시계.
+    /// 이것이 없으면 `screenTail`이 보는 영역(우리 입력부터 화면 끝까지)이 표현되지 않아,
+    /// "프로브가 하단 chrome에도 있으면 tail이 고정된다" 같은 결함이 fake에서는 보이지 않는다
+    /// (독립 검증자 지적)
+    var bottomChrome = "? for shortcuts"
+    /// Something below the box that changes on every read — a context meter, a clock. Then the
+    /// tail differs every time and the look can never say "stuck" (reviewer's R6), which is why
+    /// the safety of the next input cannot rest on that look
+    var tickingChrome = false
+    /// Text that newly appears from the nth `screenText` call onwards
+    var screenGains: [Int: String] = [:]
+    /// What was already on screen when the first byte went out — pins "what did it see before typing"
+    private(set) var screenPrefixAtFirstSend: String?
+    /// A submitted message stays on screen, in the transcript — that is what claude does, and it
+    /// is what `inputBoxAfterSubmit` reads. Turning this on models **the input box losing our text
+    /// instead of submitting it**: the CR goes out and nothing appears anywhere
+    var dropSubmittedFromScreen = false
+    /// The CR is reported as sent and **nothing happens**: the input box keeps our text and the
+    /// transcript never gets it (round 5 reproduction — a TUI that has not consumed the CR)
+    var submitDoesNothing = false
+    /// The same for Ctrl+U: the write is accepted, the TUI never acts on it. An AppleScript or a
+    /// CLI call returning success means the terminal took the bytes, not that claude processed
+    /// them (round 8, both reviewers)
+    var clearDoesNothing = false
+    /// **Measured (2.1.238, pty)**: Ctrl+U on a `!…` line clears the text but **leaves the `!`**,
+    /// so the box stays in shell mode and looks empty. Whatever is typed next is submitted as a
+    /// shell command. One Backspace after the Ctrl+U removes the prefix (also measured)
+    var clearLeavesModePrefix = true
+    /// **The user presses Enter** right after our nth send lands (1-based). On Warp they are
+    /// looking at that tab by design, so this is not exotic: whatever is in the box at that moment
+    /// is submitted by them, not by us (round 9)
+    var userPressesEnterAfterSend: Int?
+    /// The nth `sendKeys` reports failure **although the bytes went in** (1-based). The helper
+    /// injecting part of a write and then erroring looks exactly like this from here, and it is
+    /// the only shape in which a resend can duplicate a message
+    var deliverButReportFailureAt: Set<Int> = []
     /// 화면 읽기가 pane 단위로 정확하지 않은 터미널(Warp)
     var screenNeedsPaneProof = false
     /// 읽히는 화면이 우리 pane이 아닌 상황 — 우리 타이핑은 화면에 비치지 않는다
     var screenIsForeign = false
     /// 그 남의 pane이 뒤늦게 얻는 텍스트 (Codex 재현: 개수가 증가한다)
     var foreignScreenGains: [String] = []
+    /// Every synthetic wait, and the order of reads/waits/sends. The delivery loop's speed is a
+    /// property worth pinning: a poll that sleeps **before** its first read pays a full interval
+    /// for a screen that is already drawn (round 10)
+    private(set) var waits: [TimeInterval] = []
+    private(set) var events: [String] = []
     private(set) var sendCallCount = 0
     /// 바이트를 내보내기 직전 게이트가 몇 번 확인됐는지
     private(set) var gateChecks = 0
@@ -705,25 +2049,53 @@ private final class FakeClaudeSession {
         ClaudeSessionIO(
             sendKeys: { [unowned self] keys in
                 sendCallCount += 1
+                events.append("send")
+                if screenPrefixAtFirstSend == nil { screenPrefixAtFirstSend = screenPrefix }
                 if failSendAt.contains(sendCallCount) { return false }
+                let reported = !deliverButReportFailureAt.contains(sendCallCount)
                 keystrokes.append(keys)
-                switch keys {
-                case claudeSubmitKey:
-                    submitted.append(box)
-                    if keepSubmittedOnScreen { history += box + " " }
-                    box = ""
-                case claudeClearInputKey: box = ""
-                default:
-                    if !dropTypingAt.contains(sendCallCount) { box += keys }
+                if keys == claudeSubmitKey {
+                    // A CR into an **empty** box does nothing (measured) — modelling it as an
+                    // empty submission would hide the duplicate a resend can cause
+                    if !box.isEmpty, !submitDoesNothing {
+                        submitted.append(box)
+                        if !dropSubmittedFromScreen { history += box + " " }
+                        box = ""
+                    }
+                } else if dropTypingAt.contains(sendCallCount) {
+                    // claude drew nothing for this send
+                } else {
+                    // Byte by byte, the way a terminal sees it — so a change that drops the
+                    // Backspace from the clear sequence shows up here rather than passing
+                    for character in keys {
+                        switch character {
+                        case "\u{15}" where !clearDoesNothing:
+                            box = clearLeavesModePrefix && box.hasPrefix("!") ? "!" : ""
+                        case "\u{15}":
+                            break // the write was accepted, the TUI ignored it
+                        case "\u{7f}":
+                            if !box.isEmpty, !clearDoesNothing { box.removeLast() }
+                        default:
+                            box.append(character)
+                        }
+                    }
                     if foreignScreenGains.contains(keys) { foreignScreen += " " + keys }
                 }
-                return true
+                if sendCallCount == userPressesEnterAfterSend, !box.isEmpty {
+                    submitted.append(box) // 사용자가 누른 Enter — 우리 CR이 아니다
+                    history += box + " "
+                    box = ""
+                }
+                return reported
             },
             screenText: { [unowned self] in
                 screenCalls += 1
+                events.append("read")
+                if let gained = screenGains[screenCalls] { screenPrefix += " " + gained }
                 if failScreenAt.contains(screenCalls) { return nil }
                 if screenIsForeign { return foreignScreen }
-                return screenPrefix + " " + history + "❯ " + box
+                let ticker = tickingChrome ? " \(screenCalls)% context left" : ""
+                return screenPrefix + " " + history + "❯ " + box + "\n" + bottomChrome + ticker
             },
             confirmSession: { [unowned self] _ in sessionAlive },
             sessionIsUnchanged: { [unowned self] in
@@ -731,8 +2103,350 @@ private final class FakeClaudeSession {
                 return sessionAlive
             },
             screenNeedsPaneProof: screenNeedsPaneProof,
-            wait: { _ in }
+            wait: { [unowned self] seconds in
+                waits.append(seconds)
+                events.append("wait")
+            }
         )
+    }
+}
+
+// MARK: - The two delivery routes are never mixed in one session
+// Measured (claude 2.1.238, bare pty, 3 runs per timepoint all agreeing, 32 runs under
+// 32 runs, 3 per timepoint, all agreeing): **submitting the argv message clears the input box.**
+// Bytes typed before it renders land in the box and are wiped by that clear (T1 at 0.06s and T2
+// right after the first frame both lost 3/3), while raw mode — the readiness signal — is reached
+// at 0.1–0.19s, seconds too early to protect anything.
+//
+// Round 3 tried to gate the typing on a per-request marker appearing on screen. Two independent
+// reviewers broke it: a zsh with `set -x` prints the fully substituted argv, marker included,
+// right before the exec, and it can print it more than once — so no count over that marker is a
+// condition **only claude** can satisfy, and the production loop recorded a wiped input as
+// delivered. Round 4 removes the combination instead of the gate: a request either merges
+// everything into argv or types everything (`prepareRequest`). These tests pin that, and pin the
+// one thing kept from the lesson — a submission is only counted once it is seen to have survived.
+
+final class ClaudeSubmissionSurvivalTests: XCTestCase {
+    private let inputs = ["/review"]
+
+    /// **The check is best-effort (round 6, user's decision).** Nothing outside the TUI can prove
+    /// a message exists, and chasing that proof produced a check that was wrong in both directions
+    /// twice. What the loop needs from the screen is one operational answer — may the next input
+    /// be typed? — so only a screen that **still shows our input where we typed it** stops
+    /// delivery. "Gone from the screen" is one of the things a scrolled transcript looks like, and
+    /// nothing bad follows from carrying on: the box does not hold our text, so the next input
+    /// cannot be appended to it
+    func testAnInputThatLeftTheScreenDoesNotStopDelivery() {
+        let session = FakeClaudeSession()
+        session.dropSubmittedFromScreen = true
+        XCTAssertEqual(submitClaudeInputs(["/review", "/second"], io: session.io), 2)
+    }
+
+    /// …and it is still never retyped. Retyping is the one move that could submit the same message
+    /// twice, and that invariant does not depend on any reading of the screen
+    func testAnInputThatLeftTheScreenIsNotRetyped() {
+        let session = FakeClaudeSession()
+        session.dropSubmittedFromScreen = true
+        _ = submitClaudeInputs(["/review", "/second"], io: session.io)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "/review" }.count, 1)
+    }
+
+    /// A screen we cannot read says nothing. Unknown is not evidence of a wipe — and calling it
+    /// one would stop delivery, which drops every input after this one
+    func testAnUnreadableScreenAfterTheCarriageReturnIsNotTreatedAsAWipe() {
+        let session = FakeClaudeSession()
+        session.dropSubmittedFromScreen = true
+        // 1: pre-typing snapshot · 2: reflection · 3–7: the whole post-CR window
+        session.failScreenAt = [3, 4, 5, 6, 7]
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+    }
+
+    /// The normal path is unchanged — a message that reached the transcript counts once
+    func testASubmittedInputStaysOnScreenAndCounts() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+        XCTAssertEqual(session.submitted, inputs)
+    }
+
+    /// **Reproduction (round 5, Codex)**: the CR is reported as sent, the TUI has not acted on it,
+    /// and the text is **still in the input box**. The old check re-read the screen against the
+    /// *pre-typing* snapshot — the question the reflection check had already answered yes — so it
+    /// counted a message that does not exist.
+    ///
+    /// **Round 6 (independent reviewer, the blocking one)**: stopping is not enough. Our text is
+    /// provably still in the box, so the single cleanup point has to fire — otherwise the next
+    /// Enter the **user** presses submits it, and a `!` input runs their shell command
+    func testAnInputStillSittingInTheInputBoxIsNotCountedAsDelivered() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 0)
+        XCTAssertEqual(session.submitted, [])
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "잔여를 지우지 않았다")
+    }
+
+    /// The reviewer's own reproduction, in the shape they ran it: the TUI stops acting on
+    /// submissions **after the first one**, the writes keep reporting success, and the second
+    /// input is left sitting in the box
+    func testAnInputTheTUIStoppedActingOnIsClearedRatherThanLeftForTheUsersEnter() {
+        let session = FakeClaudeSession()
+        let base = session.io
+        var io = base
+        io.sendKeys = { keys in
+            if keys == claudeSubmitKey, !session.submitted.isEmpty { session.submitDoesNothing = true }
+            return base.sendKeys(keys)
+        }
+        XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: io), 1)
+        XCTAssertEqual(session.submitted, ["/review"])
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "`!git status`가 입력창에 남았다")
+    }
+
+    /// **Reproduction (round 5, Codex P1-a)**: a change somewhere else on the screen — a spinner,
+    /// streaming output — is not evidence about the input box. Only the region from our input to
+    /// the end of the screen is
+    func testAnUnrelatedScreenChangeDoesNotMakeAStuckInputLookSubmitted() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        session.screenGains = [4: "spinner"] // arrives during the post-CR look, above our input
+        XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: session.io), 0)
+        XCTAssertFalse(
+            session.keystrokes.contains("!git status"),
+            "이어 치면 두 입력이 한 줄로 붙어 제출된다"
+        )
+    }
+
+    /// **Reproduction (round 7, Codex — the blocking one).** Two questions had been squashed into
+    /// one: *(i) did claude receive it* (not proven, by decision) and *(ii) is the input box empty
+    /// before we type the next thing* (a safety property). Treating "unknown" as "empty" merged our
+    /// leftover with the next input: the first CR is written but the box keeps `/review`, the
+    /// post-CR look cannot read the screen, and the next input is typed straight onto it —
+    /// `"/review!git status"` goes in as one line
+    func testResidueIsClearedBeforeTheNextInputIsTyped() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true // the first CR writes but the TUI does not act on it
+        // …and something below the box ticks (context meter, clock), so the tail differs on every
+        // read and the look can never answer "stuck" — the common case, not a corner (R6)
+        session.tickingChrome = true
+        let base = session.io
+        var io = base
+        io.sendKeys = { keys in
+            let result = base.sendKeys(keys)
+            if keys == claudeSubmitKey { session.submitDoesNothing = false } // only the first
+            return result
+        }
+        _ = submitClaudeInputs(["/review", "!git status"], io: io)
+        XCTAssertEqual(session.submitted, ["!git status"], "잔여와 다음 입력이 한 줄로 합쳐졌다")
+    }
+
+    /// The same property where the screen can never answer: on Warp the post-CR look is skipped
+    /// entirely, so **even a single input** must not be left in the box for the user's next Enter
+    /// (with a `!` input that Enter runs their shell command)
+    func testWarpDeliveryDoesNotLeaveOurInputInTheBox() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        session.submitDoesNothing = true
+        _ = submitClaudeInputs(["!git status"], io: session.io)
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+    }
+
+    /// …and the rule is **one rule**, not a per-branch judgement: delivery ends with the box
+    /// cleared whenever we cannot see that it is free of ours — including the path where
+    /// everything looked fine. The cost (a draft the user started during delivery is erased) is
+    /// accepted deliberately; the alternative is our `!` line waiting for their Enter
+    func testDeliveryEndsWithTheBoxCleared() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
+        XCTAssertEqual(session.submitted, inputs)
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+    }
+
+    /// **Reproduction (round 7, independent reviewer — F1, deterministic).** `screenTail` takes the
+    /// **last** occurrence of the probe, and claude draws things *below* the input box: hint lines,
+    /// a permission mode indicator, a context meter. If the probe also appears down there, that
+    /// occurrence wins, the tail never moves, and a submission that went through is read as "still
+    /// in the box" — delivery stops and the rest of the inputs are dropped. A one-character input
+    /// hits it immediately (`y` is in "bypass permissions on")
+    func testAProbeThatAlsoAppearsBelowTheBoxIsNotJudged() {
+        let session = FakeClaudeSession()
+        session.bottomChrome = "? for shortcuts · ⏵⏵ bypass permissions on"
+        XCTAssertEqual(submitClaudeInputs(["y", "!git status"], io: session.io), 2)
+        XCTAssertEqual(session.submitted, ["y", "!git status"])
+    }
+
+    /// The same with a whole slash command echoed in the chrome (`try /review`)
+    func testAProbeEchoedInAHintLineIsNotJudged() {
+        let session = FakeClaudeSession()
+        session.bottomChrome = "try /review for a code review"
+        XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: session.io), 2)
+        XCTAssertEqual(session.submitted, ["/review", "!git status"])
+    }
+
+    /// **Reproduction (round 7, independent reviewer — R5)**: one failed read in the middle of the
+    /// look wiped out what the earlier reads had already established. A read we could not make says
+    /// nothing; it must not turn "the box is still holding it" into "carry on"
+    func testAFailedReadDoesNotEraseWhatTheEarlierReadsShowed() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        session.failScreenAt = [4] // 1: snapshot · 2: reflection · 3,4,5…: the post-CR look
+        _ = submitClaudeInputs(["/review", "!git status"], io: session.io)
+        XCTAssertFalse(session.keystrokes.contains("!git status"), "박혀 있는 것을 보고도 이어 쳤다")
+    }
+
+    /// **Reproduction (round 8, Codex — the blocking one).** The reflection check accepted the
+    /// probe appearing **anywhere**, and the CR follows it immediately. claude draws hint lines
+    /// that can contain the very text we typed, so a screen that gains one of those while our
+    /// typing was dropped looks exactly like a render — and the CR then submits whatever the box
+    /// really holds, which can be something the user typed. Round 7 put the uniqueness rule only
+    /// *after* the CR; the judgement before an irreversible byte has to be the stricter one
+    func testTextAppearingSomewhereElseIsNotMistakenForOurRender() {
+        let session = FakeClaudeSession()
+        session.dropTypingAt = Set(1...100)      // claude never draws what we type
+        session.screenGains = [2: "try /review"] // …and a hint containing it shows up meanwhile
+        XCTAssertEqual(submitClaudeInputs(["/review"], io: session.io), 0)
+        XCTAssertFalse(session.keystrokes.contains(claudeSubmitKey), "확인 없이 CR이 나갔다")
+    }
+
+    /// The normal path still goes through: what we type really is in the box, so clearing it makes
+    /// the text disappear — that is the experiment that tells the two apart
+    func testTextThatDisappearsWhenTheBoxIsClearedIsOurs() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(["/review"], io: session.io), 1)
+        XCTAssertEqual(session.submitted, ["/review"])
+    }
+
+    /// **Speed, as a pinned property (round 10).** Every poll in the delivery loop used to sleep
+    /// **before** its first read, so a screen that was already drawn still cost a full interval —
+    /// four of those per input. The rule now: read first, then retry on a short interval, with the
+    /// same (or a longer) deadline. Evidence is not traded away for it; only the sampling changes.
+    ///
+    /// Pinned two ways: no wait may directly follow a send (the next thing is always a read), and
+    /// the total synthetic wait for one happy-path input stays small. Measured on this fake:
+    /// **1.70s before, 0.00s after** — the happy path now answers on its first read every time.
+    func testTheHappyPathDoesNotSleepBeforeReading() {
+        let session = FakeClaudeSession()
+        XCTAssertEqual(submitClaudeInputs(["!git status"], io: session.io), 1)
+        for (index, event) in session.events.enumerated() where event == "send" {
+            guard let next = session.events[safe: index + 1] else { continue } // 마지막 정리
+            XCTAssertEqual(next, "read", "전송 뒤에 읽기 대신 대기가 왔다: \(session.events)")
+        }
+        XCTAssertLessThanOrEqual(session.waits.reduce(0, +), 0.5, "\(session.waits)")
+    }
+
+    /// **Reproduction (round 12, driver's pty measurement — blocking).** Ctrl+U does **not** leave
+    /// claude's `!` shell mode: it clears the text and leaves the `!` behind, so the box looks
+    /// empty on screen (the disappearance check passes) while still being in shell mode. The next
+    /// input typed into it is submitted as a **shell command** — measured directly:
+    /// `command not found: tcq3hello`. CLAUDE.md carried this as "unmeasured, the circumstantial
+    /// evidence points the safe way"; the evidence pointed the wrong way.
+    ///
+    /// The real path is not exotic: an earlier `!` input whose CR did not take leaves `!text` in
+    /// the box, the next cycle's marker experiment clears it down to `!`, and a plain-text body
+    /// then goes in as `!body`.
+    func testAPlainInputIsNeverSubmittedIntoLeftoverShellMode() {
+        let session = FakeClaudeSession()
+        session.presetBox = "!gh pr view 1" // 앞 입력의 CR이 먹지 않아 남은 것
+        _ = submitClaudeInputs(["summarize the diff"], io: session.io)
+        XCTAssertEqual(
+            session.submitted, ["summarize the diff"],
+            "`!`가 남은 입력창에 평문을 넣어 셸 명령으로 제출했다"
+        )
+    }
+
+    /// **Reproduction (round 9, Codex — the blocking one, a regression round 8 introduced).**
+    /// The attribution experiment used to type **the body**. If the user presses Enter while that
+    /// trial typing is on screen — on Warp they are looking at the tab by design — their Enter
+    /// runs the command, and the app, which only counts the CRs **it** sent, clears, retypes and
+    /// submits: `!git status` runs twice. Up to round 7 our CR landed in an empty box and did
+    /// nothing. The experiment now uses a throwaway marker, so a stray Enter submits that instead
+    /// and the command is typed exactly once
+    func testAUserPressingEnterDuringTheExperimentCannotRunTheCommandTwice() {
+        let session = FakeClaudeSession()
+        session.userPressesEnterAfterSend = 1 // the first thing we type is the experiment's
+        _ = submitClaudeInputs(["!git status"], io: session.io)
+        XCTAssertEqual(
+            session.submitted.filter { $0 == "!git status" }.count, 1,
+            "사용자 Enter와 우리 CR로 명령이 두 번 실행됐다"
+        )
+    }
+
+    /// **Reproduction (round 9, independent reviewer).** The appearance check demanded *exactly*
+    /// one more copy of our text on screen. If claude draws it a second time — the same hint-line
+    /// behaviour this repository documents elsewhere — the count is `baseline + 2`, the check never
+    /// matches, and the button does nothing at all: five typings, no CR, no message. Appearance
+    /// needs "at least one more"; only the **disappearance** check needs an exact count
+    func testAnInputTheScreenDrawsTwiceIsStillSubmitted() {
+        let session = FakeClaudeSession()
+        let base = session.io
+        var io = base
+        io.sendKeys = { keys in
+            let sent = base.sendKeys(keys)
+            // claude draws our line a second time somewhere else the moment we type it
+            if keys == "/review" { session.screenPrefix += " /review" }
+            return sent
+        }
+        XCTAssertEqual(submitClaudeInputs(["/review"], io: io), 1)
+        XCTAssertEqual(session.submitted, ["/review"])
+    }
+
+    /// **Reproduction (round 9, Codex P2)**: the trial text reached the tty and only the *screen
+    /// read* failed, so the clear was never sent and the next attempt typed on top of it. With a
+    /// marker the leftover is harmless, and the next attempt's clear takes it — what must not
+    /// happen is the body going in twice
+    func testAFailedReadDuringTheExperimentDoesNotDoubleTheBody() {
+        let session = FakeClaudeSession()
+        session.failScreenAt = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] // the whole first attempt
+        _ = submitClaudeInputs(["!git status"], io: session.io)
+        XCTAssertEqual(session.submitted, ["!git status"])
+        XCTAssertEqual(session.keystrokes.filter { $0 == "!git status" }.count, 1)
+    }
+
+    /// **Reproduction (round 8, both reviewers)**: a Ctrl+U whose **write** succeeded is not a
+    /// Ctrl+U the TUI processed — AppleScript and the CLI answer for the terminal, not for claude.
+    /// Lowering ownership on the write left the box holding our markers with no cleanup at all
+    func testAWrittenClearThatTheTUIIgnoredStillLeavesUsHoldingTheBox() {
+        let session = FakeClaudeSession()
+        session.clearDoesNothing = true // 쓰기는 성공, TUI는 처리하지 않는다
+        _ = submitClaudeInputs(["!git status"], io: session.io)
+        // 표식이 사라지지 않으므로 어떤 시도도 본문까지 가지 못하고, 마지막에 정리가 나간다 —
+        // 쓰인 Ctrl+U를 처리됨으로 믿던 때는 이 정리가 통째로 건너뛰어졌다
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertFalse(session.keystrokes.contains("!git status"), "확인 없이 본문을 쳤다")
+    }
+
+    /// Cleanup is one Ctrl+U through the same gate, and the terminal CLI does fail one call now and
+    /// then — a single attempt with no retry and no record leaves our text in the box silently
+    func testCleanupIsRetriedWhenTheSendFails() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        // 1: 실험 타이핑 · 2: 실험 클리어 · 3: 본문 · 4: CR · 5–7: 끝내며 정리하는 시도들
+        session.failSendAt = [5, 6]
+        _ = submitClaudeInputs(inputs, io: session.io)
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
+        XCTAssertEqual(session.sendCallCount, 7)
+    }
+
+    /// …and it is not retyped either, for the same reason a wiped one is not
+    func testAnInputStillSittingInTheInputBoxIsNotRetyped() {
+        let session = FakeClaudeSession()
+        session.submitDoesNothing = true
+        _ = submitClaudeInputs(["/review", "/second"], io: session.io)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "/review" }.count, 1)
+    }
+
+    /// **Reproduction (round 5, independent reviewer)**: on Warp the screen read after the CR is
+    /// **whatever pane has focus**, so switching tabs returns someone else's text — not nil. Read
+    /// as "our input is gone" it reported a delivered input as lost and dropped every input after
+    /// it. Where the screen cannot be attributed to our pane, absence means *unknown*
+    func testAForeignScreenAfterTheCarriageReturnDoesNotStopDelivery() {
+        let session = FakeClaudeSession()
+        session.screenNeedsPaneProof = true
+        let base = session.io
+        var io = base
+        io.screenText = {
+            session.keystrokes.contains(claudeSubmitKey) ? "다른 pane 화면" : base.screenText()
+        }
+        XCTAssertEqual(submitClaudeInputs(inputs, io: io), 1)
+        XCTAssertEqual(session.submitted, inputs)
     }
 }
 
@@ -745,11 +2459,19 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다
+    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다.
+    /// 앞뒤의 Ctrl+U는 라운드 7의 규칙 (ii)다: 치기 전에 비우고, 끝나며 비운다
     func testSubmitsOnlyAfterScreenShowsTypedText() {
         let session = FakeClaudeSession()
         _ = submitClaudeInputs([inputs[0]], io: session.io)
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeSubmitKey])
+        // 라운드 9의 한 주기: **표식**을 쳐 보고 → 비우고(사라짐 확인) → 본문을 **한 번** 치고
+        // → CR, 그리고 전달이 끝나며 한 번 더 비운다. 표식은 난수라 모양으로 고정한다
+        XCTAssertEqual(session.keystrokes.count, 5)
+        XCTAssertTrue(session.keystrokes[0].hasPrefix("tc"), session.keystrokes[0])
+        XCTAssertEqual(
+            Array(session.keystrokes.dropFirst()),
+            [claudeClearInputKey, inputs[0], claudeSubmitKey, claudeClearInputKey]
+        )
     }
 
     /// 회귀 방지(실측): 입력 #1 제출 직후 wezterm cli 호출 한 번이 실패해 남은 입력 2개가
@@ -757,7 +2479,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 것이므로, 재타이핑으로 복구하고 남은 입력을 계속 보내야 한다.
     func testTransientSendFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failSendAt = [3] // #1 타이핑·CR 다음 = #2의 첫 타이핑
+        session.failSendAt = [5] // #1의 표식·클리어·본문 다음 = #1의 CR
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
@@ -765,7 +2487,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 화면 조회 실패도 마찬가지다 — 반영을 확인하지 못했을 뿐이라 재타이핑으로 복구한다
     func testTransientScreenReadFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failScreenAt = [2]
+        session.failScreenAt = [2] // #1의 반영 확인 조회
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
@@ -773,7 +2495,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 재시도는 남은 입력을 무한정 붙들지 않는다 — 계속 실패하면 그 입력에서 멈춘다
     func testPersistentFailureStopsAtThatInput() {
         let session = FakeClaudeSession()
-        session.failSendAt = Set(3...100)
+        session.failSendAt = Set(6...100) // #1은 통과(표식·클리어·본문·CR), #2의 표식부터 실패
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
@@ -824,7 +2546,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 끝났다면, 같은 tty의 셸이나 새 claude에 CR이 들어가 사용자가 치던 것을 제출·실행시킨다
     func testCarriageReturnResendStopsWhenSessionChanged() {
         let session = FakeClaudeSession()
-        session.failSendAt = [2] // 타이핑은 성공, 첫 CR 실패
+        session.failSendAt = [4] // 표식·클리어·본문은 성공, 첫 CR 실패
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
@@ -834,18 +2556,37 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        // 타이핑 1 + CR 1 + 포기 후 정리 1 — CR 재전송을 더 시도하면 안 된다
-        XCTAssertEqual(session.sendCallCount, 3)
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
+        // 표식 1 + 클리어 1 + 본문 1 + CR 1 + 포기 후 정리 1 — CR 재전송은 없어야 한다
+        XCTAssertEqual(session.sendCallCount, 5)
+        XCTAssertEqual(
+            Array(session.keystrokes.dropFirst()),
+            [claudeClearInputKey, inputs[0], claudeClearInputKey]
+        )
     }
 
     /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도
     /// 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번 제출된다
     func testFailedSubmitResendsCarriageReturnWithoutRetyping() {
         let session = FakeClaudeSession()
-        session.failSendAt = [2] // #1 타이핑 성공, #2 = CR 실패
+        session.failSendAt = [4] // 표식·클리어·본문 성공, #4 = CR 실패
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
+        // 본문은 한 번만 친다(실험은 표식으로 한다). CR 뒤에 다시 치지 않는 것이 여기서 지킬 불변식
+        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
+    }
+
+    /// **Reproduction (round 5, Codex)**: a CR whose call reported failure may still have landed —
+    /// the helper can inject part of a write and then error. Retrying the CR is fine (a CR into an
+    /// empty box does nothing), but the outer loop used to give up on the resends, clear the box
+    /// and **retype**, submitting the same message twice. With a `!` input that runs the user's
+    /// command twice
+    func testAnInputWhoseCarriageReturnMayHaveLandedIsNeverRetyped() {
+        let session = FakeClaudeSession()
+        // 1: the marker · 2: its clear · 3: the body · 4–6: the three CR attempts, each landing
+        // but reporting failure
+        session.deliverButReportFailureAt = [4, 5, 6]
+        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
+        XCTAssertEqual(session.submitted, [inputs[0]]) // it did go through — exactly once
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
     }
 
@@ -853,9 +2594,10 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// 아직 그리지 못하는 순간이 있다. 화면은 읽히는데 입력만 안 보이므로 재타이핑으로 복구한다
     func testUnreflectedInputRetypesUntilScreenShowsIt() {
         let session = FakeClaudeSession()
-        session.dropTypingAt = [1] // 첫 타이핑을 claude가 버린다
+        session.dropTypingAt = [3] // 표식·클리어는 통과하고 **본문**을 claude가 버린다
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]]) // 빈 줄이 아니라 실제 입력이 제출됐다
+        // 버려진 본문 1 + 다음 시도의 본문 1
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2)
     }
 
@@ -920,8 +2662,12 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             let count = submitClaudeInputs([inputs[0]], io: session.io)
             return (count, session.submitted)
         }
-        // pane 증명이 없으면 남의 화면이 그대로 제출을 승인한다 (Codex가 재현한 공격)
-        XCTAssertEqual(run(paneProof: false).submitted, 1)
+        // 라운드 8부터는 pane 증명이 없어도 남의 화면이 제출을 승인하지 못한다 — 귀속 실험이
+        // "우리가 친 것이 우리가 비운 뒤 사라지는가"를 묻는데, 남의 화면에서는 사라지지 않는다.
+        // 그래도 증명을 없애지 않는 이유는 실험이 **우리 텍스트**로 이뤄져 우연한 일치를
+        // 배제하지 못하기 때문이다(난수 표식은 배제한다)
+        XCTAssertEqual(run(paneProof: false).lines, [])
+        XCTAssertEqual(run(paneProof: false).submitted, 0)
         // 증명을 요구하면 난수가 그 화면에 뜨지 않으므로 아무것도 제출되지 않는다
         XCTAssertEqual(run(paneProof: true).submitted, 0)
         XCTAssertTrue(run(paneProof: true).lines.isEmpty)
@@ -1020,17 +2766,20 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         // 사본만 맞고 실물이 어긋나도 초록이 된다
         var ownership = InputBoxOwnership()
         XCTAssertFalse(ownership.mayHoldOurs, "아무것도 보내기 전에는 지울 우리 조각이 없다")
-        ownership.recordSend(keys: "!gh pr view", sent: false) // 전송은 실패했지만 바이트는 이미 들어갔을 수 있다
+        ownership.recordSendAttempt() // 전송이 실패해도 바이트는 이미 들어갔을 수 있다
         XCTAssertTrue(ownership.mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
-        ownership.recordSend(keys: claudeSubmitKey, sent: true)
-        XCTAssertFalse(ownership.mayHoldOurs, "제출로 입력창이 비었는데 정리를 보내면 사용자 초안을 지운다")
-        ownership.recordSend(keys: claudeSubmitKey, sent: false) // 제출 실패 — 본문은 입력창에 그대로 남아 있다
-        XCTAssertTrue(ownership.mayHoldOurs)
-        // 클리어 갈래도 같다: 성공한 Ctrl+U는 입력창을 비우므로 내려가고, 실패면 남는다
-        ownership.recordSend(keys: claudeClearInputKey, sent: true)
+        // **쓰인** CR·Ctrl+U는 TUI가 처리했다는 증거가 아니다 — AppleScript·CLI의 성공은 터미널이
+        // 바이트를 받았다는 뜻일 뿐이다. 그래서 어떤 전송도 이것을 내리지 않는다
+        ownership.recordSendAttempt()
+        XCTAssertTrue(ownership.mayHoldOurs, "쓰인 Ctrl+U를 처리됨으로 믿었다")
+        // 그리고 **CR은 내리지 않는다**(라운드 7): tty에 CR을 썼다는 것과 TUI가 그것을 제출로
+        // 처리했다는 것은 다른 일이고, 처리되지 않았으면 본문은 입력창에 그대로다. "모르면 비었다"로
+        // 두는 바람에 잔여가 다음 입력과 한 줄로 붙었다. 내려가는 것은 **증거**뿐이다 —
+        // 우리가 성공적으로 비웠거나, 화면이 우리 것이 거기 없다고 보여 줬을 때
+        ownership.recordSendAttempt()
+        XCTAssertTrue(ownership.mayHoldOurs, "CR을 썼다는 것은 입력창이 비었다는 증거가 아니다")
+        ownership.recordInputBoxIsFreeOfOurs()
         XCTAssertFalse(ownership.mayHoldOurs)
-        ownership.recordSend(keys: claudeClearInputKey, sent: false)
-        XCTAssertTrue(ownership.mayHoldOurs)
     }
 
     /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
@@ -1055,7 +2804,8 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         session.screenNeedsPaneProof = true
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.gateChecks, session.sendCallCount)
-        XCTAssertEqual(session.sendCallCount, 4) // 표식 · Ctrl+U · 본문 · CR
+        // 표식 · 클리어 · 본문 · CR · 끝내며 정리
+        XCTAssertEqual(session.sendCallCount, 5)
     }
 
     /// 회귀 방지(P0-2): 첫 CR도 세션 확인을 통과해야 한다. 화면 반영을 확인한 직후라도 그
@@ -1074,14 +2824,16 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         // 타이핑만 나가고 CR은 막혔다. 그 타이핑은 입력창에 남으므로 포기하면서 지운다
-        XCTAssertEqual(session.keystrokes, [inputs[0], claudeClearInputKey])
+        XCTAssertEqual(
+            Array(session.keystrokes.dropFirst()),
+            [claudeClearInputKey, inputs[0], claudeClearInputKey]
+        )
     }
 
     /// 같은 입력을 두 번 예약했을 때, 앞의 것이 화면(대화 기록)에 남아 있어도 뒤의 것이
     /// 제출된다 — "있었나/없었나"가 아니라 "몇 번 보이나"로 세기 때문이다
     func testRepeatedInputIsStillSubmittedWhileTheEarlierOneStaysOnScreen() {
         let session = FakeClaudeSession()
-        session.keepSubmittedOnScreen = true
         XCTAssertEqual(submitClaudeInputs([inputs[0], inputs[0]], io: session.io), 2)
         XCTAssertEqual(session.submitted, [inputs[0], inputs[0]])
     }
@@ -1129,8 +2881,8 @@ final class ScreenReflectionTests: XCTestCase {
 final class ToolCheckTests: XCTestCase {
     func testScriptAsksEachToolAndMarksCompletion() {
         let script = toolCheckScript(["z", "gh"])
-        XCTAssertTrue(script.contains("command -v z >/dev/null 2>&1 && echo TC_OK:z"))
-        XCTAssertTrue(script.contains("command -v gh >/dev/null 2>&1 && echo TC_OK:gh"))
+        XCTAssertTrue(script.contains("command -v z 2>/dev/null) && echo TC_OK:z"))
+        XCTAssertTrue(script.contains("command -v gh 2>/dev/null) && echo TC_OK:gh"))
         // 완료 마커가 없으면 "도구 없음"과 "셸 자체가 실패"를 구분할 수 없다
         XCTAssertTrue(script.hasSuffix("echo TC_DONE"))
     }
@@ -1164,6 +2916,150 @@ final class ToolCheckTests: XCTestCase {
         XCTAssertTrue(loginShellPath().hasPrefix("/"))
     }
 
+    /// **Round 9 decision.** The check asks the form the terminals actually open — an interactive
+    /// **login** shell (WezTerm spawns the shell with a `-` argv0 by design; iTerm2's default
+    /// profile command is "Login shell"; Warp uses the login shell). Round 8 asked both forms and
+    /// unioned them, which answers a different question ("is it in *some* rc") and told the merge
+    /// that a claude only reachable from `.bashrc` was runnable — the pane then failed with
+    /// `command not found` (reviewer reproduction).
+    ///
+    /// Measured (rc files planted in an empty HOME): `bash -l -i -c` reads `.bash_profile`,
+    /// `bash -i -c` reads `.bashrc`, `zsh -l -i -c` reads all three of zsh's. So for a bash user
+    /// whose tools live only in `.bashrc`, "missing" is the **correct** answer: their tab does not
+    /// read that file either, which is also why their `z …` command would fail there.
+    func testToolCheckAsksTheShellFormTheTerminalsOpen() throws {
+        let home = NSTemporaryDirectory() + "tc-home-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try "tcfunc() { :; }\n".write(toFile: home + "/.bashrc", atomically: true, encoding: .utf8)
+        try "tcprofile() { :; }\n"
+            .write(toFile: home + "/.bash_profile", atomically: true, encoding: .utf8)
+
+        let result = try XCTUnwrap(checkTools(
+            ["tcfunc", "tcprofile"], shell: "/bin/bash",
+            environment: ["HOME": home, "PATH": "/usr/bin:/bin"]
+        ))
+        XCTAssertEqual(result.available["tcprofile"], true, "로그인 셸이 읽는 파일의 도구를 못 봤다")
+        XCTAssertEqual(
+            result.available["tcfunc"], false,
+            "탭에서 읽히지 않는 rc의 도구를 있다고 답하면 병합이 켜지고 pane에서 실패한다"
+        )
+    }
+
+    /// The fallback exists only for shells that reject `-l` (dash has no such flag). A first
+    /// candidate that *answers* — even with "not found" — is the answer
+    func testTheSecondShellFormIsOnlyAFallbackForShellsThatRejectTheFirst() {
+        let candidates = toolCheckShellArgumentCandidates("SCRIPT")
+        XCTAssertEqual(candidates.first, ["-l", "-i", "-c", "SCRIPT"])
+        XCTAssertEqual(candidates.last, ["-i", "-c", "SCRIPT"])
+    }
+
+    /// **Round 8 (Codex P2)**: a relative `PATH` entry resolves against the working directory, and
+    /// the pane's is whatever the command `cd`s into — so a file found from `/` is not a file
+    /// `command claude` will find there. Any relative entry disqualifies the answer
+    /// **Reproduction (round 9, independent reviewer).** The guard was written as
+    /// `for d in $PATH`, and **zsh does not word-split an unquoted parameter** — so in the shell
+    /// this machine actually logs in with, the loop ran once over the whole string and the guard
+    /// did nothing. The test hid it by running the script through `/bin/sh` on purpose, which is
+    /// the same shape of mistake round 2 made with the xtrace oracle: green, and proving nothing.
+    /// So the guard is asked in **every shell the tool check may run in**
+    func testTheRelativePathGuardAnswersTheSameInEveryShellWeMayAsk() throws {
+        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash"]
+        where FileManager.default.isExecutableFile(atPath: shell) {
+            let relative = try runProcess(
+                shell, ["-c", toolCheckScript(["ls"])],
+                env: ["PATH": "bin:/usr/bin:/bin"], timeout: 10
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(parseToolExecutables(output: relative.stdout, tools: ["ls"])),
+                ["ls": false], shell
+            )
+            let absolute = try runProcess(
+                shell, ["-c", toolCheckScript(["ls"])],
+                env: ["PATH": "/usr/bin:/bin"], timeout: 10
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(parseToolExecutables(output: absolute.stdout, tools: ["ls"])),
+                ["ls": true], shell
+            )
+        }
+    }
+
+    func testARelativePathEntryIsNotAcceptedAsAnExecutable() throws {
+        // Codex's shape exactly: with `bin` on PATH, asking from `/` finds `/bin/ls` and answers
+        // "executable" — but in the pane, after the command has `cd`ed somewhere else, `bin/ls`
+        // is not there. The relative entry is what makes the answer meaningless, so it is refused
+        let result = try runProcess(
+            "/bin/sh", ["-c", toolCheckScript(["ls"])],
+            env: ["PATH": "bin:/usr/bin:/bin"], timeout: 10
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(parseToolCheck(output: result.stdout, tools: ["ls"])), ["ls": true]
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(parseToolExecutables(output: result.stdout, tools: ["ls"])),
+            ["ls": false]
+        )
+    }
+
+    /// `command -v` answers for **functions and aliases** too, so "the user can type claude" and
+    /// "the merge can launch claude" are different facts: the merged command runs `command claude`,
+    /// which skips exactly those. Measured (both zsh and bash): with `zzclaude(){ :; }` defined,
+    /// `command -v zzclaude` prints `zzclaude` while `command zzclaude` is "command not found"
+    func testScriptAlsoAsksWhetherTheNameResolvesToAFile() {
+        XCTAssertTrue(toolCheckScript(["claude"]).contains("TC_EXE:claude"))
+    }
+
+    func testAWrapperIsAvailableButNotExecutable() throws {
+        let output = "TC_OK:z\nTC_OK:claude\nTC_EXE:claude\nTC_DONE\n"
+        XCTAssertEqual(
+            try XCTUnwrap(parseToolCheck(output: output, tools: ["z", "claude"])),
+            ["z": true, "claude": true]
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(parseToolExecutables(output: output, tools: ["z", "claude"])),
+            ["z": false, "claude": true]
+        )
+    }
+
+    /// The classification has to come out of a **real shell**, not out of our reading of one.
+    ///
+    /// Three cases, all measured before they were coded (round 7, Codex's reproduction):
+    ///  - `tcfunc` — a function with no file behind it. `command claude` would fail, so no merge
+    ///  - `tcwrapped` — a function **wrapping a real file**. `command -v` answers `tcwrapped`, but
+    ///    `command tcwrapped` runs the file, which is exactly what the merged command does. The old
+    ///    probe said "not executable" here and refused to merge, contradicting the documented
+    ///    "the merge bypasses your wrapper"
+    ///  - `tcnoexec` — a file on PATH **without the executable bit**. bash and dash hand back its
+    ///    absolute path from `command -v` (measured), so a `/*` test alone called it executable and
+    ///    the merged `command claude` then failed
+    func testExecutableProbeSeesPastWrappersAndRejectsUnrunnableFiles() throws {
+        let directory = NSTemporaryDirectory() + "tc-toolcheck-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        for name in ["tcreal", "tcwrapped", "tcnoexec"] {
+            try "#!/bin/sh\nexit 0\n".write(toFile: directory + "/" + name, atomically: true, encoding: .utf8)
+        }
+        for name in ["tcreal", "tcwrapped"] {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory + "/" + name
+            )
+        }
+
+        let tools = ["tcfunc", "tcreal", "tcwrapped", "tcnoexec"]
+        let result = try runProcess(
+            "/bin/sh",
+            ["-c", "tcfunc() { :; }\ntcwrapped() { command tcwrapped; }\n" + toolCheckScript(tools)],
+            env: ["PATH": directory + ":/usr/bin:/bin"], timeout: 10
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(parseToolExecutables(output: result.stdout, tools: tools)),
+            ["tcfunc": false, "tcreal": true, "tcwrapped": true, "tcnoexec": false]
+        )
+        // The `-x` guard is what covers the shells that answer with a path for a file they could
+        // not run (measured: bash and dash do, /bin/sh and zsh do not), so it must not be dropped
+        XCTAssertTrue(toolCheckScript(["claude"]).contains("[ -x "), toolCheckScript(["claude"]))
+    }
     // "Without z every button fails" holds only until a base directory is configured. Keeping it
     // an error afterwards leaves a red line in the setup window of a perfectly fine environment
     func testZIsCriticalOnlyWhileNoBaseDirectoryIsConfigured() {
@@ -1185,6 +3081,32 @@ final class ToolCheckTests: XCTestCase {
 // MARK: - AppleScript 이스케이프
 
 final class AppleScriptTests: XCTestCase {
+    /// iTerm2 is the one terminal that does not receive `claudeClearInputKey` as bytes — it goes
+    /// through AppleScript, so the sequence has to be spelled out there too. Both characters, in
+    /// one `write text` (a newline between them would submit), Ctrl+U first: alone it leaves
+    /// claude's `!` shell mode behind and the next plain input runs as a shell command (measured)
+    func testTheClearScriptSendsBothCharactersOfTheClearSequence() {
+        let script = iTermClearInputScript(sessionID: "s")
+        XCTAssertTrue(
+            script.contains("write text ((character id 21) & (character id 127)) newline NO"),
+            script
+        )
+    }
+
+    /// **Drift (round 13, independent reviewer).** "One constant, every site" was false for iTerm2:
+    /// the script transcribed 21 and 127 instead of reading `claudeClearInputKey`, so changing the
+    /// constant would have moved every terminal *except* iTerm2 — silently. The expectation here is
+    /// recomputed from the constant, so the two can no longer disagree
+    func testTheClearScriptIsDerivedFromTheClearKeyAndCannotDriftFromIt() {
+        let expected = claudeClearInputKey.unicodeScalars
+            .map { "(character id \($0.value))" }
+            .joined(separator: " & ")
+        XCTAssertTrue(
+            iTermClearInputScript(sessionID: "s").contains("write text (\(expected)) newline NO"),
+            iTermClearInputScript(sessionID: "s")
+        )
+    }
+
     func testEscapeQuotesAndBackslashes() {
         XCTAssertEqual(escapeForAppleScript(#"say "hi" \ now"#), #"say \"hi\" \\ now"#)
     }
@@ -1468,12 +3390,28 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertFalse(warpTabConfigIsOurs(contents: ""))
     }
 
-    /// 이름으로도 한 번 거른다 — 우리 접두사 + 16진 토큰 형태만 회수 대상이다
+    /// 이름으로도 한 번 거른다 — 우리가 **쓰는 이름 그대로**(접두사 + 8자리 소문자 hex)만
+    /// 회수 대상이다. 넓게 잡으면 우리가 만들지 않은 파일을 지운다(라운드 8, Codex P2):
+    /// 생성 규칙과 회수 규칙은 한 정본이어야 한다
     func testOnlyOurNamingIsSweptFromTheDirectory() {
         XCTAssertTrue(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-내파일.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "my-workspace.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.txt"))
+        // 우리가 결코 쓰지 않는 형태들
+        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-DEADBEEF.toml"))
+        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-０１２３abcd.toml"))
+        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-abc.toml"))
+        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeefdeadbeef.toml"))
+    }
+
+    /// 소켓 이름도 같은 정본이다 — `tcw-a.sock` 같은 길이 미달을 우리 것으로 보면, 같은 사용자의
+    /// 다른 프로그램 소켓이 회수 대상이 된다
+    func testOnlyOurSocketNamingIsReclaimable() {
+        XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-a1b2c3d4.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-a.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-user.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-A1B2C3D4.sock"))
     }
 
     /// 브랜치 초기 빌드가 남긴 고정 이름 파일도 회수 대상이다 — 다만 내용이 우리 것일 때만
@@ -2081,6 +4019,17 @@ final class UninstallScriptSyncTests: XCTestCase {
             warpTabConfigHeader,
             warpTabConfigLegacyStem + ".toml",
             warpHelperExecutableName,
+            // Round 4: uninstall swept the helper sockets but left the prompt directories, which
+            // are the ones holding **content** — PR and issue bodies, and `!` output
+            claudePromptDirectoryPrefix + "*",
+            // Round 5: a directory carrying the hand-off marker is one a **running** claude
+            // session was told to read. Uninstalling must not pull that file out from under it,
+            // so those are reported instead of deleted
+            claudePromptHandoffName,
+            // Round 8: the socket sweep matched `tcw-*.sock` with no name check at all, so a
+            // same-user socket like `/tmp/tcw-user.sock` was in range. The pattern below is the
+            // one the app writes — prefix plus 8 lower-case hex
+            "^tcw-[0-9a-f]{8}\\.sock$",
         ]
         for needle in expected {
             XCTAssertTrue(

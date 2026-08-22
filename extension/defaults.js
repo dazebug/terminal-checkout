@@ -32,7 +32,7 @@ const PR_PRESETS = [
   {
     name: 'Review PR (claude)', face: '🔍',
     command: '{cd} && claude',
-    // A leading `!` in claude hands the line to the shell — gh output piles straight into claude's context
+    // A leading `!` is typed into claude's shell mode, so the command really runs in that session
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
   },
 ];

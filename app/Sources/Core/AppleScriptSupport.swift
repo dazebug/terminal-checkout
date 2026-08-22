@@ -62,17 +62,29 @@ public func iTermWriteToSessionScript(sessionID: String, text: String, submit: B
     """
 }
 
-/// Ctrl+U(0x15)를 세션에 보내 입력창을 비우는 AppleScript — 재타이핑 전 잔여 제거용.
-/// 제어문자는 AppleScript 문자열 리터럴에 넣을 수 없어 character id로 만든다.
+/// Control characters cannot be written into an AppleScript string literal, so they are spelled as
+/// `character id` and concatenated. **Derived from the key string, never transcribed**: iTerm2 is
+/// the one terminal that does not receive `claudeClearInputKey` as bytes, and while the numbers
+/// were written out by hand, changing that constant left iTerm2 on the old sequence in silence.
+func appleScriptCharacters(of keys: String) -> String {
+    keys.unicodeScalars.map { "(character id \($0.value))" }.joined(separator: " & ")
+}
+
+/// The AppleScript that clears the input box — `claudeClearInputKey`, i.e. Ctrl+U (0x15) **then**
+/// Backspace (0x7F), in a single `write text` (a newline between the two would submit).
+///
+/// Why Backspace follows is recorded at `claudeClearInputKey`: Ctrl+U alone leaves claude's `!`
+/// shell mode behind, and the plain input typed after it runs as a shell command (measured).
 public func iTermClearInputScript(sessionID: String) -> String {
     let escapedID = escapeForAppleScript(sessionID)
+    let keys = appleScriptCharacters(of: claudeClearInputKey)
     return """
     tell application id "\(iTermBundleID)"
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if (id of s) is "\(escapedID)" then
-                        tell s to write text (character id 21) newline NO
+                        tell s to write text (\(keys)) newline NO
                         return "ok"
                     end if
                 end repeat

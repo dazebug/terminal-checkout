@@ -267,8 +267,9 @@ function renderButtons(kind) {
       </div>
       <div class="claude-queue">
         <div class="claude-queue-head"><span class="ret">⏎</span> claude inputs
-          <span class="help-inline">— when the command starts claude, these are typed into that session in order</span>
+          <span class="help-inline">— delivered in order; <code>!</code> lines run in claude's shell mode</span>
         </div>
+        <div class="claude-hint" hidden><code>!</code> lines are typed into claude's shell mode so they really run as commands — consecutive ones go in as a single line joined with <code>;</code>, each behind a banner. On Warp that typing needs the Accessibility permission. A single plain-text input, with nothing else in the list, skips typing entirely and becomes claude's opening message — that additionally needs the command to end in a bare <code>claude</code>.</div>
         <div class="claude-warn" hidden>⚠ The command doesn't start claude, so these inputs won't be delivered</div>
         <div class="claude-rows"></div>
         <button class="add-input-btn">+ Add Input</button>
@@ -325,6 +326,9 @@ function updateFacePreview(card, face) {
 function updateClaudeWarn(card, btn) {
   const hasInputs = btn.claudeInputs.some(s => s.trim());
   card.querySelector('.claude-warn').hidden = !hasInputs || /\bclaude\b/.test(btn.command);
+  // The merge rules are only worth reading once there is something to merge — showing them on
+  // every empty card would put three paragraphs of prose above every button
+  card.querySelector('.claude-hint').hidden = !hasInputs;
 }
 
 function renderOverrides() {

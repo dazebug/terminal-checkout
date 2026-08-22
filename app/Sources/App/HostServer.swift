@@ -93,22 +93,38 @@ final class HostServer {
             // 실행 결과와 무관하게 요청 도착 자체가 Chrome→relay→소켓 경로의 증거다
             Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
+            // 성공 경로의 단계별 스톱워치. 시작점은 **요청이 도착한 순간**이라 이후 모든
+            // 「총」이 사용자가 버튼을 누른 뒤 체감하는 시간과 같은 축에 있다
+            let timeline = DeliveryTimeline()
             let response = execQueue.sync {
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
                 handleRequest(json: json, baseDirectory: Settings.baseDirectory) { resolved in
-                    // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
-                    let handle = try runInTerminal(
-                        command: resolved.command, terminal: Settings.terminal,
-                        injectsClaudeInput: !resolved.claudeInputs.isEmpty
+                    // 예약된 claude 입력의 경로는 `prepareRequest`가 정한다 — 평문 1개는 argv,
+                    // 나머지는 타이핑(연속 `!`는 안전 게이트를 통과할 때만 한 줄로 병합)
+                    let prepared = prepareRequest(
+                        resolved, claudeIsExecutable: Settings.claudeIsExecutable
                     )
-                    if !resolved.claudeInputs.isEmpty {
+                    let route = prepared.claudeInputs.isEmpty
+                        ? (resolved.claudeInputs.isEmpty ? "claude 입력 없음" : "argv 병합")
+                        : "타이핑 \(prepared.claudeInputs.count)개"
+                    timeline.step("요청 수신 — claude 입력 \(resolved.claudeInputs.count)개, \(route)")
+                    // 터미널 선택은 앱 설정이 단일 소스 — 요청의 terminal 필드는 무시한다
+                    let terminal = Settings.terminal
+                    let handle = try runInTerminal(
+                        command: prepared.command, terminal: terminal,
+                        injectsClaudeInput: !prepared.claudeInputs.isEmpty
+                    )
+                    timeline.step("\(terminal.rawValue) 탭 생성 완료")
+                    if !prepared.claudeInputs.isEmpty {
                         // 전달 감시는 claude 기동 대기와 입력별 재시도가 모두 블로킹이라
                         // 수 분이 걸릴 수 있다 — 직렬 execQueue와 Chrome 응답을 막지 않도록
                         // 응답은 스폰 즉시 돌려주고 감시는 밖에서 돈다
                         DispatchQueue.global(qos: .utility).async {
-                            deliverClaudeInputs(resolved.claudeInputs, to: handle)
+                            deliverClaudeInputs(
+                                prepared.claudeInputs, to: handle, timeline: timeline
+                            )
                         }
                     }
                 }

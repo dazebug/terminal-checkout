@@ -53,15 +53,27 @@ public func resolveRequest(
     let command = try renderCommand(
         template: template, variables: variables, appVariables: appVariables
     )
+    try rejectNUL(in: command, what: "command_template")
 
     var claudeInputs: [String] = []
     for text in rawInputs {
         let rendered = try renderCommand(
             template: text, variables: variables, appVariables: appVariables
         ).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !rendered.isEmpty { claudeInputs.append(rendered) }
+        guard !rendered.isEmpty else { continue }
+        try rejectNUL(in: rendered, what: "claude_inputs")
+        claudeInputs.append(rendered)
     }
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)
+}
+
+/// A NUL cannot be delivered faithfully by either route: on the argv track command substitution
+/// **drops** it silently (`pre<NUL>post` → `prepost`, reproduced), and on the injection track it
+/// cannot go into the tty input queue at all. Rather than send something altered, reject the
+/// request — the extension surfaces this string as the failure.
+private func rejectNUL(in text: String, what: String) throws {
+    guard text.utf8.contains(0) else { return }
+    throw CommandError.badRequest("\(what) must not contain NUL")
 }
 
 /// The variables only the app knows the value of. Today that is `{cd}` (the repository entry
