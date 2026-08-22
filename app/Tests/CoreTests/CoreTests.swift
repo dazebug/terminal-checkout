@@ -1,7 +1,7 @@
 import XCTest
 @testable import Core
 
-// MARK: - 명령 렌더링 (변수 치환 + command injection 방지)
+// MARK: - Command rendering (variable substitution + command-injection defence)
 
 final class RenderTests: XCTestCase {
     func testRenderBasic() throws {
@@ -23,8 +23,7 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(cmd, "r a/b release/2 develop a_b 1402 frograms")
     }
 
-    // {base}는 이 PR이 실제로 머지될 브랜치다 — 리포 오버라이드·글로벌 기본값을 거치는
-    // {main}과 달라질 수 있으므로 서로 다른 값으로 치환돼야 한다
+    // {base} is the branch this PR will actually be merged into — it can differ from {main}, which goes through the per-repository override and the global default, so the two have to substitute different values
     func testRenderBaseIsIndependentOfMain() throws {
         let cmd = try renderCommand(
             template: "git merge --ff-only origin/{base} && echo {main}",
@@ -33,7 +32,7 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(cmd, "git merge --ff-only origin/release/2 && echo main")
     }
 
-    // 이슈/PR 프리셋의 gh 명령은 {owner}/{repo}/{number}를 그대로 URL 경로에 넣는다
+    // The gh commands in the issue and PR presets put {owner}/{repo}/{number} straight into a URL path
     func testRenderGitHubAPIPath() throws {
         let cmd = try renderCommand(
             template: "gh api repos/{owner}/{repo}/issues/{number}/timeline",
@@ -67,8 +66,8 @@ final class RenderTests: XCTestCase {
         )
     }
 
-    // bash 그룹핑 { …; }는 변수 패턴({word})이 아니므로 그대로 통과해야 한다
-    // (기본 checkout 프리셋이 워크트리 fallback에 { } 그룹핑을 사용)
+    // A bash grouping { …; } is not a variable pattern ({word}), so it has to pass through untouched
+    // (the default checkout preset uses { } grouping for its worktree fallback)
     func testBashGroupingBracesPassThrough() throws {
         let cmd = try renderCommand(
             template: "z {repo} && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }",
@@ -232,7 +231,7 @@ final class RepoEntryCommandTests: XCTestCase {
     }
 }
 
-// MARK: - 요청 해석 (command_template 포맷)
+// MARK: - Request resolution (the command_template shape)
 
 final class RequestTests: XCTestCase {
     func testTemplateRequest() throws {
@@ -243,7 +242,7 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(try resolveRequest(req).command, "z remy && git checkout fix/x")
     }
 
-    // 어느 터미널을 쓸지는 앱 설정이 정한다 — 요청에 섞여 오는 terminal 필드는 해석하지 않는다
+    // Which terminal to use is the app's setting to decide — a terminal field riding along in the request is never resolved
     func testTerminalFieldIsIgnored() throws {
         let req: [String: Any] = [
             "command_template": "z {repo}",
@@ -260,7 +259,7 @@ final class RequestTests: XCTestCase {
         XCTAssertThrowsError(try resolveRequest(["command_template": ""]))
     }
 
-    // claude_inputs: claude 실행 후 세션에 타이핑할 입력들. command와 같은 변수 문법을 쓴다.
+    // claude_inputs: the inputs to type into the session once claude is running. They use the same variable syntax as the command.
     func testClaudeInputsParsedAndRendered() throws {
         let req: [String: Any] = [
             "command_template": "z {repo} && claude",
@@ -300,7 +299,7 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
-    // 입력 속 변수도 command와 같은 검증을 거친다 — 미지의 변수는 에러
+    // A variable inside an input gets the same validation as one in the command — an unknown variable is an error
     func testClaudeInputsUnknownVariableThrows() {
         XCTAssertThrowsError(try resolveRequest([
             "command_template": "z {repo}", "variables": ["repo": "remy"],
@@ -412,7 +411,7 @@ final class RequestTests: XCTestCase {
     }
 }
 
-// MARK: - 요청 핸들러 (성공/실패 JSON 응답 형태)
+// MARK: - The request handler (the success/failure JSON response shape)
 
 final class HandlerTests: XCTestCase {
     func testHandleRequestSuccess() {
@@ -452,12 +451,11 @@ final class HandlerTests: XCTestCase {
     }
 }
 
-// MARK: - Claude 입력 전달 (포그라운드 게이트 판정 — 셸 오입력 방지의 핵심)
+// MARK: - claude input delivery (the foreground gate verdict — the crux of preventing shell mistyping)
 
 final class ClaudeInjectorTests: XCTestCase {
-    // ps -t <tty> -o pid=,stat=,comm= 출력 기준. 포그라운드 프로세스 그룹은 stat에 `+`가 붙는다.
-    // 이름만이 아니라 PID 를 돌려주는 이유는 입력 사이 재대기에서 같은 세션인지 확인하기
-    // 위해서다 (testForegroundPIDDistinguishesReplacedSession 참고).
+    // Against `ps -t <tty> -o pid=,stat=,comm=` output. A foreground process group carries `+` in stat.
+    // The reason a PID comes back rather than just the name is so the re-wait between inputs can confirm it is the same session (see testForegroundPIDDistinguishesReplacedSession).
     func testForegroundClaudeDetected() {
         XCTAssertEqual(claudeForegroundPID(psOutput: "100 Ss   -zsh\n200 S+   claude"), 200)
     }
@@ -468,7 +466,7 @@ final class ClaudeInjectorTests: XCTestCase {
     }
 
     func testShellAtPromptIsNotClaude() {
-        // 프롬프트 대기 중에는 셸 자신이 포그라운드(+)다 — 이때 타이핑하면 셸이 실행해버린다
+        // While waiting at the prompt the shell itself is the foreground (+) — typing then makes the shell run it
         XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  -zsh"))
         XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  zsh"))
         XCTAssertNil(claudeForegroundPID(psOutput: "100 Ss+  /bin/zsh"))
@@ -483,7 +481,7 @@ final class ClaudeInjectorTests: XCTestCase {
     }
 
     func testPathWithSpacesUsesExactBasename() {
-        // "Claude Helper (Renderer)" 같은 무관한 프로세스가 claude로 오인되면 안 된다
+        // An unrelated process such as "Claude Helper (Renderer)" must not be mistaken for claude
         XCTAssertNil(claudeForegroundPID(
             psOutput: "400 S+   /Applications/Claude.app/Contents/MacOS/Claude Helper (Renderer)"))
     }
@@ -492,9 +490,7 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(claudeForegroundPID(psOutput: ""))
     }
 
-    /// `ps -o pid=,stat=,comm=` 의 pid 는 우측 정렬이라 선행 공백이 붙고, comm 앞에도
-    /// 칸 맞춤 공백이 여러 개 온다 (실측: `" 3719 S+   node"`). 이 공백을 떼지 않으면
-    /// 이름 비교가 전부 어긋나 claude 를 영영 못 찾는다.
+    /// In `ps -o pid=,stat=,comm=` the pid is right-aligned so it carries leading spaces, and several alignment spaces come before comm as well (measured: `" 3719 S+   node"`). Without trimming them every name comparison is off and claude is never found.
     func testRealPSColumnSpacingIsTolerated() {
         XCTAssertEqual(claudeForegroundPID(psOutput: " 3719 S+   node"), 3719)
         XCTAssertEqual(
@@ -505,14 +501,12 @@ final class ClaudeInjectorTests: XCTestCase {
     }
 
     func testMalformedPIDColumnIsSkipped() {
-        // pid 자리가 숫자가 아니면(헤더 등) 그 줄은 건너뛴다
+        // When the pid field is not a number (a header, say) that line is skipped
         XCTAssertNil(claudeForegroundPID(psOutput: "PID STAT COMM\nxxx S+   claude"))
     }
 
-    /// 세션 교체 방어의 회귀 방지: 원래 claude 가 죽고 같은 tty 에 새 claude 가 떠도
-    /// 이름·raw mode 는 똑같이 만족하므로, PID 로만 두 세션을 구별할 수 있다.
-    /// 구별하지 못하면 남은 claude_inputs 가 무관한 새 세션에 제출되고,
-    /// 입력이 `!…` 셸 모드면 의도하지 않은 명령까지 실행된다.
+    /// Regression guard for the session-swap defence: when the original claude dies and a new one comes up on the same tty, the name and raw mode are satisfied identically, so the PID is the only thing that can tell the two sessions apart.
+    /// Failing to tell them apart submits the remaining claude_inputs into an unrelated new session, and with a `!…` shell-mode input it even runs an unintended command.
     func testForegroundPIDDistinguishesReplacedSession() {
         let first = claudeForegroundPID(psOutput: "100 Ss   -zsh\n95539 R+   claude")
         let replaced = claudeForegroundPID(psOutput: "100 Ss   -zsh\n95610 R+   claude")
@@ -521,11 +515,10 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNotEqual(first, replaced)
     }
 
-    // MARK: tty raw mode 판정 — 포그라운드가 claude여도 아직 입력을 받을 수 없는 구간을 가른다.
-    // 셸이 claude를 exec한 직후 tty는 canonical(icanon+echo)이라, 이때 타이핑하면
-    // claude가 아니라 커널이 에코한다. 그 에코를 화면 반영으로 오판하면 CR이 유실된다 (실측).
+    // MARK: the tty raw-mode verdict — it separates out the window where the foreground is claude but input still cannot be accepted.
+    // Right after the shell execs claude the tty is canonical (icanon+echo), so typing then is echoed by the kernel rather than by claude. Mistaking that echo for the screen reflecting the input loses the CR (measured).
 
-    /// 실제 `stty -f /dev/ttysNNN -a` 출력 (claude 실행 중 = raw mode)
+    /// Real `stty -f /dev/ttysNNN -a` output (while claude is running = raw mode)
     private static let sttyRawOutput = """
     speed 9600 baud; 89 rows; 338 columns;
     lflags: -icanon -isig -iexten -echo echoe -echok echoke -echonl echoctl
@@ -534,7 +527,7 @@ final class ClaudeInjectorTests: XCTestCase {
     iflags: -istrip -icrnl -inlcr -igncr -ixon -ixoff ixany imaxbel -iutf8
     """
 
-    /// 실제 `stty` 출력 (claude exec 직후 = canonical, 커널이 에코하는 구간)
+    /// Real `stty` output (right after claude is exec'd = canonical, the window where the kernel echoes)
     private static let sttyCanonicalOutput = """
     speed 9600 baud; 89 rows; 338 columns;
     lflags: icanon isig iexten echo echoe echok echoke -echonl echoctl
@@ -547,42 +540,41 @@ final class ClaudeInjectorTests: XCTestCase {
     }
 
     func testCanonicalModeDetected() {
-        // 여기서 타이핑하면 커널 에코가 화면에 떠 반영 확인을 거짓 통과시킨다
+        // Typing here puts the kernel echo on screen and lets the reflection check pass falsely
         XCTAssertEqual(ttyIsRawMode(sttyOutput: Self.sttyCanonicalOutput), false)
     }
 
     func testRawFlagIsNotMatchedAsSubstring() {
-        // "-icanon"은 "icanon"을 부분 문자열로 포함한다 — 토큰 단위로 갈라야 raw를
-        // canonical로 오판하지 않는다
+        // "-icanon" contains "icanon" as a substring — the split has to be token by token or raw gets mistaken for canonical
         XCTAssertEqual(ttyIsRawMode(sttyOutput: "lflags: -icanon -echo"), true)
         XCTAssertEqual(ttyIsRawMode(sttyOutput: "lflags: icanon echo"), false)
     }
 
     func testUndecidableSttyOutputIsNil() {
-        // stty 실패·형식 변경으로 판정할 수 없으면 nil — 호출자가 ps 게이트만으로 진행한다
+        // nil when it cannot be told because stty failed or its format changed — the caller then carries on with the ps gate alone
         XCTAssertNil(ttyIsRawMode(sttyOutput: ""))
         XCTAssertNil(ttyIsRawMode(sttyOutput: "stty: /dev/ttys999: No such file or directory"))
     }
 
-    // MARK: 입력 접수 가능 판정 = 포그라운드 claude + raw mode
+    // MARK: the can-accept-input verdict = foreground claude + raw mode
 
     func testAcceptsInputRequiresBothSignals() {
         let claudeFg = "100 Ss   -zsh\n200 S+   claude"
         let shellFg = "100 Ss+  -zsh"
         XCTAssertEqual(acceptingClaudePID(psOutput: claudeFg, sttyOutput: Self.sttyRawOutput), 200)
-        // claude는 떴지만 아직 canonical — 지금 보내면 CR이 유실된다
+        // claude is up but the tty is still canonical — sending now loses the CR
         XCTAssertNil(acceptingClaudePID(psOutput: claudeFg, sttyOutput: Self.sttyCanonicalOutput))
-        // 셸 프롬프트는 zle 때문에 raw지만 포그라운드가 claude가 아니다
+        // A shell prompt is raw because of zle, but the foreground is not claude
         XCTAssertNil(acceptingClaudePID(psOutput: shellFg, sttyOutput: Self.sttyRawOutput))
     }
 
     func testAcceptsInputFallsBackToForegroundWhenSttyUnavailable() {
-        // stty를 못 읽는 환경에서 전달이 아예 끊기지 않도록 ps 게이트만으로 통과시킨다
+        // Where stty cannot be read, the ps gate alone lets it through so delivery is not cut off entirely
         XCTAssertEqual(acceptingClaudePID(psOutput: "200 S+   claude", sttyOutput: ""), 200)
         XCTAssertNil(acceptingClaudePID(psOutput: "100 Ss+  -zsh", sttyOutput: ""))
     }
 
-    // wezterm cli list --format json에서 pane의 tty를 찾는다
+    // Finds a pane's tty in `wezterm cli list --format json`
     func testWezTermTTYParsing() throws {
         let json = Data("""
         [{"window_id":0,"tab_id":0,"pane_id":3,"tty_name":"/dev/ttys011","title":"zsh"},
@@ -597,8 +589,7 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(wezTermTTYName(listJSON: Data("broken".utf8), paneID: "3"))
     }
 
-    // 화면 반영 확인용 프로브: 긴 입력은 화면 폭에서 줄바꿈돼 통짜 매칭이 깨지므로
-    // 앞부분만 잘라 쓴다
+    // The probe for confirming the screen reflects an input: a long input wraps at the screen width and breaks a whole-string match, so only its front is used
     func testClaudeInputProbeShortInputUsedWhole() {
         XCTAssertEqual(claudeInputProbe("/help"), "/help")
     }
@@ -614,8 +605,8 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertEqual(claudeInputProbe("  /help  "), "/help")
     }
 
-    // claude는 shell mode 입력을 "! gh ..."처럼 `!` 뒤에 공백을 끼워 그린다.
-    // 이걸 놓치면 반영 확인이 영영 실패해 입력이 제출되지 않고 입력창에 매달린다 (실측)
+    // claude draws a shell-mode input with a space after the `!`, as in "! gh ...".
+    // Missing that makes the reflection check fail forever, so the input is never submitted and hangs in the input box (measured)
     func testScreenMatchesShellModeRendering() {
         XCTAssertTrue(screenReflectsNewInput(
             before: "╭────────╮\n╰────────╯\n  ! for shell mode",
@@ -624,7 +615,7 @@ final class ClaudeInjectorTests: XCTestCase {
         ))
     }
 
-    // 긴 입력은 터미널 폭에서 줄바꿈된다 — 프로브 길이 안에서 끊겨도 매칭돼야 한다
+    // A long input wraps at the terminal width — it has to match even when the break falls inside the probe's length
     func testScreenMatchesWrappedInput() {
         XCTAssertTrue(screenReflectsNewInput(
             before: "> ",
@@ -637,17 +628,14 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertFalse(screenReflectsNewInput(before: "> ", after: "> \n  ? for shortcuts", input: "!gh issue view 1404"))
     }
 
-    // 공백뿐인 입력은 프로브가 비어 아무 화면에나 매칭된다 — 제출을 승인해선 안 된다
+    // A whitespace-only input has an empty probe that matches any screen at all — it must not approve a submission
     func testEmptyInputNeverMatches() {
         XCTAssertFalse(screenReflectsNewInput(before: "", after: "아무 화면", input: "   "))
     }
 }
 
-// MARK: - 제어키 바이트
-// 전달 경로도, 아래 테스트들도 `claudeSubmitKey`·`claudeClearInputKey`를 **참조**한다 — 상수 자체가
-// 틀리면(CR이 LF로 바뀌는 등) 그 테스트들은 함께 초록이 되어 오라클이 되지 못한다. 그래서 이
-// 한 자리에서만 리터럴 바이트로 고정한다: claude는 CR(0x0D)만 제출로 인식하고(실측), 입력창
-// 클리어는 Ctrl+U(0x15)다.
+// MARK: - Control-key bytes
+// Both the delivery path and the tests below **reference** `claudeSubmitKey` and `claudeClearInputKey` — if the constants themselves were wrong (a CR turning into an LF, say) those tests would go green along with them and stop being oracles. So the literal bytes are pinned in this one place: claude recognises only CR (0x0D) as a submission (measured), and clearing the input box is Ctrl+U (0x15).
 
 final class ClaudeControlKeyTests: XCTestCase {
     func testControlKeysAreTheExpectedBytes() {
@@ -659,17 +647,15 @@ final class ClaudeControlKeyTests: XCTestCase {
     }
 }
 
-// MARK: - 터미널 식별자
-// rawValue를 리터럴로 고정하는 oracle — 케이스 이름을 바꾸면 저장값이 함께 바뀌어 기존 사용자의
-// 터미널 선택이 조용히 무시된다. 저장값 "iterm"은 확장 이름과 무관하게 iTerm2를 가리키는
-// 식별자이므로 바꾸지 않는다. 상수 자기참조로는 이 계약을 지킬 수 없어 리터럴로만 검증한다.
+// MARK: - Terminal identifiers
+// An oracle that pins the rawValues as literals — renaming a case changes the stored value with it, and an existing user's terminal choice is then silently ignored. The stored value "iterm" is an identifier that denotes iTerm2 regardless of the product's name, so it does not change. A constant referring to itself cannot keep this contract, which is why the check is by literal only.
 
 final class TerminalIdentifierTests: XCTestCase {
     func testRawValuesAreTheStoredIdentifiers() {
         XCTAssertEqual(Terminal.iterm.rawValue, "iterm")
         XCTAssertEqual(Terminal.wezterm.rawValue, "wezterm")
         XCTAssertEqual(Terminal.warp.rawValue, "warp")
-        // oracle 완결성: 케이스가 늘면 위 목록에도 리터럴 한 줄이 있어야 한다
+        // Oracle completeness: a new case has to gain a literal line in the list above too
         XCTAssertEqual(Terminal.allCases.count, 3)
     }
 
@@ -677,8 +663,7 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal(storedValue: "iterm"), .iterm)
         XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
         XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
-        // 알 수 없는 저장값(다른 버전이 남긴 식별자, 손으로 고친 plist)은 iTerm2 폴백 —
-        // 폴백이 소비 지점마다 갈리지 않게 파싱 한 곳에 모은 계약
+        // An unknown stored value (an identifier left by another version, a hand-edited plist) falls back to iTerm2 — the contract that gathers the fallback into the single parsing point so it cannot diverge per consumer
         XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
         XCTAssertEqual(Terminal(storedValue: ""), .iterm)
     }
@@ -694,7 +679,7 @@ final class TerminalIdentifierTests: XCTestCase {
 
 final class ClaudeInputPreconditionTests: XCTestCase {
     override func tearDown() {
-        ClaudeInputGuidance.present = nil // 훅은 전역이라 테스트 간에 새면 안 된다
+        ClaudeInputGuidance.present = nil         // The hook is global, so it must not leak between tests
         super.tearDown()
     }
 
@@ -728,7 +713,7 @@ final class ClaudeInputPreconditionTests: XCTestCase {
 
         let rejection = try XCTUnwrap(wezTermFallbackRejection(injectsClaudeInput: true))
         guard case TerminalError.claudeInputNotDeliverable(let blocker) = rejection else {
-            return XCTFail("전용 거절 케이스여야 한다: \(rejection)")
+            return XCTFail("this has to be the dedicated rejection case: \(rejection)")
         }
         XCTAssertEqual(blocker, .wezTermSessionUnavailable)
         // …and the setup window stays where it is: it has no WezTerm control on it, so taking
@@ -852,7 +837,7 @@ final class ClaudeInputPreconditionTests: XCTestCase {
             helperExecutable: { "/x/helper" }, socketPath: { _ in "/tmp/tcw.sock" }
         )) { error in
             guard case TerminalError.claudeInputNotDeliverable(.warpAccessibility) = error else {
-                return XCTFail("권한 상실은 전용 거절이어야 한다: \(error)")
+                return XCTFail("a lost permission has to be the dedicated rejection: \(error)")
             }
         }
     }
@@ -864,7 +849,7 @@ final class ClaudeInputPreconditionTests: XCTestCase {
             helperExecutable: { nil }, socketPath: { _ in "/tmp/tcw.sock" }
         )) { error in
             guard case TerminalError.claudeInputNotDeliverable(.warpHelperUnavailable) = error else {
-                return XCTFail("헬퍼 실종은 전용 거절이어야 한다: \(error)")
+                return XCTFail("a missing helper has to be the dedicated rejection: \(error)")
             }
         }
         XCTAssertThrowsError(try warpInjectionSetup(
@@ -907,7 +892,7 @@ final class ClaudeInputPreconditionTests: XCTestCase {
 
         XCTAssertEqual(seen, [.warpHelperUnavailable])
         guard case .claudeInputNotDeliverable(let blocker) = error else {
-            return XCTFail("전달 불가 거절은 전용 케이스여야 한다 — 문자열로 식별하면 안 된다")
+            return XCTFail("an undeliverable rejection has to be the dedicated case — it must not be identified by its string")
         }
         XCTAssertEqual(blocker, .warpHelperUnavailable)
     }
@@ -929,13 +914,13 @@ final class ClaudeInputPreconditionTests: XCTestCase {
     func testRunInTerminalRejectsBeforeOpeningAnyTab() throws {
         try XCTSkipIf(
             accessibilityIsTrusted(),
-            "손쉬운 사용이 허용된 환경 — 이 경로는 실제로 Warp 탭을 연다"
+            "the Accessibility permission is granted here — this path really would open a Warp tab"
         )
         XCTAssertThrowsError(
             try runInTerminal(command: "claude", terminal: .warp, injectsClaudeInput: true)
         ) { error in
             guard case TerminalError.claudeInputNotDeliverable(let blocker) = error else {
-                return XCTFail("탭을 열기 전에 전용 거절이 나와야 한다: \(error)")
+                return XCTFail("the dedicated rejection has to come before any tab is opened: \(error)")
             }
             XCTAssertEqual(blocker, .warpAccessibility)
         }
@@ -984,7 +969,7 @@ final class ClaudeInputPlanTests: XCTestCase {
     /// typed line joined with `;`, so three inputs are one type/submit cycle rather than three.
     func testARunOfShellInputsBecomesOneTypedLine() {
         let typed = claudeTypedInputs(["!gh pr view 42", "!gh pr diff 42", "!git status"])
-        XCTAssertEqual(typed.count, 1, "연속 ! 입력이 한 사이클로 합쳐지지 않았다")
+        XCTAssertEqual(typed.count, 1, "a run of consecutive ! inputs was not merged into one cycle")
         XCTAssertEqual(
             typed.first,
             "!/bin/echo '==== !gh pr view 42 ===='; gh pr view 42;"
@@ -1036,9 +1021,9 @@ final class ClaudeInputPlanTests: XCTestCase {
                 // a banner + body (merged), so look for the text after the `!`
                 let needle = input.hasPrefix("!") ? String(input.dropFirst()) : input
                 guard let found = joined.range(of: needle, range: cursor..<joined.endIndex) else {
-                    return XCTFail("\(inputs) → \(joined): \(input) 유실")
+                    return XCTFail("\(inputs) → \(joined): \(input) was lost")
                 }
-                cursor = found.lowerBound // 순서 보존 (같은 입력이 반복될 수 있어 상한만 민다)
+                cursor = found.lowerBound         // Preserves order (the same input can repeat, so only the lower bound advances)
             }
         }
     }
@@ -1068,7 +1053,7 @@ final class ClaudeInputPlanTests: XCTestCase {
             ["!   ", "!printf '%s\n' two"],            // the request trims this one to `!`
             ["!echo ====", "!printf '%s\n' two"],      // zsh expands a word starting with `=`
         ] {
-            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) was merged")
         }
     }
 
@@ -1082,7 +1067,7 @@ final class ClaudeInputPlanTests: XCTestCase {
                 "!gh api repos/o/r/issues/42/timeline --jq '[.[]|select(.event==\"cross-referenced\")]'",
             ],
         ] {
-            XCTAssertEqual(claudeTypedInputs(run).count, 1, "\(run) 이 병합되지 않았다")
+            XCTAssertEqual(claudeTypedInputs(run).count, 1, "\(run) was not merged")
         }
     }
 
@@ -1100,7 +1085,7 @@ final class ClaudeInputPlanTests: XCTestCase {
             ["!git fetch && cd ../worktree", "!gh pr diff 1"],
             ["!source .env", "!gh pr view 1"],
         ] {
-            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 을 합쳤다")
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) was merged")
         }
         // …and the read-only shapes the presets actually use still merge
         XCTAssertEqual(claudeTypedInputs(["!gh pr view 1", "!gh pr diff 1"]).count, 1)
@@ -1132,7 +1117,7 @@ final class ClaudeInputPlanTests: XCTestCase {
             ["!echo one|# note", "!echo two"],
             ["!echo one; # note", "!echo two"], // the round-11 shape, still folded
         ] {
-            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) was merged")
         }
     }
 
@@ -1174,7 +1159,7 @@ final class ClaudeInputPlanTests: XCTestCase {
             ["!&& echo hi", "!echo two"],
             ["!& echo hi", "!echo two"],
         ] {
-            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) 를 합쳤다")
+            XCTAssertEqual(claudeTypedInputs(run), run, "\(run) was merged")
         }
     }
 
@@ -1190,14 +1175,14 @@ final class ClaudeInputPlanTests: XCTestCase {
             "echo one ;; echo two", "echo one ; ; echo two", "echo one ;| echo two",
             "echo one && ; echo two", "echo one ; && echo two", "echo one | | echo two",
         ] {
-            XCTAssertFalse(claudeBodyJoinsSafely(body), "\(body) 를 안전하다고 판정했다")
+            XCTAssertFalse(claudeBodyJoinsSafely(body), "\(body) was judged safe to join")
         }
         // …and every valid separator shape still merges — the gate must not fold real pipes
         for body in [
             "echo one | wc -l", "echo one || echo two", "gh pr view 1 && gh pr diff 1",
             "echo one; echo two", "gh api x --jq '.[]|.n'", "echo 'a ||| b'",
         ] {
-            XCTAssertTrue(claudeBodyJoinsSafely(body), "\(body) 를 접었다")
+            XCTAssertTrue(claudeBodyJoinsSafely(body), "\(body) was folded")
         }
     }
 
@@ -1294,7 +1279,7 @@ final class ClaudeInputPlanTests: XCTestCase {
     func testTheUnsafeJoinReallyLosesTheSecondCommandInARealShell() throws {
         let joined = "printf '%s\n' one # note; /bin/echo '==== two ===='; printf '%s\n' two"
         let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
-        XCTAssertEqual(result.stdout, "one\n", "재현이 성립하지 않는다: \(result.stdout)")
+        XCTAssertEqual(result.stdout, "one\n", "the reproduction does not hold: \(result.stdout)")
     }
 
     /// The same, for the three shapes round 13 adds. None of them merely loses its own command:
@@ -1311,7 +1296,7 @@ final class ClaudeInputPlanTests: XCTestCase {
         ] {
             let result = try runProcess("/bin/sh", ["-c", joined], timeout: 10)
             XCTAssertFalse(
-                result.stdout.contains("two"), "\(label): 재현이 성립하지 않는다 — \(result.stdout)"
+                result.stdout.contains("two"), "\(label): the reproduction does not hold — \(result.stdout)"
             )
         }
     }
@@ -1621,7 +1606,7 @@ final class AppendedPromptPerTerminalTests: XCTestCase {
         XCTAssertTrue(toml.contains("commands = [\"\(escapeForTOMLBasicString(command))\"]"), toml)
         var previous: Character = " "
         for character in escapeForTOMLBasicString(command) {
-            if character == "\"" { XCTAssertEqual(previous, "\\", "이스케이프되지 않은 따옴표") }
+            if character == "\"" { XCTAssertEqual(previous, "\\", "an unescaped quote") }
             previous = character
         }
     }
@@ -1641,7 +1626,7 @@ final class AppendedPromptPerTerminalTests: XCTestCase {
         let line = appendedPromptCommand("printf '%s'", message: hostile)
         let result = try runProcess("/bin/sh", ["-c", line], timeout: 10)
         // `printf '%s'` reapplies its format per argument, so the two arrive back to back
-        XCTAssertEqual(result.stdout, "--" + hostile, "본문이 셸에서 평가됐다")
+        XCTAssertEqual(result.stdout, "--" + hostile, "the body was evaluated by the shell")
         XCTAssertFalse(FileManager.default.fileExists(atPath: "/tmp/tc-should-not-exist"))
     }
 }
@@ -1664,7 +1649,7 @@ final class PreparedRequestTests: XCTestCase {
             command: "z remy && claude",
             claudeInputs: ["!gh pr view 42 --comments", "!gh pr diff 42"]
         ))
-        XCTAssertEqual(prepared.command, "z remy && claude", "명령이 바뀌었다")
+        XCTAssertEqual(prepared.command, "z remy && claude", "the command changed")
         XCTAssertEqual(prepared.claudeInputs.count, 1)
         XCTAssertEqual(
             prepared.claudeInputs.first,
@@ -1893,17 +1878,15 @@ final class ClaudePromptReclaimTests: XCTestCase {
     }
 }
 
-// MARK: - 입력 전달 순서와 실패 복구
-// 전달 루프는 osascript·wezterm cli를 부르지만, 순서·재시도·중단 판정은 프로세스 없이
-// 검증할 수 있어야 한다 — ClaudeSessionIO로 그 호출만 갈아 끼운다.
+// MARK: - Delivery order and failure recovery
+// The delivery loop calls osascript and the wezterm cli, but the order, the retries and the stop verdicts have to be verifiable without any processes — ClaudeSessionIO swaps out exactly those calls.
 
-/// claude 세션 흉내. 입력창(box)에 타이핑된 것을 화면에 그대로 비추고, CR을 받으면
-/// 제출로 처리해 입력창을 비운다.
+/// A stand-in for a claude session. It mirrors whatever is typed into the input box (box) onto the screen, and on receiving a CR it treats that as a submission and empties the box.
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
-// MARK: - 전달 단계 계측 (라운드 15)
+// MARK: - Delivery stage instrumentation (round 15)
 // A successful delivery used to log one line, at the end. When a real run took 86 seconds between
 // the tab opening and the first submission, nothing in the log could say where they went — helper
 // wait, claude startup, or the user not looking at the tab. These pin the shape of the stopwatch
@@ -1950,12 +1933,12 @@ final class DeliveryTimelineTests: XCTestCase {
     }
 
     /// The attempt counter is the whole point of the pane-proof line: on Warp the proof only
-    /// passes while the user is looking at that tab, so "통과 (시도 3/5)" with a large gap is the
+    /// passes while the user is looking at that tab, so "passed (attempt 3/5)" with a large gap is the
     /// evidence for telling them so, rather than a defect to chase
     func testThePaneProofLineCarriesHowManyAttemptsItTook() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
-        session.failScreenAt = [1] // 첫 시도의 화면 조회 실패 → 두 번째 시도에서 통과
+        session.failScreenAt = [1]         // The first attempt's screen read fails → it passes on the second
         var lines: [String] = []
         let timeline = DeliveryTimeline(
             now: { Date(timeIntervalSince1970: 0) }, emit: { lines.append($0) }
@@ -1979,21 +1962,18 @@ private final class FakeClaudeSession {
     private(set) var keystrokes: [String] = []
     private(set) var submitted: [String] = []
     var sessionAlive = true
-    /// n번째 sendKeys 호출을 실패시킨다 (1-based) — 터미널 CLI가 한 번 실패하는 상황
+    /// Fails the nth sendKeys call (1-based) — the situation where the terminal CLI fails once
     var failSendAt: Set<Int> = []
-    /// n번째 screenText 호출을 실패시킨다 (1-based)
+    /// Fails the nth screenText call (1-based)
     var failScreenAt: Set<Int> = []
-    /// n번째 sendKeys가 보낸 텍스트를 claude가 버린다 (1-based) — TUI가 아직 입력창을
-    /// 그리지 못하는 순간. 전송은 성공하고 화면에만 뜨지 않는다
+    /// claude discards the text the nth sendKeys sent (1-based) — the moment where the TUI has not drawn the input box yet. The send succeeds and only the screen fails to show it
     var dropTypingAt: Set<Int> = []
-    /// 입력창에 이미 남아 있는 텍스트 (클리어 실패 상황을 만들 때 쓴다)
+    /// Text already sitting in the input box (used to build the failed-clear situation)
     var presetBox = "" { didSet { box = presetBox } }
-    /// 화면에 이미 떠 있는 텍스트 (다른 pane을 읽고 있는 상황을 만들 때 쓴다)
+    /// Text already on screen (used to build the situation where another pane is being read)
     var screenPrefix = ""
-    /// 입력창 **아래**에 claude TUI가 그리는 것들 — 힌트 줄, 권한 표시, 컨텍스트 %, 시계.
-    /// 이것이 없으면 `screenTail`이 보는 영역(우리 입력부터 화면 끝까지)이 표현되지 않아,
-    /// "프로브가 하단 chrome에도 있으면 tail이 고정된다" 같은 결함이 fake에서는 보이지 않는다
-    /// (독립 검증자 지적)
+    /// What the claude TUI draws **below** the input box — hint lines, the permission indicator, the context %, a clock.
+    /// Without these the region `screenTail` looks at (from our input to the end of the screen) is not represented, so a defect like "a probe that also appears in the bottom chrome pins the tail forever" is invisible in the fake (independent reviewer's point)
     var bottomChrome = "? for shortcuts"
     /// Something below the box that changes on every read — a context meter, a clock. Then the
     /// tail differs every time and the look can never say "stuck" (reviewer's R6), which is why
@@ -2026,11 +2006,11 @@ private final class FakeClaudeSession {
     /// injecting part of a write and then erroring looks exactly like this from here, and it is
     /// the only shape in which a resend can duplicate a message
     var deliverButReportFailureAt: Set<Int> = []
-    /// 화면 읽기가 pane 단위로 정확하지 않은 터미널(Warp)
+    /// A terminal whose screen reads are not pane-accurate (Warp)
     var screenNeedsPaneProof = false
-    /// 읽히는 화면이 우리 pane이 아닌 상황 — 우리 타이핑은 화면에 비치지 않는다
+    /// The situation where the screen being read is not our pane — our typing never shows up on it
     var screenIsForeign = false
-    /// 그 남의 pane이 뒤늦게 얻는 텍스트 (Codex 재현: 개수가 증가한다)
+    /// Text that other pane gains later (Codex's reproduction: the count increases)
     var foreignScreenGains: [String] = []
     /// Every synthetic wait, and the order of reads/waits/sends. The delivery loop's speed is a
     /// property worth pinning: a poll that sleeps **before** its first read pays a full interval
@@ -2038,7 +2018,7 @@ private final class FakeClaudeSession {
     private(set) var waits: [TimeInterval] = []
     private(set) var events: [String] = []
     private(set) var sendCallCount = 0
-    /// 바이트를 내보내기 직전 게이트가 몇 번 확인됐는지
+    /// How many times the gate was checked immediately before bytes went out
     private(set) var gateChecks = 0
     private var screenCalls = 0
     private var box = ""
@@ -2082,7 +2062,7 @@ private final class FakeClaudeSession {
                     if foreignScreenGains.contains(keys) { foreignScreen += " " + keys }
                 }
                 if sendCallCount == userPressesEnterAfterSend, !box.isEmpty {
-                    submitted.append(box) // 사용자가 누른 Enter — 우리 CR이 아니다
+                    submitted.append(box)         // An Enter the user pressed — not our CR
                     history += box + " "
                     box = ""
                 }
@@ -2181,7 +2161,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.submitDoesNothing = true
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 0)
         XCTAssertEqual(session.submitted, [])
-        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "잔여를 지우지 않았다")
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "the residue was not erased")
     }
 
     /// The reviewer's own reproduction, in the shape they ran it: the TUI stops acting on
@@ -2197,7 +2177,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         }
         XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: io), 1)
         XCTAssertEqual(session.submitted, ["/review"])
-        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "`!git status`가 입력창에 남았다")
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey, "`!git status` was left in the input box")
     }
 
     /// **Reproduction (round 5, Codex P1-a)**: a change somewhere else on the screen — a spinner,
@@ -2210,7 +2190,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: session.io), 0)
         XCTAssertFalse(
             session.keystrokes.contains("!git status"),
-            "이어 치면 두 입력이 한 줄로 붙어 제출된다"
+            "typing on would append the two inputs into one submitted line"
         )
     }
 
@@ -2234,7 +2214,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
             return result
         }
         _ = submitClaudeInputs(["/review", "!git status"], io: io)
-        XCTAssertEqual(session.submitted, ["!git status"], "잔여와 다음 입력이 한 줄로 합쳐졌다")
+        XCTAssertEqual(session.submitted, ["!git status"], "the residue and the next input were merged into one line")
     }
 
     /// The same property where the screen can never answer: on Warp the post-CR look is skipped
@@ -2288,7 +2268,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.submitDoesNothing = true
         session.failScreenAt = [4] // 1: snapshot · 2: reflection · 3,4,5…: the post-CR look
         _ = submitClaudeInputs(["/review", "!git status"], io: session.io)
-        XCTAssertFalse(session.keystrokes.contains("!git status"), "박혀 있는 것을 보고도 이어 쳤다")
+        XCTAssertFalse(session.keystrokes.contains("!git status"), "it kept typing even after seeing the input stuck there")
     }
 
     /// **Reproduction (round 8, Codex — the blocking one).** The reflection check accepted the
@@ -2302,7 +2282,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.dropTypingAt = Set(1...100)      // claude never draws what we type
         session.screenGains = [2: "try /review"] // …and a hint containing it shows up meanwhile
         XCTAssertEqual(submitClaudeInputs(["/review"], io: session.io), 0)
-        XCTAssertFalse(session.keystrokes.contains(claudeSubmitKey), "확인 없이 CR이 나갔다")
+        XCTAssertFalse(session.keystrokes.contains(claudeSubmitKey), "a CR went out without confirmation")
     }
 
     /// The normal path still goes through: what we type really is in the box, so clearing it makes
@@ -2325,8 +2305,8 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         let session = FakeClaudeSession()
         XCTAssertEqual(submitClaudeInputs(["!git status"], io: session.io), 1)
         for (index, event) in session.events.enumerated() where event == "send" {
-            guard let next = session.events[safe: index + 1] else { continue } // 마지막 정리
-            XCTAssertEqual(next, "read", "전송 뒤에 읽기 대신 대기가 왔다: \(session.events)")
+            guard let next = session.events[safe: index + 1] else { continue }         // the cleanup at the end
+            XCTAssertEqual(next, "read", "a wait came after the send instead of a read: \(session.events)")
         }
         XCTAssertLessThanOrEqual(session.waits.reduce(0, +), 0.5, "\(session.waits)")
     }
@@ -2343,11 +2323,11 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
     /// then goes in as `!body`.
     func testAPlainInputIsNeverSubmittedIntoLeftoverShellMode() {
         let session = FakeClaudeSession()
-        session.presetBox = "!gh pr view 1" // 앞 입력의 CR이 먹지 않아 남은 것
+        session.presetBox = "!gh pr view 1"         // left over because the previous input's CR did not take
         _ = submitClaudeInputs(["summarize the diff"], io: session.io)
         XCTAssertEqual(
             session.submitted, ["summarize the diff"],
-            "`!`가 남은 입력창에 평문을 넣어 셸 명령으로 제출했다"
+            "plain text was typed into an input box still holding a `!` and submitted as a shell command"
         )
     }
 
@@ -2364,7 +2344,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         _ = submitClaudeInputs(["!git status"], io: session.io)
         XCTAssertEqual(
             session.submitted.filter { $0 == "!git status" }.count, 1,
-            "사용자 Enter와 우리 CR로 명령이 두 번 실행됐다"
+            "the command ran twice — once from the user's Enter and once from our CR"
         )
     }
 
@@ -2404,13 +2384,12 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
     /// Lowering ownership on the write left the box holding our markers with no cleanup at all
     func testAWrittenClearThatTheTUIIgnoredStillLeavesUsHoldingTheBox() {
         let session = FakeClaudeSession()
-        session.clearDoesNothing = true // 쓰기는 성공, TUI는 처리하지 않는다
+        session.clearDoesNothing = true         // the write succeeds, the TUI does not process it
         _ = submitClaudeInputs(["!git status"], io: session.io)
-        // 표식이 사라지지 않으므로 어떤 시도도 본문까지 가지 못하고, 마지막에 정리가 나간다 —
-        // 쓰인 Ctrl+U를 처리됨으로 믿던 때는 이 정리가 통째로 건너뛰어졌다
+        // The marker never disappears, so no attempt gets as far as the body and a cleanup goes out at the end — back when a written Ctrl+U was believed to have been processed, this cleanup was skipped entirely
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
         XCTAssertTrue(session.submitted.isEmpty)
-        XCTAssertFalse(session.keystrokes.contains("!git status"), "확인 없이 본문을 쳤다")
+        XCTAssertFalse(session.keystrokes.contains("!git status"), "the body was typed without confirmation")
     }
 
     /// Cleanup is one Ctrl+U through the same gate, and the terminal CLI does fail one call now and
@@ -2418,7 +2397,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
     func testCleanupIsRetriedWhenTheSendFails() {
         let session = FakeClaudeSession()
         session.submitDoesNothing = true
-        // 1: 실험 타이핑 · 2: 실험 클리어 · 3: 본문 · 4: CR · 5–7: 끝내며 정리하는 시도들
+        // 1: the experiment's typing · 2: the experiment's clear · 3: the body · 4: the CR · 5–7: the cleanup attempts on the way out
         session.failSendAt = [5, 6]
         _ = submitClaudeInputs(inputs, io: session.io)
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
@@ -2459,13 +2438,12 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 제출은 화면 반영을 확인한 뒤에만 한다 — 타이핑 없이 CR이 먼저 나가면 빈 줄이 제출된다.
-    /// 앞뒤의 Ctrl+U는 라운드 7의 규칙 (ii)다: 치기 전에 비우고, 끝나며 비운다
+    /// A submission happens only after the screen is confirmed to reflect the input — a CR going out ahead of any typing submits an empty line.
+    /// The Ctrl+U before and after is round 7's rule (ii): empty before typing, and empty on the way out
     func testSubmitsOnlyAfterScreenShowsTypedText() {
         let session = FakeClaudeSession()
         _ = submitClaudeInputs([inputs[0]], io: session.io)
-        // 라운드 9의 한 주기: **표식**을 쳐 보고 → 비우고(사라짐 확인) → 본문을 **한 번** 치고
-        // → CR, 그리고 전달이 끝나며 한 번 더 비운다. 표식은 난수라 모양으로 고정한다
+        // Round 9's cycle: type a **marker** → clear it (confirming it disappears) → type the body **once** → CR, and empty once more as delivery ends. The marker is random, so it is pinned by shape
         XCTAssertEqual(session.keystrokes.count, 5)
         XCTAssertTrue(session.keystrokes[0].hasPrefix("tc"), session.keystrokes[0])
         XCTAssertEqual(
@@ -2474,34 +2452,31 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
     }
 
-    /// 회귀 방지(실측): 입력 #1 제출 직후 wezterm cli 호출 한 번이 실패해 남은 입력 2개가
-    /// 통째로 버려졌다. 터미널 CLI 호출 실패는 "세션이 끝났다"가 아니라 그 호출만 실패한
-    /// 것이므로, 재타이핑으로 복구하고 남은 입력을 계속 보내야 한다.
+    /// Regression guard (measured): right after input #1 was submitted, one wezterm cli call failed and the remaining 2 inputs were thrown away wholesale. A failed terminal CLI call does not mean "the session is over", only that this call failed — so it has to recover by retyping and keep sending the rest.
     func testTransientSendFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failSendAt = [5] // #1의 표식·클리어·본문 다음 = #1의 CR
+        session.failSendAt = [5]         // after #1's marker, clear and body = #1's CR
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 화면 조회 실패도 마찬가지다 — 반영을 확인하지 못했을 뿐이라 재타이핑으로 복구한다
+    /// A failed screen read is the same — it only means the reflection could not be confirmed, so it recovers by retyping
     func testTransientScreenReadFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failScreenAt = [2] // #1의 반영 확인 조회
+        session.failScreenAt = [2]         // #1's reflection-check read
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 재시도는 남은 입력을 무한정 붙들지 않는다 — 계속 실패하면 그 입력에서 멈춘다
+    /// Retrying does not hold the remaining inputs forever — if it keeps failing it stops at that input
     func testPersistentFailureStopsAtThatInput() {
         let session = FakeClaudeSession()
-        session.failSendAt = Set(6...100) // #1은 통과(표식·클리어·본문·CR), #2의 표식부터 실패
+        session.failSendAt = Set(6...100)         // #1 passes (marker, clear, body, CR) and it fails from #2's marker onwards
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
 
-    /// 세션이 바뀌었으면(원래 claude가 죽고 같은 tty에 새 claude가 떴으면) 남은 입력을
-    /// 보내지 않는다 — `!…` 입력이면 무관한 세션에서 셸 명령이 실행된다
+    /// When the session has changed (the original claude died and a new one came up on the same tty) the remaining inputs are not sent — with a `!…` input a shell command would run in an unrelated session
     func testReplacedSessionStopsDelivery() {
         let session = FakeClaudeSession()
         _ = submitClaudeInputs([inputs[0]], io: session.io)
@@ -2511,52 +2486,48 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.keystrokes.count, after)
     }
 
-    /// 재시도 자체가 세션 확인을 건너뛰면 안 된다 — 첫 타이핑과 재시도 사이에 세션이
-    /// 바뀔 수 있고, 그 사이 두 번째 claude에 타이핑하면 같은 오입력이 된다
+    /// A retry must not skip the session check itself — the session can change between the first typing and the retry, and typing into that second claude is the same mistyping
     func testRetryReconfirmsSessionBeforeRetyping() {
         let session = FakeClaudeSession()
-        session.failSendAt = [1] // 첫 타이핑 실패 → 재시도 진입
+        session.failSendAt = [1]         // the first typing fails → it enters a retry
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
             screenText: { session.io.screenText() },
-            // 입력 사이 게이트는 통과했지만 재시도 직전 확인에서 세션이 바뀐 상황
+            // The between-inputs gate passed, but the check immediately before the retry finds the session changed
             confirmSession: { _ in confirms += 1; return confirms == 1 },
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
-        // 재시도 타이핑이 나가면 안 된다. 첫 타이핑은 전송 자체가 실패했지만 바이트는 이미
-        // 들어갔을 수 있어, 포기하면서 지우는 Ctrl+U 하나만 뒤따른다
-        XCTAssertFalse(session.keystrokes.contains(inputs[0]), "재시도 타이핑: \(session.keystrokes)")
+        // No retry typing may go out. The first typing failed as a send, but its bytes may already be in, so a single Ctrl+U follows to erase them on the way out
+        XCTAssertFalse(session.keystrokes.contains(inputs[0]), "retry typing went out: \(session.keystrokes)")
         XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
-    /// 입력창 클리어(Ctrl+U)가 실패했으면 타이핑하지 않는다 — 남아 있을지 모르는 텍스트
-    /// 뒤에 이어 치면 화면 확인은 통과한 채로 앞이 붙은 입력이 제출된다
+    /// When clearing the input box (Ctrl+U) failed, nothing is typed — typing after text that may still be there gets an input with something stuck on the front submitted while the screen check passes
     func testFailedClearDoesNotTypeOverLeftovers() {
         let session = FakeClaudeSession()
         session.presetBox = "잔여텍스트"
-        session.failSendAt = [1, 2] // #1 타이핑 실패 → #2 클리어도 실패
+        session.failSendAt = [1, 2]         // #1's typing fails → #2's clear fails too
         _ = submitClaudeInputs([inputs[0]], io: session.io)
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
 
-    /// CR 재전송도 세션 동일성 게이트 안에 있어야 한다 — 첫 CR이 실패한 뒤 원래 claude가
-    /// 끝났다면, 같은 tty의 셸이나 새 claude에 CR이 들어가 사용자가 치던 것을 제출·실행시킨다
+    /// Resending the CR has to sit inside the session-identity gate too — if the original claude ended after the first CR failed, the CR lands on the shell of that tty or on a new claude and submits and runs whatever the user was typing
     func testCarriageReturnResendStopsWhenSessionChanged() {
         let session = FakeClaudeSession()
-        session.failSendAt = [4] // 표식·클리어·본문은 성공, 첫 CR 실패
+        session.failSendAt = [4] // marker, clear and body succeed; the first CR fails
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
             screenText: { session.io.screenText() },
-            // 입력 사이 게이트와 첫 CR 게이트는 통과하고, 재전송 직전에 세션이 바뀐 상황
+            // The between-inputs gate and the first CR gate both pass, and the session changes immediately before the resend
             confirmSession: { _ in confirms += 1; return confirms <= 2 },
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        // 표식 1 + 클리어 1 + 본문 1 + CR 1 + 포기 후 정리 1 — CR 재전송은 없어야 한다
+        // marker 1 + clear 1 + body 1 + CR 1 + cleanup after giving up 1 — there must be no CR resend
         XCTAssertEqual(session.sendCallCount, 5)
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
@@ -2564,14 +2535,13 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
     }
 
-    /// 제출(CR) 전송이 실패하면 재타이핑이 아니라 CR만 다시 보낸다 — 실패로 보고됐어도
-    /// 실제로는 전달됐을 수 있고, 그때 재타이핑하면 같은 입력이 두 번 제출된다
+    /// When sending the submission (CR) fails it resends the CR rather than retyping — a reported failure may in fact have gone through, and retyping then submits the same input twice
     func testFailedSubmitResendsCarriageReturnWithoutRetyping() {
         let session = FakeClaudeSession()
-        session.failSendAt = [4] // 표식·클리어·본문 성공, #4 = CR 실패
+        session.failSendAt = [4] // marker, clear and body succeed; #4 = the CR fails
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
-        // 본문은 한 번만 친다(실험은 표식으로 한다). CR 뒤에 다시 치지 않는 것이 여기서 지킬 불변식
+        // The body is typed once (the experiment uses the marker). Not typing again after a CR is the invariant to hold here
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
     }
 
@@ -2590,20 +2560,17 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
     }
 
-    /// 회귀 방지(Warp 실측): claude가 뜬 직후 게이트 ①②를 통과하고도 TUI가 첫 입력을
-    /// 아직 그리지 못하는 순간이 있다. 화면은 읽히는데 입력만 안 보이므로 재타이핑으로 복구한다
+    /// Regression guard (measured on Warp): right after claude comes up there is a moment where gates ① and ② pass but the TUI has not drawn the first input yet. The screen reads fine and only the input is missing, so it recovers by retyping
     func testUnreflectedInputRetypesUntilScreenShowsIt() {
         let session = FakeClaudeSession()
-        session.dropTypingAt = [3] // 표식·클리어는 통과하고 **본문**을 claude가 버린다
+        session.dropTypingAt = [3] // the marker and clear pass, and claude discards the **body**
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
-        XCTAssertEqual(session.submitted, [inputs[0]]) // 빈 줄이 아니라 실제 입력이 제출됐다
-        // 버려진 본문 1 + 다음 시도의 본문 1
+        XCTAssertEqual(session.submitted, [inputs[0]]) // the real input was submitted, not an empty line
+        // the discarded body 1 + the next attempt's body 1
         XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2)
     }
 
-    /// 화면을 끝내 읽지 못하면 아무것도 제출하지 않는다. tty 입력 큐가 비었다는
-    /// 신호(`FIONREAD`=0)로 대신하던 때가 있었는데, 그것은 claude가 `read()`했다는 뜻일 뿐
-    /// 입력창에 그렸다는 뜻이 아니라서 claude가 버린 입력에 빈 CR을 보내고 "전달됨"으로 기록했다
+    /// When the screen can never be read, nothing is submitted. There was a time the "tty input queue is empty" signal (`FIONREAD`=0) stood in for it, but that only means claude called `read()`, not that it drew the input box — so an empty CR was sent on top of input claude had discarded and it was recorded as "delivered"
     func testUnreadableScreenNeverSubmits() {
         let session = FakeClaudeSession()
         session.failScreenAt = Set(1...100)
@@ -2611,8 +2578,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(session.submitted.isEmpty)
     }
 
-    /// 화면은 읽히는데 우리 입력이 영영 뜨지 않으면(다른 pane을 읽고 있다) 제출하지 않는다 —
-    /// 여기서 빈 줄을 제출하면 사용자가 그 pane에 치고 있던 것이 실행된다
+    /// When the screen reads but our input never appears (another pane is being read) nothing is submitted — submitting an empty line here runs whatever the user was typing in that pane
     func testScreenThatNeverShowsInputNeverSubmits() {
         let session = FakeClaudeSession()
         session.dropTypingAt = Set(1...100)
@@ -2620,39 +2586,32 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(session.submitted.isEmpty)
     }
 
-    /// 회귀 방지(검증자 재현 P2): 주입은 **포커스와 무관하게 우리 tty로** 들어가므로
-    /// "화면에서 확인하지 못했다"가 "입력창에 없다"를 뜻하지 않는다. 본문이 이미 들어간 채로
-    /// 반영 확인이 끝내 실패하면, 그 조각을 지우지 않고 끝낼 경우 사용자가 나중에 누른 Enter가
-    /// 그것을 제출한다(`!…` 셸 모드면 명령까지 실행된다).
-    /// 권한이 살아 있어도 마찬가지라 정리 조건은 "권한 상실"이 아니라 **"다 끝내지 못했고 우리
-    /// 조각이 남아 있을 수 있음"**이어야 한다.
+    /// Regression guard (reviewer reproduction, P2): injection enters **our tty regardless of focus**, so "we could not confirm it on screen" does not mean "it is not in the input box". If the reflection check finally fails while the body is already in, ending without erasing that fragment lets an Enter the user presses later submit it (in `!…` shell mode it even runs a command).
+    /// The same holds while the permission is alive, so the cleanup condition is not "the permission was lost" but **"we did not finish and a fragment of ours may remain"**.
     func testUnconfirmedTypingIsClearedWhenDeliveryGivesUp() {
         let session = FakeClaudeSession()
-        session.dropTypingAt = Set(1...100) // 바이트는 들어갔는데 화면에는 영영 안 뜬다
+        session.dropTypingAt = Set(1...100) // the bytes went in but never show up on screen
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         XCTAssertEqual(
             session.keystrokes.last, claudeClearInputKey,
-            "포기하고 끝내면서 입력창에 남은 우리 조각을 지우지 않았다: \(session.keystrokes)"
+            "it gave up and ended without erasing the fragment of ours left in the input box: \(session.keystrokes)"
         )
     }
 
-    /// 회귀 방지(P0-2): 접근성으로 읽는 화면이 우리 pane이라는 보장은 없다. 다른 pane에 우연히
-    /// 같은 텍스트가 떠 있으면 단순 부분 문자열 일치는 타이핑 전부터 통과하고, 그대로 CR이
-    /// 나가면 우리 입력은 제출되지 않은 채 그 순간 사용자가 치던 것이 제출된다.
-    /// 타이핑 전 화면을 먼저 찍어 "전보다 한 번 더 보인다"를 요구하면 이 갈래가 죽는다
+    /// Regression guard (P0-2): there is no guarantee the screen read through Accessibility is our pane. If another pane happens to show the same text, a plain substring match passes even before we type, and the CR that follows leaves our input unsubmitted while whatever the user was typing goes in instead.
+    /// Taking a snapshot before typing and demanding "one more occurrence than before" kills that branch
     func testTextAlreadyOnScreenBeforeTypingIsNotReflection() {
         let session = FakeClaudeSession()
-        session.screenPrefix = inputs[0] // 다른 pane에 같은 텍스트가 이미 떠 있다
-        session.dropTypingAt = Set(1...100) // 우리 입력은 실제로 뜨지 않는다
+        session.screenPrefix = inputs[0] // another pane already shows the same text
+        session.dropTypingAt = Set(1...100) // our input never actually appears
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
     }
 
-    /// 회귀 방지(P0-1): 타이핑 전에는 없던 프로브가 타이핑 후 **다른 pane에** 나타나면 개수도
-    /// 증가한다 — 개수 비교는 과거 텍스트 오탐만 없앨 뿐 화면의 출처를 보증하지 않는다.
-    /// 우리 tty에만 들어가는 난수가 그 화면에 뜨는 것을 먼저 확인해야 화면 확인이 성립한다.
-    /// 두 갈래를 한 테스트에 둔 이유는 이 플래그가 실제로 판정을 가르는지까지 고정하기 위해서다
+    /// Regression guard (P0-1): if a probe that was absent before typing appears **in another pane** afterwards, the count increases too — comparing counts only removes the false positive from pre-existing text; it says nothing about where the screen came from.
+    /// The screen check only holds once a random value that can enter our tty alone has been seen to appear on that screen.
+    /// Both branches live in one test so that the flag actually splitting the verdict is pinned as well
     func testPaneProofIsWhatBlocksAForeignScreen() {
         func run(paneProof: Bool) -> (submitted: Int, lines: [String]) {
             let session = FakeClaudeSession()
@@ -2662,18 +2621,16 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             let count = submitClaudeInputs([inputs[0]], io: session.io)
             return (count, session.submitted)
         }
-        // 라운드 8부터는 pane 증명이 없어도 남의 화면이 제출을 승인하지 못한다 — 귀속 실험이
-        // "우리가 친 것이 우리가 비운 뒤 사라지는가"를 묻는데, 남의 화면에서는 사라지지 않는다.
-        // 그래도 증명을 없애지 않는 이유는 실험이 **우리 텍스트**로 이뤄져 우연한 일치를
-        // 배제하지 못하기 때문이다(난수 표식은 배제한다)
+        // Since round 8, someone else's screen cannot approve a submission even without the pane proof — the attribution experiment asks "does what we typed disappear once we clear it", and on someone else's screen it does not.
+        // The proof is nevertheless kept because the experiment is made of **our own text** and so cannot rule out a coincidental match (a random marker can)
         XCTAssertEqual(run(paneProof: false).lines, [])
         XCTAssertEqual(run(paneProof: false).submitted, 0)
-        // 증명을 요구하면 난수가 그 화면에 뜨지 않으므로 아무것도 제출되지 않는다
+        // With the proof demanded, the random value never appears on that screen, so nothing is submitted
         XCTAssertEqual(run(paneProof: true).submitted, 0)
         XCTAssertTrue(run(paneProof: true).lines.isEmpty)
     }
 
-    /// pane 증명을 켜도 정상 경로는 그대로 끝까지 간다 — 강화가 전달을 막으면 안 된다
+    /// With the pane proof on, the normal path still runs to the end — a hardening must not block delivery
     func testPaneProofDoesNotBlockTheNormalPath() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
@@ -2681,8 +2638,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.submitted, inputs)
     }
 
-    /// 증명에 쓴 난수가 입력과 함께 제출되면 claude가 엉뚱한 것을 받는다 —
-    /// 표식은 반드시 지우고 나서 친다
+    /// If the random value used for the proof were submitted along with the input, claude would receive the wrong thing — the marker is always erased before typing
     func testPaneProofTokenNeverReachesSubmission() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
@@ -2690,27 +2646,23 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
 
-    /// 회귀 방지(P0-1): 세션이 바뀐 뒤에는 CR뿐 아니라 **표식·Ctrl+U·본문 타이핑도** 나가면
-    /// 안 된다. 그것이 새 셸이나 새로 뜬 claude의 입력창을 오염시키고, Ctrl+U는 그쪽에서
-    /// 사용자가 치던 초안을 지운다. "실행은 안 되니 괜찮다"가 아니다
+    /// Regression guard (P0-1): once the session has changed, not just the CR but **the marker, the Ctrl+U and the body typing** must not go out either. They pollute the input box of the new shell or the newly started claude, and the Ctrl+U erases the draft the user was typing there. "It does not execute, so it is fine" is not the answer
     func testNoBytesLeaveAfterTheSessionChanged() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
             screenText: { session.io.screenText() },
-            confirmSession: { _ in true }, // 입력 사이 게이트는 통과한 상태
-            sessionIsUnchanged: { false }, // 그러나 바이트를 내보내는 순간에는 이미 바뀌었다
+            confirmSession: { _ in true }, // the between-inputs gate has passed
+            sessionIsUnchanged: { false }, // but by the moment bytes go out it has already changed
             screenNeedsPaneProof: true,
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        XCTAssertTrue(session.keystrokes.isEmpty, "새어 나간 바이트: \(session.keystrokes)")
+        XCTAssertTrue(session.keystrokes.isEmpty, "bytes leaked out: \(session.keystrokes)")
     }
 
-    /// 회귀 방지(P0-2): 화면을 더 확인할 수 없게 되면(권한 회수) **새로 치는 것은** 멈춰야
-    /// 하지만, 이미 친 것을 되돌리는 정리는 나가야 한다. 정리까지 같은 조건으로 막으면
-    /// 자동 입력이 입력창에 남아 사용자가 나중에 Enter를 눌렀을 때 실행된다
+    /// Regression guard (P0-2): when the screen can no longer be confirmed (the permission was revoked) **typing anything new** has to stop, but the cleanup that undoes what was already typed still has to go out. Blocking the cleanup under the same condition leaves the automatic input in the box, to be run by an Enter the user presses later
     func testLostScreenAccessStopsTypingButNotCleanup() {
         let session = FakeClaudeSession()
         let io = ClaudeSessionIO(
@@ -2718,17 +2670,16 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             screenText: { session.io.screenText() },
             confirmSession: { _ in true },
             sessionIsUnchanged: { true },
-            canConfirmScreen: { false }, // 전달 도중 권한이 사라졌다
+            canConfirmScreen: { false }, // the permission disappeared mid-delivery
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        XCTAssertTrue(session.keystrokes.isEmpty, "확인할 수 없는데 친 것: \(session.keystrokes)")
-        XCTAssertTrue(clearAbandonedInput(io: io, weSentSomething: true), "정리가 막혔다")
+        XCTAssertTrue(session.keystrokes.isEmpty, "typed while it could not be confirmed: \(session.keystrokes)")
+        XCTAssertTrue(clearAbandonedInput(io: io, weSentSomething: true), "the cleanup was blocked")
         XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
-    /// 회귀 방지(P1-2): 권한은 시도 **시작**에만이 아니라 매 전송 앞에서 확인해야 한다.
-    /// pane 증명이나 1초 대기 중에 회수되면 그 뒤 표식·본문·CR이 계속 나간다
+    /// Regression guard (P1-2): the permission has to be checked before every send, not only at the **start** of an attempt. If it is revoked during the pane proof or a one-second wait, the marker, the body and the CR keep going out afterwards
     func testPermissionLostMidAttemptStopsFurtherSends() {
         let session = FakeClaudeSession()
         var sends = 0
@@ -2737,19 +2688,17 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             screenText: { session.io.screenText() },
             confirmSession: { _ in true },
             sessionIsUnchanged: { true },
-            canConfirmScreen: { sends < 1 }, // 첫 전송 직후 권한이 사라진다
+            canConfirmScreen: { sends < 1 }, // the permission disappears right after the first send
             screenNeedsPaneProof: true,
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        // 새로 치는 것은 표식 하나에서 멈춘다. 그 뒤에 나가는 것은 **이미 친 표식을 지우는**
-        // 정리뿐이다 — 정리까지 막으면 표식이 입력창에 남아 사용자가 그것을 제출하게 된다
-        XCTAssertEqual(session.keystrokes.count, 2, "권한이 사라진 뒤에도 새로 친 것: \(session.keystrokes)")
+        // Typing anything new stops at the one marker. What goes out after it is only the cleanup that **erases the marker already typed** — blocking that too leaves the marker in the input box for the user to submit
+        XCTAssertEqual(session.keystrokes.count, 2, "typed anew after the permission was gone: \(session.keystrokes)")
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
     }
 
-    /// 회귀 방지(P1-3): 우리가 한 바이트도 보내지 않았으면 정리도 하지 않는다 —
-    /// 그 Ctrl+U는 사용자가 치고 있던 초안만 지운다
+    /// Regression guard (P1-3): if we never sent a single byte, no cleanup happens either — that Ctrl+U would erase nothing but the draft the user was typing
     func testCleanupDoesNothingWhenWeNeverSentAnything() {
         let session = FakeClaudeSession()
         XCTAssertFalse(clearAbandonedInput(io: session.io, weSentSomething: false))
@@ -2758,32 +2707,25 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
-    /// 회귀 방지: "우리 조각이 입력창에 남아 있는가"는 **시도**로 세우고 **CR·클리어로 내린다**.
-    /// 결과로 세우면 헬퍼가 일부만 넣고 실패했을 때 남은 조각을 못 지우고(미탐),
-    /// 한 번 성공한 뒤 계속 참으로 두면 다음 입력을 시작도 못 했을 때 사용자 초안을 지운다(오탐).
+    /// Regression guard: "might a fragment of ours be in the input box" is raised by the **attempt** and lowered by **observation**.
+    /// Raising it by the result misses the leftover when the helper injected part of a write and then failed (a false negative), and leaving it true forever after one success erases the user's draft when the next input never even started (a false positive).
     func testInputBoxOwnershipRisesOnAttemptAndFallsOnSubmit() {
-        // `deliverClaudeInputs`가 쓰는 그 타입을 검증한다 — 규칙 사본을 여기 두면
-        // 사본만 맞고 실물이 어긋나도 초록이 된다
+        // This exercises the very type `deliverClaudeInputs` uses — keeping a copy of the rule here would go green while the copy is right and the real one has drifted
         var ownership = InputBoxOwnership()
-        XCTAssertFalse(ownership.mayHoldOurs, "아무것도 보내기 전에는 지울 우리 조각이 없다")
-        ownership.recordSendAttempt() // 전송이 실패해도 바이트는 이미 들어갔을 수 있다
-        XCTAssertTrue(ownership.mayHoldOurs, "실패한 전송 뒤 남은 조각을 못 지우게 된다")
-        // **쓰인** CR·Ctrl+U는 TUI가 처리했다는 증거가 아니다 — AppleScript·CLI의 성공은 터미널이
-        // 바이트를 받았다는 뜻일 뿐이다. 그래서 어떤 전송도 이것을 내리지 않는다
+        XCTAssertFalse(ownership.mayHoldOurs, "before anything is sent there is no fragment of ours to erase")
+        ownership.recordSendAttempt() // even a failed send may already have put bytes in
+        XCTAssertTrue(ownership.mayHoldOurs, "the fragment left after a failed send would become impossible to erase")
+        // A CR or Ctrl+U having been **written** is not evidence the TUI processed it — a success from AppleScript or the CLI only means the terminal accepted the bytes. So no send lowers this
         ownership.recordSendAttempt()
-        XCTAssertTrue(ownership.mayHoldOurs, "쓰인 Ctrl+U를 처리됨으로 믿었다")
-        // 그리고 **CR은 내리지 않는다**(라운드 7): tty에 CR을 썼다는 것과 TUI가 그것을 제출로
-        // 처리했다는 것은 다른 일이고, 처리되지 않았으면 본문은 입력창에 그대로다. "모르면 비었다"로
-        // 두는 바람에 잔여가 다음 입력과 한 줄로 붙었다. 내려가는 것은 **증거**뿐이다 —
-        // 우리가 성공적으로 비웠거나, 화면이 우리 것이 거기 없다고 보여 줬을 때
+        XCTAssertTrue(ownership.mayHoldOurs, "a written Ctrl+U was believed to have been processed")
+        // And **a CR does not lower it** (round 7): writing a CR to the tty and the TUI processing it as a submission are different things, and if it was not processed the body is still in the box. Treating "unknown" as "empty" is how residue got appended to the next input as one line. Only **evidence** lowers it — the screen showed our marker disappear after a clear, or the screen showed that ours is not there
         ownership.recordSendAttempt()
-        XCTAssertTrue(ownership.mayHoldOurs, "CR을 썼다는 것은 입력창이 비었다는 증거가 아니다")
+        XCTAssertTrue(ownership.mayHoldOurs, "writing a CR is not evidence that the input box is empty")
         ownership.recordInputBoxIsFreeOfOurs()
         XCTAssertFalse(ownership.mayHoldOurs)
     }
 
-    /// 전달이 중간에 끝난 뒤의 정리용 Ctrl+U도 같은 게이트를 지나야 한다 —
-    /// 이 자리가 게이트를 우회하면 정리가 남의 세션 입력창을 지운다
+    /// The cleanup Ctrl+U after delivery ended midway has to pass the same gate — if this site bypassed it, the cleanup would erase somebody else's session's input box
     func testAbandonedInputCleanupIsGatedToo() {
         let session = FakeClaudeSession()
         let io = ClaudeSessionIO(
@@ -2797,41 +2739,37 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(session.keystrokes.isEmpty)
     }
 
-    /// 바이트를 내보내는 자리는 전부 하나의 게이트를 지난다 — 자리마다 따로 확인하면
-    /// 다음에 또 빠진 자리가 생긴다. 표식·Ctrl+U·본문·CR 네 번 모두 확인돼야 한다
+    /// Every site that emits bytes goes through the one gate — checking at each site separately is how the next missed site appears. What is asserted is the general property (gate checks == sends), not a fixed list: this run happens to make five sends, and a sixth site added later is covered without editing this test
     func testEverySendPassesTheSameGate() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.gateChecks, session.sendCallCount)
-        // 표식 · 클리어 · 본문 · CR · 끝내며 정리
+        // marker · clear · body · CR · the cleanup on the way out
         XCTAssertEqual(session.sendCallCount, 5)
     }
 
-    /// 회귀 방지(P0-2): 첫 CR도 세션 확인을 통과해야 한다. 화면 반영을 확인한 직후라도 그
-    /// 사이 claude가 죽고 셸이나 새 claude가 같은 tty를 차지할 수 있고, 그 CR은 사용자가
-    /// 치고 있던 것을 제출·실행시킨다
+    /// Regression guard (P0-2): the first CR has to pass the session check too. Even immediately after confirming the screen reflection, claude can die in between and the shell or a new claude can take that tty, and the CR then submits and runs whatever the user was typing
     func testFirstCarriageReturnAlsoRequiresSessionConfirmation() {
         let session = FakeClaudeSession()
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
             screenText: { session.io.screenText() },
-            // 입력 사이 게이트만 통과하고, 그 뒤 세션이 바뀐 상황
+            // Only the between-inputs gate passes, and the session changes after it
             confirmSession: { _ in confirms += 1; return confirms == 1 },
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
-        // 타이핑만 나가고 CR은 막혔다. 그 타이핑은 입력창에 남으므로 포기하면서 지운다
+        // Only the typing went out and the CR was blocked. That typing stays in the input box, so it is erased on the way out
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
             [claudeClearInputKey, inputs[0], claudeClearInputKey]
         )
     }
 
-    /// 같은 입력을 두 번 예약했을 때, 앞의 것이 화면(대화 기록)에 남아 있어도 뒤의 것이
-    /// 제출된다 — "있었나/없었나"가 아니라 "몇 번 보이나"로 세기 때문이다
+    /// With the same input scheduled twice, the second is still submitted while the first is on screen (in the transcript) — because the count is "how many times is it visible", not "was it there at all"
     func testRepeatedInputIsStillSubmittedWhileTheEarlierOneStaysOnScreen() {
         let session = FakeClaudeSession()
         XCTAssertEqual(submitClaudeInputs([inputs[0], inputs[0]], io: session.io), 2)
@@ -2839,9 +2777,9 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     }
 }
 
-// MARK: - 화면 반영 판정 (타이핑 전/후 비교)
-// 접근성으로 읽는 Warp 화면은 포커스된 pane의 것이라 우리 pane이라는 보장이 없다.
-// "이미 떠 있던 텍스트"와 "우리가 방금 친 것"을 가르는 수단은 타이핑 전 화면과의 비교뿐이다.
+// MARK: - The screen-reflection verdict (before/after typing)
+// The Warp screen read through Accessibility belongs to the focused pane, with no guarantee it is ours.
+// The only way to tell "text that was already there" from "what we just typed" is a comparison against the screen taken before typing.
 
 final class ScreenReflectionTests: XCTestCase {
     private let input = "!gh issue view 1415"
@@ -2850,8 +2788,7 @@ final class ScreenReflectionTests: XCTestCase {
         XCTAssertTrue(screenReflectsNewInput(before: "❯ ", after: "❯ " + input, input: input))
     }
 
-    /// 스냅샷을 못 찍었으면(화면 조회 실패) 확인 실패다 — 못 찍은 것을 "없었다"로 다루면
-    /// 이미 떠 있던 텍스트가 그대로 반영으로 통과한다
+    /// A snapshot that could not be taken (a failed screen read) is a failed check — treating what could not be sampled as "it was not there" lets pre-existing text pass as a reflection
     func testMissingBeforeSnapshotIsNotReflection() {
         XCTAssertFalse(screenReflectsNewInput(before: nil, after: "❯ " + input, input: input))
     }
@@ -2861,14 +2798,14 @@ final class ScreenReflectionTests: XCTestCase {
         XCTAssertFalse(screenReflectsNewInput(before: screen, after: screen, input: input))
     }
 
-    /// 대화 기록에 같은 텍스트가 남아 있어도 하나 더 늘면 반영이다
+    /// Even with the same text still in the transcript, one more occurrence counts as a reflection
     func testOneMoreOccurrenceIsReflection() {
         XCTAssertTrue(screenReflectsNewInput(
             before: input + " ❯ ", after: input + " ❯ " + input, input: input
         ))
     }
 
-    /// 화면이 스크롤되어 옛 항목이 밀려나면 개수가 늘지 않는다 — 그때는 재타이핑으로 간다
+    /// When the screen scrolls and pushes the old occurrence out, the count does not grow — that path goes to a retype
     func testUnchangedOccurrenceCountIsNotReflection() {
         XCTAssertFalse(screenReflectsNewInput(
             before: input + " 옛 줄", after: "새 줄 " + input, input: input
@@ -2876,14 +2813,14 @@ final class ScreenReflectionTests: XCTestCase {
     }
 }
 
-// MARK: - 도구 확인 (z/gh/claude가 사용자 셸에서 실제로 불릴 수 있는지)
+// MARK: - Tool checking (whether z/gh/claude can actually be called in the user's shell)
 
 final class ToolCheckTests: XCTestCase {
     func testScriptAsksEachToolAndMarksCompletion() {
         let script = toolCheckScript(["z", "gh"])
         XCTAssertTrue(script.contains("command -v z 2>/dev/null) && echo TC_OK:z"))
         XCTAssertTrue(script.contains("command -v gh 2>/dev/null) && echo TC_OK:gh"))
-        // 완료 마커가 없으면 "도구 없음"과 "셸 자체가 실패"를 구분할 수 없다
+        // Without the completion marker, "the tool is missing" and "the shell itself failed" cannot be told apart
         XCTAssertTrue(script.hasSuffix("echo TC_DONE"))
     }
 
@@ -2893,20 +2830,20 @@ final class ToolCheckTests: XCTestCase {
         XCTAssertEqual(result, ["z": true, "gh": false, "claude": true])
     }
 
-    // 셸 통합(iTerm2 등)이 첫 줄 앞에 escape sequence를 붙여도 마커를 찾아내야 한다
+    // The marker has to be found even when shell integration (iTerm2 and friends) prepends escape sequences to the first line
     func testIgnoresShellIntegrationPrefix() throws {
         let output = "\u{1B}]1337;ShellIntegrationVersion=14;shell=zsh\u{07}TC_OK:z\nTC_DONE"
         let result = try XCTUnwrap(parseToolCheck(output: output, tools: ["z"]))
         XCTAssertEqual(result["z"], true)
     }
 
-    // "TC_OK:zoxide"가 "z"의 매칭으로 새면 z 없이도 있다고 오판한다
+    // If "TC_OK:zoxide" leaked through as a match for "z", z would be judged present while it is missing
     func testToolNamePrefixDoesNotLeak() throws {
         let result = try XCTUnwrap(parseToolCheck(output: "TC_OK:zoxide\nTC_DONE", tools: ["z", "zoxide"]))
         XCTAssertEqual(result, ["z": false, "zoxide": true])
     }
 
-    // 완료 마커가 없으면 확인 실패(nil) — 전부 "없음"으로 단정하면 안 된다
+    // No completion marker means the check failed (nil) — it must not be concluded that everything is missing
     func testMissingDoneMarkerMeansUnknown() {
         XCTAssertNil(parseToolCheck(output: "TC_OK:z", tools: ["z"]))
         XCTAssertNil(parseToolCheck(output: "", tools: ["z"]))
@@ -2939,10 +2876,10 @@ final class ToolCheckTests: XCTestCase {
             ["tcfunc", "tcprofile"], shell: "/bin/bash",
             environment: ["HOME": home, "PATH": "/usr/bin:/bin"]
         ))
-        XCTAssertEqual(result.available["tcprofile"], true, "로그인 셸이 읽는 파일의 도구를 못 봤다")
+        XCTAssertEqual(result.available["tcprofile"], true, "a tool in a file the login shell reads was not seen")
         XCTAssertEqual(
             result.available["tcfunc"], false,
-            "탭에서 읽히지 않는 rc의 도구를 있다고 답하면 병합이 켜지고 pane에서 실패한다"
+            "answering that a tool in an rc the tab never reads is present turns the merge on and fails in the pane"
         )
     }
 
@@ -3078,7 +3015,7 @@ final class ToolCheckTests: XCTestCase {
     }
 }
 
-// MARK: - AppleScript 이스케이프
+// MARK: - AppleScript escaping
 
 final class AppleScriptTests: XCTestCase {
     /// iTerm2 is the one terminal that does not receive `claudeClearInputKey` as bytes — it goes
@@ -3118,29 +3055,28 @@ final class AppleScriptTests: XCTestCase {
     func testITermScriptEmbedsEscapedCommand() {
         let script = iTermScript(for: #"echo "hi""#)
         XCTAssertTrue(script.contains(#"write text "echo \"hi\"""#))
-        // 이름("iTerm2")이 아닌 번들 ID로 타게팅해야 한다 — 앱 파일명이 iTerm.app이거나
-        // 복사본(iTerm Rosetta.app 등)으로 LaunchServices 이름 해석이 꼬여도 동작하도록 (-1728 방지)
+        // Targeting has to be by bundle ID rather than by name ("iTerm2") — so it keeps working when the app file is called iTerm.app, or when a copy (iTerm Rosetta.app and the like) has confused LaunchServices' name resolution (this is what avoids -1728)
         XCTAssertTrue(script.contains(#"tell application id "com.googlecode.iterm2""#))
         XCTAssertFalse(script.contains(#"tell application "iTerm2""#))
     }
 
-    // claude 입력 전달을 위해 spawn 스크립트가 세션 핸들(id|tty)을 돌려줘야 한다
+    // For claude input delivery the spawn script has to return a session handle (id|tty)
     func testITermScriptReturnsSessionHandle() {
         let script = iTermScript(for: "echo hi")
         XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
     }
 
-    // 타이핑 모드: 개행 없이 텍스트만 넣는다 — 제출은 화면 반영 확인 후 별도로 보낸다
+    // Typing mode: the text alone goes in, with no newline — the submission is sent separately once the screen is confirmed to reflect it
     func testITermWriteToSessionScriptTypingSuppressesNewline() {
         let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#, submit: false)
         XCTAssertTrue(script.contains(#"tell application id "com.googlecode.iterm2""#))
         XCTAssertTrue(script.contains(#"if (id of s) is "ABC-123" then"#))
         XCTAssertTrue(script.contains(#"write text "say \"hi\"" newline NO"#))
-        // 세션이 사라졌으면(탭 닫힘) "gone"을 돌려줘 호출자가 전달을 중단하게 한다
+        // When the session is gone (the tab closed) it returns "gone" so the caller stops the delivery
         XCTAssertTrue(script.contains(#"return "gone""#))
     }
 
-    // 제출 모드: 개행만 보낸다 (빈 write text = Enter)
+    // Submission mode: only the newline is sent (an empty write text = Enter)
     func testITermWriteToSessionScriptSubmitSendsNewlineOnly() {
         let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: "", submit: true)
         XCTAssertTrue(script.contains(#"write text """#))
@@ -3152,7 +3088,7 @@ final class AppleScriptTests: XCTestCase {
         XCTAssertTrue(script.contains(#"if (id of s) is "x\"y" then"#))
     }
 
-    // 화면 반영 확인용 스크립트: 세션의 현재 화면 텍스트를 돌려준다
+    // The script for confirming the screen reflects an input: it returns the session's current screen text
     func testITermSessionContentsScript() {
         let script = iTermSessionContentsScript(sessionID: "ABC-123")
         XCTAssertTrue(script.contains(#"if (id of s) is "ABC-123" then"#))
@@ -3161,11 +3097,11 @@ final class AppleScriptTests: XCTestCase {
     }
 }
 
-// MARK: - Extension ID (unpacked 확장: SHA-256(절대경로) 앞 32 hex → a-p)
+// MARK: - Extension ID (unpacked extension: the first 32 hex of SHA-256(absolute path) → a-p)
 
 final class ExtensionIDTests: XCTestCase {
     func testKnownVectors() {
-        // 벡터는 기존 install.sh의 파이썬 구현으로 계산한 값
+        // The vector is the value computed by the previous Python implementation in install.sh
         XCTAssertEqual(extensionID(forPath: "/Users/test/extension"), "ommholjeknmifgidochbhocolnejiema")
         XCTAssertEqual(extensionID(forPath: "/tmp/e"), "cinkehcaekebplmoijecmdfmflcnboch")
     }
@@ -3174,10 +3110,9 @@ final class ExtensionIDTests: XCTestCase {
         XCTAssertEqual(extensionID(forPath: "/tmp/e"), extensionID(forPath: "/tmp/e"))
     }
 
-    // manifest "key"(base64 DER 공개키)가 있으면 Chrome은 경로 대신 그 키에서 ID를 만든다 —
-    // 해시 대상만 다르고 매핑 규칙은 경로 방식과 같다
+    // With a manifest "key" (a base64 DER public key) present, Chrome builds the ID from that key rather than from the path — only what gets hashed differs; the mapping rule is the same as the path form
     func testKeyBasedIDKnownVector() {
-        // base64 "aGVsbG8=" → "hello", 기대값은 파이썬 hashlib로 독립 계산
+        // base64 "aGVsbG8=" → "hello"; the expected value was computed independently with Python hashlib
         XCTAssertEqual(extensionID(fromManifestKey: "aGVsbG8="), "cmpcenlkfplakdaocgoidlckmfljocjo")
     }
 
@@ -3200,7 +3135,7 @@ final class ManifestTests: XCTestCase {
         XCTAssertEqual(obj["allowed_origins"] as? [String], ["chrome-extension://abcdefgh/"])
     }
 
-    // Web Store 전환 대비: store ID + 개발용 ID 병기 지원
+    // Ready for the Web Store move: it supports listing the store ID alongside the development one
     func testManifestJSONMultipleOrigins() throws {
         let data = nativeHostManifestJSON(relayPath: "/x", extensionIDs: ["aaa", "bbb"])
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -3211,7 +3146,7 @@ final class ManifestTests: XCTestCase {
     }
 }
 
-// MARK: - Native Messaging 프레이밍 (4바이트 LE 길이 + JSON)
+// MARK: - Native Messaging framing (a 4-byte LE length + JSON)
 
 final class FramingTests: XCTestCase {
     func testFrameMessage() {
@@ -3232,7 +3167,7 @@ final class FramingTests: XCTestCase {
     }
 }
 
-// MARK: - 경로 상수
+// MARK: - Path constants
 
 final class PathsTests: XCTestCase {
     func testSocketPathEnvOverride() {
@@ -3247,10 +3182,10 @@ final class PathsTests: XCTestCase {
     }
 }
 
-// MARK: - WezTerm 탭을 만들 창 고르기
+// MARK: - Choosing the window a WezTerm tab is created in
 
 final class WezTermWindowTests: XCTestCase {
-    // wezterm cli list-clients --format json 실측 형태
+    // The measured shape of `wezterm cli list-clients --format json`
     private let clientsJSON = Data("""
     [{"username":"u","hostname":"h","pid":96467,
       "connection_elapsed":{"secs":546209,"nanos":0},
@@ -3258,7 +3193,7 @@ final class WezTermWindowTests: XCTestCase {
       "workspace":"default","focused_pane_id":146}]
     """.utf8)
 
-    // 같은 순간의 wezterm cli list --format json (창 3개, 창마다 탭 1개 이상)
+    // `wezterm cli list --format json` at the same moment (3 windows, at least one tab each)
     private let listJSON = Data("""
     [{"window_id":4,"tab_id":82,"pane_id":147,"tty_name":"/dev/ttys003"},
      {"window_id":3,"tab_id":81,"pane_id":146,"tty_name":"/dev/ttys000"},
@@ -3269,7 +3204,7 @@ final class WezTermWindowTests: XCTestCase {
         XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: listJSON), "3")
     }
 
-    // client가 여럿이면 가장 최근에 활동한(idle_time이 짧은) 쪽이 사용자가 보고 있는 창이다
+    // With several clients, the most recently active one (the shortest idle_time) is the window the user is looking at
     func testMostRecentlyActiveClientWins() {
         let clients = Data("""
         [{"pid":1,"idle_time":{"secs":300,"nanos":0},"focused_pane_id":5},
@@ -3278,7 +3213,7 @@ final class WezTermWindowTests: XCTestCase {
         XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "4")
     }
 
-    // focused_pane_id가 없는 client(창 없이 붙은 mux 연결)는 후보에서 빼야 한다
+    // A client with no focused_pane_id (a mux connection attached without a window) has to be dropped from the candidates
     func testClientWithoutFocusedPaneIgnored() {
         let clients = Data("""
         [{"pid":1,"idle_time":{"secs":0,"nanos":0}},
@@ -3287,8 +3222,7 @@ final class WezTermWindowTests: XCTestCase {
         XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "0")
     }
 
-    // 포커스된 pane이 목록에 없으면(직전에 닫힘) 창을 지정하지 않는다 —
-    // 엉뚱한 창을 골라 탭을 흘리는 대신 wezterm 기본 선택에 맡긴다
+    // When the focused pane is not in the list (it closed a moment ago) no window is named — rather than pick the wrong window and spill a tab into it, the choice is left to wezterm's default
     func testUnknownFocusedPaneYieldsNil() {
         let clients = Data(#"[{"idle_time":{"secs":0,"nanos":0},"focused_pane_id":999}]"#.utf8)
         XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON))
@@ -3300,9 +3234,7 @@ final class WezTermWindowTests: XCTestCase {
         XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("[]".utf8), listJSON: listJSON))
     }
 
-    // 창을 특정했으면 그 창을 먼저 노리고, 실패하면 창 지정 없이 한 번 더 시도한다 —
-    // 찾은 창이 spawn 직전에 닫히면 wezterm은 "window_id N not found"로 실패하고(실측),
-    // 거기서 포기하면 `wezterm start` fallback이 새 창을 띄워 고치려던 증상이 되살아난다
+    // With a window identified, that window is aimed at first, and on failure it is tried once more without one — if the window found closes just before the spawn, wezterm fails with "window_id N not found" (measured), and giving up there lets the `wezterm start` fallback open a new window, resurrecting the very symptom this fixes
     func testSpawnAttemptsRetryWithoutWindowID() {
         XCTAssertEqual(
             wezTermSpawnAttempts(windowID: "3"),
@@ -3310,15 +3242,14 @@ final class WezTermWindowTests: XCTestCase {
         )
     }
 
-    // 창을 못 찾았으면 시도는 한 번뿐이다 — 같은 명령을 두 번 돌릴 이유가 없다
+    // With no window found there is only one attempt — there is no reason to run the same command twice
     func testSpawnAttemptsSingleWhenWindowUnknown() {
         XCTAssertEqual(wezTermSpawnAttempts(windowID: nil), [["cli", "spawn"]])
     }
 }
 
-// MARK: - Warp: Tab Config TOML
-// Warp에 새 탭을 열고 명령을 실행시키는 수단은 Tab Config 파일뿐이다 —
-// AppleScript 미지원, warpctrl은 Stable 기본 비활성, pane에 텍스트를 보내는 CLI도 없다(실측).
+// MARK: - Warp: the Tab Config TOML
+// A Tab Config file is the only way to open a new tab in Warp and run a command in it — no AppleScript support, warpctrl disabled by default on Stable, and no CLI that sends text to a pane (measured).
 
 final class WarpTabConfigTests: XCTestCase {
     func testTOMLRunsCommandInSingleTerminalPane() {
@@ -3328,8 +3259,7 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertTrue(toml.contains(#"commands = ["z remy && claude"]"#), toml)
     }
 
-    /// claude 입력을 예약한 버튼만 헬퍼를 먼저 띄운다. 순서가 뒤집히면 헬퍼는 claude가
-    /// 끝난 뒤에야 뜬다
+    /// Only a button with claude input scheduled starts the helper first. With the order reversed, the helper would not come up until claude had already ended
     func testTOMLRunsHelperBeforeUserCommand() {
         let toml = warpTabConfigTOML(commands: ["'/tmp/helper' '/tmp/x.sock'", "z remy && claude"])
         XCTAssertTrue(
@@ -3344,14 +3274,12 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("directory"))
     }
 
-    // `{{name}}`은 Warp의 파라미터 템플릿 문법이라 [params.*]를 선언하면 열 때 모달이 뜬다 —
-    // 우리는 파라미터를 쓰지 않으므로 선언도 하지 않는다
+    // `{{name}}` is Warp's parameter template syntax, so declaring [params.*] pops a modal on open — we use no parameters, so we declare none
     func testTOMLDeclaresNoParameters() {
         XCTAssertFalse(warpTabConfigTOML(commands: ["z remy"]).contains("[params"))
     }
 
-    // 실측: 선언되지 않은 `{{zzz}}`는 치환도 모달도 없이 셸에 그대로 전달된다
-    // (`printf '%s' 'X{{zzz}}Y'` → 파일 내용 `X{{zzz}}Y`). 그래서 따로 방어하지 않는다
+    // Measured: an undeclared `{{zzz}}` is passed to the shell as-is, with no substitution and no modal (`printf '%s' 'X{{zzz}}Y'` → the file contains `X{{zzz}}Y`). So it needs no defence of its own
     func testTOMLLeavesWarpTemplateBracesLiteral() {
         let toml = warpTabConfigTOML(commands: ["awk '{{print}}'"])
         XCTAssertTrue(toml.contains(##"commands = ["awk '{{print}}'"]"##), toml)
@@ -3361,8 +3289,7 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertEqual(escapeForTOMLBasicString(#"say "hi" \ now"#), #"say \"hi\" \\ now"#)
     }
 
-    // TOML basic string은 제어문자를 리터럴로 담을 수 없다 — 이스케이프하지 않으면
-    // Warp가 파일 파싱에 실패해 탭이 아예 열리지 않는다
+    // A TOML basic string cannot carry control characters literally — without escaping, Warp fails to parse the file and the tab does not open at all
     func testEscapeControlCharacters() {
         XCTAssertEqual(escapeForTOMLBasicString("a\nb\tc\rd"), #"a\nb\tc\rd"#)
         XCTAssertEqual(escapeForTOMLBasicString("a\u{01}b"), #"a\u0001b"#)
@@ -3373,9 +3300,7 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertTrue(toml.contains(#"commands = ["echo \"a\"\nrm -rf /"]"#), toml)
     }
 
-    /// 요청마다 다른 이름을 쓴다 — 고정 이름은 같은 이름의 사용자 Tab Config를 말없이
-    /// 덮어쓰고, `open`이 돌아온 뒤에도 Warp가 파일을 읽기 전이라 연속 요청이 서로의 명령을
-    /// 갈아 끼운다(pane 등장까지 실측 0.5∼0.7초)
+    /// Every request uses a different name — a fixed one silently overwrites a user Tab Config of the same name, and since Warp has not read the file even after `open` returns, consecutive requests swap each other's commands (measured 0.5∼0.7s until the pane appears)
     func testTabConfigNameCarriesTokenSoRunsDoNotCollide() {
         let stem = warpTabConfigStem(token: "deadbeef")
         XCTAssertEqual(stem, "terminal-checkout-deadbeef")
@@ -3383,30 +3308,27 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertEqual(warpTabConfigURL(stem: stem), "warp://tab_config/\(stem)")
     }
 
-    /// 회수는 우리가 만든 파일에만 해야 한다 — 사용자 Tab Config를 지우면 안 된다
+    /// Reclaiming may only touch files we created — a user's Tab Config must not be deleted
     func testOnlyOurGeneratedFileIsRecognisedAsOurs() {
         XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigTOML(commands: ["z remy"])))
         XCTAssertFalse(warpTabConfigIsOurs(contents: "name = \"내 작업 공간\"\n"))
         XCTAssertFalse(warpTabConfigIsOurs(contents: ""))
     }
 
-    /// 이름으로도 한 번 거른다 — 우리가 **쓰는 이름 그대로**(접두사 + 8자리 소문자 hex)만
-    /// 회수 대상이다. 넓게 잡으면 우리가 만들지 않은 파일을 지운다(라운드 8, Codex P2):
-    /// 생성 규칙과 회수 규칙은 한 정본이어야 한다
+    /// The name is filtered once as well — only **exactly the name we write** (the prefix plus 8 lower-case hex) is a reclaim target. Casting wider deletes files we did not create (round 8, Codex P2): the creation rule and the reclaim rule have to be one source of truth
     func testOnlyOurNamingIsSweptFromTheDirectory() {
         XCTAssertTrue(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-내파일.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "my-workspace.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.txt"))
-        // 우리가 결코 쓰지 않는 형태들
+        // Shapes we never write
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-DEADBEEF.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-０１２３abcd.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-abc.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeefdeadbeef.toml"))
     }
 
-    /// 소켓 이름도 같은 정본이다 — `tcw-a.sock` 같은 길이 미달을 우리 것으로 보면, 같은 사용자의
-    /// 다른 프로그램 소켓이 회수 대상이 된다
+    /// The socket name shares that source of truth — treating an under-length name like `tcw-a.sock` as ours would make another program's socket, belonging to the same user, a reclaim target
     func testOnlyOurSocketNamingIsReclaimable() {
         XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-a1b2c3d4.sock"))
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-a.sock"))
@@ -3414,19 +3336,17 @@ final class WarpTabConfigTests: XCTestCase {
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-A1B2C3D4.sock"))
     }
 
-    /// 브랜치 초기 빌드가 남긴 고정 이름 파일도 회수 대상이다 — 다만 내용이 우리 것일 때만
+    /// A fixed-name file left by an early build of this branch is a reclaim target too — but only when its contents are ours
     func testLegacyFixedNameIsSweptOnlyWhenContentsAreOurs() {
         XCTAssertTrue(warpTabConfigFileIsOurs(name: "terminal-checkout.toml"))
     }
 }
 
-// MARK: - Warp: 헬퍼 기동 명령과 소켓 경로
-// 헬퍼는 pane 안에서 떠야 한다 — TIOCSTI는 호출 프로세스의 제어 터미널에만 허용되므로
-// (BSD `isctty`) 세션 밖의 앱은 pane tty에 바이트를 넣을 수 없다.
+// MARK: - Warp: the helper launch command and socket path
+// The helper has to come up inside the pane — TIOCSTI is allowed only on the calling process's controlling terminal (BSD `isctty`), so an app outside the session cannot put bytes into the pane's tty.
 
 final class WarpHelperLaunchTests: XCTestCase {
-    /// 앱 번들 경로에는 공백이 있다(`Terminal Checkout.app`) — 인용하지 않으면 셸이
-    /// 두 단어로 갈라 헬퍼가 뜨지 않는다
+    /// The app bundle path contains a space (`Terminal Checkout.app`) — without quoting, the shell splits it into two words and the helper never starts
     func testHelperCommandQuotesPathsWithSpaces() {
         XCTAssertEqual(
             warpHelperCommand(
@@ -3445,8 +3365,7 @@ final class WarpHelperLaunchTests: XCTestCase {
         XCTAssertEqual(shellSingleQuoted(""), "''")
     }
 
-    /// 소켓 경로는 sun_path 104바이트 제한을 넘으면 bind가 실패한다 —
-    /// 후보 중 들어가는 첫 디렉토리를 고른다
+    /// A socket path past sun_path's 104-byte limit makes bind fail — the first candidate directory that fits is chosen
     func testSocketPathPicksFirstDirectoryThatFits() {
         let path = warpHelperSocketPath(
             token: "ab12cd34", directories: [String(repeating: "x", count: 120), "/tmp"]
@@ -3460,7 +3379,7 @@ final class WarpHelperLaunchTests: XCTestCase {
         )
     }
 
-    /// 실행마다 다른 토큰을 써야 이전 실행이 남긴 죽은 소켓에 붙지 않는다
+    /// A different token per run is what keeps it from attaching to a dead socket left by an earlier run
     func testSocketNameCarriesToken() {
         XCTAssertEqual(
             warpHelperSocketPath(token: "deadbeef", directories: ["/tmp"]),
@@ -3468,7 +3387,7 @@ final class WarpHelperLaunchTests: XCTestCase {
         )
     }
 
-    /// 회수는 우리 소켓 이름에만 한다 — 다른 프로그램의 소켓을 지우면 안 된다
+    /// Reclaiming applies to our socket names alone — another program's socket must not be deleted
     func testOnlyOurSocketNamesAreReclaimed() {
         XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-deadbeef.sock"))
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-.sock"))
@@ -3484,9 +3403,8 @@ final class WarpHelperLaunchTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: 헬퍼 소켓 프로토콜
-// 요청·응답은 줄 단위 ASCII다. 주입할 바이트는 base64로 싣는다 — CR·Ctrl+U 같은
-// 제어문자를 줄 기반 프로토콜에 날것으로 실을 수 없기 때문이다.
+// MARK: - Warp: the helper socket protocol
+// Requests and responses are line-based ASCII. The bytes to inject ride as base64 — control characters such as CR and Ctrl+U cannot travel raw in a line-based protocol.
 
 final class WarpHelperProtocolTests: XCTestCase {
     private func roundTrip(_ request: WarpHelperRequest) -> WarpHelperRequest? {
@@ -3498,8 +3416,7 @@ final class WarpHelperProtocolTests: XCTestCase {
         XCTAssertEqual(roundTrip(.bye), .bye)
     }
 
-    /// 제출(CR)과 입력창 클리어(Ctrl+U)가 그대로 실려야 한다 — 한 바이트라도 바뀌면
-    /// claude가 입력을 제출하지 않는다
+    /// The submission (CR) and the input-box clear (Ctrl+U) have to ride unchanged — one altered byte and claude does not submit the input
     func testInjectCarriesControlBytesUnchanged() {
         for text in ["!gh issue view 1", claudeSubmitKey, claudeClearInputKey, "한글 입력", ""] {
             let request = WarpHelperRequest.inject(expectedPID: 4242, bytes: Data(text.utf8))
@@ -3507,8 +3424,7 @@ final class WarpHelperProtocolTests: XCTestCase {
         }
     }
 
-    /// 주입 요청은 "누가 읽을 것을 기대하는지"를 함께 나른다 — 헬퍼가 그 순간의 포그라운드와
-    /// 맞춰 보고 어긋나면 넣지 않는다
+    /// An injection request carries "who is expected to read this" along with it — the helper compares that against the foreground at that moment and does not inject when they disagree
     func testInjectCarriesTheExpectedReader() {
         XCTAssertEqual(
             parseWarpHelperRequest(encodeWarpHelperRequest(.inject(expectedPID: 91, bytes: Data("x".utf8)))),
@@ -3516,8 +3432,7 @@ final class WarpHelperProtocolTests: XCTestCase {
         )
         XCTAssertNil(parseWarpHelperRequest("inject notapid eA=="))
         XCTAssertNil(parseWarpHelperRequest("inject 91"))
-        // 0 이하는 거부한다 — `getpgid(0)`은 호출자 그룹이라, 헬퍼가 포그라운드인 비정상
-        // 상황에서 "기대 독자가 맞다"로 통과해 버린다
+        // Anything at or below 0 is refused — `getpgid(0)` is the caller's group, so in the abnormal situation where the helper is the foreground it would pass as "the expected reader matches"
         XCTAssertNil(parseWarpHelperRequest("inject 0 eA=="))
         XCTAssertNil(parseWarpHelperRequest("inject -1 eA=="))
     }
@@ -3545,18 +3460,16 @@ final class WarpHelperProtocolTests: XCTestCase {
         XCTAssertEqual(parseWarpHelperResponse(encodeWarpHelperResponse(.err("ENXIO"))), .err("ENXIO"))
     }
 
-    /// 접두사가 없는 줄을 성공으로 읽으면 실패가 성공으로 보고된다
+    /// Reading a line without the prefix as a success reports a failure as a success
     func testResponseWithoutPrefixIsRejected() {
         XCTAssertNil(parseWarpHelperResponse("/dev/ttys026"))
         XCTAssertNil(parseWarpHelperResponse(""))
     }
 }
 
-// MARK: - Warp: 주입 직전 포그라운드 판정
-// TIOCSTI는 호출자의 세션인지만 보고 **누가 그 바이트를 읽을지는 정하지 않는다**. claude가
-// 죽어 셸이 포그라운드가 되면 큐에 남은 CR을 셸이 읽어 사용자 초안을 실행한다.
-// 실측: 앱이 고르는 claude pid가 프로세스 그룹 리더가 아닌 경우가 있다(13개 pane 중 3개) —
-// 그래서 pid가 아니라 `getpgid(pid)`와 비교해야 한다.
+// MARK: - Warp: the foreground verdict immediately before injecting
+// TIOCSTI only checks whether it is the caller's session; **it does not decide who reads those bytes**. If claude dies and the shell becomes the foreground, the shell reads the CR left in the queue and runs the user's draft.
+// Measured: the claude pid the app picks is sometimes not the process group leader (3 of 13 panes) — which is why the comparison is against `getpgid(pid)` rather than the pid.
 
 final class WarpForegroundTests: XCTestCase {
     func testForegroundMatchesExpectedGroup() {
@@ -3567,7 +3480,7 @@ final class WarpForegroundTests: XCTestCase {
         XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: 99))
     }
 
-    /// `tcgetpgrp`·`getpgid`가 실패하면 -1이다 — 알 수 없을 때는 넣지 않는다
+    /// A failed `tcgetpgrp` or `getpgid` yields -1 — when it cannot be told, nothing is injected
     func testUnknownGroupIsBlocked() {
         XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: -1, expectedPGID: -1))
         XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: -1))
@@ -3575,14 +3488,12 @@ final class WarpForegroundTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: 헬퍼 정지 판정
-// 상한과 tty 동일성을 한 함수로 모은다 — 대기 루프와 요청 처리 경로가 서로 다른 기준을 쓰면
-// 연결을 물고 계속 요청하는 쪽이 상한을 통째로 우회한다.
+// MARK: - Warp: the helper stop verdict
+// The caps and the tty identity are gathered into one function — if the waiting loop and the request-handling path used different criteria, someone holding the connection open and requesting continuously would bypass the caps entirely.
 
 final class WarpHelperBudgetTests: XCTestCase {
-    /// 헬퍼가 한 요청에 쓰는 시간이 앱의 응답 대기보다 길면, 앱이 먼저 포기하고 재시도하는
-    /// 동안 이전 요청의 주입이 계속 돌아 재시도분·사용자 입력과 섞인다.
-    /// 두 값을 따로 두면 다시 갈리므로 한 곳에서 유도한다
+    /// If the helper spent longer on one request than the app waits for a response, the previous request's injection would keep running while the app gives up and retries, and those bytes would mix with the retry's and with the user's input.
+    /// Keeping the two numbers separate is how they drift apart again, so the second is derived from the first in one place
     func testHelperFinishesWellBeforeTheAppGivesUp() {
         XCTAssertLessThan(warpHelperWorkBudget, warpHelperRequestTimeout)
         XCTAssertLessThanOrEqual(warpHelperWorkBudget * 2, warpHelperRequestTimeout)
@@ -3603,8 +3514,7 @@ final class WarpHelperStopTests: XCTestCase {
         XCTAssertNil(reason(idle: 179, alive: 899))
     }
 
-    /// tty 번호는 재사용된다 — 우리 pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면
-    /// 남은 주입이 남의 tty로 들어간다. 다른 무엇보다 먼저 본다
+    /// tty numbers get reused — once our pane closes and a new session takes the same number, the remaining injection goes into somebody else's tty. This is checked before anything else
     func testTTYSessionChangeStopsEverything() {
         XCTAssertEqual(reason(tty: false), .ttySessionChanged)
         XCTAssertEqual(reason(tty: false, idle: 0, alive: 0), .ttySessionChanged)
@@ -3616,14 +3526,11 @@ final class WarpHelperStopTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: 주입 분할
-// tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다. 512바이트를 넘는
-// claude 입력이 통째로 실패하지 않도록, 큐 여유만큼 나눠 넣고 소비를 기다렸다 이어 넣는다.
+// MARK: - Warp: splitting an injection
+// The tty input queue has a cap (TTYHOG) and the kernel silently drops whatever overflows it. So a claude input over 512 bytes does not fail wholesale: it is written in pieces sized to the queue's headroom, waiting for consumption in between.
 
 final class WarpInjectChunkTests: XCTestCase {
-    /// 회귀 방지(P0-1): 큐에 **한 바이트라도** 남아 있으면 넣지 않는다. 여유가 있다고 이어
-    /// 넣으면 앞 조각의 tail이 큐에 남은 채로 다음이 쌓이고, claude가 앞 24자만 읽어 화면에
-    /// 그리면 화면 확인은 통과한다 — 그 뒤 claude가 끝나면 남은 tail을 **셸이 읽어 실행한다**
+    /// Regression guard (P0-1): nothing is written while **even one byte** remains in the queue. Continuing just because there is room leaves the previous piece's tail in the queue while the next piles on, and once claude reads only the first 24 characters and draws them, the screen check passes — then, when claude ends, **the shell reads and runs** the remaining tail
     func testChunkOnlyGoesIntoAnEmptyQueue() {
         XCTAssertEqual(warpInjectChunkSize(pending: 1, remaining: 1000, limit: 512), 0)
         XCTAssertEqual(warpInjectChunkSize(pending: 100, remaining: 1000, limit: 512), 0)
@@ -3636,17 +3543,11 @@ final class WarpInjectChunkTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: 주입한 바이트가 읽히는지 지켜보기
-// 넣은 뒤 큐가 비는 것을 확인해야 전달로 인정한다. 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는
-// **부정** 신호일 뿐이고, 남은 바이트가 **누구 것인지는 말해 주지 않는다** — 총량 하나뿐이라
-// 우리 것과 사용자가 방금 친 키를 가를 수 없다. 그래서 판정은 표본 하나로 끝나고, 이력을
-// 인자로 받지 않는다: 받는 순간 "총량 변화로 출처를 추론"하는 갈래가 되살아난다.
+// MARK: - Warp: watching whether the injected bytes get read
+// Delivery only counts once the queue is seen to drain after the write. The `FIONREAD` consulted here is the **negative** signal "not read yet" alone, and it **says nothing about whose** the remaining bytes are — it is a single total, so ours cannot be separated from the keys the user just typed. That is why the verdict ends at one sample and takes no history as an argument: the moment it does, the branch that "infers the origin from a change in the total" comes back.
 
 final class WarpInjectWatchTests: XCTestCase {
-    /// 회귀 방지(검증자 재현 ①): 옛 판정은 직전 표본과 비교해 "큐가 늘었으면 사용자 키가 섞였다"로
-    /// 봤는데, **첫 표본은 비교 대상이 없어** 어떤 값이어도 섞였다고 세우지 못했다. claude가 우리
-    /// 바이트를 모두 읽은 뒤 사용자가 한 글자를 치고 그 순간 포그라운드가 바뀌면, 그 한 글자를
-    /// 우리 것으로 보고 큐를 통째로 버렸다(`tcflush`) — 사용자 키를 조용히 지우는 오판이다.
+    /// Regression guard (reviewer reproduction ①): the old verdict compared against the previous sample and read "the queue grew, so the user's keys got mixed in", but **the first sample has nothing to compare against** and so could never establish that anything was mixed in whatever its value. If the user typed one character after claude had read all of our bytes and the foreground changed at that moment, that character was taken for ours and the whole queue was discarded (`tcflush`) — a misjudgement that silently erases the user's keys.
     func testFirstSampleNeverJustifiesDiscardingTheQueue() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 1, readerIsOurs: false, budgetExpired: false),
@@ -3654,9 +3555,7 @@ final class WarpInjectWatchTests: XCTestCase {
         )
     }
 
-    /// 회귀 방지(검증자 재현 ②): 첫 표본을 넘겨도 마찬가지다. claude가 5바이트를 읽는 사이
-    /// 사용자가 4바이트를 치면 큐는 10 → 9로 **줄어든다** — 단조 감소는 "남은 것이 우리 바이트"의
-    /// 증거가 못 된다. 어느 표본에서도 결론은 같다: 버리지 않고 실패만 알린다.
+    /// Regression guard (reviewer reproduction ②): past the first sample it is no different. If the user types 4 bytes while claude reads 5, the queue **shrinks** from 10 to 9 — a monotonic decrease is no evidence that "what remains is our bytes". At any sample the conclusion is the same: discard nothing and report only the failure.
     func testMonotonicDecreaseIsNotProofOfOwnership() {
         for pending in [10, 9] {
             XCTAssertEqual(
@@ -3666,7 +3565,7 @@ final class WarpInjectWatchTests: XCTestCase {
         }
     }
 
-    /// 성공은 **큐가 빈 것을 우리 독자가 만든 경우뿐**이다
+    /// Success is **only the case where our reader is what emptied the queue**
     func testDeliveredOnlyWhenOurReaderEmptiedTheQueue() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 0, readerIsOurs: true, budgetExpired: false), .delivered
@@ -3676,8 +3575,7 @@ final class WarpInjectWatchTests: XCTestCase {
         )
     }
 
-    /// 큐는 비었지만 그 사이 claude가 끝나 셸이 가져갔으면 실패다 — 성공으로 답하면 앱이 그 위에
-    /// CR을 얹고, 사용자의 다음 Enter가 그 줄을 실행한다
+    /// The queue drained but claude ended in between and the shell took it — that is a failure. Answering success makes the app put a CR on top, and the user's next Enter runs that line
     func testEmptyQueueDrainedByAnotherReaderIsFailure() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 0, readerIsOurs: false, budgetExpired: false),
@@ -3685,14 +3583,14 @@ final class WarpInjectWatchTests: XCTestCase {
         )
     }
 
-    /// 우리 독자가 그대로면 예산이 남는 동안 기다린다
+    /// While our reader is unchanged it waits for as long as the budget lasts
     func testWaitsWhileOurReaderStillHasBytes() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: false), .keepWaiting
         )
     }
 
-    /// 예산 안에 안 읽혔으면 실패다(fail-closed) — 성공으로 답하면 큐에 남은 tail 위로 CR이 얹힌다
+    /// Not read within the budget is a failure (fail-closed) — answering success puts a CR on top of the tail left in the queue
     func testBudgetExpiryFailsClosed() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: true),
@@ -3700,7 +3598,7 @@ final class WarpInjectWatchTests: XCTestCase {
         )
     }
 
-    /// 독자가 사라진 갈래는 예산과 무관하게 같은 결론이다 — 남은 바이트를 버리지 않는다
+    /// The branch where the reader is gone reaches the same conclusion regardless of the budget — the remaining bytes are not discarded
     func testReaderGoneOutranksBudget() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 3, readerIsOurs: false, budgetExpired: true),
@@ -3710,8 +3608,8 @@ final class WarpInjectWatchTests: XCTestCase {
 }
 
 
-// MARK: - Warp: 줄 단위 수신 버퍼
-// 소켓 read()는 줄 경계를 지켜 주지 않는다 — 한 번에 두 줄이 오기도, 한 줄이 쪼개져 오기도 한다.
+// MARK: - Warp: the line-oriented receive buffer
+// A socket read() does not respect line boundaries — two lines can arrive at once, and one line can arrive split.
 
 final class LineBufferTests: XCTestCase {
     func testYieldsCompleteLinesAndKeepsThePartialTail() {
@@ -3732,7 +3630,7 @@ final class LineBufferTests: XCTestCase {
         XCTAssertNil(buffer.nextLine())
     }
 
-    /// 줄바꿈 없이 계속 보내는 상대에게 메모리를 무한정 내주지 않는다
+    /// A peer that never sends a newline is not given unbounded memory
     func testOverlongTailIsRejected() {
         var buffer = LineBuffer(limit: 16)
         buffer.append(Data(String(repeating: "x", count: 17).utf8))
@@ -3740,8 +3638,7 @@ final class LineBufferTests: XCTestCase {
         XCTAssertNil(buffer.nextLine())
     }
 
-    /// 회귀 방지(P0-4): 상한을 넘긴 줄이 **마지막 줄바꿈과 함께** 들어오면 꼬리 검사만으로는
-    /// 그대로 통과한다 — 완성된 줄에도 같은 상한을 건다
+    /// Regression guard (P0-4): an over-cap line that arrives **together with its final newline** passes straight through a tail-only check — the same cap applies to completed lines
     func testOverlongCompletedLineIsRejected() {
         var buffer = LineBuffer(limit: 16)
         buffer.append(Data((String(repeating: "x", count: 20) + "\n").utf8))
@@ -3759,14 +3656,14 @@ final class LineBufferTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: 프로세스 트리
-// pane 셸은 Warp `terminal-server`의 직속 자식이고, GUI 프로세스는 그 부모다(실측).
-// GUI pid는 접근성으로 화면을 읽을 때 대상 프로세스를 특정하는 데 쓴다.
+// MARK: - Warp: the process tree
+// The pane's shell is a direct child of Warp's `terminal-server`, and the GUI process is that one's parent (measured).
+// The GUI pid is what identifies the target process when the screen is read through Accessibility.
 
 final class WarpProcessTests: XCTestCase {
     private let exePath = "/Applications/Warp.app/Contents/MacOS/stable"
 
-    /// `ps -axo pid=,ppid=,command=` 실측 형태
+    /// The measured shape of `ps -axo pid=,ppid=,command=`
     private let psOutput = """
         1     0 /sbin/launchd
     17699     1 /Applications/Warp.app/Contents/MacOS/stable
@@ -3779,13 +3676,12 @@ final class WarpProcessTests: XCTestCase {
         XCTAssertEqual(warpGUIPIDs(psOutput: psOutput, executablePath: exePath), [17699])
     }
 
-    /// 인자 없는 GUI 프로세스 자체를 terminal-server로 오인하면 GUI의 부모(launchd)를
-    /// Warp로 지목하게 된다
+    /// Mistaking the argument-less GUI process itself for terminal-server would name the GUI's parent (launchd) as Warp
     func testGUIProcessItselfIsNotTerminalServer() {
         XCTAssertFalse(warpGUIPIDs(psOutput: psOutput, executablePath: exePath).contains(1))
     }
 
-    /// 다른 경로에 설치된 Warp를 보고 있으면 아무것도 잡히지 않는다
+    /// Looking at a Warp installed somewhere else catches nothing
     func testDifferentExecutablePathMatchesNothing() {
         XCTAssertEqual(
             warpGUIPIDs(
@@ -3796,7 +3692,7 @@ final class WarpProcessTests: XCTestCase {
         )
     }
 
-    /// Warp를 두 번 띄우면 terminal-server도 둘이다 — 둘 다 후보로 남긴다
+    /// Launching Warp twice yields two terminal-servers — both stay as candidates
     func testTwoWarpInstancesYieldTwoGUIPIDs() {
         let ps = psOutput
             + "\n30000 29999 /Applications/Warp.app/Contents/MacOS/stable terminal-server --parent-pid=29999"
@@ -3804,9 +3700,8 @@ final class WarpProcessTests: XCTestCase {
     }
 }
 
-// MARK: - Warp: pane 증명이 필요한 핸들
-// 화면 조회가 그 세션의 것이라고 단정할 수 있는지는 터미널마다 다르다. 이 판정이 어긋나면
-// iTerm2·WezTerm이 불필요한 증명 비용을 물거나, Warp가 증명 없이 제출한다.
+// MARK: - Warp: the handles that need a pane proof
+// Whether a screen read can be asserted to belong to that session differs per terminal. Getting this verdict wrong makes iTerm2 and WezTerm pay an unnecessary proof cost, or lets Warp submit without one.
 
 final class PaneProofRoutingTests: XCTestCase {
     func testOnlyWarpNeedsPaneProof() {
@@ -3818,21 +3713,20 @@ final class PaneProofRoutingTests: XCTestCase {
         XCTAssertFalse(TerminalSessionHandle.none.screenNeedsPaneProof)
     }
 
-    /// 표식은 우리 실행에서만 나올 수 있어야 하고, claude 입력창에서 특별한 뜻을 가지면 안 된다
+    /// The marker has to be something only our run can produce, and it must mean nothing special to claude's input box
     func testPaneProofTokenIsPlainAndUnique() {
         let tokens = (0..<50).map { _ in paneProofToken() }
-        // 영숫자만 — `/`·`!`·`@`는 claude 입력창에서 모드·자동완성을 건드린다
+        // Alphanumerics only — `/`, `!` and `@` trigger modes and completion in claude's input box
         XCTAssertTrue(tokens.allSatisfy { token in token.allSatisfy { $0.isLetter || $0.isNumber } })
-        // 우연히 다른 pane에 같은 것이 뜰 수 없을 만큼 길고, 실행마다 달라야 한다
+        // Long enough that the same value cannot appear in another pane by chance, and different on every run
         XCTAssertTrue(tokens.allSatisfy { $0.count == 12 })
         XCTAssertGreaterThan(Set(tokens).count, 45)
     }
 }
 
-// MARK: - Warp: 회수 (비정상 종료가 남긴 것)
-// 정상 경로는 스스로 치운다(헬퍼는 `bye`·pane 종료·시그널에서, `runInWarp`은 탭이 열린 뒤).
-// SIGKILL·앱 크래시만 그 경로를 건너뛰므로 다음 실행이 훑는데, **살아 있는 것을 건드리지
-// 않는 것**이 조건이다 — 잘못 지우면 전달 중인 세션의 통로가 사라진다.
+// MARK: - Warp: reclaiming (what an abnormal exit leaves behind)
+// The normal paths clean up after themselves (the helper on `bye`, on the pane closing and on signals; `runInWarp` once the tab has opened).
+// Only SIGKILL and an app crash skip those, so the next run sweeps up — on the condition that it **never touches anything alive**: deleting the wrong thing removes the channel of a session mid-delivery.
 
 final class WarpReclaimTests: XCTestCase {
     private var directory = ""
@@ -3874,7 +3768,7 @@ final class WarpReclaimTests: XCTestCase {
         return fd
     }
 
-    /// 주인이 죽은 소켓 = 파일은 남았는데 아무도 듣지 않는 상태 (SIGKILL로 끝난 헬퍼)
+    /// A socket whose owner died = the file survives with nobody listening (a helper that ended on SIGKILL)
     func testDeadHelperSocketIsRemoved() throws {
         let path = (directory as NSString).appendingPathComponent("tcw-deadbeef.sock")
         close(try listeningSocket(at: path))
@@ -3885,7 +3779,7 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertFalse(exists(path))
     }
 
-    /// 살아 있는 헬퍼의 소켓을 지우면 그 세션의 전달이 통째로 끊긴다
+    /// Deleting a live helper's socket cuts off that session's delivery entirely
     func testLiveHelperSocketIsKept() throws {
         let path = (directory as NSString).appendingPathComponent("tcw-cafebabe.sock")
         let fd = try listeningSocket(at: path)
@@ -3897,22 +3791,21 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertTrue(exists(path))
     }
 
-    /// `bind`와 `listen` 사이에는 연결이 거절된다 — 갓 만들어진 파일을 지우면 그 창에 걸린
-    /// 헬퍼의 소켓을 없애게 된다
+    /// Connections are refused between `bind` and `listen` — deleting a freshly created file removes the socket of a helper caught in that window
     func testFreshHelperSocketIsKept() {
         let path = write("tcw-facefeed.sock", ageSeconds: 1)
         reclaimDeadWarpHelperSockets(in: [directory])
         XCTAssertTrue(exists(path))
     }
 
-    /// 회귀 방지(P0-3): 이름만 보고 지우면 같은 이름의 **일반 파일**이 사라진다 (Codex 재현)
+    /// Regression guard (P0-3): deleting by name alone removes a **regular file** of the same name (Codex's reproduction)
     func testRegularFileWithOurSocketNameIsNotRemoved() {
         let path = write("tcw-deadbeef.sock", "사용자 파일", ageSeconds: 3000)
         reclaimDeadWarpHelperSockets(in: [directory])
         XCTAssertTrue(exists(path))
     }
 
-    /// 심볼릭 링크를 따라가 지우면 링크가 가리키는 남의 파일이 사라진다
+    /// Following a symbolic link to delete removes whatever file of somebody else's the link points at
     func testSymlinkWithOurSocketNameIsNotRemoved() throws {
         let target = write("남의파일.txt", "소중한 것", ageSeconds: 3000)
         let link = (directory as NSString).appendingPathComponent("tcw-cafed00d.sock")
@@ -3922,8 +3815,7 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: link))
     }
 
-    /// 20초 뒤 예약 삭제도 경로만 보고 지우면 안 된다 — 그 사이 사용자가 같은 경로에
-    /// 자기 파일을 놓았을 수 있다
+    /// The scheduled deletion 20 seconds later must not go by path alone either — the user may have put their own file at that path in the meantime
     func testScheduledTabConfigRemovalRechecksTheHeader() {
         let ours = write("terminal-checkout-deadbeef.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 0)
         removeWarpTabConfigIfOurs(path: ours)
@@ -3934,15 +3826,14 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertTrue(exists(theirs))
     }
 
-    /// 회귀 방지(P0-3): 우리 이름의 심볼릭 링크가 우리 헤더를 가진 파일을 가리키면
-    /// 경로 기반 판정은 **링크 자체를 지운다**. 소켓 쪽은 `lstat`으로 막았는데 여기가 빠졌었다
+    /// Regression guard (P0-3): when a symbolic link bearing our name points at a file carrying our header, a path-based verdict **deletes the link itself**. The socket side was covered by `lstat` and this one had been missed
     func testSymlinkWithOurTabConfigNameIsNotRemoved() throws {
         let target = write("남의파일.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 600)
         let link = (directory as NSString).appendingPathComponent("terminal-checkout-deadbeef.toml")
         try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
         removeWarpTabConfigIfOurs(path: link)
         reclaimStaleWarpTabConfigs(in: directory)
-        XCTAssertNotNil(try? FileManager.default.attributesOfItem(atPath: link), "링크가 지워졌다")
+        XCTAssertNotNil(try? FileManager.default.attributesOfItem(atPath: link), "the link was deleted")
         XCTAssertTrue(exists(target))
     }
 
@@ -3960,7 +3851,7 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertFalse(exists(path))
     }
 
-    /// 지금 막 열리고 있는 다른 요청의 파일을 지우면 그 탭이 열리지 않는다
+    /// Deleting another request's file while it is opening right now means that tab never opens
     func testFreshTabConfigIsKept() {
         let path = write(
             "terminal-checkout-deadbeef.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 5
@@ -3969,14 +3860,14 @@ final class WarpReclaimTests: XCTestCase {
         XCTAssertTrue(exists(path))
     }
 
-    /// 이름이 겹친 사용자 파일은 내용에서 걸러진다 — 남의 Tab Config를 지우면 안 된다
+    /// A user file whose name collides is filtered out by its contents — somebody else's Tab Config must not be deleted
     func testUserFileWithOurNamingIsKept() {
         let path = write("terminal-checkout-deadbeef.toml", "name = \"내 작업 공간\"\n", ageSeconds: 600)
         reclaimStaleWarpTabConfigs(in: directory)
         XCTAssertTrue(exists(path))
     }
 
-    /// 브랜치 초기 빌드가 남긴 고정 이름 파일도 내용이 우리 것이면 회수한다
+    /// A fixed-name file left by an early build of this branch is reclaimed too, when its contents are ours
     func testLegacyFixedNameTabConfigIsRemoved() {
         let path = write(
             "terminal-checkout.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 600
@@ -3986,33 +3877,26 @@ final class WarpReclaimTests: XCTestCase {
     }
 }
 
-// MARK: - uninstall.sh ↔ Swift 상수 동기화
-// 삭제 스크립트는 앱과 **같은 판정**으로 남은 파일을 지운다(소켓은 우리 접두사 + 실제 소켓,
-// Tab Config는 우리 접두사 + 우리 헤더). 그 문자열이 스크립트에 복제돼 있어, 한쪽만 바뀌면
-// 삭제 대상이 조용히 어긋난다 — 접두사를 바꾸면 사용자 머신에 우리 파일이 영구히 남고,
-// 헤더를 바꾸면 스크립트가 아무것도 못 지운다. 이 테스트가 그 갈림을 red로 만든다.
+// MARK: - uninstall.sh ↔ Swift constant synchronisation
+// The uninstall script deletes what is left with **the same verdict** the app uses (for a socket: our prefix plus an actual socket; for a Tab Config: our prefix plus our header). Those strings are duplicated in the script, so changing only one side makes the deletion target drift silently — change the prefix and our files stay on the user's machine forever; change the header and the script deletes nothing. This test turns that divergence red.
 //
-// **한계**: 문자열이 파일에 있는지만 본다. 그래서 uninstall.sh를 고칠 때 문자열을 주석이나 죽은
-// 코드에만 남기면 이 가드는 통과한다 — 셸 구문까지 보지는 않는다.
+// **The limit**: it only checks whether the string is in the file. So if someone editing uninstall.sh leaves the string in a comment or in dead code, this guard still passes — it does not look at the shell syntax.
 
-/// 리포 루트 파일을 **소스 위치 기준**으로 읽는다 — 테스트 실행 CWD는 호출 방식에 따라
-/// 달라지지만 `#filePath`는 컴파일 시점의 절대 경로라 worktree에서도 그 사본을 가리킨다.
-/// 못 찾으면 던져서 **실패**한다: 스킵으로 넘기면 가드가 조용히 무력화된다.
+/// Reads a repository-root file **relative to the source location** — the CWD a test runs in depends on how it was invoked, whereas `#filePath` is the absolute path at compile time and so points at that checkout's copy even in a worktree.
+/// If it cannot be found it throws and **fails**: passing it off as a skip disables the guard silently.
 private func repoFileContents(_ name: String) throws -> String {
-    let root = URL(fileURLWithPath: #filePath) // <루트>/app/Tests/CoreTests/CoreTests.swift
+    let root = URL(fileURLWithPath: #filePath) // <root>/app/Tests/CoreTests/CoreTests.swift
         .deletingLastPathComponent() // CoreTests
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // app
-        .deletingLastPathComponent() // 리포 루트
+        .deletingLastPathComponent() // the repository root
     return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
 }
 
 final class UninstallScriptSyncTests: XCTestCase {
     func testUninstallScriptSweepsWithTheSameConstants() throws {
         let script = try repoFileContents("uninstall.sh")
-        // 스크립트에 그대로 나타나야 하는 것들. `--serve` 플래그는 일부러 빠져 있다 —
-        // WarpHelper 타깃 private이라 여기서 볼 수 없고, 어긋났을 때 피해는 pkill 미스뿐이며
-        // 헬퍼는 유휴·수명 상한으로 스스로 죽는다
+        // What has to appear verbatim in the script. The `--serve` flag is deliberately absent — it is private to the WarpHelper target and cannot be seen from here, the damage from a divergence is only a missed pkill, and the helper dies on its own from the idle and lifetime caps
         let expected = [
             warpHelperSocketPrefix + "*.sock",
             warpTabConfigPrefix + "*.toml",
@@ -4034,7 +3918,7 @@ final class UninstallScriptSyncTests: XCTestCase {
         for needle in expected {
             XCTAssertTrue(
                 script.contains(needle),
-                "uninstall.sh가 \(needle.debugDescription)을 다루지 않는다 — Swift 상수만 바뀌었다"
+                "uninstall.sh does not handle \(needle.debugDescription) — only the Swift constant changed"
             )
         }
     }
