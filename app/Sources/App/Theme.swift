@@ -1,9 +1,11 @@
 import AppKit
 
-/// 설정 창의 시각 시스템 — "설정 창 = 터미널 세션" 컨셉.
-/// 색은 장식이 아니라 상태를 말할 때만 쓴다 (ANSI 의미색: 초록=정상, 노랑=확인 필요, 빨강=오류).
+/// The setup window's visual system, built on one idea: the window *is* a terminal session.
+/// Colour is never decoration — it is used only where it states a state, with the ANSI meanings
+/// (green = fine, yellow = needs a look, red = error).
 enum Theme {
-    /// 배경 3단 레이어: 창 < 카드 < 칩 — "화면 속 화면"(코드 칩)이 가장 어둡다
+    /// Three background layers: window < card < chip — the "screen within a screen" (a code chip)
+    /// is the darkest
     static let bg = hex(0x14161C)
     static let panel = hex(0x1B1E26)
     static let chipBg = hex(0x0E1014)
@@ -17,7 +19,7 @@ enum Theme {
     static let warn = hex(0xE0B14E)
     static let err = hex(0xE06C75)
     static let accent = hex(0x56C2DC)
-    /// GitHub 페이지에 삽입되는 확장 버튼과 같은 초록 — 두 화면의 브랜드 연속성
+    /// The same green as the extension's buttons on a GitHub page — the two screens read as one product
     static let actionGreen = hex(0x238636)
 
     static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
@@ -38,8 +40,9 @@ enum Theme {
     }
 }
 
-/// 헤더의 파이프라인 스트립: Chrome 확장 ── relay ── 앱 ── 터미널.
-/// 이 앱이 존재하는 이유(TCC 권한 분리 구조)를 그대로 그린 것이며, 각 점은 실제 상태로 점등된다.
+/// The pipeline strip in the header: Chrome extension ── relay ── app ── terminal.
+/// It draws the reason this app exists (the TCC permission split), and each dot lights up from the
+/// real state rather than from a static picture.
 final class PipelineStripView: NSView {
     struct Node {
         let label: String
@@ -65,7 +68,7 @@ final class PipelineStripView: NSView {
         ])
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) 미지원") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update(_ nodes: [Node]) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -104,7 +107,8 @@ final class PipelineStripView: NSView {
     }
 }
 
-/// 헤더 타이틀 뒤의 블록 커서. 시스템 '동작 줄이기' 설정 시 깜빡이지 않는다.
+/// The block cursor after the header title. It does not blink when the system's Reduce Motion
+/// setting is on.
 final class BlinkCursorView: NSTextField {
     private var timer: Timer?
 

@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.setupMainMenu() }
-        // relay가 백그라운드로 띄운 경우(--background)에는 창을 열지 않는다
+        // Launched in the background by the relay (`--background`): no window
         if !CommandLine.arguments.contains("--background") {
             showSetupWindow()
         }
@@ -46,11 +46,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try server.start()
             self.server = server
         } catch {
-            checkoutLog("소켓 서버 시작 실패 — \(errorMessage(error))")
+            checkoutLog("socket server failed to start — \(errorMessage(error))")
         }
     }
 
-    /// 프로그램 방식 앱은 메인 메뉴가 없으면 ⌘C/⌘V/⌘W 등이 동작하지 않는다
+    /// An app built in code has no main menu unless it makes one, and without it ⌘C/⌘V/⌘W do nothing.
+    ///
+    /// Every title is read at the moment the menu is built, so a language change rebuilds it (the
+    /// observer above) rather than translating anything in place.
     private func setupMainMenu() {
         let main = NSMenu()
 
@@ -58,39 +61,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "\(appDisplayName) 종료",
+            withTitle: localized("app.menu.quit", appDisplayName),
             action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"
         )
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem()
         main.addItem(editItem)
-        let editMenu = NSMenu(title: "편집")
-        editMenu.addItem(withTitle: "잘라내기", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "복사", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "붙여넣기", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "모두 선택", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editMenu = NSMenu(title: localized("app.menu.edit"))
+        editMenu.addItem(withTitle: localized("app.menu.cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: localized("app.menu.copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: localized("app.menu.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: localized("app.menu.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
 
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
-        let windowMenu = NSMenu(title: "윈도우")
-        windowMenu.addItem(withTitle: "닫기", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let windowMenu = NSMenu(title: localized("app.menu.window"))
+        windowMenu.addItem(withTitle: localized("app.menu.close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowItem.submenu = windowMenu
 
         NSApp.mainMenu = main
     }
 
-    /// 앱은 어디에도 상시 노출되지 않는다 (메뉴 막대 없음, Dock은 창이 열린 동안만).
-    /// 설정이 필요하면 Spotlight 등으로 앱을 다시 실행 → reopen 이벤트로 이 창이 열린다.
+    /// The app is nowhere on screen while it is idle — no menu bar item, and a Dock icon only while
+    /// this window is open. Launching it again (from Spotlight, say) arrives as a reopen event,
+    /// which is what brings the window back.
     private func showSetupWindow() {
         if setupWindow == nil {
             let controller = SetupWindowController()
-            // 창이 닫히면 Dock/⌘Tab에서 다시 숨긴다 (보이지 않는 백그라운드로 복귀)
+            // Closing the window hides it from the Dock and ⌘Tab again — back to the invisible background
             controller.onClose = { NSApp.setActivationPolicy(.accessory) }
             setupWindow = controller
         }
-        // 창이 열려 있는 동안은 Dock/⌘Tab에 나타나도록 일반 앱으로 전환
+        // A regular app while the window is up, so it appears in the Dock and ⌘Tab
         NSApp.setActivationPolicy(.regular)
         setupWindow?.showWindow(nil)
         setupWindow?.window?.makeKeyAndOrderFront(nil)
