@@ -34,6 +34,11 @@ final class SetupWindowLayoutTests: XCTestCase {
         window.contentRect(forFrameRect: window.frame).height
     }
 
+    /// A screen with room to spare, for the tests whose subject is "the window tracks its
+    /// content". Tall enough that no layout in this window reaches the clamp — the clamp has its
+    /// own test, and mixing the two makes a pass depend on the display the suite runs on.
+    private let roomyScreen = NSRect(x: 0, y: 0, width: 1600, height: 2000)
+
     /// Every status line must wrap. One of them (`accessibilityStatusLabel`) was declared beside
     /// its siblings but missed the styling loop, so it kept the default font and a single line —
     /// a long status clipped at the card edge instead of flowing. Asserting the whole family is
@@ -51,9 +56,16 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     /// The window is never shorter than its content, in either direction of every transition —
     /// growing (a section appears) and shrinking (it goes away).
+    ///
+    /// The screen is pinned because the property only holds while the content *fits* it: past
+    /// that the window is clamped on purpose and the stack scrolls (the test below). Left to the
+    /// real display this passes on a roomy desktop and fails wherever the runner's screen is
+    /// shorter than the content — measured on CI at 681pt against 721.5pt of content, which is
+    /// the designed clamp, not a defect.
     func testWindowMatchesContentAcrossEveryTerminalTransition() throws {
         let controller = makeController(.iterm)
         let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen
         for terminal in [Terminal.warp, .wezterm, .warp, .iterm, .warp] {
             controller.select(terminal: terminal)
             settle(window)
@@ -74,8 +86,9 @@ final class SetupWindowLayoutTests: XCTestCase {
     func testGrowingNearTheBottomEdgeKeepsTheWindowOnScreen() throws {
         let controller = makeController(.wezterm) // shortest layout, so switching grows it
         let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
         settle(window)
-        let visible = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame
+        let visible = roomyScreen
         window.setFrameOrigin(NSPoint(x: visible.minX + 20, y: visible.minY + 4))
 
         controller.select(terminal: .warp)
@@ -117,6 +130,7 @@ final class SetupWindowLayoutTests: XCTestCase {
     func testPermissionRefreshKeepsTheWindowFitted() throws {
         let controller = makeController(.warp)
         let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
         controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
         settle(window)
         XCTAssertGreaterThanOrEqual(
