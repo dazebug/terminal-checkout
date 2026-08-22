@@ -62,6 +62,19 @@ enum AppLocalization {
         )
     }
 
+    /// The same answer as a value publication will accept.
+    ///
+    /// `resolveLocale` returns a member of the list it was given, so in production this never takes
+    /// the fallback branch. A test can put anything into `tagOverrideForTesting`, though, and that
+    /// is the branch: an override we do not ship publishes English rather than persisting a tag
+    /// nothing can render.
+    static func resolvedLocale(
+        defaults: UserDefaults = .standard,
+        systemPreferred: [String] = Locale.preferredLanguages
+    ) -> SupportedLocale {
+        SupportedLocale(resolvedTag(defaults: defaults, systemPreferred: systemPreferred)) ?? .fallback
+    }
+
     /// The catalog for one tag, or nil when the bundle does not carry it. `resources` is a
     /// parameter so a test can point at the source tree; production passes the app bundle.
     static func catalog(

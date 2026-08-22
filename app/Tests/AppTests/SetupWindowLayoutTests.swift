@@ -191,6 +191,74 @@ final class SetupWindowLayoutTests: XCTestCase {
             contentHeight(window), controller.rootStack.fittingSize.height - 0.5
         )
     }
+
+    /// **Every sentence in the pipeline strip comes from the catalogue** (round 10 review).
+    ///
+    /// The strip was assembling one of its own: `"Native Host: \(manifest.message)"` put an English
+    /// word in front of a translated status, and `"relay"` was a bare literal. Item 12's gate could
+    /// not see either of them — it counts `localized(…)` calls and catalogue keys, so a string
+    /// nobody localised is invisible to it. That is the limit of a scan-shaped gate, and this case
+    /// is what covers the shape it cannot.
+    ///
+    /// What is checked is the **frame**, not the wording (D59): a node's text has to be a catalogue
+    /// value, or a catalogue value's frame with its `%@` filled in — the payload is allowed to be
+    /// anything, including a product name. `iTerm2`, `WezTerm` and `Warp` are the declared
+    /// exceptions, because a product name is the same word in every language.
+    ///
+    /// The states handed in are synthetic and built from that locale's own catalogue, so the case
+    /// enumerates the rows it means instead of whatever this machine's manifest happens to say.
+    func testPipelineNodesAreLocalized() throws {
+        let productNames: Set<String> = ["iTerm2", "WezTerm", "Warp"]
+        var renderings: [String: [String]] = [:]
+
+        for tag in SetupWindowLayoutTests.populatedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            defer { AppLocalization.tagOverrideForTesting = nil }
+            let values = Array(try loadCatalogue(tag).values)
+            let controller = makeController(.warp)
+
+            let nodes = controller.pipelineNodes(
+                manifest: .ok(try XCTUnwrap(try loadCatalogue(tag)["app.status.manifest.registered"])),
+                extensionState: .ok(try XCTUnwrap(try loadCatalogue(tag)["app.status.extensionFolder.ready"])),
+                socketAlive: true, permission: nil, accessibilityGranted: true
+            )
+            XCTAssertEqual(nodes.count, 4, "\(tag): the strip lost a node")
+
+            for node in nodes {
+                XCTAssertTrue(
+                    productNames.contains(node.label) || framed(node.label, by: values),
+                    "\(tag): the label \"\(node.label)\" is not from the catalogue"
+                )
+                XCTAssertTrue(
+                    framed(node.detail, by: values),
+                    "\(tag): the sentence \"\(node.detail)\" is not from the catalogue"
+                )
+            }
+            renderings[tag] = nodes.map { "\($0.label)|\($0.detail)" }
+        }
+
+        // Every sentence has to move with the language. A frame that came from the catalogue but
+        // answered the same in both would mean the lookup never reached a second file.
+        let english = try XCTUnwrap(renderings["en"])
+        let korean = try XCTUnwrap(renderings["ko"])
+        for (index, pair) in zip(english, korean).enumerated() {
+            XCTAssertNotEqual(pair.0, pair.1, "pipeline node \(index) reads the same in both languages")
+        }
+    }
+
+    /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
+    /// almost nothing around the placeholder would match anything, so those are not counted.
+    private func framed(_ text: String, by values: [String]) -> Bool {
+        for value in values {
+            if value == text { return true }
+            let parts = value.components(separatedBy: "%@")
+            guard parts.count == 2, parts[0].count + parts[1].count >= 3 else { continue }
+            if text.hasPrefix(parts[0]), text.hasSuffix(parts[1]), text.count > parts[0].count + parts[1].count {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 
@@ -219,12 +287,7 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
     /// catalogues, and a check that still scanned the source would pass by finding nothing —
     /// vacuously green, which is worse than deleted.
     private func catalogue(_ tag: String) throws -> [String: String] {
-        let path = (SetupWindowLayoutTests.sourceResources as NSString)
-            .appendingPathComponent("\(tag).lproj/Localizable.strings")
-        let parsed = try PropertyListSerialization.propertyList(
-            from: Data(contentsOf: URL(fileURLWithPath: path)), format: nil
-        ) as? [String: String]
-        return try XCTUnwrap(parsed, "\(tag) catalogue did not parse")
+        try loadCatalogue(tag)
     }
 
     func testTheCardSaysTheRequestIsRefusedRatherThanPartlyRun() throws {
@@ -295,4 +358,17 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
             }
         }
     }
+}
+
+
+/// One catalogue, read from the source tree. File scope because two of the classes here need it:
+/// `swift test` has no app bundle, and a `Bundle` lookup would resolve through the host's language
+/// (D7) rather than through the tag being asked about.
+private func loadCatalogue(_ tag: String) throws -> [String: String] {
+    let path = (SetupWindowLayoutTests.sourceResources as NSString)
+        .appendingPathComponent("\(tag).lproj/Localizable.strings")
+    let parsed = try PropertyListSerialization.propertyList(
+        from: Data(contentsOf: URL(fileURLWithPath: path)), format: nil
+    ) as? [String: String]
+    return try XCTUnwrap(parsed, "\(tag) catalogue did not parse")
 }

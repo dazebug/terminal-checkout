@@ -58,6 +58,8 @@
 "app.panel.choosePrompt" = "선택";
 "app.pipeline.node.app" = "앱";
 "app.pipeline.node.extension" = "Chrome 확장";
+"app.pipeline.node.relay" = "relay";
+"app.pipeline.relay.detail" = "Native Host: %@";
 "app.pipeline.socket.listening" = "소켓 서버 대기 중 (host.sock)";
 "app.pipeline.socket.missing" = "소켓 파일 없음 — 앱을 재시작해 보세요";
 "app.pipeline.warp.noAccessibility" = "손쉬운 사용 권한 없음 — claude 입력이 예약된 버튼은 탭을 열지 않고 거절됨";

@@ -29,6 +29,34 @@ public let automaticLocalePreference = "auto"
 /// than to whatever the machine happens to prefer is a decision, not a property of the bundle.
 public let fallbackLocale = "en"
 
+/// A tag we actually ship a catalogue for.
+///
+/// It exists because validating on the way **out** was not enough: `publish` used to take any
+/// string, so `publish(resolved: "fr", …)` persisted a tag nothing can render and the mistake was
+/// only noticed by the next read, which then threw the whole identity away (round 10 review). The
+/// type moves that check to the moment the value is made, and the compiler asks the question
+/// instead of a reviewer — the same move `ShellPayload` makes in the App target, one direction over:
+/// there a computed value must not reach a shell, here an unshipped tag must not reach storage.
+///
+/// The only way to build one without asking is `fallback`, which is `fallbackLocale` — a member of
+/// `supportedLocales` by construction, and `testTheFallbackIsALocaleWeShip` keeps that true.
+public struct SupportedLocale: Equatable {
+    public let tag: String
+
+    private init(unchecked tag: String) {
+        self.tag = tag
+    }
+
+    public init?(_ tag: String) {
+        guard supportedLocales.contains(tag) else { return nil }
+        self.init(unchecked: tag)
+    }
+
+    /// The answer for a question we could not answer — English, for the reason `fallbackLocale`
+    /// gives.
+    public static let fallback = SupportedLocale(unchecked: fallbackLocale)
+}
+
 /// The catalog to render in.
 ///
 /// `preference` is the **stored object**, not a decoded string — `UserDefaults.object(forKey:)`
@@ -99,6 +127,20 @@ public func localeSnapshotToPublish(resolved: String, lastPublished: LocaleSnaps
     guard let last = lastPublished else { return LocaleSnapshot(tag: resolved, epoch: 0) }
     guard last.tag != resolved else { return last }
     return LocaleSnapshot(tag: resolved, epoch: last.epoch + 1)
+}
+
+/// Whether this identity has a next revision left to give.
+///
+/// `Int.max` is the epoch storage treats as malformed — it cannot express its own successor — so an
+/// identity sitting at `Int.max - 1` is one advance away from a snapshot the app would refuse on the
+/// very next read (round 10 review; it was persisted first and rejected afterwards). The caller has
+/// to mint a fresh identity at that point rather than advance, which is the same answer D51 gives
+/// from the other end: an epoch that cannot move means the identity has to.
+///
+/// It is a question rather than a clamp because the recovery is minting, and only the caller has an
+/// identity to mint.
+public func localeIdentityIsExhausted(_ snapshot: LocaleSnapshot) -> Bool {
+    snapshot.epoch >= Int.max - 1
 }
 
 /// Case and `_` are levelled so that `zh_TW` and `ZH-Hant` are read as the tags they name.

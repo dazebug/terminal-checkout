@@ -66,6 +66,8 @@
 "app.panel.choosePrompt" = "Choose";
 "app.pipeline.node.app" = "app";
 "app.pipeline.node.extension" = "Chrome extension";
+"app.pipeline.node.relay" = "relay";
+"app.pipeline.relay.detail" = "Native Host: %@";
 "app.pipeline.socket.listening" = "socket server listening (host.sock)";
 "app.pipeline.socket.missing" = "no socket file — try restarting the app";
 "app.pipeline.warp.noAccessibility" = "No Accessibility permission — buttons with scheduled claude input are refused without opening a tab";

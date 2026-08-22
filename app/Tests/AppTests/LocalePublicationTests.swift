@@ -28,6 +28,14 @@ final class LocalePublicationTests: XCTestCase {
         super.tearDown()
     }
 
+    /// `SupportedLocale` has no literal form — that is the whole point of the type — so a case that
+    /// means "publish Korean" says it once here instead of unwrapping in every line.
+    private func locale(
+        _ tag: String, file: StaticString = #filePath, line: UInt = #line
+    ) throws -> SupportedLocale {
+        try XCTUnwrap(SupportedLocale(tag), "\(tag) is not a locale we ship", file: file, line: line)
+    }
+
     /// The envelope as it sits on disk, field by field, so that a malformed one can still be
     /// inspected — refusing those is what several of these cases are about.
     private func storedTriple() -> (String?, Any?, String?) {
@@ -54,13 +62,13 @@ final class LocalePublicationTests: XCTestCase {
     /// under it loses to whatever epoch the extension has cached, and the language never moves
     /// again. The identity has to change with it.
     func testANilLastPublishedIsOnlyValidForATrulyNewInstall() throws {
-        let fresh = try XCTUnwrap(LocaleState.publish(resolved: "ko", defaults: defaults, role: .interactive))
+        let fresh = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive))
         XCTAssertEqual(fresh.snapshot, LocaleSnapshot(tag: "ko", epoch: 0))
         XCTAssertFalse(fresh.installId.isEmpty)
 
         // The same starting point, except that an identity survived
         seed(installId: fresh.installId, epoch: nil, tag: nil)
-        let after = try XCTUnwrap(LocaleState.publish(resolved: "ko", defaults: defaults, role: .interactive))
+        let after = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive))
         XCTAssertEqual(after.snapshot.epoch, 0)
         XCTAssertNotEqual(
             after.installId, fresh.installId,
@@ -82,7 +90,7 @@ final class LocalePublicationTests: XCTestCase {
             UserDefaults.standard.removePersistentDomain(forName: suiteName)
             seed(installId: "old-identity", epoch: epoch, tag: "ko")
             let published = try XCTUnwrap(
-                LocaleState.publish(resolved: "ja", defaults: defaults, role: .interactive), label
+                LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive), label
             )
             XCTAssertNotEqual(published.installId, "old-identity", label)
             XCTAssertEqual(published.snapshot, LocaleSnapshot(tag: "ja", epoch: 0), label)
@@ -92,7 +100,7 @@ final class LocalePublicationTests: XCTestCase {
         // A tag we do not ship is malformed too — it cannot be what we last published
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         seed(installId: "old-identity", epoch: 4, tag: "fr")
-        let published = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: defaults, role: .interactive))
+        let published = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
         XCTAssertNotEqual(published.installId, "old-identity")
         XCTAssertEqual(published.snapshot.epoch, 0)
     }
@@ -105,13 +113,13 @@ final class LocalePublicationTests: XCTestCase {
         seed(installId: "install-a", epoch: 3, tag: "ko")
         let before = storedTriple()
 
-        let headless = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: defaults, role: .headless))
+        let headless = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .headless))
         XCTAssertEqual(headless.snapshot, LocaleSnapshot(tag: "ko", epoch: 3), "the headless server invented a revision")
         XCTAssertEqual(storedTriple().0, before.0)
         XCTAssertEqual(storedTriple().1 as? Int, before.1 as? Int)
         XCTAssertEqual(storedTriple().2, before.2, "the headless server wrote")
 
-        let gui = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: defaults, role: .interactive))
+        let gui = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
         XCTAssertEqual(gui.snapshot, LocaleSnapshot(tag: "ja", epoch: 4))
         XCTAssertEqual(gui.installId, "install-a")
         // The pair the extension orders by: no epoch ever carries two different tags
@@ -120,7 +128,7 @@ final class LocalePublicationTests: XCTestCase {
         // And with nothing stored, the headless server publishes nothing at all rather than
         // minting an identity the GUI would then disagree with
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
-        XCTAssertNil(LocaleState.publish(resolved: "ja", defaults: defaults, role: .headless))
+        XCTAssertNil(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .headless))
         XCTAssertNil(storedTriple().0)
     }
 
@@ -130,7 +138,7 @@ final class LocalePublicationTests: XCTestCase {
     /// ordering promise — for one identity the epoch never goes down, whatever was in the plist.
     func testACorruptedEpochCannotTrapOrPublishNonMonotonically() throws {
         seed(installId: "install-a", epoch: Int.max, tag: "ko")
-        let recovered = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: defaults, role: .interactive))
+        let recovered = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
         XCTAssertEqual(recovered.snapshot.epoch, 0)
         XCTAssertNotEqual(recovered.installId, "install-a", "a revision that cannot advance kept its identity")
 
@@ -141,7 +149,7 @@ final class LocalePublicationTests: XCTestCase {
         var epochs: [Int] = []
         for resolved in ["ko", "ja", "ko", "zh-Hant"] {
             let published = try XCTUnwrap(
-                LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive)
+                LocaleState.publish(resolved: try locale(resolved), defaults: defaults, role: .interactive)
             )
             XCTAssertEqual(published.installId, "install-b")
             epochs.append(published.snapshot.epoch)
@@ -154,7 +162,7 @@ final class LocalePublicationTests: XCTestCase {
     /// number that moved each time would make every launch look like a language change.
     func testRepublishingTheSameLocaleStandsStill() throws {
         seed(installId: "install-a", epoch: 2, tag: "ja")
-        let again = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: defaults, role: .interactive))
+        let again = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
         XCTAssertEqual(again, LocalePublication(installId: "install-a", snapshot: LocaleSnapshot(tag: "ja", epoch: 2)))
     }
 
@@ -172,15 +180,16 @@ final class LocalePublicationTests: XCTestCase {
     func testNoReaderObservesMixedSnapshot() throws {
         let watched = try XCTUnwrap(WriteObservingDefaults(suiteName: suiteName))
         let minted = try XCTUnwrap(
-            LocaleState.publish(resolved: "ko", defaults: watched, role: .interactive)
+            LocaleState.publish(resolved: try locale("ko"), defaults: watched, role: .interactive)
         )
 
         var observed: [LocalePublication?] = []
+        let japanese = try locale("ja")
         watched.afterWrite = { [unowned watched] in
-            observed.append(LocaleState.publish(resolved: "ja", defaults: watched, role: .headless))
+            observed.append(LocaleState.publish(resolved: japanese, defaults: watched, role: .headless))
         }
         let advanced = try XCTUnwrap(
-            LocaleState.publish(resolved: "ja", defaults: watched, role: .interactive)
+            LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: .interactive)
         )
         watched.afterWrite = nil
 
@@ -219,7 +228,7 @@ final class LocalePublicationTests: XCTestCase {
         for (key, value) in legacy { watched.set(value, forKey: key) }
 
         XCTAssertNil(
-            LocaleState.publish(resolved: "ko", defaults: watched, role: .headless),
+            LocaleState.publish(resolved: try locale("ko"), defaults: watched, role: .headless),
             "the old three keys were read as something to republish"
         )
 
@@ -230,7 +239,7 @@ final class LocalePublicationTests: XCTestCase {
                 stale: LocaleState.legacyKeys.contains { watched.object(forKey: $0) != nil }
             ))
         }
-        let minted = try XCTUnwrap(LocaleState.publish(resolved: "ja", defaults: watched, role: .interactive))
+        let minted = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: .interactive))
         watched.afterWrite = nil
 
         XCTAssertNotEqual(minted.installId, "old-identity")
@@ -247,6 +256,135 @@ final class LocalePublicationTests: XCTestCase {
             XCTAssertNil(watched.object(forKey: key), key)
         }
         XCTAssertEqual(Set(LocaleState.legacyKeys), Set(legacy.keys), "the deleted set is not the old schema")
+    }
+
+    /// **⑦ A tag we do not ship cannot be published** (round 10 review).
+    ///
+    /// The mint path used to persist whatever string it was handed, so `publish(resolved: "fr", …)`
+    /// wrote a tag nothing can render, and the mistake surfaced only on the next read — which then
+    /// threw the identity away to recover from a value we had written ourselves. The check now
+    /// happens where the value is made: `SupportedLocale` has no other way in.
+    ///
+    /// The case cannot pass an unsupported tag to `publish` at all — that is the point — so what it
+    /// proves is the two halves that remain provable: the type refuses, and the value production
+    /// path in front of it (`resolvedLocale`) answers with a shipped tag even when the stored
+    /// preference is a corrupt one.
+    func testPublishRejectsUnsupportedResolvedTag() throws {
+        XCTAssertNil(SupportedLocale("fr"), "a tag we ship no catalogue for was accepted")
+        XCTAssertNil(SupportedLocale(""))
+        XCTAssertNil(SupportedLocale(automaticLocalePreference), "`auto` is a preference, not a tag")
+        XCTAssertEqual(SupportedLocale("zh-Hant")?.tag, "zh-Hant")
+
+        defaults.set(42, forKey: languagePreferenceKey)
+        let resolved = AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: ["fr-CA"])
+        XCTAssertTrue(supportedLocales.contains(resolved.tag), "the resolver produced \(resolved.tag)")
+
+        let published = try XCTUnwrap(
+            LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive)
+        )
+        XCTAssertTrue(supportedLocales.contains(published.snapshot.tag))
+        XCTAssertEqual(storedTriple().2, published.snapshot.tag, "what was stored is not what was returned")
+    }
+
+    /// **⑧ An identity one step from `Int.max` rotates instead of publishing it.**
+    ///
+    /// `stored` accepts `Int.max - 1`, and advancing it produced `Int.max` — a snapshot the very
+    /// next read calls malformed (round 10 review). Writing it and then refusing to read it is the
+    /// worst of both: the extension is handed an epoch, and the app has thrown the identity away by
+    /// the time anyone looks. The rotation happens before that value exists.
+    func testEpochAtMaxMinusOneCannotPublishIntMax() throws {
+        seed(installId: "install-a", epoch: Int.max - 1, tag: "ko")
+        let rotated = try XCTUnwrap(
+            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive)
+        )
+        XCTAssertNotEqual(rotated.installId, "install-a", "the exhausted identity was kept")
+        XCTAssertEqual(rotated.snapshot, LocaleSnapshot(tag: "ja", epoch: 0))
+        XCTAssertEqual(storedTriple().1 as? Int, 0, "an epoch was stored that cannot be read back")
+
+        // One below that still advances normally — the rotation is a boundary, not a ceiling that
+        // swallowed the last usable revision
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        seed(installId: "install-b", epoch: Int.max - 2, tag: "ko")
+        let advanced = try XCTUnwrap(
+            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive)
+        )
+        XCTAssertEqual(advanced.installId, "install-b")
+        XCTAssertEqual(advanced.snapshot.epoch, Int.max - 1)
+    }
+
+    /// **⑨ A valid envelope beside stale legacy keys still loses the legacy keys.**
+    ///
+    /// The cleanup used to live in `write`, which never runs in this state: the envelope is valid,
+    /// so a republication of the same tag returns it unchanged and writes nothing — and the old
+    /// keys stayed for good (round 10 review). Case ⑥ covers the legacy-only state and would have
+    /// gone on passing.
+    func testValidEnvelopeAlsoRemovesLegacyKeys() throws {
+        seed(installId: "install-a", epoch: 3, tag: "ko")
+        for (key, value) in ["localeInstallId": "old", "localeEpoch": 1, "localePublishedTag": "ja"] as [String: Any] {
+            defaults.set(value, forKey: key)
+        }
+
+        let republished = try XCTUnwrap(
+            LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive)
+        )
+        XCTAssertEqual(republished.snapshot, LocaleSnapshot(tag: "ko", epoch: 3), "the envelope moved")
+        for key in LocaleState.legacyKeys {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+
+        // The headless role does not clean, for the same reason it does not write (D49)
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        seed(installId: "install-a", epoch: 3, tag: "ko")
+        defaults.set("old", forKey: "localeInstallId")
+        XCTAssertNotNil(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .headless))
+        XCTAssertNotNil(defaults.object(forKey: "localeInstallId"), "the headless role wrote")
+    }
+
+    /// The invariant `SupportedLocale.fallback` is built on: the language every unanswerable
+    /// question lands in is one we actually ship. Without this the type could hand out a tag with
+    /// no catalogue behind it, which is the defect it exists to prevent.
+    func testTheFallbackIsALocaleWeShip() {
+        XCTAssertTrue(supportedLocales.contains(fallbackLocale))
+        XCTAssertEqual(SupportedLocale.fallback.tag, fallbackLocale)
+        XCTAssertEqual(SupportedLocale(fallbackLocale), SupportedLocale.fallback)
+    }
+
+    /// **A preference that is not a string reads as itself, not as `auto`** (round 8 review).
+    ///
+    /// The two sides have to agree about what an unreadable value means: the picker asks
+    /// `Settings.languagePreference`, the window draws what `resolveLocale` says, and folding the
+    /// value in one of them and not the other is how the picker ended up claiming a choice the
+    /// window was not honouring.
+    func testACorruptPreferenceIsNeitherAutoNorAChoice() {
+        defaults.set(42, forKey: languagePreferenceKey)
+        let corrupt = Settings.languagePreference(in: defaults)
+        XCTAssertNotEqual(corrupt, automaticLocalePreference, "a corrupt value folded into a choice")
+        XCTAssertFalse(supportedLocales.contains(corrupt), "a corrupt value read as a language we ship")
+        XCTAssertEqual(
+            AppLocalization.resolvedTag(defaults: defaults, systemPreferred: ["ko-KR"]), fallbackLocale,
+            "the window and the picker disagree about what this value means"
+        )
+
+        defaults.removeObject(forKey: languagePreferenceKey)
+        XCTAssertEqual(Settings.languagePreference(in: defaults), automaticLocalePreference)
+        defaults.set("ja", forKey: languagePreferenceKey)
+        XCTAssertEqual(Settings.languagePreference(in: defaults), "ja")
+    }
+
+    /// And what the picker does with that third state. All three rows are enumerated here rather
+    /// than driven through the window, which would mean writing the preference into the domain the
+    /// installed app uses.
+    func testThePickerPointsAtTheLanguageBeingDrawn() {
+        let entries: [String?] = [automaticLocalePreference] + supportedLocales
+
+        XCTAssertEqual(languagePickerIndex(stored: "ja", drawn: "ja", entries: entries),
+                       entries.firstIndex(of: "ja"))
+        XCTAssertEqual(languagePickerIndex(stored: automaticLocalePreference, drawn: "ko", entries: entries), 0)
+        // The third state: nothing matches the stored value, so the picker shows what is on screen
+        XCTAssertEqual(languagePickerIndex(stored: "42", drawn: fallbackLocale, entries: entries),
+                       entries.firstIndex(of: fallbackLocale))
+        // And when even that is unknown there is nowhere else to point
+        XCTAssertEqual(languagePickerIndex(stored: "42", drawn: "fr", entries: entries), 0)
     }
 }
 

@@ -816,11 +816,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private func refresh() {
         // The picker follows the stored value rather than its own last click: a second window, or a
         // value written before this launch, has to show through
-        let language = Settings.language
-        let index = languagePopUp.itemArray.firstIndex {
-            $0.representedObject as? String == language
-        }
-        languagePopUp.selectItem(at: index ?? 0)
+        languagePopUp.selectItem(at: languagePickerIndex(
+            stored: Settings.language, drawn: AppLocalization.resolvedTag(),
+            entries: languagePopUp.itemArray.map { $0.representedObject as? String }
+        ))
         languageNoteLabel.stringValue = languageNote()
 
         let manifest = Installer.manifestState()
@@ -967,7 +966,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsList.addArrangedSubview(label)
     }
 
-    private func pipelineNodes(
+    /// Internal rather than private so `testPipelineNodesAreLocalized` can read the strings this
+    /// produces. Reaching them through the drawn view would mean walking a stack of labels, and a
+    /// walk that stopped finding them would go quiet instead of failing.
+    func pipelineNodes(
         manifest: SetupState, extensionState: SetupState,
         socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool
     ) -> [PipelineStripView.Node] {
@@ -1014,7 +1016,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 label: localized("app.pipeline.node.extension"), color: color(extensionState),
                 detail: extensionState.message
             ),
-            .init(label: "relay", color: color(manifest), detail: "Native Host: \(manifest.message)"),
+            .init(
+                label: localized("app.pipeline.node.relay"), color: color(manifest),
+                // The frame comes from the catalogue and only the payload is free (D59). This one
+                // was assembled here — `"Native Host: \(manifest.message)"` — which put an English
+                // word in front of a translated status and, being a literal, was invisible to
+                // item 12's gate: it counts `localized(…)` calls, not strings nobody localised.
+                detail: localized("app.pipeline.relay.detail", manifest.message)
+            ),
             .init(
                 label: localized("app.pipeline.node.app"), color: socketAlive ? Theme.ok : Theme.err,
                 detail: localized(
@@ -1227,6 +1236,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 /// It does **not** name the cause as "a function or an alias": the same answer comes from a
 /// relative `PATH` entry and from a file without the executable bit (both measured), and a card
 /// that asserts the wrong cause sends people to fix the wrong thing (round 8).
+/// Which entry the language picker points at.
+///
+/// Three cases, and the third is the one that had a defect. A stored preference that matches an
+/// entry selects it. A stored preference that matches nothing is the **third state** round 8 found —
+/// not `auto`, not a language we ship — and pointing at the first entry there would have the picker
+/// claim "follow the system" while the window draws English. It points at the language actually
+/// being drawn instead, which `resolveLocale` has already decided; picking anything writes a clean
+/// value and the state is gone.
+///
+/// It takes the entries rather than reading the control so the three rows can be enumerated in a
+/// test without a window, a `UserDefaults` write, or a language change on this machine.
+func languagePickerIndex(stored: String, drawn: String, entries: [String?]) -> Int {
+    entries.firstIndex { $0 == stored } ?? entries.firstIndex { $0 == drawn } ?? 0
+}
+
 func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
     guard available?["claude"] == true, executable?["claude"] == false else { return nil }
     return localized("app.tools.claudeWrapper.advice")

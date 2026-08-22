@@ -47,14 +47,34 @@ enum Settings {
     /// so only the GUI reaches here. It publishes immediately, so the revision moves in the same
     /// process that took the click rather than on the next launch.
     static var language: String {
-        get { (UserDefaults.standard.object(forKey: languagePreferenceKey) as? String) ?? automaticLocalePreference }
+        get { languagePreference(in: .standard) }
         set {
             UserDefaults.standard.set(newValue, forKey: languagePreferenceKey)
             LocaleState.publish(
-                resolved: AppLocalization.resolvedTag(), role: .interactive
+                resolved: AppLocalization.resolvedLocale(), role: .interactive
             )
             NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
         }
+    }
+
+    /// What a stored preference reads as.
+    ///
+    /// The doc above says a value that is not a string must not read as "follow the system", and
+    /// the getter used to do exactly that (round 8 review): `as? String ?? auto` folded a
+    /// hand-edited plist into a choice the user never made, while `AppLocalization.resolvedTag()`,
+    /// looking at the same object, resolved it to English — the picker said one thing while the
+    /// window drew another. Handed on as text it stays a **third state**: neither `auto` nor a tag
+    /// we ship, which leaves the window to decide what to show for it (it shows the language it is
+    /// actually drawing in). `string(forKey:)` cannot express that state at all, answering nil for
+    /// "absent" and for "present but another type" alike.
+    ///
+    /// It takes its store as an argument so the third state can be exercised without writing into
+    /// the domain the installed app is using.
+    static func languagePreference(in defaults: UserDefaults) -> String {
+        guard let stored = defaults.object(forKey: languagePreferenceKey) else {
+            return automaticLocalePreference
+        }
+        return stored as? String ?? String(describing: stored)
     }
 
     /// When the last request arrived on the socket — the only evidence that the extension really is
@@ -220,6 +240,11 @@ enum LocaleState {
     /// What this process should publish for `resolved`, and — for the one writer — the persistence
     /// that makes it true for the next one.
     ///
+    /// `resolved` is a `SupportedLocale` and not a string: the mint path used to write whatever it
+    /// was handed, so a tag we ship no catalogue for could be persisted and was only caught by the
+    /// next read, which then discarded the identity to recover (round 10 review). The type asks the
+    /// question where the value is made instead.
+    ///
     /// The headless server never invents a revision. With a stored snapshot it repeats it verbatim,
     /// even when this launch resolves to a different locale: a system-language change seen only by
     /// a headless process arrives on the next GUI launch, which is the promise `auto` already
@@ -227,47 +252,72 @@ enum LocaleState {
     /// metadata, which the extension treats as no input rather than as a reason to change (D51).
     @discardableResult
     static func publish(
-        resolved: String, defaults: UserDefaults = .standard, role: LocaleWriterRole
+        resolved: SupportedLocale, defaults: UserDefaults = .standard, role: LocaleWriterRole
     ) -> LocalePublication? {
+        // The one writer is also the one cleaner. Removing the earlier schema's keys used to happen
+        // inside `write`, which never runs when a valid envelope is already there — so an envelope
+        // beside stale keys kept them for good (round 10 review). Doing it on the way in covers that
+        // state and keeps the ordering rule below: the deletion still precedes any envelope write.
+        if role == .interactive { forgetLegacySchema(defaults) }
+
         guard let stored = stored(defaults) else {
             guard role == .interactive else { return nil }
-            let minted = LocalePublication(
-                installId: UUID().uuidString, snapshot: LocaleSnapshot(tag: resolved, epoch: 0)
-            )
-            write(minted, to: defaults)
-            return minted
+            return mint(resolved, to: defaults)
         }
-        guard stored.snapshot.tag != resolved else { return stored }
+        guard stored.snapshot.tag != resolved.tag else { return stored }
         guard role == .interactive else { return stored }
+        guard !localeIdentityIsExhausted(stored.snapshot) else {
+            // One more revision would be `Int.max`, which storage refuses to read back — so the
+            // identity is rotated *before* that value exists rather than after it has been written
+            // and then judged malformed. The extension takes an unfamiliar `installId`
+            // unconditionally (D32), so the language still moves.
+            return mint(resolved, to: defaults)
+        }
         let advanced = LocalePublication(
             installId: stored.installId,
-            snapshot: localeSnapshotToPublish(resolved: resolved, lastPublished: stored.snapshot)
+            snapshot: localeSnapshotToPublish(resolved: resolved.tag, lastPublished: stored.snapshot)
         )
         write(advanced, to: defaults)
         return advanced
     }
 
-    /// One `set`, because a publication is one fact. Three of them are what let a reader see a
-    /// triple that was never published.
-    ///
+    /// A new identity at revision 0 — the recovery for every state that has no usable snapshot,
+    /// whether nothing was stored, what was stored could not be read, or the identity ran out of
+    /// revisions.
+    private static func mint(_ resolved: SupportedLocale, to defaults: UserDefaults) -> LocalePublication {
+        let minted = LocalePublication(
+            installId: UUID().uuidString, snapshot: LocaleSnapshot(tag: resolved.tag, epoch: 0)
+        )
+        write(minted, to: defaults)
+        return minted
+    }
+
     /// The three-key state an earlier build wrote is **not read** — a triple written in three steps
     /// cannot be shown to have been committed as one, which is the defect itself, so it is not
     /// evidence of anything. Deleting it is the other half of that decision, and the reason is the
     /// build that *does* read it: nothing here has been released, so a copy holding those keys is a
     /// copy on our own machines, sharing the bundle id and therefore this domain, whose headless
     /// server would go on handing the extension a triple this build has already replaced. Measured
-    /// while making this change: `defaults read com.dazebug.terminal-checkout` held no locale key
-    /// at all, so what this covers is the state item 8's still-pending GUI checks would create, not
-    /// one that has been seen. Deleting is a write and therefore reachable only from the
-    /// interactive role, so the single writer stays single (D49).
+    /// when the envelope was introduced: `defaults read com.dazebug.terminal-checkout` held no
+    /// locale key at all, so what this covers is the state item 8's still-pending GUI checks would
+    /// create, not one that has been seen.
     ///
-    /// The deletion goes **first**, because the two states must not coexist: an envelope under a
-    /// freshly minted identity *next to* the stale triple is the pair that lets two builds trade
-    /// the language back and forth, since an unfamiliar `installId` is accepted unconditionally
-    /// (D32). Interrupted the other way there is nothing at all, and the next publication mints —
-    /// the state D51 already covers.
-    private static func write(_ publication: LocalePublication, to defaults: UserDefaults) {
+    /// It runs from `publish` rather than from `write`, and that is the fix for the state where a
+    /// valid envelope and stale keys sat side by side: nothing writes in that state, so a cleanup
+    /// living in `write` never ran and the old keys stayed for good. Deleting is a write and so it
+    /// is still reachable only from the interactive role — the single writer stays single (D49).
+    private static func forgetLegacySchema(_ defaults: UserDefaults) {
         for key in legacyKeys { defaults.removeObject(forKey: key) }
+    }
+
+    /// One `set`, because a publication is one fact. Three of them are what let a reader see a
+    /// triple that was never published.
+    ///
+    /// The legacy keys are already gone by the time this runs (`publish` clears them on the way
+    /// in), which is what keeps the two states from coexisting: an envelope under a freshly minted
+    /// identity *next to* the stale triple is the pair that lets two builds trade the language back
+    /// and forth, since an unfamiliar `installId` is accepted unconditionally (D32).
+    private static func write(_ publication: LocalePublication, to defaults: UserDefaults) {
         defaults.set(
             [
                 Field.installId: publication.installId,
