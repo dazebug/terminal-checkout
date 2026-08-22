@@ -112,18 +112,26 @@ private func normalizedTag(_ tag: String) -> String {
     tag.replacingOccurrences(of: "_", with: "-").lowercased()
 }
 
-/// The language subtag of an already-normalized tag, or nil when there is no usable one — an
-/// empty string, digits, or anything with a space in it, all of which reach here from a plist
-/// nobody but a hand-editor wrote.
+/// The language subtag of an already-normalized tag, or nil when the string is not a tag.
 ///
-/// Empty subtags are kept rather than skipped, so that `-ko` has no language rather than the one
-/// that follows the missing subtag. Skipping them read as harmless and was not: the whole point of
-/// the corrupt case is that a value we cannot account for does not get to name a language.
+/// **Every** subtag is checked, not just the first one. Reading only the first answered Korean for
+/// `ko--KR`: the walk stopped at the leading `-`, found `ko`, and never looked at the rest — and
+/// `ko-`, `zh--Hant`, `ko-💩` and `zh-Hant foo` went the same way (round 5 review). The round
+/// before had switched the split to keep empty subtags, which closed the **leading**-empty shape
+/// alone; a rule that holds for one shape of malformed input is not the rule this is supposed to
+/// be. Nothing here is a full BCP-47 validator: a subtag is 1–8 ASCII alphanumerics, the first is
+/// 2–8 ASCII letters, and anything else is a string nobody who meant a language wrote.
 private func languageSubtag(_ normalized: String) -> String? {
-    guard let first = normalized.split(separator: "-", omittingEmptySubsequences: false).first
-    else { return nil }
+    let subtags = normalized.split(separator: "-", omittingEmptySubsequences: false)
+    guard let first = subtags.first else { return nil }
+    for subtag in subtags {
+        guard (1...8).contains(subtag.count),
+              subtag.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) })
+        else { return nil }
+    }
     let language = String(first)
-    guard !language.isEmpty, language.allSatisfy({ $0.isASCII && $0.isLetter }) else { return nil }
+    guard (2...8).contains(language.count), language.allSatisfy({ $0.isASCII && $0.isLetter })
+    else { return nil }
     return language
 }
 
@@ -147,9 +155,12 @@ private func chineseScript(_ normalized: String) -> String {
 /// the exact spelling it declared.
 private func matchingLocale(for tag: String, in available: [String]) -> String? {
     let wanted = normalizedTag(tag)
+    // The check runs **before** the exact match. Behind it, a malformed value could still be
+    // answered by an entry of `available` spelled the same way — the one path that skipped
+    // validation altogether (round 5 review).
+    guard let language = languageSubtag(wanted) else { return nil }
     if let exact = available.first(where: { normalizedTag($0) == wanted }) { return exact }
 
-    guard let language = languageSubtag(wanted) else { return nil }
     let sameLanguage = available.filter { languageSubtag(normalizedTag($0)) == language }
     guard !sameLanguage.isEmpty else { return nil }
 

@@ -61,8 +61,13 @@ done
 # app/Sources/Core/WarpControl.swift — UninstallScriptSyncTests enforces both matches.
 # The first is a permanent machine protocol and will not change again; the second is what earlier
 # builds wrote and is kept so their files are still collected here.
+# The first alternative is anchored at **both** ends: unanchored, a file whose first line merely
+# starts with the token — `…/v10`, or a user's own line — reads as ours and gets deleted. The
+# second cannot be: earlier builds put the explanation on that same line, so only its start is
+# fixed. `warpTabConfigIsOurs` splits the two the same way, and UninstallScriptSweepTests runs this
+# block against real files to check the boundary rather than the spelling.
 for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do
-    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -qE '^(#!terminal-checkout/tab-config/v1|# Terminal Checkout이 자동 생성합니다)'; then
+    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -qE '^#!terminal-checkout/tab-config/v1$|^# Terminal Checkout이 자동 생성합니다'; then
         rm -f "$toml"
     fi
 done

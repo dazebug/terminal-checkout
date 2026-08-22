@@ -63,7 +63,15 @@ public func warpTabConfigFileIsOurs(name: String) -> Bool {
 /// more) but for **files already on users' disks**: dropping it here would strand every Tab Config
 /// an earlier build left behind.
 public func warpTabConfigIsOurs(contents: String) -> Bool {
-    contents.hasPrefix(warpTabConfigHeader) || contents.hasPrefix(warpTabConfigLegacyHeader)
+    // The token is matched **whole line, exactly**. A prefix match reads `…/v1` followed by
+    // anything as ours — `…/v10`, the shape the next format version takes, and any user line that
+    // happens to start the same way — and the verdict's one job is to keep a user file from being
+    // deleted. We had made this exact match possible ourselves by moving the explanation onto its
+    // own line and then kept matching by prefix (round 5 review).
+    if contents.prefix(while: { $0 != "\n" }) == warpTabConfigHeader { return true }
+    // The legacy header keeps its prefix match because earlier builds wrote the explanation on the
+    // **same** line, so there is no exact string on those disks to match.
+    return contents.hasPrefix(warpTabConfigLegacyHeader)
 }
 
 /// Escaping for a TOML basic string. Control characters cannot be carried literally and have to become escape sequences — let one through and Warp fails to parse the file, so the tab does not open at all.

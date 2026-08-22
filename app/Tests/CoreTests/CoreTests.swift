@@ -3943,6 +3943,24 @@ final class WarpTabConfigMarkerTests: XCTestCase {
         XCTAssertFalse(warpTabConfigIsOurs(contents: "name = \"my workspace\"\n"))
     }
 
+    /// **A near miss is not ours** (P0, round 5 review). The verdict used `hasPrefix` for both
+    /// headers, so anything whose first line *starts with* the token — `…/v1` followed by a `0`,
+    /// which is the shape the next format version would take, or a user's own line that happens to
+    /// open with it — was reclaimed and deleted. We created that exposure ourselves: separating the
+    /// explanation onto its own line made an exact match possible and the prefix match stayed.
+    ///
+    /// The legacy header keeps its prefix match, and that is not an oversight: earlier builds wrote
+    /// the explanation on the *same* line, so there is no exact string on disk to match.
+    func testAFirstLineThatMerelyStartsWithTheTokenIsNotOurs() {
+        XCTAssertFalse(warpTabConfigIsOurs(contents: warpTabConfigHeader + "0\nname = \"theirs\"\n"))
+        XCTAssertFalse(warpTabConfigIsOurs(contents: warpTabConfigHeader + "-draft\n"))
+        XCTAssertFalse(warpTabConfigIsOurs(contents: warpTabConfigHeader + " and then some\n"))
+        // The token on a line of its own stays ours, with or without the trailing newline
+        XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigHeader))
+        XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigHeader + "\n"))
+        XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigLegacyHeader + " — 탭이 열리면 지웁니다.\n"))
+    }
+
     /// The human-readable explanation lives on its **own** line, so translating it later can never
     /// touch the token the reclaim verdict matches on.
     func testTheExplanationIsOnItsOwnLine() {
@@ -3984,6 +4002,104 @@ final class UninstallScriptSyncTests: XCTestCase {
                 "uninstall.sh does not handle \(needle.debugDescription) — only the Swift constant changed"
             )
         }
+    }
+}
+
+/// What `UninstallScriptSyncTests` cannot see: it asks whether a string appears in the script, and
+/// a string appears in a predicate whose **boundary** is wrong just as well as in one whose is
+/// right — the prefix match that deleted a user's file passed that check for as long as it existed.
+/// So this runs the sweep against real files and looks at what is left.
+///
+/// **Only the Tab Config block is run, never the whole script.** The rest of `uninstall.sh` kills a
+/// running TerminalCheckout and any live Warp injection helper, and sweeps `/tmp/tcw-*.sock` and
+/// `/tmp/tc-prompt-*` through hardcoded paths that no environment variable redirects — running that
+/// from a test would delete the files of whoever is using the app on this machine, mid-delivery.
+/// The block is lifted out of the shipped script verbatim, so the bytes under test are the shipped
+/// bytes; when it can no longer be found the test fails rather than passing on a script it never
+/// read. `set -euo pipefail` is put back because the script runs under it, and the block's
+/// if-statement shape was chosen for that reason.
+final class UninstallScriptSweepTests: XCTestCase {
+    private var home = ""
+    private var tabConfigs = ""
+
+    override func setUp() {
+        super.setUp()
+        home = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("tc-uninstall-\(UInt32.random(in: .min ... .max))")
+        tabConfigs = (home as NSString).appendingPathComponent(".warp/tab_configs")
+        try? FileManager.default.createDirectory(
+            atPath: tabConfigs, withIntermediateDirectories: true
+        )
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(atPath: home)
+        super.tearDown()
+    }
+
+    private func tabConfigSweep(_ script: String) -> String? {
+        guard let start = script.range(of: #"for toml in "$HOME"/.warp/tab_configs/"#),
+              let end = script.range(of: "\ndone\n", range: start.upperBound..<script.endIndex)
+        else { return nil }
+        return String(script[start.lowerBound..<end.upperBound])
+    }
+
+    @discardableResult
+    private func write(_ name: String, _ contents: String) -> String {
+        let path = (tabConfigs as NSString).appendingPathComponent(name)
+        FileManager.default.createFile(atPath: path, contents: Data(contents.utf8))
+        return path
+    }
+
+    private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
+
+    func testTheSweepDeletesOnlyFilesCarryingOurMarker() throws {
+        let script = try repoFileContents("uninstall.sh")
+        let block = try XCTUnwrap(
+            tabConfigSweep(script),
+            "the Tab Config sweep is no longer where this test reads it from — uninstall.sh changed shape"
+        )
+
+        let ours = write("terminal-checkout-deadbeef.toml", warpTabConfigTOML(commands: ["z remy"]))
+        let legacyName = write("terminal-checkout.toml", warpTabConfigTOML(commands: ["z remy"]))
+        let legacyHeader = write(
+            "terminal-checkout-cafebabe.toml",
+            warpTabConfigLegacyHeader + " — 탭이 열리면 지웁니다.\nname = \"Terminal Checkout\"\n"
+        )
+        // The P0: one character past our token, which is what `…/v2` or a user's own line looks like
+        let nearMiss = write("terminal-checkout-0badcafe.toml", warpTabConfigHeader + "0\nname = \"theirs\"\n")
+        let theirs = write("terminal-checkout-feedface.toml", "name = \"my workspace\"\n")
+        let otherName = write("my-workspace.toml", warpTabConfigTOML(commands: ["z remy"]))
+        // A link wearing our name: following it would delete somebody else's file, so the script
+        // checks `-L` before it checks the header
+        let linkTarget = write("their-config.toml", warpTabConfigTOML(commands: ["z remy"]))
+        let link = (tabConfigs as NSString).appendingPathComponent("terminal-checkout-beefbeef.toml")
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: linkTarget)
+
+        // The block goes to a **file**, not to `bash -c`. Measured: an argument passed through
+        // `Process.arguments` comes out NFD on Darwin, and the legacy header in it is Korean — so
+        // `-c` handed grep a pattern that no longer matched the NFC bytes on disk, and the legacy
+        // file survived a sweep that in a real shell deletes it. The test would have been
+        // reporting its own encoding, not the script's behaviour
+        let runner = (home as NSString).appendingPathComponent("sweep.sh")
+        try ("set -euo pipefail\n" + block).write(toFile: runner, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [runner]
+        process.environment = ["HOME": home, "PATH": "/usr/bin:/bin"]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+
+        XCTAssertFalse(exists(ours), "a Tab Config we wrote was left behind")
+        XCTAssertFalse(exists(legacyName), "the fixed name early builds used was left behind")
+        XCTAssertFalse(exists(legacyHeader), "a Tab Config from an older build was left behind")
+        XCTAssertTrue(exists(nearMiss), "a file that only starts with our token was deleted")
+        XCTAssertTrue(exists(theirs), "a user's file with a colliding name was deleted")
+        XCTAssertTrue(exists(otherName), "a file outside our naming was deleted")
+        XCTAssertTrue(exists(linkTarget), "a user's file was deleted through a symlink wearing our name")
+        XCTAssertTrue(exists(link), "the symlink itself was deleted")
     }
 }
 
@@ -4099,15 +4215,53 @@ final class LocaleResolutionTests: XCTestCase {
         }
     }
 
-    /// The output is always a member of the list it was given, by identity — never the caller's
-    /// input echoed back, and never a tag assembled here. That is what lets the caller turn it
-    /// straight into `<tag>.lproj`; a resolver that returned `en` when `en` is not in the bundle
-    /// would name a directory that does not exist.
+    /// A tag is a tag only when **every** subtag is one (P0, round 5 review).
+    ///
+    /// Reading the first component alone answered Korean for `ko--KR`: the walk stopped at the
+    /// first `-`, found `ko`, and never looked at what followed. The round before had added
+    /// `omittingEmptySubsequences: false`, which closed the **leading**-empty shape and nothing
+    /// else — so the comment claiming that a value we cannot account for does not get to name a
+    /// language was true of one shape rather than of the rule. The system list needs the same
+    /// check: an `auto` list that opens with `ko--KR` must skip that entry, not honour it.
+    func testEverySubtagIsCheckedNotJustTheFirst() {
+        // This system order answers `ko`, so anything that leaks shows up as Korean
+        let system = ["ko-KR"]
+        let malformed = [
+            "ko-", "ko--KR", "zh--Hant", "zh__Hant", "ko-💩", "zh-Hant foo", "ko-KR-",
+            "zh-abcdefghi", "ko-KR ", "-ko",
+        ]
+        for tag in malformed {
+            XCTAssertEqual(
+                resolveLocale(preference: tag, systemPreferred: system, available: bundled), "en", tag
+            )
+        }
+        XCTAssertEqual(
+            resolveLocale(preference: "auto", systemPreferred: ["ko--KR", "ja-JP"], available: bundled),
+            "ja"
+        )
+        // The exact match used to run before the check, so a malformed entry in `available`
+        // answered for itself
+        XCTAssertEqual(
+            resolveLocale(preference: "ko--KR", systemPreferred: [], available: ["ko--KR", "en"]), "en"
+        )
+        // Still a tag: one underscore is the ICU spelling of the same thing
+        XCTAssertEqual(resolveLocale(preference: "zh_Hant", systemPreferred: [], available: bundled), "zh-Hant")
+    }
+
+    /// The output is a member of the list it was given, by identity — never the caller's input
+    /// echoed back, and never a tag assembled here. That is what lets the caller turn it straight
+    /// into `<tag>.lproj`; a resolver that returned `en` when `en` is not in the bundle would name
+    /// a directory that does not exist.
+    ///
+    /// **Membership is all this one says.** Which member is the right one for a given input is what
+    /// the measured-table, system-order and explicit-choice tests answer — the name used to promise
+    /// that too, and a name that promises more than the assertions deliver is the same defect as a
+    /// comment that does (round 5 review).
     ///
     /// The shape check is the other half: a tag ends up in a filesystem path and, if it ever
     /// leaks into a command, in a shell word. All five pass the same character whitelist a
     /// request variable does, and none of them carries `/` or `.`, which that whitelist allows.
-    func testResolvedTagAlwaysNamesABundledLproj() {
+    func testEveryResolutionIsAMemberOfTheAvailableTags() {
         XCTAssertEqual(supportedLocales, bundled)
         for tag in supportedLocales {
             XCTAssertEqual(try? sanitizeValue(tag), tag)
