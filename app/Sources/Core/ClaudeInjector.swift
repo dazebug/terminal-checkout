@@ -375,10 +375,10 @@ private func typeAndSubmit(
     boxObservedEmpty: () -> Void = {},
     timeline: DeliveryTimeline? = nil, label: String = ""
 ) -> SubmitOutcome {
-    // 12 attempts × a ~2s appearance window ≈ the same total patience the old 5 × 5s gave for
-    // "the user has not looked at the tab yet" (attempts are what carry that waiting now — see
-    // the appearance deadline's comment). More, shorter attempts answer a swallowed marker in
-    // ~2s instead of 5 without giving up on a slow watcher any earlier
+    // Attempts, not the deadline, are what wait out "the user has not looked at the tab yet":
+    // 12 × the ~2s appearance window is ~25s of patience for a slow watcher, while a marker
+    // claude swallowed at startup is abandoned after ~2s instead of blocking the whole budget
+    // (see the appearance deadline in `proveOurPaneAndEmptyBox`)
     let maxAttempts = 12
     for attempt in 1...maxAttempts {
         guard io.canConfirmScreen() else {
@@ -633,10 +633,11 @@ let screenPollInterval: TimeInterval = 0.15
 /// checked: the same reads, the same conditions, just asked sooner.
 private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: () -> Bool) -> Bool {
     // Counted rather than clock-driven so the fake, whose `wait` is a no-op, still terminates.
-    // The sleep is **shortened by what the read itself cost**: a Warp Accessibility read is
-    // 134∼139ms (measured in the field, 2026-08-22), so sleeping the full interval on top made
-    // every "5 second" deadline take ~9.5s of wall clock — the attempt count assumed reads were
-    // free. With the compensation, one iteration costs ~interval regardless of the reader
+    // The sleep is **shortened by what the read itself cost**. Reads are not free — a Warp
+    // Accessibility read measures 134∼143ms in the field, close to the interval itself — and
+    // sleeping the full interval on top of that made every deadline here take nearly twice its
+    // stated wall clock, because the attempt count assumes an iteration costs one interval.
+    // With the compensation it does, whichever terminal is reading
     let attempts = max(1, Int((deadline / screenPollInterval).rounded()))
     for attempt in 0..<attempts {
         let readStarted = Date()
@@ -731,7 +732,7 @@ public func deliverClaudeInputs(
             return
         }
         ttyPath = warpHelperTTY(socket: socket)
-        // 가설 (a): 헬퍼 대기 창은 최대 20초다. 이 줄의 「+」가 그중 얼마를 썼는지 말한다
+        // 헬퍼 대기는 최대 20초까지 늘어날 수 있다 — 이 줄의 「+」가 그중 실제로 쓴 시간이다
         timeline?.step(ttyPath == nil ? "Warp 주입 헬퍼 대기 실패" : "Warp 주입 헬퍼 준비")
     case .none:
         checkoutLog("claude 입력 전달 불가 — 세션 핸들 없음")
@@ -750,8 +751,8 @@ public func deliverClaudeInputs(
         checkoutLog("\(Int(timeout))초 내에 claude가 입력을 받을 상태가 되지 않아 입력 \(inputs.count)개를 보내지 않음")
         return
     }
-    // 가설 (b): 여기까지의 「+」가 cd + 셸 rc + claude 부팅이다 (전면 프로세스 = claude이고
-    // tty가 raw mode가 될 때까지)
+    // 이 줄의 「+」가 cd + 셸 rc + claude 부팅에 걸린 시간이다 — 전면 프로세스가 claude가 되고
+    // tty가 raw mode로 바뀔 때까지이며, 앱이 줄일 수 없는 구간이라 여기가 크면 원인은 밖에 있다
     timeline?.step("claude 준비 (pid \(claudePID))")
 
     let io = ClaudeSessionIO(
