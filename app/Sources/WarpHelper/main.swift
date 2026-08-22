@@ -29,7 +29,7 @@ private let foregroundRecheckStride = 16
 // ─────────────────────────────────────────────────────────────────────────────
 // Trust boundary declaration (this applies to the whole feature)
 //
-// **The boundary is the uid.** Processes running as the same uid are trusted; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
+// **The boundary is the uid.** Processes running as the same uid are treated as inside the boundary; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
 //
 // What is possible inside this boundary (and is not prevented):
 //  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime: the helper dies immediately on `bye` when delivery ends, and failing that it is caught by the 180-second idle cap and the 900-second lifetime cap.
@@ -54,7 +54,7 @@ private let serveFlag = "--serve"
 /// A signal handler may only call async-signal-safe functions — it cannot build a Swift string, so the path is captured as a C string in advance. `lstat` and `unlink` are both on the safe list.
 private var socketPathForSignal: UnsafeMutablePointer<CChar>?
 
-/// Deletes only when it is our socket. Going by the path alone would remove a file somebody put there in the meantime — collisions do not happen on the normal path, but a deletion cannot be undone.
+/// Deletes only when the object at the path we expected is a socket. That is **inferred** ownership, not proven: a same-uid process can put a socket of its own there, and residual 2 in the preamble is exactly that. Going by the path alone would also remove a regular file somebody put there in the meantime — collisions do not happen on the normal path, but a deletion cannot be undone.
 private func unlinkIfSocket(_ path: UnsafePointer<CChar>) {
     var info = stat()
     guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK else { return }
