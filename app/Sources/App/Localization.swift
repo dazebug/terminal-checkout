@@ -134,8 +134,21 @@ enum AppLocalization {
 /// A free function rather than a method so that a call site reads as the sentence it produces, and
 /// so that **nothing can hold the result**: `localized` is called where the string is used, which is
 /// what makes a language change take effect on the next redraw rather than on the next launch.
-func localized(_ key: String) -> String {
-    AppLocalization.string(key)
+///
+/// **The key is a `StaticString`, so it cannot be computed.** That is not a style rule: item 12's
+/// gate answers "is every catalogue key referenced" and "is every referenced key in the catalogue"
+/// by reading the sources for literals, and both answers are only as good as the guarantee that a
+/// key never arrives from a variable. The type gives that guarantee — a concatenation, an
+/// interpolation, and a `String` variable all fail to compile here — which turns the scan from a
+/// best effort into an enumeration. It is the same move `ShellPayload` makes below for the opposite
+/// direction: there a literal is required so a computed value cannot reach a shell, here so a
+/// computed value cannot reach a catalogue lookup.
+///
+/// Picking between two keys stays possible and is written as a choice between two calls
+/// (`flag ? localized("a") : localized("b")`), which is also what D36 asks for: choose a finished
+/// message, never assemble one.
+func localized(_ key: StaticString) -> String {
+    AppLocalization.string(key.description)
 }
 
 /// The same lookup with arguments substituted.
@@ -147,8 +160,8 @@ func localized(_ key: String) -> String {
 /// No locale is passed to `String(format:)` on purpose: every placeholder we use is `%@` or a
 /// positional form of it, and a locale-aware format would put grouping separators into numbers that
 /// are not numbers to us.
-func localized(_ key: String, _ arguments: CVarArg...) -> String {
-    String(format: AppLocalization.string(key), arguments: arguments)
+func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
+    String(format: AppLocalization.string(key.description), arguments: arguments)
 }
 
 /// Text that is **shell syntax**, not a message.

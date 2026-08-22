@@ -1029,7 +1029,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// status is the assembly D36 rules out — in a language that puts the subject last, the pieces
     /// end up in the wrong order and no translator can fix it from inside either half. A whole
     /// message with `%@` can be written the way the language wants.
-    private func apply(_ state: SetupState, to label: NSTextField, format: String? = nil) {
+    private func apply(_ state: SetupState, to label: NSTextField, format: StaticString? = nil) {
         let body = format.map { localized($0, state.message) } ?? state.message
         label.stringValue = "● \(body)"
         switch state {
