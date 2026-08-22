@@ -36,4 +36,11 @@ codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-relay"
 codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-warp-helper"
 codesign --force --sign - "$APP"
 
+# The last step, so that "the build succeeded" means "the bundle carries exactly the resources the
+# sources declare". Copying catalogues by hand is what makes a missed copy possible at all, and the
+# failure it produces — one language silently falling back — is invisible on the machine that built
+# it (D1). CI names this script as its own step as well, so deleting the call from here does not
+# quietly delete the gate.
+./verify-bundle.sh "$APP"
+
 echo "Build complete: $(pwd)/$APP"

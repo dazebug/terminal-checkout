@@ -20,5 +20,10 @@ jobs:
         run: node --test
       - name: Build app bundle
         run: bash app/build.sh
+      # build.sh runs this as its own last step too. Named here as well so that removing the call
+      # from build.sh cannot take the gate with it: the locale catalogues are copied into the
+      # bundle by hand, and a missed copy is invisible on the machine that built it.
+      - name: Bundle resources match the sources
+        run: bash app/verify-bundle.sh
       - name: Relay-socket-server e2e
         run: bash app/e2e.sh
