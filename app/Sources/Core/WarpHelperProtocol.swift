@@ -32,13 +32,13 @@ public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int
 ///
 /// The price is that the window in which our bytes **linger as residue** in the shell's line buffer widens again. This side is still chosen because residue is something the user can see and erase, whereas a wrong `tcflush` **silently** deletes the keys they just typed.
 public enum WarpInjectWatch: Equatable {
-    /// The queue is empty and the reader we aimed at took the bytes — the only success.
+    /// The queue is empty and the foreground is still the reader we aimed at — the only success, and the closest to delivery this vantage point reaches. It does not say claude processed anything.
     case delivered
     /// Our reader is still reading.
     case keepWaiting
-    /// The queue is empty but somebody other than the reader we aimed at took the bytes (usually the shell, after claude has exited).
+    /// The queue is empty and the foreground is **not** the reader we aimed at. Which of the two read the bytes is not observable from one sample, so the name says where it landed and not who took it — the usual way here is claude exiting and the shell inheriting the queue.
     case drainedByOther
-    /// The reader we aimed at is gone while bytes remain in the queue — nothing is discarded, only the remaining count is reported.
+    /// Bytes remain in the queue and the foreground is not the reader we aimed at — or could not be confirmed to be it, since a failed lookup lands here as well. Nothing is discarded, only the remaining count is reported.
     case readerGone(pending: Int)
     /// Not read within the budget (fail-closed).
     case notReadInTime(pending: Int)

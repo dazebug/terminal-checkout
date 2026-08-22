@@ -153,7 +153,8 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
                 guard warpForegroundIsExpected(
                     foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
                 ) else {
-                    return .err("foreground changed after \(index - sent) bytes")
+                    // Same check as the one before the write, and the same wording: a lookup that fails is "not the expected reader", not "changed"
+                    return .err("foreground is not the expected reader after \(index - sent) bytes")
                 }
             }
             var value = CChar(bitPattern: all[index])
@@ -193,12 +194,14 @@ private func watchUntilRead(
         case .delivered:
             return .ok(String(injected))
         case .drainedByOther:
-            checkoutLog("Warp injection helper: the queue drained, but somebody other than the claude we aimed at took it")
-            return .err("queue drained by a different reader")
+            // Two observations, one sample: the queue is empty, and the foreground is not ours. Which of them read the bytes is not observable — `FIONREAD` is an unattributed total, and our claude reading and then exiting produces this same sample. The verdict is failure either way, and the log says what was seen rather than who took it
+            checkoutLog("Warp injection helper: the queue drained while the foreground was not the claude we aimed at — which of them read the bytes is not observable here")
+            return .err("queue drained with the foreground not ours")
         case .readerGone(let pending):
             // Nothing is discarded. The remaining bytes may end up as residue in the shell's line buffer, but emptying the queue to prevent that would silently take the keys the user just typed as well
-            checkoutLog("Warp injection helper: the claude we aimed at is gone — reporting failure rather than discarding \(pending) unread byte(s)")
-            return .err("expected reader gone; \(pending) bytes unread")
+            // "not ours" and not "gone": a failed `tcgetpgrp`/`getpgid` lookup yields -1 and lands here too (see `warpForegroundIsExpected`)
+            checkoutLog("Warp injection helper: the foreground is no longer the claude we aimed at — reporting failure rather than discarding \(pending) unread byte(s)")
+            return .err("foreground is not the expected reader; \(pending) bytes unread")
         case .notReadInTime(let pending):
             return .err("injected bytes not read in time (\(pending) pending)")
         case .keepWaiting:

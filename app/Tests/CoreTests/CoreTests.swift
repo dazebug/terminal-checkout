@@ -630,7 +630,7 @@ final class ClaudeInjectorTests: XCTestCase {
 
     // A whitespace-only input has an empty probe that matches any screen at all — it must not approve a submission
     func testEmptyInputNeverMatches() {
-        XCTAssertFalse(screenReflectsNewInput(before: "", after: "아무 화면", input: "   "))
+        XCTAssertFalse(screenReflectsNewInput(before: "", after: "any screen", input: "   "))
     }
 }
 
@@ -897,7 +897,7 @@ final class ClaudeInputPreconditionTests: XCTestCase {
         XCTAssertEqual(blocker, .warpHelperUnavailable)
     }
 
-    /// The headless server (`--headless-server`) installs no hook — the rejection still has to go out
+    /// The headless server (`--headless-server`) installs no hook — the rejection still has to go out, carrying **the blocker's own wording** rather than a copy of it: the equality below is against `ClaudeInputBlocker.warpAccessibility.message`, so a literal spelled out at the throw site fails here
     func testRejectionWithoutAHookStillThrows() {
         ClaudeInputGuidance.present = nil
         XCTAssertEqual(
@@ -998,10 +998,10 @@ final class ClaudeInputPlanTests: XCTestCase {
     /// A run ends at the first input that is not a `!`, and everything keeps its order
     func testRunsAreBrokenByOtherInputsAndOrderIsKept() {
         XCTAssertEqual(
-            claudeTypedInputs(["!a", "!b", "설계 정리해줘", "/review", "!c", "!d"]),
+            claudeTypedInputs(["!a", "!b", "summarise the design", "/review", "!c", "!d"]),
             [
                 "!/bin/echo '==== !a ===='; a; /bin/echo '==== !b ===='; b",
-                "설계 정리해줘",
+                "summarise the design",
                 "/review",
                 "!/bin/echo '==== !c ===='; c; /bin/echo '==== !d ===='; d",
             ]
@@ -1306,13 +1306,13 @@ final class ClaudeInputPlanTests: XCTestCase {
     /// and only then (see the plan's dissent: mixing argv with typing in one session brings back
     /// the measured startup-clear race that round 4 removed)
     func testAllPlainTextBecomesTheOpeningMessage() {
-        XCTAssertEqual(claudeArgvOpeningMessage(["설계 정리해줘"]), "설계 정리해줘")
+        XCTAssertEqual(claudeArgvOpeningMessage(["summarise the design"]), "summarise the design")
         // **Exactly one.** Joining several with blank lines produced a message the newline guard
         // in `prepareRequest` then rejected, so two plain inputs could never ride argv — the join
         // was dead code pretending to be a feature (round 11, Codex). Several plain inputs are
         // typed, which is visible and needs no shell-specific quoting of newlines
-        XCTAssertNil(claudeArgvOpeningMessage(["설계 정리해줘", "그다음 테스트 추가"]))
-        XCTAssertNil(claudeArgvOpeningMessage(["설계 정리해줘", "!git status"]))
+        XCTAssertNil(claudeArgvOpeningMessage(["summarise the design", "then add tests"]))
+        XCTAssertNil(claudeArgvOpeningMessage(["summarise the design", "!git status"]))
         XCTAssertNil(claudeArgvOpeningMessage(["!git status"]))
         XCTAssertNil(claudeArgvOpeningMessage(["/review"]))
         XCTAssertNil(claudeArgvOpeningMessage([]))
@@ -1366,7 +1366,7 @@ final class ClaudeCommandTailTests: XCTestCase {
 
     /// Appending after a comment comments out the addition too — a silent loss, so fall back
     func testCommentedClaudeDoesNotMatch() {
-        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude # 나중에"))
+        XCTAssertFalse(commandAcceptsAppendedClaudePrompt("z r && claude # later"))
     }
 
     // The next five are all **reproductions from the external reviewer**. A token heuristic only
@@ -1672,16 +1672,16 @@ final class PreparedRequestTests: XCTestCase {
     /// wiped (measured). A list that mixes plain text with anything else is typed in full
     func testAMixedListIsTypedInFullRatherThanSplitBetweenArgvAndTyping() {
         let prepared = prepareRequest(ResolvedRequest(
-            command: "z remy && claude", claudeInputs: ["설계 정리해줘", "!git status"]
+            command: "z remy && claude", claudeInputs: ["summarise the design", "!git status"]
         ))
         XCTAssertEqual(prepared.command, "z remy && claude")
-        XCTAssertEqual(prepared.claudeInputs, ["설계 정리해줘", "!git status"])
+        XCTAssertEqual(prepared.claudeInputs, ["summarise the design", "!git status"])
     }
 
     /// A newline in the message would end the command line early — iTerm2 writes it with
     /// `write text`, WezTerm with `send-text`, and both read a newline as "run it now"
     func testAMessageWithANewlineIsTypedInsteadOfAppended() {
-        let inputs = ["첫 줄\n둘째 줄"]
+        let inputs = ["first line\nsecond line"]
         let prepared = prepareRequest(ResolvedRequest(command: "z remy && claude", claudeInputs: inputs))
         XCTAssertEqual(prepared.command, "z remy && claude")
         XCTAssertEqual(prepared.claudeInputs, inputs)
@@ -1689,7 +1689,7 @@ final class PreparedRequestTests: XCTestCase {
 
     /// A command that cannot take the append types instead — today's behaviour
     func testUnappendableCommandFallsBackToTyping() {
-        let inputs = ["설계 정리해줘"]
+        let inputs = ["summarise the design"]
         let prepared = prepareRequest(ResolvedRequest(command: "z remy", claudeInputs: inputs))
         XCTAssertEqual(prepared.command, "z remy")
         XCTAssertEqual(prepared.claudeInputs, inputs)
@@ -1698,7 +1698,7 @@ final class PreparedRequestTests: XCTestCase {
     /// **Round 6 (independent reviewer)**: with `claude` installed only as a function or an alias,
     /// `command claude` would fail with "command not found" while the setup window still shows ✅
     func testMergingNeedsAClaudeExecutableNotJustAWrapper() {
-        let inputs = ["설계 정리해줘"]
+        let inputs = ["summarise the design"]
         let prepared = prepareRequest(
             ResolvedRequest(command: "z remy && claude", claudeInputs: inputs),
             claudeIsExecutable: false
@@ -1710,7 +1710,7 @@ final class PreparedRequestTests: XCTestCase {
     /// csh and tcsh: the appended text is a parse error that takes the whole line with it, so the
     /// login shell has to be POSIX-family before anything is appended
     func testANonPOSIXLoginShellFallsBackToTyping() {
-        let inputs = ["설계 정리해줘"]
+        let inputs = ["summarise the design"]
         let prepared = prepareRequest(
             ResolvedRequest(command: "z remy && claude", claudeInputs: inputs),
             loginShell: "/bin/tcsh"
@@ -1900,15 +1900,15 @@ final class DeliveryTimelineTests: XCTestCase {
         var clock = Date(timeIntervalSince1970: 1_000)
         var lines: [String] = []
         let timeline = DeliveryTimeline(now: { clock }, emit: { lines.append($0) })
-        timeline.step("요청 수신")
+        timeline.step("request received")
         clock = clock.addingTimeInterval(3.2)
-        timeline.step("Warp 탭 생성")
+        timeline.step("Warp tab created")
         clock = clock.addingTimeInterval(86)
-        timeline.step("claude 준비")
+        timeline.step("claude ready")
         XCTAssertEqual(lines, [
-            "요청 수신 (+0.0s, total 0.0s)",
-            "Warp 탭 생성 (+3.2s, total 3.2s)",
-            "claude 준비 (+86.0s, total 89.2s)",
+            "request received (+0.0s, total 0.0s)",
+            "Warp tab created (+3.2s, total 3.2s)",
+            "claude ready (+86.0s, total 89.2s)",
         ])
     }
 
@@ -2023,7 +2023,7 @@ private final class FakeClaudeSession {
     private var screenCalls = 0
     private var box = ""
     private var history = ""
-    private var foreignScreen = "다른 pane 화면"
+    private var foreignScreen = "another pane's screen"
 
     var io: ClaudeSessionIO {
         ClaudeSessionIO(
@@ -2422,7 +2422,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         let base = session.io
         var io = base
         io.screenText = {
-            session.keystrokes.contains(claudeSubmitKey) ? "다른 pane 화면" : base.screenText()
+            session.keystrokes.contains(claudeSubmitKey) ? "another pane's screen" : base.screenText()
         }
         XCTAssertEqual(submitClaudeInputs(inputs, io: io), 1)
         XCTAssertEqual(session.submitted, inputs)
@@ -2508,7 +2508,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// When clearing the input box (Ctrl+U) failed, nothing is typed — typing after text that may still be there gets an input with something stuck on the front submitted while the screen check passes
     func testFailedClearDoesNotTypeOverLeftovers() {
         let session = FakeClaudeSession()
-        session.presetBox = "잔여텍스트"
+        session.presetBox = "leftover"
         session.failSendAt = [1, 2]         // #1's typing fails → #2's clear fails too
         _ = submitClaudeInputs([inputs[0]], io: session.io)
         XCTAssertEqual(session.submitted, [inputs[0]])
@@ -2739,7 +2739,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(session.keystrokes.isEmpty)
     }
 
-    /// Every site that emits bytes goes through the one gate — checking at each site separately is how the next missed site appears. What is asserted is the general property (gate checks == sends), not a fixed list: this run happens to make five sends, and a sixth site added later is covered without editing this test
+    /// Every site that emits bytes goes through the one gate — checking at each site separately is how the next missed site appears. What is asserted is the general property (gate checks == sends), not a fixed list: this run happens to make five sends, and any additional send executed by this scenario is covered without editing this test. A send on a path this scenario never takes — a failure branch, another input shape, another terminal's route — is not covered by this equality and needs its own case
     func testEverySendPassesTheSameGate() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
@@ -2794,7 +2794,7 @@ final class ScreenReflectionTests: XCTestCase {
     }
 
     func testTextThatWasAlreadyThereIsNotReflection() {
-        let screen = "다른 pane: " + input
+        let screen = "another pane: " + input
         XCTAssertFalse(screenReflectsNewInput(before: screen, after: screen, input: input))
     }
 
@@ -2808,7 +2808,7 @@ final class ScreenReflectionTests: XCTestCase {
     /// When the screen scrolls and pushes the old occurrence out, the count does not grow — that path goes to a retype
     func testUnchangedOccurrenceCountIsNotReflection() {
         XCTAssertFalse(screenReflectsNewInput(
-            before: input + " 옛 줄", after: "새 줄 " + input, input: input
+            before: input + " old line", after: "new line " + input, input: input
         ))
     }
 }
@@ -3311,14 +3311,14 @@ final class WarpTabConfigTests: XCTestCase {
     /// Reclaiming may only touch files we created — a user's Tab Config must not be deleted
     func testOnlyOurGeneratedFileIsRecognisedAsOurs() {
         XCTAssertTrue(warpTabConfigIsOurs(contents: warpTabConfigTOML(commands: ["z remy"])))
-        XCTAssertFalse(warpTabConfigIsOurs(contents: "name = \"내 작업 공간\"\n"))
+        XCTAssertFalse(warpTabConfigIsOurs(contents: "name = \"my workspace\"\n"))
         XCTAssertFalse(warpTabConfigIsOurs(contents: ""))
     }
 
     /// The name is filtered once as well — only **exactly the name we write** (the prefix plus 8 lower-case hex) is a reclaim target. Casting wider deletes files we did not create (round 8, Codex P2): the creation rule and the reclaim rule have to be one source of truth
     func testOnlyOurNamingIsSweptFromTheDirectory() {
         XCTAssertTrue(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.toml"))
-        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-내파일.toml"))
+        XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-myfile.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "my-workspace.toml"))
         XCTAssertFalse(warpTabConfigFileIsOurs(name: "terminal-checkout-deadbeef.txt"))
         // Shapes we never write
@@ -3391,7 +3391,7 @@ final class WarpHelperLaunchTests: XCTestCase {
     func testOnlyOurSocketNamesAreReclaimed() {
         XCTAssertTrue(warpHelperSocketFileIsOurs(name: "tcw-deadbeef.sock"))
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-.sock"))
-        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-내소켓.sock"))
+        XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-mysocket.sock"))
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "other.sock"))
         XCTAssertFalse(warpHelperSocketFileIsOurs(name: "tcw-deadbeef.txt"))
     }
@@ -3416,7 +3416,9 @@ final class WarpHelperProtocolTests: XCTestCase {
         XCTAssertEqual(roundTrip(.bye), .bye)
     }
 
-    /// The submission (CR) and the input-box clear (Ctrl+U) have to ride unchanged — one altered byte and claude does not submit the input
+    /// The submission (CR) and the input-box clear (Ctrl+U) have to ride unchanged — one altered byte and claude does not submit the input.
+    ///
+    /// The list is wider than those two on purpose, and the extra entries are not decoration: the multibyte one is this suite's only check that a payload survives the base64 round trip byte for byte (the helper cuts writes on byte boundaries, so a mangled encoding would surface as a split character), and the empty one is the shape `inject` answers before any of that
     func testInjectCarriesControlBytesUnchanged() {
         for text in ["!gh issue view 1", claudeSubmitKey, claudeClearInputKey, "한글 입력", ""] {
             let request = WarpHelperRequest.inject(expectedPID: 4242, bytes: Data(text.utf8))
@@ -3575,7 +3577,7 @@ final class WarpInjectWatchTests: XCTestCase {
         )
     }
 
-    /// The queue drained but claude ended in between and the shell took it — that is a failure. Answering success makes the app put a CR on top, and the user's next Enter runs that line
+    /// The queue drained while the foreground is no longer ours — the usual way there is claude ending in between and the shell inheriting the queue, and since which of them read the bytes is not observable, the verdict has to be failure either way. Answering success makes the app put a CR on top, and the user's next Enter runs that line
     func testEmptyQueueDrainedByAnotherReaderIsFailure() {
         XCTAssertEqual(
             warpInjectWatchDecision(pending: 0, readerIsOurs: false, budgetExpired: false),
@@ -3800,14 +3802,14 @@ final class WarpReclaimTests: XCTestCase {
 
     /// Regression guard (P0-3): deleting by name alone removes a **regular file** of the same name (Codex's reproduction)
     func testRegularFileWithOurSocketNameIsNotRemoved() {
-        let path = write("tcw-deadbeef.sock", "사용자 파일", ageSeconds: 3000)
+        let path = write("tcw-deadbeef.sock", "a user's file", ageSeconds: 3000)
         reclaimDeadWarpHelperSockets(in: [directory])
         XCTAssertTrue(exists(path))
     }
 
     /// Following a symbolic link to delete removes whatever file of somebody else's the link points at
     func testSymlinkWithOurSocketNameIsNotRemoved() throws {
-        let target = write("남의파일.txt", "소중한 것", ageSeconds: 3000)
+        let target = write("someone-elses-file.txt", "something precious", ageSeconds: 3000)
         let link = (directory as NSString).appendingPathComponent("tcw-cafed00d.sock")
         try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
         reclaimDeadWarpHelperSockets(in: [directory])
@@ -3821,14 +3823,14 @@ final class WarpReclaimTests: XCTestCase {
         removeWarpTabConfigIfOurs(path: ours)
         XCTAssertFalse(exists(ours))
 
-        let theirs = write("terminal-checkout-cafebabe.toml", "name = \"내 것\"\n", ageSeconds: 0)
+        let theirs = write("terminal-checkout-cafebabe.toml", "name = \"mine\"\n", ageSeconds: 0)
         removeWarpTabConfigIfOurs(path: theirs)
         XCTAssertTrue(exists(theirs))
     }
 
     /// Regression guard (P0-3): when a symbolic link bearing our name points at a file carrying our header, a path-based verdict **deletes the link itself**. The socket side was covered by `lstat` and this one had been missed
     func testSymlinkWithOurTabConfigNameIsNotRemoved() throws {
-        let target = write("남의파일.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 600)
+        let target = write("someone-elses-file.toml", warpTabConfigTOML(commands: ["z remy"]), ageSeconds: 600)
         let link = (directory as NSString).appendingPathComponent("terminal-checkout-deadbeef.toml")
         try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
         removeWarpTabConfigIfOurs(path: link)
@@ -3862,7 +3864,7 @@ final class WarpReclaimTests: XCTestCase {
 
     /// A user file whose name collides is filtered out by its contents — somebody else's Tab Config must not be deleted
     func testUserFileWithOurNamingIsKept() {
-        let path = write("terminal-checkout-deadbeef.toml", "name = \"내 작업 공간\"\n", ageSeconds: 600)
+        let path = write("terminal-checkout-deadbeef.toml", "name = \"my workspace\"\n", ageSeconds: 600)
         reclaimStaleWarpTabConfigs(in: directory)
         XCTAssertTrue(exists(path))
     }

@@ -497,7 +497,12 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
         return screenReflectsNewInput(before: before, after: after, input: marker)
     }
     guard appeared else {
-        checkoutLog("the screen being read is not our pane — retrying (\(attempt)/\(maxAttempts))")
+        // What this branch knows is that the marker did not appear within the deadline. Being on
+        // somebody else's screen is one way there; a marker claude swallowed during initialisation
+        // (documented on the deadline above), a tab the user has not looked at yet, and a TUI that
+        // has not drawn it are others. Naming the first as the cause is the promotion CLAUDE.md
+        // rules out in the other direction too: "not confirmed on screen" is not "not in the box"
+        checkoutLog("could not confirm that the screen is our pane — retrying (\(attempt)/\(maxAttempts))")
         return false
     }
     guard send(claudeClearInputKey, io: io) else {
