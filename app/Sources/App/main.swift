@@ -2,7 +2,7 @@ import AppKit
 import Core
 import Foundation
 
-// 테스트용 헤드리스 모드: UI 없이 소켓 서버만 띄운다 (e2e 테스트에서 사용)
+// Headless mode for tests: the socket server only, with no UI (this is what `e2e.sh` drives)
 if CommandLine.arguments.contains("--headless-server") {
     let server = HostServer(socketPath: defaultSocketPath())
     do {

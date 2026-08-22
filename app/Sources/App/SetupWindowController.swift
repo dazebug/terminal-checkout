@@ -1,9 +1,12 @@
 import AppKit
 import Core
 
-/// 설치·터미널 선택·권한·테스트를 한 화면에서 처리하는 설정 창.
-/// 디자인: 설정 창 자체가 터미널 세션 — 섹션은 프롬프트(❯), 상태는 종료 코드처럼 색으로 읽힌다.
-/// 노출은 상태 기반: 완료된 설정 항목의 카드는 사라지고 파이프라인 스트립의 점으로만 남는다.
+/// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
+/// The design is that the window *is* a terminal session — a section reads as a prompt (❯), and a
+/// state reads the way an exit code does, through colour.
+/// What is on screen follows the state: the card for a step that is done disappears, and that step
+/// stays visible only as a dot on the pipeline strip.
+
 /// Card width. File scope so the status-label factory below can use it before `self` exists.
 let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
@@ -105,9 +108,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
-    /// iTerm2 선택 + 권한 미허용일 때만 표시 (WezTerm은 TCC 권한 불필요)
+    /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
+    /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
+    /// permission at all, which is why it has no section of its own.
     private let permissionSection = NSStackView()
-    /// Warp 선택 + 손쉬운 사용 미허용일 때만 표시
+    /// On screen only while the terminal is Warp and the Accessibility permission is not granted
     private let accessibilitySection = NSStackView()
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
@@ -129,7 +134,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var languageRestartButton: NSButton!
     private var languageNoteLabel: NSTextField!
     private var languageObserver: NSObjectProtocol?
-    /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
+    /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
+    /// (`windowWillClose`), so the next time the window opens the state decides again.
     private var forceShowInstall = false
     private var requestObserver: (any NSObjectProtocol)?
     private var toolsObserver: (any NSObjectProtocol)?
@@ -170,7 +176,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// `localized(…)` returns a `String`, and `ShellPayload` cannot be built from one.
     private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 
-    /// 창이 닫힐 때 알림 (AppDelegate가 Dock 표시를 되돌리는 데 사용)
+    /// Called when the window closes — `AppDelegate` uses it to hide the app from the Dock again
     var onClose: (() -> Void)?
 
     convenience init() {
@@ -182,7 +188,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.title = localized("app.window.title")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // 터미널은 어둡다 — 시스템 모드와 무관하게 다크로 고정 (레이어 색이 정적이므로 필수)
+        // A terminal is dark, so this window is pinned to dark whatever the system appearance is.
+        // Not a preference: `Theme`'s colours are fixed values rather than dynamic ones, and in a
+        // light appearance they would not follow
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Theme.bg
         window.isMovableByWindowBackground = true
@@ -199,11 +207,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // 도구 확인은 로그인 셸을 띄우느라 창보다 늦게 끝난다
+        // The tool check opens a login shell, so it finishes after this window is already up
         toolsObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // 우리 문자열은 재시작을 기다리지 않는다(D14) — 언어가 바뀌면 이 창이 다시 그린다
+        // Our own strings do not wait for a restart (D14) — a language change redraws this window
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildForLanguageChange() }
@@ -254,7 +262,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    // MARK: - UI 구성
+    // MARK: - Building the UI
 
     private func buildContent() -> NSView {
         let stack = FittedContentStackView()
@@ -327,7 +335,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return row
     }
 
-    // MARK: 카드 — 설정 단계 (완료되면 숨김)
+    // MARK: Cards — the setup steps (hidden once done)
 
     private func buildChromeCard() -> NSView {
         card(localized("app.card.chrome.title"), [
@@ -398,8 +406,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
-    /// 명령이 부르는 도구 확인. 앱의 PATH가 아니라 로그인 셸에 물어야 한다 —
-    /// z는 zoxide가 rc에서 정의하는 셸 함수라 실행 파일 탐색으로는 찾을 수 없다.
+    /// The check on the tools a command calls. The login shell has to be asked rather than the
+    /// app's own PATH — `z` is a shell function zoxide defines in an rc file, so looking for an
+    /// executable of that name finds nothing.
     private func buildToolsCard() -> NSView {
         toolsList.orientation = .vertical
         toolsList.alignment = .leading
@@ -410,9 +419,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
-    // MARK: 카드 — 상시 (터미널 선택·테스트)
+    // MARK: Cards — always on screen (terminal choice, test)
 
-    // MARK: 카드 — 언어
+    // MARK: Cards — language
 
     /// **The app owns the language and the extension follows** (D8): the picker is here because the
     /// setup window is what a user sees *before* the extension exists, so an extension-side picker
@@ -488,7 +497,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
         warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
 
-        // 세로 배치 — 셋을 가로로 늘어놓으면 카드 폭에 눌린다
+        // Stacked vertically: three of them side by side do not fit the card's width
         let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
@@ -538,9 +547,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ]))
     }
 
-    /// 화면을 읽어 "claude가 그 입력을 받았는지" 확인하는 데 쓴다. 확인 없이 제출하면 claude가
-    /// 초기화 중 버린 입력이 "전달됨"으로 기록되므로(실측), 이 권한 없이는 claude 입력을
-    /// 전달하지 않는다 — 명령 실행과는 무관하다는 것을 문구로 갈라 준다.
+    /// The permission is what lets the app read the screen and check whether claude received the
+    /// input. Submitting without that check records an input claude discarded during its
+    /// initialisation as "delivered" (measured), so without the permission claude input is not
+    /// delivered at all — and the wording keeps that apart from running a command, which needs
+    /// nothing.
     private func buildAccessibilitySection() {
         // Idempotent: it fills a **stored** stack, so building a second time would append a second
         // copy of everything rather than replace it. `toolsList` already clears for the same reason
@@ -586,7 +597,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return card(localized("app.card.test.title"), [row, testResultLabel])
     }
 
-    /// 설정 완료 후에만 보이는 유틸리티 (설정 중에는 확장이 로드되기 전이라 옵션 페이지가 없다)
+    /// Utilities that appear only once setup is done — before that the extension is not loaded and
+    /// there is no options page to open. `refresh()` ties this row to the extension card, so it
+    /// also goes away while the setup guide is deliberately back on screen.
     private func buildUtilityRow() -> NSView {
         buttonRow([
             button(localized("app.button.openOptionsPage"), #selector(openOptionsPage)),
@@ -594,7 +607,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
-    // MARK: 뷰 팩토리
+    // MARK: View factories
 
     private func card(_ title: String, _ content: [NSView]) -> NSView {
         let box = NSView()
@@ -681,7 +694,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return box
     }
 
-    /// 안내 절차용 인용 블록 — 왼쪽에 가는 세로 바를 세운 heredoc 느낌
+    /// The quote block the setup steps are drawn in — a thin vertical bar down the left, so it
+    /// reads like a heredoc
     private func quoteBlock(_ lines: [String]) -> NSView {
         let bar = NSView()
         bar.wantsLayer = true
@@ -758,7 +772,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             .localizedString(for: date, relativeTo: Date())
     }
 
-    // MARK: - 터미널 선택
+    // MARK: - The terminal choice
 
     @objc private func terminalChanged() {
         if weztermRadio.state == .on {
@@ -785,19 +799,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
         }
-        // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
-        // 그 사이 사용자가 끼어들면 입력이 섞인다
+        // Scheduled claude input is delivered only once claude is up, so it takes a while — and
+        // anything the user types in the meantime mixes into it
         // Two complete sentences, joined as sentences. That is the one join D36 leaves open:
         // each part is a message a translator can write on its own, and neither is a clause of the other
         var note = localized("app.terminal.note.common")
-        // Warp는 화면을 "포커스된 탭"만 보여 주므로, 앱이 자기 탭을 확인할 수 있을 때만 제출한다
+        // Warp shows only the focused tab, so the app submits only while it can see its own
         if Settings.terminal == .warp {
             note += localized("app.terminal.note.warp")
         }
         terminalNoteLabel.stringValue = note
     }
 
-    // MARK: - 상태 갱신
+    // MARK: - Refreshing the state
 
     private func refresh() {
         // The picker follows the stored value rather than its own last click: a second window, or a
@@ -813,7 +827,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let folder = Installer.extensionState()
         let evidence = Settings.lastRequestAt
 
-        // Chrome 연결: 정상이면 카드를 숨긴다 (앱 실행 시 자동 등록·자가 치유되므로 버튼도 불필요)
+        // The Chrome connection: the card is hidden when it is fine — the app registers the
+        // manifest on launch and heals it when the app has moved, so there is nothing to press
         if case .ok = manifest {
             chromeCard.isHidden = true
         } else {
@@ -821,7 +836,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             apply(manifest, to: manifestStatusLabel)
         }
 
-        // 확장: 소켓으로 요청이 실제 도착했을 때만 완료로 본다
+        // The extension counts as done only when a request has actually arrived on the socket
         let extensionState: SetupState
         if case .error = folder {
             extensionState = folder
@@ -840,10 +855,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
-        // 손쉬운 사용이 없어도 명령 실행은 된다(claude 입력 전달만 막힌다) — 오류가 아니라 경고로 다룬다
+        // A command still runs without Accessibility — only the claude input delivery is refused —
+        // so this is a warning and not an error
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
-        // 터미널별 권한 UI — 케이스를 추가하면 "이 터미널에 권한 섹션이 필요한가"가 여기서
-        // 컴파일 에러로 강제된다
+        // The permission UI, per terminal. There is no `default`, so adding a terminal makes
+        // "does this one need a permission section" a compile error here rather than a question
+        // somebody has to remember to ask
         switch Settings.terminal {
         case .iterm:
             if PermissionChecker.isITermInstalled {
@@ -854,7 +871,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
             apply(permission!, to: permissionStatusLabel, format: "app.status.itermAutomation.format")
         case .wezterm:
-            break // CLI 실행이라 TCC 권한이 필요 없다
+            break // driven through the CLI, so no TCC permission is involved
         case .warp:
             apply(
                 accessibilityGranted
@@ -916,10 +933,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// 없는 도구만 줄로 남긴다 — 준비된 도구까지 나열하면 정상 상태에서도 카드가 계속 떠 있게 된다.
+    /// Only the missing tools get a line. Listing the ones that are there too would leave the card
+    /// on screen in the state where nothing is wrong.
     private func updateToolsCard() {
         guard let availability = Settings.toolAvailability else {
-            toolsCard.isHidden = true // 아직 확인 전 (백그라운드에서 진행 중)
+            // No answer yet. The check runs in the background on every launch, and one that fails
+            // leaves this nil rather than writing something — so "not yet" and "it did not answer"
+            // arrive here as the same value
+            toolsCard.isHidden = true
             return
         }
         // nil covers both "not configured" and "stored value is unusable" — in either case the
@@ -983,7 +1004,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.ok
                 terminalDetail = localized("app.pipeline.warp.ready")
             } else {
-                // claude 입력이 없는 버튼은 그대로 도므로 오류가 아니라 경고다
+                // Buttons that schedule no claude input still work, so this is a warning
                 terminalColor = Theme.warn
                 terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
@@ -1018,7 +1039,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    // MARK: - 액션
+    // MARK: - Actions
 
     @objc private func registerManifest() {
         do {
@@ -1029,7 +1050,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// 설치 도우미: 폴더 준비(사본이 없거나 낡았으면 갱신) → 경로 클립보드 복사 → chrome://extensions 열기
+    /// The install helper: prepare the folder (copy again when the copy is missing or stale) → put
+    /// the path on the clipboard → open chrome://extensions
     @objc private func installInChrome() {
         if Installer.extensionCopyNeedsUpdate() {
             do {
@@ -1129,8 +1151,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         PermissionChecker.openAutomationSettings()
     }
 
-    /// 손쉬운 사용 프롬프트는 그 자리에서 허용되지 않고 시스템 설정으로 안내만 한다 —
-    /// 완료 콜백이 없어 창이 다시 키가 될 때(windowDidBecomeKey → refresh) 상태를 다시 읽는다
+    /// The Accessibility prompt grants nothing on the spot — it only points at System Settings —
+    /// and it has no completion callback, so the state is read again when the window becomes key
+    /// (`windowDidBecomeKey` → `refresh()`).
     @objc private func requestAccessibility() {
         PermissionChecker.requestAccessibility()
         refresh()
@@ -1166,7 +1189,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    // MARK: - 헬퍼
+    // MARK: - Helpers
 
     private func openInChrome(_ urlString: String) {
         guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
