@@ -159,22 +159,47 @@ struct LocalePublication: Equatable {
 /// half-written one means, and who may write. Those are invariants of the caller and of storage,
 /// not of the function, which is why they are proved here instead of by widening it (D67).
 enum LocaleState {
-    static let installIdKey = "localeInstallId"
-    static let epochKey = "localeEpoch"
-    static let publishedTagKey = "localePublishedTag"
+    /// The whole publication, under **one** key.
+    ///
+    /// It used to be three, and three keys cannot be read as one fact: between the epoch write and
+    /// the tag write, a reader gets the epoch of the `ja` publication carrying the tag of the `ko`
+    /// one — a pair this app never published (round 9 review, reproduced by
+    /// `testNoReaderObservesMixedSnapshot`). The extension's rule is "same install, accept only a
+    /// strictly greater epoch" (D32), so it would take that pair and then turn down the correct
+    /// `(…, 4, ja)` for carrying an epoch it already holds, and the language would stay wrong.
+    /// **A single-writer rule does not make readers atomic** (the review's sentence): D49 removed
+    /// the race between two writers, and this is a reader seeing one writer's half-finished
+    /// sequence — a different axis, and the one this key closes. One value is replaced as a whole,
+    /// so a read lands on the complete old triple or the complete new one.
+    static let publicationKey = "localePublication"
+
+    /// The keys the three-key schema wrote, kept only to be deleted (see `write`).
+    static let legacyKeys = ["localeInstallId", "localeEpoch", "localePublishedTag"]
+
+    /// The names inside the envelope. They are the persisted schema, not an implementation detail:
+    /// a rename is a new shape on disk, which is why the tests spell them out rather than import
+    /// them from here.
+    private enum Field {
+        static let installId = "installId"
+        static let epoch = "epoch"
+        static let tag = "tag"
+    }
 
     /// A stored snapshot counts only when **all three** parts are there and readable. A partial one
     /// is not "epoch 0 of this install": republishing 0 under an identity the extension already
     /// holds would lose to its cached higher epoch, and the app would look stuck in the old
-    /// language forever. It counts as no identity at all, and a new one is minted (D51).
+    /// language forever. It counts as no identity at all, and a new one is minted (D51). Our writer
+    /// puts all three in at once, so an envelope missing one of them was edited by hand or written
+    /// by something else — the required set is checked here rather than assumed from the shape.
     ///
     /// `Int.max` is malformed for the same reason absence is — the next revision cannot be
     /// expressed, so staying under this identity would mean publishing changes the extension is
     /// required to ignore.
     private static func stored(_ defaults: UserDefaults) -> LocalePublication? {
-        guard let installId = defaults.object(forKey: installIdKey) as? String, !installId.isEmpty,
-              let epoch = defaults.object(forKey: epochKey) as? Int, epoch >= 0, epoch < Int.max,
-              let tag = defaults.object(forKey: publishedTagKey) as? String,
+        guard let envelope = defaults.dictionary(forKey: publicationKey),
+              let installId = envelope[Field.installId] as? String, !installId.isEmpty,
+              let epoch = envelope[Field.epoch] as? Int, epoch >= 0, epoch < Int.max,
+              let tag = envelope[Field.tag] as? String,
               supportedLocales.contains(tag)
         else { return nil }
         return LocalePublication(
@@ -212,9 +237,34 @@ enum LocaleState {
         return advanced
     }
 
+    /// One `set`, because a publication is one fact. Three of them are what let a reader see a
+    /// triple that was never published.
+    ///
+    /// The three-key state an earlier build wrote is **not read** — a triple written in three steps
+    /// cannot be shown to have been committed as one, which is the defect itself, so it is not
+    /// evidence of anything. Deleting it is the other half of that decision, and the reason is the
+    /// build that *does* read it: nothing here has been released, so a copy holding those keys is a
+    /// copy on our own machines, sharing the bundle id and therefore this domain, whose headless
+    /// server would go on handing the extension a triple this build has already replaced. Measured
+    /// while making this change: `defaults read com.dazebug.terminal-checkout` held no locale key
+    /// at all, so what this covers is the state item 8's still-pending GUI checks would create, not
+    /// one that has been seen. Deleting is a write and therefore reachable only from the
+    /// interactive role, so the single writer stays single (D49).
+    ///
+    /// The deletion goes **first**, because the two states must not coexist: an envelope under a
+    /// freshly minted identity *next to* the stale triple is the pair that lets two builds trade
+    /// the language back and forth, since an unfamiliar `installId` is accepted unconditionally
+    /// (D32). Interrupted the other way there is nothing at all, and the next publication mints —
+    /// the state D51 already covers.
     private static func write(_ publication: LocalePublication, to defaults: UserDefaults) {
-        defaults.set(publication.installId, forKey: installIdKey)
-        defaults.set(publication.snapshot.epoch, forKey: epochKey)
-        defaults.set(publication.snapshot.tag, forKey: publishedTagKey)
+        for key in legacyKeys { defaults.removeObject(forKey: key) }
+        defaults.set(
+            [
+                Field.installId: publication.installId,
+                Field.epoch: publication.snapshot.epoch,
+                Field.tag: publication.snapshot.tag,
+            ],
+            forKey: publicationKey
+        )
     }
 }
