@@ -1,7 +1,7 @@
 import Foundation
 
-// Chrome Native Messaging 프레이밍: 4바이트 네이티브 엔디언(=LE) 길이 + JSON payload.
-// relay↔앱 소켓 통신도 동일한 프레이밍을 쓴다.
+// Chrome Native Messaging framing: a 4-byte native-endian (= LE) length followed by the JSON payload.
+// The relay↔app socket traffic uses the very same framing.
 
 private let maxFrameLength = 16 * 1024 * 1024
 

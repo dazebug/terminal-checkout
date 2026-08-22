@@ -1923,9 +1923,9 @@ final class DeliveryTimelineTests: XCTestCase {
         clock = clock.addingTimeInterval(86)
         timeline.step("claude 준비")
         XCTAssertEqual(lines, [
-            "요청 수신 (+0.0s, 총 0.0s)",
-            "Warp 탭 생성 (+3.2s, 총 3.2s)",
-            "claude 준비 (+86.0s, 총 89.2s)",
+            "요청 수신 (+0.0s, total 0.0s)",
+            "Warp 탭 생성 (+3.2s, total 3.2s)",
+            "claude 준비 (+86.0s, total 89.2s)",
         ])
     }
 
@@ -1941,11 +1941,11 @@ final class DeliveryTimelineTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline), 1)
         XCTAssertEqual(lines, [
-            "입력 1/1 pane 증명 통과 (시도 1/12) (+0.0s, 총 0.0s)",
-            "입력 1/1 본문 반영 확인 (+0.0s, 총 0.0s)",
-            // The "총" on this line is the number the user is complaining about: press to submit
-            "입력 1/1 제출(CR) 전송 (+0.0s, 총 0.0s)",
-            "입력 1/1 사후 확인: 입력창 상태 알 수 없음 (+0.0s, 총 0.0s)",
+            "input 1/1 pane proof passed (attempt 1/12) (+0.0s, total 0.0s)",
+            "input 1/1 body reflection confirmed (+0.0s, total 0.0s)",
+            // The "total" on this line is the number the user is complaining about: press to submit
+            "input 1/1 submission (CR) sent (+0.0s, total 0.0s)",
+            "input 1/1 post-check: the input box state is unknown (+0.0s, total 0.0s)",
         ])
     }
 
@@ -1962,7 +1962,7 @@ final class DeliveryTimelineTests: XCTestCase {
         )
         _ = submitClaudeInputs(["!gh pr diff 1"], io: session.io, timeline: timeline)
         XCTAssertTrue(
-            lines.contains { $0.hasPrefix("입력 1/1 pane 증명 통과 (시도 2/12)") }, "\(lines)"
+            lines.contains { $0.hasPrefix("input 1/1 pane proof passed (attempt 2/12)") }, "\(lines)"
         )
     }
 

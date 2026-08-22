@@ -1,70 +1,51 @@
 import Foundation
 
-// Warp pane 안에서 도는 주입 헬퍼와 앱 사이의 프로토콜.
+// The protocol between the app and the injection helper that runs inside a Warp pane.
 //
-// 왜 pane 안에 프로세스가 필요한가: BSD 커널은 비root의 `TIOCSTI`를 호출 프로세스의 제어
-// 터미널로만 허용한다(`isctty`). 앱은 pane의 세션 밖이라 pane tty에 바이트를 넣을 수 없다.
-// 그래서 Tab Config가 여는 pane에서 헬퍼를 먼저 띄우고, 앱은 그 소켓의 클라이언트가 된다.
+// Why a process has to be inside the pane: for a non-root caller the BSD kernel allows `TIOCSTI` only on the calling process's controlling terminal (`isctty`). The app is outside the pane's session, so it cannot put bytes into the pane's tty.
+// So the helper is launched first in the pane the Tab Config opens, and the app becomes a client of its socket.
 //
-// 줄 단위 ASCII 프로토콜이다. 주입할 바이트만 base64로 싣는다 — 제출(CR)과 입력창
-// 클리어(Ctrl+U)가 제어문자라 줄 기반 프로토콜에 날것으로 실을 수 없기 때문이다.
+// It is a line-based ASCII protocol. Only the bytes to inject ride as base64 — submission (CR) and clearing the input box (Ctrl+U) are control characters and cannot travel raw in a line-based protocol.
 
 public enum WarpHelperRequest: Equatable {
-    /// 헬퍼가 붙어 있는 pane의 tty 경로. 앱은 이 값으로 게이트 ①②③을 태운다
+    /// The tty path of the pane the helper is attached to. The app runs gates ①②③ against this value.
     case tty
-    /// 그 바이트들을 tty 입력 큐에 넣는다. `expectedPID`는 **그 바이트를 읽을 것으로 기대하는**
-    /// 프로세스다 — 헬퍼가 주입 직전에 포그라운드와 맞춰 보고 어긋나면 넣지 않는다.
-    /// 요청마다 싣는 이유는 상태로 두면 "설정해 두고 잊는" 갈래가 생기기 때문이다.
+    /// Put these bytes into the tty input queue. `expectedPID` is the process **expected to read those bytes** — immediately before injecting, the helper compares it against the foreground and does not inject when they disagree.
+    /// It rides on every request because keeping it as state would create a "set it and forget it" branch.
     case inject(expectedPID: Int32, bytes: Data)
-    /// 전달이 끝났으니 종료해라 — 헬퍼가 pane에 남아 떠도는 것을 막는 정상 경로다
+    /// Delivery is over, exit — the normal path that keeps the helper from lingering in the pane.
     case bye
 }
 
-/// tty 입력 큐에는 상한(TTYHOG)이 있고 넘치면 커널이 조용히 버린다. 그래서 한 번에 넣는 양을
-/// 제한하고, 넘치는 만큼은 소비를 기다렸다 이어 넣는다 — 상한을 넘는 입력을 통째로 거절하면
-/// 512바이트가 넘는 claude 프롬프트가 항상 실패한다.
-/// 바이트 단위로 자르는 것은 안전하다: tty 입력 큐는 바이트 스트림이라 멀티바이트 문자가
-/// 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
+/// The tty input queue has a cap (TTYHOG) and the kernel silently drops whatever overflows it. So the amount written at once is limited and the surplus waits for consumption before continuing — rejecting an over-cap input outright would make every claude prompt longer than 512 bytes fail.
+/// Cutting on byte boundaries is safe: the tty input queue is a byte stream, so a multi-byte character split across chunks still arrives whole for claude as long as the order is kept (measured with Korean input).
 ///
-/// **큐에 한 바이트라도 남아 있으면 넣지 않는다.** 여유가 있다고 이어 넣으면 앞 조각의 tail이
-/// 큐에 남은 채 다음이 쌓이는데, claude가 앞부분만 읽어 화면에 그리면 앱의 반영 확인은
-/// 통과한다(프로브는 앞 24자만 본다 — `claudeInputProbe`). 그 뒤 claude가 끝나면 큐에 남은
-/// tail을 **셸이 읽어 명령으로 실행한다.** 우리가 만든 바이트가 사용자의 셸에서 실행되는
-/// 갈래가 여기였다. 빈 큐에만 넣으면 조각마다 claude가 읽은 것을 확인하고 다음으로 넘어간다.
+/// **Nothing is written while even one byte is still in the queue.** Continuing just because there is room leaves the previous chunk's tail in the queue while the next piles on: claude reads only the front and draws it, so the app's reflection check passes (the probe looks at the first 24 characters only — `claudeInputProbe`). Then, once claude exits, **the shell reads the tail left in the queue and runs it as a command.** This was the branch by which bytes we produced got executed in the user's shell. Writing only into an empty queue means every chunk is confirmed read by claude before the next one goes.
 public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int {
     guard pending == 0 else { return 0 }
     return max(0, min(remaining, limit))
 }
 
-/// 주입한 바이트가 읽히는지 지켜보는 동안, **표본 하나로** 내리는 판정.
+/// The verdict reached **from a single sample** while watching whether the injected bytes get read.
 ///
-/// 이력을 인자로 받지 않는 것이 이 함수의 요점이다. 한때는 직전 표본과 비교해 "큐가 늘었으면
-/// 사용자 키가 섞인 것"으로 보고, 늘지 않았으면 남은 바이트를 우리 것으로 여겨 `tcflush`로
-/// 버렸다. 그 추론은 두 자리에서 깨진다(검증자 재현): **첫 표본**은 비교 대상이 없어 어떤 값도
-/// 섞였다고 세우지 못하고, 그 뒤에도 claude가 5바이트를 읽는 사이 사용자가 4바이트를 치면
-/// 총량은 10 → 9로 **줄어** 같은 오판이 된다. `FIONREAD`는 출처 없는 총량뿐이라 "남은 것이 우리
-/// 바이트"를 증명할 방법이 애초에 없다 — 그래서 증명을 강화하는 대신 **버리는 동작 자체를
-/// 없앴다.**
+/// Taking no history as an argument is the whole point of this function. There used to be a comparison against the previous sample: "the queue grew, so the user's keys got mixed in", and if it had not grown the remaining bytes were treated as ours and discarded with `tcflush`. That inference breaks in two places (reproduced by the reviewer): the **first sample** has nothing to compare against, so it can never establish that anything was mixed in, and even afterwards, if the user types 4 bytes while claude reads 5, the total **shrinks** from 10 to 9 and produces the same misjudgement. `FIONREAD` is an unattributed total, so there was never a way to prove "what remains is our bytes" — which is why, instead of strengthening the proof, **the discarding was removed altogether.**
 ///
-/// 그 대가로 우리 바이트가 셸 줄 버퍼에 **잔해로 남는 창**이 다시 넓어진다. 그래도 이쪽을
-/// 택하는 이유는 남는 잔해는 사용자가 보고 지울 수 있지만, 잘못된 `tcflush`는 사용자가 방금 친
-/// 키를 **조용히** 지우기 때문이다.
+/// The price is that the window in which our bytes **linger as residue** in the shell's line buffer widens again. This side is still chosen because residue is something the user can see and erase, whereas a wrong `tcflush` **silently** deletes the keys they just typed.
 public enum WarpInjectWatch: Equatable {
-    /// 큐가 비었고 우리가 겨눈 독자가 가져갔다 — 유일한 성공
+    /// The queue is empty and the reader we aimed at took the bytes — the only success.
     case delivered
-    /// 아직 우리 독자가 읽는 중이다
+    /// Our reader is still reading.
     case keepWaiting
-    /// 큐는 비었으나 겨눈 독자가 아닌 쪽(대개 claude가 끝난 뒤의 셸)이 가져갔다
+    /// The queue is empty but somebody other than the reader we aimed at took the bytes (usually the shell, after claude has exited).
     case drainedByOther
-    /// 겨눈 독자가 사라졌는데 큐에 바이트가 남았다 — 버리지 않고 남은 수만 알린다
+    /// The reader we aimed at is gone while bytes remain in the queue — nothing is discarded, only the remaining count is reported.
     case readerGone(pending: Int)
-    /// 예산 안에 읽히지 않았다 (fail-closed)
+    /// Not read within the budget (fail-closed).
     case notReadInTime(pending: Int)
 }
 
-/// 큐 잔량·독자 동일성·예산 소진으로 다음 동작을 정한다.
-/// 빈 큐를 먼저 보는 이유는 그것만이 성공 조건이기 때문이고, 독자 확인이 예산보다 앞서는 이유는
-/// 남의 독자가 붙은 뒤에는 더 기다릴 이유가 없기 때문이다.
+/// Decides what to do next from the queue's remaining bytes, whether the reader is still ours, and whether the budget is spent.
+/// The empty queue is checked first because it is the only success condition, and the reader check comes before the budget because once somebody else's reader is attached there is no reason to keep waiting.
 public func warpInjectWatchDecision(
     pending: Int, readerIsOurs: Bool, budgetExpired: Bool
 ) -> WarpInjectWatch {
@@ -73,34 +54,26 @@ public func warpInjectWatchDecision(
     return budgetExpired ? .notReadInTime(pending: pending) : .keepWaiting
 }
 
-/// 헬퍼가 요청 **하나**에 쓰는 시간의 상한 — 큐가 비기를 기다리고, 넣은 바이트가 읽히는지
-/// 지켜보는 전부가 이 안에 들어간다.
+/// The cap on the time the helper spends on **one** request — waiting for the queue to drain and watching whether the written bytes get read both have to fit inside it.
 public let warpHelperWorkBudget: TimeInterval = 2
 
-/// 앱이 응답을 기다리는 시간. 헬퍼의 예산보다 **확실히 길어야 한다** — 앱이 먼저 포기하고
-/// 재시도하는 동안 이전 요청의 주입이 계속 돌면, 그 바이트가 재시도분·사용자 입력과 섞인다.
-/// 두 값을 따로 적으면 한쪽만 고쳐져 다시 갈리므로 한 곳에서 유도한다.
+/// How long the app waits for a response. It has to be **comfortably longer** than the helper's budget — if the app gives up first and retries while the previous request's injection is still running, those bytes mix with the retry's and with the user's own typing.
+/// Writing the two numbers separately is how one of them gets fixed and they drift apart again, so the second is derived from the first in one place.
 public let warpHelperRequestTimeout: TimeInterval = warpHelperWorkBudget * 3
 
-/// 지금 이 tty의 입력을 읽을 프로세스가 우리가 겨눈 claude인가.
+/// Is the process that will read this tty's input right now the claude we aimed at?
 ///
-/// `TIOCSTI`는 호출자의 controlling session인지만 보고 **큐에 넣은 바이트를 누가 읽을지는
-/// 정하지 않는다**. claude가 죽어 셸이 포그라운드가 되면 남은 CR을 셸이 읽어 사용자가 치던
-/// 초안을 실행한다 — 그래서 "보내기 전"만 보는 앱 쪽 게이트로는 부족하고, 주입과 같은
-/// 프로세스에서 포그라운드를 확인해야 창이 좁아진다.
+/// `TIOCSTI` only checks whether the caller shares the controlling session; **it does not decide who reads the bytes put into the queue**. If claude dies and the shell becomes the foreground, the shell reads the remaining CR and runs whatever draft the user was typing — which is why app-side gates that look only "before sending" are not enough, and why the window narrows only when the foreground is checked from the same process that injects.
 ///
-/// pid가 아니라 **프로세스 그룹**으로 비교한다: 앱이 고르는 claude pid가 그룹 리더가 아닌
-/// 경우가 있다(사용자의 claude pane 13개 중 3개에서 `pid != pgid` 실측).
-/// 조회가 실패하면 -1이므로 "알 수 없으면 넣지 않는다"가 된다.
+/// The comparison is by **process group** rather than pid: the claude pid the app picks is sometimes not the group leader (measured: `pid != pgid` in 3 of the user's 13 claude panes).
+/// A failed lookup yields -1, which makes this "if it cannot be told, do not inject".
 public func warpForegroundIsExpected(foregroundPGID: Int32, expectedPGID: Int32) -> Bool {
     foregroundPGID > 0 && expectedPGID > 0 && foregroundPGID == expectedPGID
 }
 
-/// 헬퍼가 더 살아 있으면 안 되는 이유. 대기 루프와 **요청 처리 경로**가 같은 판정을 쓴다 —
-/// 상한 검사가 대기 루프에만 있으면, 연결을 물고 계속 요청하는 쪽이 유휴·수명 상한을
-/// 통째로 우회한다.
+/// Why the helper must not stay alive any longer. The waiting loop and the **request-handling path** use the same verdict — with the cap checked only in the waiting loop, someone holding the connection open and requesting continuously bypasses the idle and lifetime caps entirely.
 public enum WarpHelperStop: Equatable {
-    /// tty가 우리 세션의 제어 터미널이 아니게 됐다 (pane이 닫히고 번호가 재사용됐다)
+    /// The tty is no longer our session's controlling terminal (the pane closed and its number was reused).
     case ttySessionChanged
     case idle
     case lifetime
@@ -114,7 +87,7 @@ public enum WarpHelperStop: Equatable {
     }
 }
 
-/// tty 동일성을 먼저 본다 — 상한에 여유가 있어도 남의 tty에는 한 바이트도 넣으면 안 된다.
+/// The tty identity is checked first — even with budget to spare, not one byte may go into somebody else's tty.
 public func warpHelperStopReason(
     ttySessionMatches: Bool,
     idleSeconds: TimeInterval,
@@ -141,7 +114,7 @@ public func encodeWarpHelperRequest(_ request: WarpHelperRequest) -> String {
     }
 }
 
-/// 헬퍼가 받은 줄을 요청으로 읽는다. 해석되지 않으면 nil — 헬퍼는 그때 `err`로 답한다.
+/// Reads a line the helper received as a request. nil when it cannot be parsed — the helper answers `err` in that case.
 public func parseWarpHelperRequest(_ line: String) -> WarpHelperRequest? {
     let text = trimmingLineEnding(line)
     switch text {
@@ -149,10 +122,9 @@ public func parseWarpHelperRequest(_ line: String) -> WarpHelperRequest? {
     case "bye": return .bye
     default: break
     }
-    // 빈 payload(`inject <pid> `)도 유효한 요청이라 빈 조각을 버리면 안 된다
+    // An empty payload (`inject <pid> `) is a valid request too, so empty pieces must not be dropped
     let parts = text.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
-    // pid는 양수만 받는다 — `getpgid(0)`은 "호출자의 그룹"이라, 헬퍼 자신이 포그라운드인
-    // 비정상 상황에서 0이 "기대 독자가 맞다"로 통과해 버린다. fail-closed로 둔다
+    // Only a positive pid is accepted — `getpgid(0)` means "the caller's group", so in the abnormal situation where the helper itself is the foreground, 0 would pass as "the expected reader matches". Keep it fail-closed
     guard parts.count == 3, parts[0] == "inject",
           let pid = Int32(parts[1]), pid > 0,
           let bytes = Data(base64Encoded: String(parts[2]))
@@ -167,7 +139,7 @@ public func encodeWarpHelperResponse(_ response: WarpHelperResponse) -> String {
     }
 }
 
-/// 접두사 없는 줄은 nil이다 — 그것을 성공으로 읽으면 헬퍼의 실패가 앱에는 성공으로 보인다.
+/// A line without the prefix is nil — reading it as a success is how a helper failure looks like a success to the app.
 public func parseWarpHelperResponse(_ line: String) -> WarpHelperResponse? {
     let text = trimmingLineEnding(line)
     if text == "ok" { return .ok("") }
@@ -187,16 +159,15 @@ private func trimmingLineEnding(_ line: String) -> String {
     return text
 }
 
-/// 소켓 read()는 줄 경계를 지켜 주지 않는다 — 한 번에 여러 줄이 오기도, 한 줄이 쪼개져
-/// 오기도 한다. 받은 조각을 모아 완성된 줄만 꺼내 준다.
+/// A socket read() does not respect line boundaries — several lines can arrive at once, and one line can arrive split. This accumulates the pieces and hands out only completed lines.
 public struct LineBuffer {
-    /// 줄바꿈 없이 계속 보내는 상대에게 메모리를 무한정 내주지 않기 위한 상한.
-    /// 주입 payload는 base64라 원본의 4/3 크기다
+    /// The cap that keeps a peer which never sends a newline from taking unbounded memory.
+    /// An injection payload is base64, so it is 4/3 the size of the original
     public static let defaultLimit = 256 * 1024
 
     private var data = Data()
     private let limit: Int
-    /// 상한을 넘긴 뒤에는 아무것도 돌려주지 않는다 — 호출자가 연결을 끊게 한다
+    /// After the cap is exceeded nothing is handed back — that is how the caller learns to close the connection
     public private(set) var isOverflowed = false
 
     public init(limit: Int = LineBuffer.defaultLimit) {
@@ -206,8 +177,7 @@ public struct LineBuffer {
     public mutating func append(_ chunk: Data) {
         guard !isOverflowed else { return }
         data.append(chunk)
-        // 완성된 줄과 아직 줄바꿈이 오지 않은 꼬리에 **같은** 상한을 건다. 꼬리만 보면
-        // 상한을 넘긴 줄이 마지막 줄바꿈과 함께 도착할 때 그대로 통과한다
+        // The **same** cap applies to completed lines and to the tail whose newline has not arrived yet. Checking the tail alone lets an over-cap line through when it arrives together with its final newline
         var start = data.startIndex
         while let newline = data[start...].firstIndex(of: 0x0A) {
             if data.distance(from: start, to: newline) > limit { return overflow() }

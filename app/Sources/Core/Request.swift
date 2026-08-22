@@ -1,15 +1,14 @@
 import Foundation
 
-/// 요청 해석 결과.
-/// claudeInputs는 셸 명령이 아니다 — command가 띄운 claude 세션에 순서대로 타이핑할
-/// 자유 텍스트라, 셸용 화이트리스트 검증 없이 변수 치환만 거친다 (치환 값 자체는 검증됨).
+/// The result of resolving a request.
+/// `claudeInputs` are not shell commands — they are free text to be typed, in order, into the claude session the command started, so they go through variable substitution alone and not the shell whitelist (the substituted values themselves are still validated).
 public struct ResolvedRequest {
     public let command: String
     public let claudeInputs: [String]
 }
 
-/// Chrome 확장이 보낸 요청 JSON을 해석한다: { command_template, variables, claude_inputs? }.
-/// 어느 터미널에서 실행할지는 앱 설정이 단일 소스라, 요청에 terminal 필드가 섞여 와도 읽지 않는다.
+/// Resolves the request JSON the Chrome extension sent: { command_template, variables, claude_inputs? }.
+/// Which terminal to run in has the app's settings as its single source, so a `terminal` field riding along in the request is never read.
 ///
 /// `baseDirectory` follows the same rule — the app hands over **only the stored string**, and
 /// validation, normalization, and fragment assembly all happen here in Core. An empty string means
@@ -105,10 +104,10 @@ private func appProvidedVariables(
 }
 
 public func errorMessage(_ error: Error) -> String {
-    String(describing: error) // CustomStringConvertible 준수 시 description을 그대로 쓴다
+    String(describing: error) // when the error conforms to CustomStringConvertible this is its description verbatim
 }
 
-/// 요청 처리: 해석 → 실행 → 성공/실패 응답 JSON. 실행 함수는 주입받는다 (테스트 용이성).
+/// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
 public func handleRequest(
     json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void
 ) -> [String: Any] {

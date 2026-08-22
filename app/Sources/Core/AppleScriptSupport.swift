@@ -1,10 +1,9 @@
 import Foundation
 
-/// iTerm2 번들 ID. AppleScript 타게팅은 이름이 아닌 이 ID로 한다 —
-/// 앱 파일명이 iTerm.app이거나 복사본으로 LaunchServices 이름 해석이 꼬여도 동작 (-1728 방지).
+/// The iTerm2 bundle ID. AppleScript targets this ID rather than the name — that keeps working when the app file is called iTerm.app, or when a copy has confused LaunchServices' name resolution (this is what avoids -1728).
 public let iTermBundleID = "com.googlecode.iterm2"
 
-/// AppleScript 문자열 리터럴 안에 안전하게 들어가도록 이스케이프한다.
+/// Escapes text so it can sit safely inside an AppleScript string literal.
 public func escapeForAppleScript(_ text: String) -> String {
     var s = text.replacingOccurrences(of: "\\", with: "\\\\")
     s = s.replacingOccurrences(of: "\"", with: "\\\"")
@@ -15,9 +14,9 @@ public func escapeForAppleScript(_ text: String) -> String {
     return s
 }
 
-/// iTerm2에서 새 탭을 열고 명령을 실행하는 AppleScript.
-/// 창이 하나도 없을 때(create tab 불가)를 대비해 분기한다.
-/// 마지막에 "세션id|tty"를 돌려준다 — claude 입력 전달이 이 핸들로 세션을 다시 찾는다.
+/// The AppleScript that opens a new tab in iTerm2 and runs a command.
+/// It branches to cover the case where there is no window at all (where `create tab` is not possible).
+/// At the end it returns "session id|tty" — claude input delivery uses that handle to find the session again.
 public func iTermScript(for command: String) -> String {
     let escaped = escapeForAppleScript(command)
     return """
@@ -35,10 +34,9 @@ public func iTermScript(for command: String) -> String {
     """
 }
 
-/// 이미 열린 세션에 텍스트를 타이핑하는 AppleScript (claude 입력 전달용).
-/// submit=false면 개행 없이 타이핑만 한다 — claude TUI는 LF를 제출로 인식하지 않고,
-/// 초기화 중 도착한 입력은 버리므로, 화면 반영을 확인한 뒤 제출(개행)을 따로 보내야 한다.
-/// 세션을 못 찾으면(탭 닫힘) "gone"을 돌려줘 호출자가 남은 전달을 중단하게 한다.
+/// The AppleScript that types text into an already-open session (used for claude input delivery).
+/// With submit=false it only types, without a newline — the claude TUI does not recognise LF as a submission, and it discards input that arrives during initialisation, so the submission (the newline) has to be sent separately once the screen has been confirmed to reflect the text.
+/// When the session cannot be found (the tab was closed) it returns "gone", which is how the caller learns to stop the remaining delivery.
 public func iTermWriteToSessionScript(sessionID: String, text: String, submit: Bool) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     let escapedText = escapeForAppleScript(text)
@@ -95,7 +93,7 @@ public func iTermClearInputScript(sessionID: String) -> String {
     """
 }
 
-/// 세션의 현재 화면 텍스트를 돌려주는 AppleScript — 타이핑이 실제로 반영됐는지 확인용.
+/// The AppleScript that returns a session's current screen text — used to check whether typing actually landed.
 public func iTermSessionContentsScript(sessionID: String) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     return """

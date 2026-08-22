@@ -1,15 +1,12 @@
-/// 지원 터미널의 단일 식별자. rawValue가 곧 `UserDefaults` 저장값이다 — `iterm`은 확장 이름과
-/// 무관하게 iTerm2를 가리키는 식별자이므로 바꾸지 않는다. 케이스를 추가하면 default 없는
-/// switch들이 컴파일 에러로 손댈 분기를 드러낸다 — 스위치 밖 분기(표시 조건 등)와 실측 항목은
-/// docs/new-terminal-checklist.md가 정본이다.
+/// The single identifier for a supported terminal. The rawValue *is* the value stored in `UserDefaults` — `iterm` is an identifier that denotes iTerm2 regardless of the product's name, so it does not change.
+/// Adding a case makes every `default`-less switch a compile error, which is how the branches that need touching reveal themselves — for the branches that live outside a switch (visibility conditions and the like) and for the hands-on checks, docs/new-terminal-checklist.md is the source of truth.
 public enum Terminal: String, CaseIterable {
     case iterm
     case wezterm
     case warp
 
-    /// 저장값 파싱의 단일 지점. 알 수 없는 값(다른 버전이 남긴 식별자, 손으로 고친 plist)은
-    /// iTerm2로 폴백한다. 폴백을 소비 지점마다 흩어 두면 실행은 iTerm2로 가면서 설정 창은
-    /// iTerm2 권한 섹션을 숨기는 식으로 서로 어긋날 수 있어 여기 한 곳에만 둔다.
+    /// The single place a stored value is parsed. An unknown value (an identifier left by another version, a hand-edited plist) falls back to iTerm2.
+    /// Scattering that fallback across the consumers is how they drift apart — execution going to iTerm2 while the setup window hides the iTerm2 permission section — so it lives here and nowhere else.
     public init(storedValue: String) {
         self = Terminal(rawValue: storedValue) ?? .iterm
     }
