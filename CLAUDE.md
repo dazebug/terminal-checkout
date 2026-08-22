@@ -11,6 +11,22 @@ A Chrome extension + macOS app that runs commands in a terminal (iTerm2/WezTerm/
 git config core.hooksPath .githooks  # enable the CLAUDE.md → AGENTS.md symlink hook (once after cloning)
 ```
 
+**Why this project is the way it is** lives in `docs/context/` — decisions, rejected alternatives, workarounds, incidents, and constraints the code cannot explain. Start at `docs/context/index.md`. Personal agent preferences live outside the repository and load through this import:
+
+@~/.claude/local/dazebug-terminal-checkout.md
+
+That file is one per checkout **of the machine**, not one per worktree — a gitignored `CLAUDE.local.md` would only exist in the worktree that created it, and this repository branches through worktrees. Claude Code asks once per project before loading an import from outside the working directory. If the file isn't there yet, the keep-the-why personal wizard creates it on first use.
+
+<!-- keep-the-why:config -->
+- context: `docs/context/`
+- init: complete
+- context-schema: 0.9.0
+- capture-confirmation: automatic
+- source-reference: never
+<!-- /keep-the-why:config -->
+
+`source-reference: never` means the agent doesn't *ask* whether a related issue or PR exists — it looks itself with `gh` when an entry would benefit from one, and records what it finds.
+
 ## Architecture — TCC forces this shape
 
 ```
