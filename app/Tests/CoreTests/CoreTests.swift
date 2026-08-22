@@ -2670,7 +2670,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             screenText: { session.io.screenText() },
             confirmSession: { _ in true },
             sessionIsUnchanged: { true },
-            canConfirmScreen: { false }, // the permission disappeared mid-delivery
+            screenConfirmation: { .warpAccessibility }, // the permission disappeared mid-delivery
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
@@ -2688,7 +2688,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             screenText: { session.io.screenText() },
             confirmSession: { _ in true },
             sessionIsUnchanged: { true },
-            canConfirmScreen: { sends < 1 }, // the permission disappears right after the first send
+            screenConfirmation: { sends < 1 ? nil : .warpAccessibility }, // the permission disappears right after the first send
             screenNeedsPaneProof: true,
             wait: { _ in }
         )
@@ -2723,6 +2723,27 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertTrue(ownership.mayHoldOurs, "writing a CR is not evidence that the input box is empty")
         ownership.recordInputBoxIsFreeOfOurs()
         XCTAssertFalse(ownership.mayHoldOurs)
+    }
+
+    /// The answer and its reason are one value (round 6 review). They used to be two — a `Bool`
+    /// for "can the screen be confirmed" and, at the diagnosis, a permission named from the outside
+    /// on the grounds that Warp is currently the only terminal whose confirmation can fail. That
+    /// held today and would have gone on naming a permission for a terminal that had none, so the
+    /// reason now travels with the answer and nothing can disagree with it.
+    func testTheScreenConfirmationAnswerCarriesItsOwnReason() {
+        let confirmable = ClaudeSessionIO(sendKeys: { _ in true }, screenText: { "" }, confirmSession: { _ in true })
+        XCTAssertTrue(confirmable.canConfirmScreen())
+        XCTAssertNil(confirmable.screenConfirmation())
+
+        let blocked = ClaudeSessionIO(
+            sendKeys: { _ in true }, screenText: { "" }, confirmSession: { _ in true },
+            screenConfirmation: { .warpAccessibility }
+        )
+        XCTAssertFalse(blocked.canConfirmScreen())
+        XCTAssertEqual(blocked.screenConfirmation(), .warpAccessibility)
+        // The sentence the log shows comes from the blocker itself, so it cannot name a permission
+        // for a reason that is not one
+        XCTAssertTrue(blocked.screenConfirmation()?.message.contains("Accessibility") == true)
     }
 
     /// The cleanup Ctrl+U after delivery ended midway has to pass the same gate — if this site bypassed it, the cleanup would erase somebody else's session's input box
@@ -3469,24 +3490,120 @@ final class WarpHelperProtocolTests: XCTestCase {
     }
 }
 
+// MARK: - What happens to non-ASCII text on its way through Process.arguments
+
+/// **Measured, and it is a boundary rather than a bug of ours**: Foundation hands `Process`
+/// arguments to the child re-encoded as NFD on Darwin. Text we hold as NFC — which is what a user
+/// types and what a Swift literal in this repository is — arrives decomposed on the other side.
+///
+/// It is pinned here because it is invisible everywhere else. Swift's `==` compares strings by
+/// canonical equivalence, so the two forms are *equal* in every assertion that does not look at
+/// bytes; the first thing this boundary broke was a test of ours that compared a Korean pattern
+/// against file bytes with `grep` and silently stopped matching (round 5).
+///
+/// Where it reaches a user: `runInITerm` puts the claude message inside an AppleScript that goes to
+/// `osascript -e`, and the WezTerm fallback puts the command in argv the same way. That is the
+/// subject of its own item — this class only fixes what the platform does, so a change in it fails
+/// here rather than out there.
+final class ProcessArgumentBoundaryTests: XCTestCase {
+    private let composed = "설계"
+
+    /// Comparison is on **bytes**. `XCTAssertEqual` on the strings passes either way, which is
+    /// exactly why the boundary went unnoticed for as long as it did.
+    func testANonASCIIArgumentReachesTheChildDecomposed() throws {
+        let result = try runProcess(
+            "/bin/bash", ["-c", #"printf '%s' "$1""#, "probe", composed], timeout: 10
+        )
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(
+            Array(result.stdout.utf8),
+            Array(composed.decomposedStringWithCanonicalMapping.utf8),
+            "the child no longer sees NFD — the boundary changed and everything built on it needs rereading"
+        )
+        XCTAssertNotEqual(Array(result.stdout.utf8), Array(composed.utf8))
+        XCTAssertEqual(result.stdout, composed, "the two forms stay canonically equal, which is what hides this")
+    }
+
+    /// The same for a path, which is the shape the Warp helper's socket and executable travel in.
+    /// Nothing in the repository writes a non-ASCII path today; what makes it reachable is the
+    /// user's `TMPDIR` or a bundle sitting under a folder they named themselves.
+    func testANonASCIIPathArgumentIsDecomposedToo() throws {
+        let path = "/tmp/터미널/tcw-deadbeef.sock"
+        let result = try runProcess("/bin/bash", ["-c", #"printf '%s' "$1""#, "probe", path], timeout: 10)
+        XCTAssertEqual(
+            Array(result.stdout.utf8), Array(path.decomposedStringWithCanonicalMapping.utf8)
+        )
+    }
+
+    /// The way out, measured alongside: bytes read from a **file** are not touched. Round 5's
+    /// uninstall sweep test moved to running the script from a file for this reason.
+    func testTextReadFromAFileKeepsItsBytes() throws {
+        let path = NSTemporaryDirectory() + "tc-argv-\(UInt32.random(in: .min ... .max)).txt"
+        try composed.write(toFile: path, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let result = try runProcess("/bin/cat", [path], timeout: 10)
+        XCTAssertEqual(Array(result.stdout.utf8), Array(composed.utf8))
+    }
+}
+
 // MARK: - Warp: the foreground verdict immediately before injecting
 // TIOCSTI only checks whether it is the caller's session; **it does not decide who reads those bytes**. If claude dies and the shell becomes the foreground, the shell reads the CR left in the queue and runs the user's draft.
 // Measured: the claude pid the app picks is sometimes not the process group leader (3 of 13 panes) — which is why the comparison is against `getpgid(pid)` rather than the pid.
 
 final class WarpForegroundTests: XCTestCase {
     func testForegroundMatchesExpectedGroup() {
-        XCTAssertTrue(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: 4242))
+        XCTAssertEqual(warpForeground(foregroundPGID: 4242, expectedPGID: 4242), .expected)
     }
 
     func testDifferentGroupIsBlocked() {
-        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: 99))
+        XCTAssertEqual(warpForeground(foregroundPGID: 4242, expectedPGID: 99), .different)
+    }
+}
+
+/// **"Could not be told" is its own answer** (round 6 review). The verdict used to be a `Bool`, so
+/// a failed `tcgetpgrp` or `getpgid` — which returns -1 — came back as the same value as "somebody
+/// else is attached". Refusing to inject in both cases is right and has not changed; reporting both
+/// as a different reader was a claim nobody had established, and no wording could fix it while the
+/// two shared one value.
+///
+/// This is the last gate in front of `TIOCSTI`, which only enqueues and does not decide who reads
+/// (`CLAUDE.md`), so the distinction is not cosmetic: it is the difference between "the shell took
+/// our CR" and "we could not look".
+final class WarpForegroundUnknownTests: XCTestCase {
+    /// Every shape a failed lookup takes. -1 is what the syscalls return; 0 is not a process group
+    /// either, and letting it through would compare two zeroes into `.expected`.
+    func testAFailedLookupIsUnknownAndNotDifferent() {
+        for (foreground, expected) in [(-1, -1), (4242, -1), (-1, 4242), (0, 0), (4242, 0)] {
+            XCTAssertEqual(
+                warpForeground(foregroundPGID: Int32(foreground), expectedPGID: Int32(expected)),
+                .unknown, "\(foreground)/\(expected)"
+            )
+        }
     }
 
-    /// A failed `tcgetpgrp` or `getpgid` yields -1 — when it cannot be told, nothing is injected
-    func testUnknownGroupIsBlocked() {
-        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: -1, expectedPGID: -1))
-        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 4242, expectedPGID: -1))
-        XCTAssertFalse(warpForegroundIsExpected(foregroundPGID: 0, expectedPGID: 0))
+    /// Fail-closed is unchanged: both non-expected states refuse in exactly the same way. What
+    /// changed is that the caller can still tell them apart when it writes down what happened.
+    func testUnknownRefusesLikeDifferentButIsNotTheSameValue() {
+        XCTAssertNotEqual(WarpForeground.unknown, .different)
+        for foreground in [WarpForeground.different, .unknown] {
+            XCTAssertNotEqual(
+                warpInjectWatchDecision(pending: 0, foreground: foreground, budgetExpired: false),
+                .delivered, "\(foreground)"
+            )
+            XCTAssertEqual(
+                warpInjectWatchDecision(pending: 4, foreground: foreground, budgetExpired: false),
+                .readerUnconfirmed(pending: 4), "\(foreground)"
+            )
+        }
+    }
+
+    /// The success path is the one place the answer has to be `.expected` exactly — an unknown
+    /// foreground reaching `.delivered` is the failure this whole gate exists to prevent.
+    func testOnlyAConfirmedForegroundCanDeliver() {
+        XCTAssertEqual(
+            warpInjectWatchDecision(pending: 0, foreground: .expected, budgetExpired: false),
+            .delivered
+        )
     }
 }
 
@@ -3552,8 +3669,8 @@ final class WarpInjectWatchTests: XCTestCase {
     /// Regression guard (reviewer reproduction ①): the old verdict compared against the previous sample and read "the queue grew, so the user's keys got mixed in", but **the first sample has nothing to compare against** and so could never establish that anything was mixed in whatever its value. If the user typed one character after claude had read all of our bytes and the foreground changed at that moment, that character was taken for ours and the whole queue was discarded (`tcflush`) — a misjudgement that silently erases the user's keys.
     func testFirstSampleNeverJustifiesDiscardingTheQueue() {
         XCTAssertEqual(
-            warpInjectWatchDecision(pending: 1, readerIsOurs: false, budgetExpired: false),
-            .readerGone(pending: 1)
+            warpInjectWatchDecision(pending: 1, foreground: .different, budgetExpired: false),
+            .readerUnconfirmed(pending: 1)
         )
     }
 
@@ -3561,8 +3678,8 @@ final class WarpInjectWatchTests: XCTestCase {
     func testMonotonicDecreaseIsNotProofOfOwnership() {
         for pending in [10, 9] {
             XCTAssertEqual(
-                warpInjectWatchDecision(pending: pending, readerIsOurs: false, budgetExpired: false),
-                .readerGone(pending: pending)
+                warpInjectWatchDecision(pending: pending, foreground: .different, budgetExpired: false),
+                .readerUnconfirmed(pending: pending)
             )
         }
     }
@@ -3570,42 +3687,49 @@ final class WarpInjectWatchTests: XCTestCase {
     /// Success is **only the case where our reader is what emptied the queue**
     func testDeliveredOnlyWhenOurReaderEmptiedTheQueue() {
         XCTAssertEqual(
-            warpInjectWatchDecision(pending: 0, readerIsOurs: true, budgetExpired: false), .delivered
+            warpInjectWatchDecision(pending: 0, foreground: .expected, budgetExpired: false), .delivered
         )
         XCTAssertEqual(
-            warpInjectWatchDecision(pending: 0, readerIsOurs: true, budgetExpired: true), .delivered
+            warpInjectWatchDecision(pending: 0, foreground: .expected, budgetExpired: true), .delivered
         )
     }
 
-    /// The queue drained while the foreground is no longer ours — the usual way there is claude ending in between and the shell inheriting the queue, and since which of them read the bytes is not observable, the verdict has to be failure either way. Answering success makes the app put a CR on top, and the user's next Enter runs that line
-    func testEmptyQueueDrainedByAnotherReaderIsFailure() {
-        XCTAssertEqual(
-            warpInjectWatchDecision(pending: 0, readerIsOurs: false, budgetExpired: false),
-            .drainedByOther
-        )
+    /// The queue drained while the foreground was not confirmed to be ours — the usual way there is claude ending in between and the shell inheriting the queue, and since which of them consumed the bytes is not observable, the verdict has to be failure either way. Answering success makes the app put a CR on top, and the user's next Enter runs that line.
+    ///
+    /// **Both non-expected states reach it**, which is the fail-closed rule: an unreadable
+    /// foreground is not evidence of a different reader, and it is not evidence of ours either
+    func testEmptyQueueWithoutAConfirmedReaderIsFailure() {
+        for foreground in [WarpForeground.different, .unknown] {
+            XCTAssertEqual(
+                warpInjectWatchDecision(pending: 0, foreground: foreground, budgetExpired: false),
+                .drainedWithoutConfirmedReader, "\(foreground)"
+            )
+        }
     }
 
     /// While our reader is unchanged it waits for as long as the budget lasts
     func testWaitsWhileOurReaderStillHasBytes() {
         XCTAssertEqual(
-            warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: false), .keepWaiting
+            warpInjectWatchDecision(pending: 7, foreground: .expected, budgetExpired: false), .keepWaiting
         )
     }
 
     /// Not read within the budget is a failure (fail-closed) — answering success puts a CR on top of the tail left in the queue
     func testBudgetExpiryFailsClosed() {
         XCTAssertEqual(
-            warpInjectWatchDecision(pending: 7, readerIsOurs: true, budgetExpired: true),
-            .notReadInTime(pending: 7)
+            warpInjectWatchDecision(pending: 7, foreground: .expected, budgetExpired: true),
+            .queueNotEmptyAtDeadline(pending: 7)
         )
     }
 
-    /// The branch where the reader is gone reaches the same conclusion regardless of the budget — the remaining bytes are not discarded
-    func testReaderGoneOutranksBudget() {
-        XCTAssertEqual(
-            warpInjectWatchDecision(pending: 3, readerIsOurs: false, budgetExpired: true),
-            .readerGone(pending: 3)
-        )
+    /// The branch where the reader is not confirmed reaches the same conclusion regardless of the budget — the remaining bytes are not discarded
+    func testAnUnconfirmedReaderOutranksTheBudget() {
+        for foreground in [WarpForeground.different, .unknown] {
+            XCTAssertEqual(
+                warpInjectWatchDecision(pending: 3, foreground: foreground, budgetExpired: true),
+                .readerUnconfirmed(pending: 3), "\(foreground)"
+            )
+        }
     }
 }
 

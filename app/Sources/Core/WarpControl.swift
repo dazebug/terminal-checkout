@@ -17,9 +17,10 @@ let warpTabConfigLegacyStem = "terminal-checkout"
 ///
 /// **This token is a permanent machine protocol: it will not change again.** It carries no natural
 /// language on purpose, so no future localization can have a reason to touch it. `uninstall.sh`
-/// greps for it and `warpTabConfigIsOurs` matches it by prefix, and those three copies have to stay
-/// byte-identical — a divergence means files nobody deletes. Anything a human should read goes on
-/// the line **below** it (`warpTabConfigTOML`), where translating it is harmless.
+/// greps for it and `warpTabConfigIsOurs` matches it — both against the **whole first line**, so a
+/// file that merely starts with it stays the user's — and those three copies have to stay
+/// byte-identical, since a divergence means files nobody deletes. Anything a human should read goes
+/// on the line **below** it (`warpTabConfigTOML`), where translating it is harmless.
 public let warpTabConfigHeader = "#!terminal-checkout/tab-config/v1"
 
 /// The header earlier builds wrote, kept **only** so their files stay reclaimable. It is Korean,

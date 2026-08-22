@@ -36,22 +36,26 @@ public enum WarpInjectWatch: Equatable {
     case delivered
     /// Our reader is still reading.
     case keepWaiting
-    /// The queue is empty and the foreground is **not** the reader we aimed at. Which of the two read the bytes is not observable from one sample, so the name says where it landed and not who took it — the usual way here is claude exiting and the shell inheriting the queue.
-    case drainedByOther
-    /// Bytes remain in the queue and the foreground is not the reader we aimed at — or could not be confirmed to be it, since a failed lookup lands here as well. Nothing is discarded, only the remaining count is reported.
-    case readerGone(pending: Int)
-    /// Not read within the budget (fail-closed).
-    case notReadInTime(pending: Int)
+    /// The queue is empty and the foreground was **not confirmed** to be the reader we aimed at — either somebody else's group, or a lookup that failed. Which of them consumed the bytes is not observable from one sample, so the case says what was seen and not who took it.
+    case drainedWithoutConfirmedReader
+    /// Bytes remain in the queue and the foreground was not confirmed to be ours. Nothing is discarded, only the remaining count is reported.
+    case readerUnconfirmed(pending: Int)
+    /// The budget ran out with bytes still in the queue (fail-closed). It does **not** say our bytes are the ones left: `FIONREAD` is an unattributed total, and the user typing during the wait lands in it too.
+    case queueNotEmptyAtDeadline(pending: Int)
 }
 
-/// Decides what to do next from the queue's remaining bytes, whether the reader is still ours, and whether the budget is spent.
-/// The empty queue is checked first because it is the only success condition, and the reader check comes before the budget because once somebody else's reader is attached there is no reason to keep waiting.
+/// Decides what to do next from the queue's remaining bytes, what the foreground is, and whether the budget is spent.
+/// The empty queue is checked first because it is the only success condition, and the foreground check comes before the budget because once the reader is not confirmably ours there is no reason to keep waiting.
+///
+/// `.different` and `.unknown` produce the same verdict — that is the fail-closed rule, unchanged.
+/// What changed is that they are no longer the same *value*: the caller still has both apart when
+/// it writes down what happened.
 public func warpInjectWatchDecision(
-    pending: Int, readerIsOurs: Bool, budgetExpired: Bool
+    pending: Int, foreground: WarpForeground, budgetExpired: Bool
 ) -> WarpInjectWatch {
-    if pending <= 0 { return readerIsOurs ? .delivered : .drainedByOther }
-    if !readerIsOurs { return .readerGone(pending: pending) }
-    return budgetExpired ? .notReadInTime(pending: pending) : .keepWaiting
+    if pending <= 0 { return foreground == .expected ? .delivered : .drainedWithoutConfirmedReader }
+    if foreground != .expected { return .readerUnconfirmed(pending: pending) }
+    return budgetExpired ? .queueNotEmptyAtDeadline(pending: pending) : .keepWaiting
 }
 
 /// The cap on the time the helper spends on **one** request — waiting for the queue to drain and watching whether the written bytes get read both have to fit inside it.
@@ -65,10 +69,28 @@ public let warpHelperRequestTimeout: TimeInterval = warpHelperWorkBudget * 3
 ///
 /// `TIOCSTI` only checks whether the caller shares the controlling session; **it does not decide who reads the bytes put into the queue**. If claude dies and the shell becomes the foreground, the shell reads the remaining CR and runs whatever draft the user was typing — which is why app-side gates that look only "before sending" are not enough, and why the window narrows only when the foreground is checked from the same process that injects.
 ///
+/// **Three states and not two.** This used to answer `Bool`, and a failed `tcgetpgrp` or `getpgid`
+/// lookup came back as `false` — the same value as "somebody else is attached". Both must refuse to
+/// inject, so the *decision* was right, but everything downstream then reported a fact nobody had
+/// established: an unreadable foreground was logged and replied to as a different reader. Wording
+/// alone could not fix that, because a `Bool` has nowhere to keep the difference; a caller that
+/// needs one verdict collapses the two itself, at a site the type no longer forces to think.
+///
 /// The comparison is by **process group** rather than pid: the claude pid the app picks is sometimes not the group leader (measured: `pid != pgid` in 3 of the user's 13 claude panes).
-/// A failed lookup yields -1, which makes this "if it cannot be told, do not inject".
-public func warpForegroundIsExpected(foregroundPGID: Int32, expectedPGID: Int32) -> Bool {
-    foregroundPGID > 0 && expectedPGID > 0 && foregroundPGID == expectedPGID
+public enum WarpForeground: Equatable {
+    /// The foreground process group is the one we aimed at.
+    case expected
+    /// Both lookups answered, and the foreground is somebody else's group.
+    case different
+    /// A lookup failed (`tcgetpgrp` or `getpgid` returned -1, or a pgid came back non-positive).
+    /// **Not the same as `different`**: it is the absence of an answer, and it is fail-closed for
+    /// the same reason — what cannot be told apart must not be injected into.
+    case unknown
+}
+
+public func warpForeground(foregroundPGID: Int32, expectedPGID: Int32) -> WarpForeground {
+    guard foregroundPGID > 0, expectedPGID > 0 else { return .unknown }
+    return foregroundPGID == expectedPGID ? .expected : .different
 }
 
 /// Why the helper must not stay alive any longer. The waiting loop and the **request-handling path** use the same verdict — with the cap checked only in the waiting loop, someone holding the connection open and requesting continuously bypasses the idle and lifetime caps entirely.

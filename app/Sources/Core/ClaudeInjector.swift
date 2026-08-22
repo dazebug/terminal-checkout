@@ -127,8 +127,13 @@ public struct ClaudeSessionIO {
     /// Gate ③, **immediately before bytes go out**: is it still that first claude (this one does not wait)?
     /// Only `send(_:io:)` calls it, and every send goes through `send` — checking at each send site separately guarantees a missed site.
     public var sessionIsUnchanged: () -> Bool
-    /// Is there still a way to confirm through the screen (on Warp: the Accessibility permission)? When false **nothing new is typed** — what is typed without confirmation can neither be submitted nor taken back. The cleanup that undoes what was already typed (`clearAbandonedInput`) deliberately does not look at this condition: blocking it too would leave our automatic input in the box, to be run by an Enter the user presses later.
-    public var canConfirmScreen: () -> Bool
+    /// What stands between us and confirming through the screen, or nil when nothing does. When it answers non-nil **nothing new is typed** — what is typed without confirmation can neither be submitted nor taken back. The cleanup that undoes what was already typed (`clearAbandonedInput`) deliberately does not look at this condition: blocking it too would leave our automatic input in the box, to be run by an Enter the user presses later.
+    ///
+    /// It carries the **reason** rather than a `Bool` because a diagnosis names it. A bare "cannot confirm" is true of any terminal we might add, while "grant the Accessibility permission" is true only where the means of confirmation is a permission — telling them apart from one `Bool` meant leaning on today's wiring being the only wiring, which is not a property the type held (round 6 review).
+    public var screenConfirmation: () -> ClaudeInputBlocker?
+
+    /// Can the screen still be confirmed? Derived, so the answer and its reason cannot disagree.
+    public func canConfirmScreen() -> Bool { screenConfirmation() == nil }
     /// True for terminals where `screenText` cannot be asserted to be our session's screen.
     /// iTerm2 and WezTerm read exactly that pane by pane or session id, so they are false. Warp only ever reads "the focused pane" through Accessibility, so it is true — and then every input runs the pane proof first.
     public var screenNeedsPaneProof: Bool
@@ -140,7 +145,7 @@ public struct ClaudeSessionIO {
         screenText: @escaping () -> String?,
         confirmSession: @escaping (TimeInterval) -> Bool,
         sessionIsUnchanged: @escaping () -> Bool = { true },
-        canConfirmScreen: @escaping () -> Bool = { true },
+        screenConfirmation: @escaping () -> ClaudeInputBlocker? = { nil },
         screenNeedsPaneProof: Bool = false,
         wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
@@ -148,7 +153,7 @@ public struct ClaudeSessionIO {
         self.screenText = screenText
         self.confirmSession = confirmSession
         self.sessionIsUnchanged = sessionIsUnchanged
-        self.canConfirmScreen = canConfirmScreen
+        self.screenConfirmation = screenConfirmation
         self.screenNeedsPaneProof = screenNeedsPaneProof
         self.wait = wait
     }
@@ -289,7 +294,10 @@ private func typeAndSubmit(
     let maxAttempts = 12
     for attempt in 1...maxAttempts {
         guard io.canConfirmScreen() else {
-            checkoutLog("the means of confirming the screen is gone, so nothing more is typed — the remaining fragment gets cleaned up")
+            // "no new input" and not "nothing more is typed": the cleanup Ctrl+U still goes out
+            // (it is `.cleanup`, which this gate deliberately does not block). And the cleanup is
+            // **attempted** — it can fail, and the caller is the one that logs which way it went
+            checkoutLog("the means of confirming the screen is gone, so no new input is typed — a cleanup of what is already in the box is attempted")
             return .gaveUp
         }
         if attempt > 1 {
@@ -660,8 +668,10 @@ public func deliverClaudeInputs(
         sessionIsUnchanged: {
             probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
         },
-        // A revoked permission makes screen confirmation impossible — nothing new is typed then, only the cleanup
-        canConfirmScreen: { handle.screenNeedsPaneProof ? accessibilityIsTrusted() : true },
+        // A revoked permission makes screen confirmation impossible — no new input is typed then, only the cleanup. The reason travels with the answer so a later diagnosis does not have to guess it back out of a Bool
+        screenConfirmation: {
+            handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
+        },
         // True for Warp alone — what Accessibility reads is "the focused pane", with no guarantee it is ours
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
@@ -670,9 +680,12 @@ public func deliverClaudeInputs(
     )
     timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
     checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
-    // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know. This wording can name the permission only because Warp is currently the one terminal where `canConfirmScreen` can go false (`screenNeedsPaneProof`) — if a terminal joins whose means of confirmation is not a permission, the wording has to split with it
-    if sent < inputs.count, !io.canConfirmScreen() {
-        checkoutLog("the means of confirming the screen disappeared mid-delivery — grant the Accessibility permission in the app settings window")
+    // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know.
+    // **The advice comes from the same value that made the answer no.** It used to be spelled out here and justified by "Warp is currently the only terminal whose confirmation can fail" — true today, and a sentence that would have gone on naming a permission for a terminal that had none (round 6 review). A reason that cannot name itself gets the first half of the line and no advice.
+    // One branch and not two: "cannot confirm" and "here is why" are now the same value, so there
+    // is no state where the first is true and the second unavailable
+    if sent < inputs.count, let blocker = io.screenConfirmation() {
+        checkoutLog("the means of confirming the screen disappeared mid-delivery — \(blocker.message)")
     }
 }
 

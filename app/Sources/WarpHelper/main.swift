@@ -132,10 +132,10 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
         if let stop = state.stopReason() { return .err(stop.description) }
         // Immediately before writing, "the process that will read this tty right now" is checked. The app's gate only sees the state before the request was sent, so if claude ended in between, the shell reads our bytes.
         // It is two syscalls, cheaper than a `ps` round trip, and it runs in the same process as the injection, so the window is microseconds
-        guard warpForegroundIsExpected(
-            foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
-        ) else {
-            return .err("foreground is not the expected reader")
+        switch warpForeground(foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)) {
+        case .expected: break
+        case .different: return .err("the foreground is a different process group")
+        case .unknown: return .err("the foreground could not be read")
         }
         guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
         let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
@@ -150,11 +150,16 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
         for index in sent..<(sent + chunk) {
             // Pushing a whole piece in on one check sends every remaining byte to the shell if claude ends midway. With a 512-byte piece the stretch running without a check is that long, so it is re-checked partway through — this interval is what bounds the leak
             if index > sent, (index - sent) % foregroundRecheckStride == 0 {
-                guard warpForegroundIsExpected(
+                // Same check as the one before the write, and the same three answers: "somebody
+                // else" and "could not be read" stop the write alike but are not the same finding
+                switch warpForeground(
                     foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
-                ) else {
-                    // Same check as the one before the write, and the same wording: a lookup that fails is "not the expected reader", not "changed"
-                    return .err("foreground is not the expected reader after \(index - sent) bytes")
+                ) {
+                case .expected: break
+                case .different:
+                    return .err("the foreground became a different process group after \(index - sent) bytes")
+                case .unknown:
+                    return .err("the foreground could not be read after \(index - sent) bytes")
                 }
             }
             var value = CChar(bitPattern: all[index])
@@ -184,26 +189,31 @@ private func watchUntilRead(
         guard let pending = ttyPendingBytes(state.ttyFD) else { return .err(lastErrnoName()) }
         // **Whose the remaining bytes are is never asked** — there is no way to ask.
         // Not passing any history into the verdict is what keeps that inference from coming back
+        let foreground = warpForeground(
+            foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
+        )
+        // What the two non-expected states are called when they are written down. The verdict does
+        // not distinguish them — both are failures — but a diagnosis that called an unreadable
+        // lookup "somebody else" would be reporting a fact nobody established
+        let seen = foreground == .different
+            ? "the foreground was a different process group"
+            : "the foreground could not be read"
         switch warpInjectWatchDecision(
-            pending: pending,
-            readerIsOurs: warpForegroundIsExpected(
-                foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
-            ),
-            budgetExpired: Date() >= deadline
+            pending: pending, foreground: foreground, budgetExpired: Date() >= deadline
         ) {
         case .delivered:
             return .ok(String(injected))
-        case .drainedByOther:
-            // Two observations, one sample: the queue is empty, and the foreground is not ours. Which of them read the bytes is not observable — `FIONREAD` is an unattributed total, and our claude reading and then exiting produces this same sample. The verdict is failure either way, and the log says what was seen rather than who took it
-            checkoutLog("Warp injection helper: the queue drained while the foreground was not the claude we aimed at — which of them read the bytes is not observable here")
-            return .err("queue drained with the foreground not ours")
-        case .readerGone(let pending):
+        case .drainedWithoutConfirmedReader:
+            // Two observations, one sample: the queue is empty, and the foreground is not confirmably ours. Which of them consumed the bytes is not observable — `FIONREAD` is an unattributed total, and our claude reading and then exiting produces this same sample
+            checkoutLog("Warp injection helper: the queue drained and \(seen) — which of them consumed the bytes is not observable here")
+            return .err("queue drained without a confirmed reader")
+        case .readerUnconfirmed(let pending):
             // Nothing is discarded. The remaining bytes may end up as residue in the shell's line buffer, but emptying the queue to prevent that would silently take the keys the user just typed as well
-            // "not ours" and not "gone": a failed `tcgetpgrp`/`getpgid` lookup yields -1 and lands here too (see `warpForegroundIsExpected`)
-            checkoutLog("Warp injection helper: the foreground is no longer the claude we aimed at — reporting failure rather than discarding \(pending) unread byte(s)")
-            return .err("foreground is not the expected reader; \(pending) bytes unread")
-        case .notReadInTime(let pending):
-            return .err("injected bytes not read in time (\(pending) pending)")
+            checkoutLog("Warp injection helper: \(seen) — reporting failure rather than discarding \(pending) unread byte(s)")
+            return .err("reader not confirmed; \(pending) bytes unread")
+        case .queueNotEmptyAtDeadline(let pending):
+            // Not "our bytes were not read": the count is unattributed, and keys the user pressed during the wait are in it too. What the deadline establishes is that the queue did not empty
+            return .err("queue not empty at the deadline (\(pending) pending) — consumption not confirmed")
         case .keepWaiting:
             usleep(5_000)
         }
