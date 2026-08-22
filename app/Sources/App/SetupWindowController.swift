@@ -144,27 +144,31 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         [
             (
                 "z", toolIsCritical("z", baseDirectoryConfigured: baseDirectoryConfigured),
-                baseDirectoryConfigured
-                    ? "명령을 찾을 수 없습니다 — 저장소 기본 폴더로 대신 이동하므로 버튼은 동작합니다. "
-                        + "zoxide를 설치하면 기본 폴더 밖의 저장소로도 점프합니다(brew install zoxide)."
-                    : "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. "
-                        + "brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하거나, "
-                        + "아래 「저장소 기본 폴더」를 설정하세요."
+                // Two complete messages rather than a shared opening plus two tails: a
+                // sentence assembled from pieces cannot be reordered by a translator, and three of
+                // these did share an opening clause (D36)
+                localized(
+                    baseDirectoryConfigured
+                        ? "app.tools.z.adviceWithBaseDir" : "app.tools.z.adviceNoBaseDir"
+                )
             ),
             (
                 "gh", false,
-                "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋과 저장소 기본 폴더의 clone 단계가 실패합니다. "
-                    + "brew install gh 후 gh auth login."
+                localized("app.tools.gh.advice")
             ),
             (
                 "claude", false,
-                "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다."
+                localized("app.tools.claude.advice")
             ),
         ]
     }
 
     private let terminalRadioWidth: CGFloat = 120
-    private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
+    /// Shown on screen **and** run in the user's terminal, which is why it is a `ShellPayload`
+    /// and not a catalogue key: a translated apostrophe breaks the `echo '…'` quoting and the test
+    /// button reports a shell error instead of opening a tab (D29). The type is what enforces it —
+    /// `localized(…)` returns a `String`, and `ShellPayload` cannot be built from one.
+    private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 
     /// 창이 닫힐 때 알림 (AppDelegate가 Dock 표시를 되돌리는 데 사용)
     var onClose: (() -> Void)?
@@ -175,7 +179,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        window.title = "Terminal Checkout 설정"
+        window.title = localized("app.window.title")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         // 터미널은 어둡다 — 시스템 모드와 무관하게 다크로 고정 (레이어 색이 정적이므로 필수)
@@ -326,30 +330,32 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: 카드 — 설정 단계 (완료되면 숨김)
 
     private func buildChromeCard() -> NSView {
-        card("Chrome 연결 (Native Host)", [
+        card(localized("app.card.chrome.title"), [
             manifestStatusLabel,
-            buttonRow([button("등록/업데이트", #selector(registerManifest))]),
+            buttonRow([button(localized("app.button.registerUpdate"), #selector(registerManifest))]),
         ])
     }
 
     private func buildExtensionCard() -> NSView {
-        let installButton = button("Chrome에 설치하기", #selector(installInChrome))
+        let installButton = button(localized("app.button.installInChrome"), #selector(installInChrome))
         installButton.keyEquivalent = "\r"
         installButton.bezelColor = Theme.actionGreen
         installButton.toolTip = Installer.extensionDirectory
 
         guideBlock = quoteBlock([
-            "① 우측 상단 「개발자 모드」 켜기",
-            "② 좌측 상단 「압축해제된 확장 프로그램을 로드합니다」 클릭",
-            "③ 파일 선택 창에서 ⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]",
-            "④ 개발자 모드는 켜둔 채로 유지하세요 — 끄면 확장이 비활성화됩니다",
+            localized("app.guide.step1"),
+            localized("app.guide.step2"),
+            localized("app.guide.step3"),
+            localized("app.guide.step4"),
         ])
         guideBlock.isHidden = true
         installFeedbackLabel.isHidden = true
 
-        return card("확장 프로그램", [
+        return card(localized("app.card.extension.title"), [
             extensionStatusLabel,
-            helpLabel("[Chrome에 설치하기]를 누르면 확장 폴더 경로가 클립보드에 복사되고 chrome://extensions가 열립니다."),
+            // The button's own label, not a second copy of it: quoting a label by hand is how a
+            // body ends up naming a button that has since been renamed, and in five locales at once (D28)
+            helpLabel(localized("app.card.extension.help", localized("app.button.installInChrome"))),
             buttonRow([installButton]),
             guideBlock,
             installFeedbackLabel,
@@ -362,7 +368,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// live in Core — this card stores the **normalized** result (echoed back into the field) and
     /// only words the rejection reasons.
     private func buildBaseDirCard() -> NSView {
-        baseDirField.placeholderString = "예: ~/Codes"
+        baseDirField.placeholderString = localized("app.baseDir.placeholder")
         baseDirField.font = Theme.mono(11.5)
         baseDirField.target = self
         baseDirField.action = #selector(baseDirectoryEdited)
@@ -371,16 +377,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         baseDirField.cell?.sendsActionOnEndEditing = true
         baseDirField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
 
-        let row = NSStackView(views: [baseDirField, button("폴더 선택…", #selector(chooseBaseDirectory))])
+        let row = NSStackView(views: [baseDirField, button(localized("app.button.chooseFolder"), #selector(chooseBaseDirectory))])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
 
-        return card("저장소 기본 폴더", [
+        return card(localized("app.card.baseDir.title"), [
             helpLabel(
-                "저장소들을 클론해 두는 최상위 폴더입니다. z가 이동에 실패하면(zoxide 기록이 없거나 "
-                    + "zoxide를 안 쓰는 경우) 이 폴더 아래의 저장소로 이동하고, 없으면 gh로 clone합니다. "
-                    + "비워 두면 지금까지와 똑같이 z로만 이동합니다."
+                localized("app.card.baseDir.help")
             ),
             row,
             baseDirStatusLabel,
@@ -389,9 +393,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             // offers that rewrite itself (issue #31), so point at the notice rather than asking for
             // the old by-hand re-apply
             helpLabel(
-                "이전 버전부터 쓰던 버튼은 저장해 둔 command를 그대로 유지합니다 — 폴더만 지정해서는 "
-                    + "폴백이 걸리지 않습니다. 확장 옵션 페이지를 열면 위쪽에 업데이트 표시가 뜨고, "
-                    + "버튼별로 확인한 뒤 저장하면 반영됩니다."
+                localized("app.card.baseDir.legacyNote")
             ),
         ])
     }
@@ -402,8 +404,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsList.orientation = .vertical
         toolsList.alignment = .leading
         toolsList.spacing = 6
-        return card("명령이 부르는 도구", [
-            helpLabel("버튼의 command와 claude 입력이 부르는 도구를 로그인 셸에서 확인했습니다."),
+        return card(localized("app.card.tools.title"), [
+            helpLabel(localized("app.card.tools.help")),
             toolsList,
         ])
     }
@@ -422,7 +424,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// into the catalogue with the rest of this window.
     private func languageCard() -> NSView {
         languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        languagePopUp.addItem(withTitle: "시스템 언어를 따름")
+        languagePopUp.addItem(withTitle: localized("app.language.followSystem"))
         languagePopUp.lastItem?.representedObject = automaticLocalePreference
         for tag in supportedLocales {
             languagePopUp.addItem(withTitle: languageMenuTitles[tag] ?? tag)
@@ -433,14 +435,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         // Half of the change lands now and half on the next launch (D14), so the button that closes
         // that gap sits next to the control that opens it rather than in a menu somewhere
-        languageRestartButton = button("지금 다시 시작", #selector(restartForLanguage))
+        languageRestartButton = button(localized("app.button.restartNow"), #selector(restartForLanguage))
         languageNoteLabel = helpLabel("", width: setupContentWidth - 28)
 
         let row = NSStackView(views: [languagePopUp, languageRestartButton])
         row.orientation = .horizontal
         row.alignment = .firstBaseline
         row.spacing = 10
-        return card("언어", [row, languageNoteLabel])
+        return card(localized("app.card.language.title"), [row, languageNoteLabel])
     }
 
     /// Each language in its own script. Not a catalogue lookup on purpose — these read the same
@@ -476,9 +478,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func languageNote(restartBlocked: Bool = false) -> String {
         if restartBlocked {
-            return "claude 입력을 전달하는 중이라 지금은 다시 시작하지 않습니다. 전달이 끝난 뒤 다시 눌러 주세요."
+            return localized("app.language.restartDeferred")
         }
-        return "앱이 그리는 문자열은 즉시 바뀝니다. 시스템 대화상자(파일 선택·경고)는 다음 실행부터 이 언어로 뜹니다."
+        return localized("app.language.note")
     }
 
     private func terminalCard() -> NSView {
@@ -501,12 +503,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         buildPermissionSection()
         buildAccessibilitySection()
-        return card("터미널", [radioRow, permissionSection, accessibilitySection])
+        return card(localized("app.card.terminal.title"), [radioRow, permissionSection, accessibilitySection])
     }
 
     private func radio(_ title: String, installed: Bool) -> NSButton {
         let button = NSButton(
-            radioButtonWithTitle: installed ? title : "\(title) (미설치)",
+            radioButtonWithTitle: installed ? title : localized("app.terminal.notInstalled", title),
             target: self, action: #selector(terminalChanged)
         )
         button.isEnabled = installed
@@ -521,18 +523,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         permissionSection.alignment = .leading
         permissionSection.spacing = 9
         permissionSection.addArrangedSubview(hairline())
-        permissionSection.addArrangedSubview(sectionTitle("iTerm2 제어 권한"))
+        permissionSection.addArrangedSubview(sectionTitle(localized("app.section.itermPermission.title")))
         permissionSection.addArrangedSubview(helpLabel(
-            "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다."
+            localized("app.section.itermPermission.help")
         ))
         permissionSection.addArrangedSubview(permissionStatusLabel)
-        requestPermissionButton.title = "iTerm2 권한 요청"
+        requestPermissionButton.title = localized("app.button.requestItermPermission")
         requestPermissionButton.target = self
         requestPermissionButton.action = #selector(requestPermission)
         requestPermissionButton.bezelStyle = .rounded
         permissionSection.addArrangedSubview(buttonRow([
             requestPermissionButton,
-            button("시스템 설정 열기", #selector(openAutomationSettings)),
+            button(localized("app.button.openSystemSettings"), #selector(openAutomationSettings)),
         ]))
     }
 
@@ -547,12 +549,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         accessibilitySection.alignment = .leading
         accessibilitySection.spacing = 9
         accessibilitySection.addArrangedSubview(hairline())
-        accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
+        accessibilitySection.addArrangedSubview(sectionTitle(localized("app.section.accessibility.title")))
         accessibilitySection.addArrangedSubview(helpLabel(warpAccessibilityHelpText()))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
-            button("손쉬운 사용 권한 요청", #selector(requestAccessibility)),
-            button("시스템 설정 열기", #selector(openAccessibilitySettings)),
+            button(localized("app.button.requestAccessibility"), #selector(requestAccessibility)),
+            button(localized("app.button.openSystemSettings"), #selector(openAccessibilitySettings)),
         ]))
     }
 
@@ -568,26 +570,27 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             string: "$ ", attributes: [.font: Theme.mono(11), .foregroundColor: Theme.textFaint]
         )
         command.append(NSAttributedString(
-            string: testCommand, attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
+            string: testCommand.command,
+            attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
         ))
         let commandLabel = NSTextField(labelWithString: "")
         commandLabel.attributedStringValue = command
 
-        let row = NSStackView(views: [chip(commandLabel), button("터미널에서 실행", #selector(testTerminal))])
+        let row = NSStackView(views: [chip(commandLabel), button(localized("app.button.runInTerminal"), #selector(testTerminal))])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
 
         testResultLabel.isHidden = true
 
-        return card("동작 테스트", [row, testResultLabel])
+        return card(localized("app.card.test.title"), [row, testResultLabel])
     }
 
     /// 설정 완료 후에만 보이는 유틸리티 (설정 중에는 확장이 로드되기 전이라 옵션 페이지가 없다)
     private func buildUtilityRow() -> NSView {
         buttonRow([
-            button("확장 옵션 페이지 열기", #selector(openOptionsPage)),
-            button("설치 안내 다시 보기", #selector(reshowInstall)),
+            button(localized("app.button.openOptionsPage"), #selector(openOptionsPage)),
+            button(localized("app.button.showSetupGuide"), #selector(reshowInstall)),
         ])
     }
 
@@ -784,12 +787,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
         // 그 사이 사용자가 끼어들면 입력이 섞인다
-        var note = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
-            + "claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요."
+        // Two complete sentences, joined as sentences. That is the one join D36 leaves open:
+        // each part is a message a translator can write on its own, and neither is a clause of the other
+        var note = localized("app.terminal.note.common")
         // Warp는 화면을 "포커스된 탭"만 보여 주므로, 앱이 자기 탭을 확인할 수 있을 때만 제출한다
         if Settings.terminal == .warp {
-            note += " Warp는 그 탭을 보고 있는 동안에만 전달됩니다 — 다른 탭으로 옮기면 "
-                + "멈췄다가 돌아오면 이어집니다."
+            note += localized("app.terminal.note.warp")
         }
         terminalNoteLabel.stringValue = note
     }
@@ -823,9 +826,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         if case .error = folder {
             extensionState = folder
         } else if let evidence {
-            extensionState = .ok("연결 확인됨 — 마지막 요청 \(relative(evidence))")
+            extensionState = .ok(localized("app.status.extension.connected", relative(evidence)))
         } else {
-            extensionState = .warning("Chrome에서의 첫 요청 대기 중 — 설치 후 GitHub PR 페이지에서 버튼을 누르면 완료됩니다")
+            extensionState = .warning(localized("app.status.extension.waiting"))
         }
         apply(extensionState, to: extensionStatusLabel)
         extensionCard.isHidden = evidence != nil && !forceShowInstall
@@ -847,17 +850,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 let status = PermissionChecker.iTermAutomationStatus()
                 permission = status.isGranted ? .ok(status.label) : .warning(status.label)
             } else {
-                permission = .warning("iTerm2가 설치되어 있지 않음")
+                permission = .warning(localized("app.status.iterm.notInstalled"))
             }
-            apply(permission!, to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
+            apply(permission!, to: permissionStatusLabel, format: "app.status.itermAutomation.format")
         case .wezterm:
             break // CLI 실행이라 TCC 권한이 필요 없다
         case .warp:
             apply(
                 accessibilityGranted
-                    ? .ok("허용됨")
-                    : .warning("허용 안 됨 — claude 입력이 예약된 버튼은 거절됩니다"),
-                to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
+                    ? .ok(localized("app.status.accessibility.granted"))
+                    : .warning(localized("app.status.accessibility.denied")),
+                to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
         }
         var granted = false
@@ -890,14 +893,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             resolved = try normalizedBaseDirectory(stored)
         } catch {
             apply(
-                .error("저장된 값이 올바르지 않습니다(\(baseDirectoryReason(error))) — 다시 지정해 주세요"),
+                .error(localized("app.baseDir.storedInvalid", baseDirectoryReason(error))),
                 to: baseDirStatusLabel
             )
             return
         }
         guard let normalized = resolved else {
             apply(
-                .warning("설정하지 않음 — z로만 이동합니다. zoxide 기록에 없는 저장소에서는 명령이 아무것도 하지 않습니다"),
+                .warning(localized("app.baseDir.notConfigured")),
                 to: baseDirStatusLabel
             )
             return
@@ -905,11 +908,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory)
         if exists && isDirectory.boolValue {
-            apply(.ok("\(normalized) — z가 실패하면 여기로 이동하고, 저장소가 없으면 clone합니다"), to: baseDirStatusLabel)
+            apply(.ok(localized("app.baseDir.ok", normalized)), to: baseDirStatusLabel)
         } else {
             // clone creates the leading directories (measured), so a missing folder still works —
             // this only says so out loud, which is how a typo gets noticed
-            apply(.warning("\(normalized) — 아직 없는 폴더입니다. clone할 때 만들어집니다"), to: baseDirStatusLabel)
+            apply(.warning(localized("app.baseDir.missingFolder", normalized)), to: baseDirStatusLabel)
         }
     }
 
@@ -961,39 +964,53 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .iterm:
             terminalName = "iTerm2"
             terminalColor = permission.map(color) ?? Theme.warn
-            terminalDetail = "iTerm2 자동화: \(permission?.message ?? "상태 미확인")"
+            terminalDetail = localized(
+                "app.status.itermAutomation.format", permission?.message ?? localized("app.status.unknown")
+            )
         case .wezterm:
             terminalName = "WezTerm"
             let installed = PermissionChecker.isWezTermInstalled
             terminalColor = installed ? Theme.ok : Theme.err
-            terminalDetail = installed ? "WezTerm CLI 사용 가능 — TCC 권한 불필요" : "WezTerm이 설치되어 있지 않음"
+            terminalDetail = localized(
+                installed ? "app.pipeline.wezterm.available" : "app.pipeline.wezterm.notInstalled"
+            )
         case .warp:
             terminalName = "Warp"
             if !PermissionChecker.isWarpInstalled {
                 terminalColor = Theme.err
-                terminalDetail = "Warp가 설치되어 있지 않음"
+                terminalDetail = localized("app.pipeline.warp.notInstalled")
             } else if accessibilityGranted {
                 terminalColor = Theme.ok
-                terminalDetail = "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
+                terminalDetail = localized("app.pipeline.warp.ready")
             } else {
                 // claude 입력이 없는 버튼은 그대로 도므로 오류가 아니라 경고다
                 terminalColor = Theme.warn
-                terminalDetail = "손쉬운 사용 권한 없음 — claude 입력이 예약된 버튼은 탭을 열지 않고 거절됨"
+                terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
         }
         return [
-            .init(label: "Chrome 확장", color: color(extensionState), detail: extensionState.message),
+            .init(
+                label: localized("app.pipeline.node.extension"), color: color(extensionState),
+                detail: extensionState.message
+            ),
             .init(label: "relay", color: color(manifest), detail: "Native Host: \(manifest.message)"),
             .init(
-                label: "앱", color: socketAlive ? Theme.ok : Theme.err,
-                detail: socketAlive ? "소켓 서버 대기 중 (host.sock)" : "소켓 파일 없음 — 앱을 재시작해 보세요"
+                label: localized("app.pipeline.node.app"), color: socketAlive ? Theme.ok : Theme.err,
+                detail: localized(
+                    socketAlive ? "app.pipeline.socket.listening" : "app.pipeline.socket.missing"
+                )
             ),
             .init(label: terminalName, color: terminalColor, detail: terminalDetail),
         ]
     }
 
-    private func apply(_ state: SetupState, to label: NSTextField, prefix: String = "") {
-        label.stringValue = "● \(prefix)\(state.message)"
+    /// `format` is a **key**, not a prefix. Gluing a translated label in front of a translated
+    /// status is the assembly D36 rules out — in a language that puts the subject last, the pieces
+    /// end up in the wrong order and no translator can fix it from inside either half. A whole
+    /// message with `%@` can be written the way the language wants.
+    private func apply(_ state: SetupState, to label: NSTextField, format: String? = nil) {
+        let body = format.map { localized($0, state.message) } ?? state.message
+        label.stringValue = "● \(body)"
         switch state {
         case .ok: label.textColor = Theme.ok
         case .warning: label.textColor = Theme.warn
@@ -1007,7 +1024,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         do {
             try Installer.installManifest()
         } catch {
-            showError("Native Host 등록 실패", error)
+            showError(localized("app.alert.manifestFailed"), error)
         }
         refresh()
     }
@@ -1018,7 +1035,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             do {
                 try Installer.installExtensionCopy()
             } catch {
-                showError("확장 프로그램 폴더 준비 실패", error)
+                showError(localized("app.alert.extensionFolderFailed"), error)
                 return
             }
         }
@@ -1027,7 +1044,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         pasteboard.setString(Installer.extensionDirectory, forType: .string)
         openInChrome("chrome://extensions")
         guideBlock.isHidden = false
-        installFeedbackLabel.stringValue = "경로가 클립보드에 복사되었고 Chrome이 열렸습니다. 위 ①→④ 순서대로 진행하세요."
+        installFeedbackLabel.stringValue = localized("app.install.feedback")
         installFeedbackLabel.textColor = Theme.accent
         installFeedbackLabel.isHidden = false
         refresh()
@@ -1040,8 +1057,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return errorMessage(error)
         }
         switch problem {
-        case .notAbsolute: return "절대 경로가 아닙니다"
-        case .invalidCharacters: return "공백이나 한글 등 셸에서 안전하지 않은 문자가 있습니다"
+        case .notAbsolute: return localized("app.baseDir.reason.notAbsolute")
+        case .invalidCharacters: return localized("app.baseDir.reason.invalidCharacters")
         }
     }
 
@@ -1057,7 +1074,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             baseDirField.stringValue = normalized ?? ""
         } catch {
             apply(
-                .error("저장하지 않았습니다 — \(baseDirectoryReason(error))"),
+                .error(localized("app.baseDir.notSaved", baseDirectoryReason(error))),
                 to: baseDirStatusLabel
             )
             // FittedContentStackView.layout() re-measures on the label change — no manual resize
@@ -1071,7 +1088,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "선택"
+        panel.prompt = localized("app.panel.choosePrompt")
         let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             self.baseDirField.stringValue = url.path
@@ -1096,13 +1113,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func requestPermission() {
         requestPermissionButton.isEnabled = false
-        permissionStatusLabel.stringValue = "● iTerm2 자동화: 권한 프롬프트 응답 대기 중…"
+        permissionStatusLabel.stringValue = "● " + localized("app.status.itermAutomation.waiting")
         permissionStatusLabel.textColor = Theme.textDim
         PermissionChecker.requestITermAutomation { [weak self] result in
             guard let self else { return }
             self.requestPermissionButton.isEnabled = true
             if case .failure(let error) = result {
-                self.showError("권한 요청 실패", error)
+                self.showError(localized("app.alert.permissionRequestFailed"), error)
             }
             self.refresh()
         }
@@ -1125,8 +1142,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func testTerminal() {
         let terminal = Settings.terminal
-        let command = testCommand
-        testResultLabel.stringValue = "실행 중…"
+        let command = testCommand.command
+        testResultLabel.stringValue = localized("app.test.running")
         testResultLabel.textColor = Theme.textDim
         testResultLabel.isHidden = false
         DispatchQueue.global().async { [weak self] in
@@ -1138,10 +1155,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
             DispatchQueue.main.async {
                 if let failure {
-                    self?.testResultLabel.stringValue = "실패: \(errorMessage(failure))"
+                    self?.testResultLabel.stringValue = localized("app.test.failed", errorMessage(failure))
                     self?.testResultLabel.textColor = Theme.err
                 } else {
-                    self?.testResultLabel.stringValue = "터미널에 새 탭이 열렸다면 성공입니다."
+                    self?.testResultLabel.stringValue = localized("app.test.succeeded")
                     self?.testResultLabel.textColor = Theme.textDim
                 }
                 self?.refresh()
@@ -1189,9 +1206,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 /// that asserts the wrong cause sends people to fix the wrong thing (round 8).
 func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
     guard available?["claude"] == true, executable?["claude"] == false else { return nil }
-    return "claude를 실행 파일로 찾지 못해 claude 입력을 병합하지 못합니다"
-        + " (함수·별칭으로만 설치됐거나, PATH에 상대 경로 항목이 있거나, 실행 권한이 없는 경우입니다)"
-        + " — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다."
+    return localized("app.tools.claudeWrapper.advice")
 }
 
 /// What the Accessibility card says. It used to promise that the command would still run without
@@ -1199,8 +1214,8 @@ func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?
 /// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
 /// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
 func warpAccessibilityHelpText() -> String {
-    "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 claude 입력이 "
-        + "예약된 버튼은 탭을 열지 않고 거절됩니다 — **기본 프리셋 3종이 전부 여기 해당합니다**"
-        + "(`!` 입력은 claude 셸 모드에 타이핑해야 실행되기 때문입니다). claude 입력이 없는 버튼과 "
-        + "평문 한 줄만 예약한 버튼은 권한 없이 그대로 동작합니다. 전달 중에는 그 탭을 보고 있어야 합니다."
+    // The `**…**` and the backticks are gone: `NSTextField` renders neither, so they were
+    // showing up as literal asterisks on screen — and translating them would have copied that into
+    // five catalogues
+    localized("app.section.accessibility.help")
 }

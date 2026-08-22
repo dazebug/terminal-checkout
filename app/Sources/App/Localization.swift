@@ -39,12 +39,24 @@ private let appleLanguagesKey = "AppleLanguages"
 private let missingValueSentinel = "\u{0}tc-missing"
 
 enum AppLocalization {
+    /// Where catalogues are read from. The app leaves it at its own bundle; `swift test` has no app
+    /// bundle at all, so a test that wants the window to draw **sentences instead of raw keys** has
+    /// to say where they live. Without this the layout tests would be measuring the width of
+    /// `app.card.baseDir.help` — a string that is shorter than every sentence it stands for, which
+    /// is the one direction a layout test must not be wrong in.
+    static var resourcesPath: String? = Bundle.main.resourcePath
+
+    /// A locale a test can force, so the window can be drawn in each one without touching the
+    /// user's stored preference. nil in production, and the only writer is a test.
+    static var tagOverrideForTesting: String?
+
     /// The tag this launch renders in.
     static func resolvedTag(
         defaults: UserDefaults = .standard,
         systemPreferred: [String] = Locale.preferredLanguages
     ) -> String {
-        resolveLocale(
+        if let tagOverrideForTesting { return tagOverrideForTesting }
+        return resolveLocale(
             preference: defaults.object(forKey: languagePreferenceKey),
             systemPreferred: systemPreferred
         )
@@ -53,7 +65,7 @@ enum AppLocalization {
     /// The catalog for one tag, or nil when the bundle does not carry it. `resources` is a
     /// parameter so a test can point at the source tree; production passes the app bundle.
     static func catalog(
-        forTag tag: String, resources: String? = Bundle.main.resourcePath
+        forTag tag: String, resources: String? = AppLocalization.resourcesPath
     ) -> Bundle? {
         guard let resources else { return nil }
         return Bundle(path: (resources as NSString).appendingPathComponent("\(tag).lproj"))
@@ -67,7 +79,7 @@ enum AppLocalization {
     static func string(
         _ key: String,
         tag: String? = nil,
-        resources: String? = Bundle.main.resourcePath
+        resources: String? = AppLocalization.resourcesPath
     ) -> String {
         let tag = tag ?? resolvedTag()
         for candidate in [tag, fallbackLocale] {
@@ -114,4 +126,49 @@ enum AppLocalization {
         defaults.set([tag], forKey: appleLanguagesKey)
         return tag
     }
+}
+
+
+/// The shorthand every user-facing string in the app goes through.
+///
+/// A free function rather than a method so that a call site reads as the sentence it produces, and
+/// so that **nothing can hold the result**: `localized` is called where the string is used, which is
+/// what makes a language change take effect on the next redraw rather than on the next launch.
+func localized(_ key: String) -> String {
+    AppLocalization.string(key)
+}
+
+/// The same lookup with arguments substituted.
+///
+/// Formatting happens **here and only here**, because the alternative is building a sentence out of
+/// pieces at the call site — the one thing a catalogue cannot survive (D36). A translator can move
+/// `%1$@` and `%2$@` around each other; they cannot reorder two strings a `+` glued together.
+///
+/// No locale is passed to `String(format:)` on purpose: every placeholder we use is `%@` or a
+/// positional form of it, and a locale-aware format would put grouping separators into numbers that
+/// are not numbers to us.
+func localized(_ key: String, _ arguments: CVarArg...) -> String {
+    String(format: AppLocalization.string(key), arguments: arguments)
+}
+
+/// Text that is **shell syntax**, not a message.
+///
+/// The distinction is load-bearing rather than tidy: `testCommand` is shown on screen *and* run in
+/// the user's terminal, so a translated apostrophe would break the `echo '…'` quoting and the test
+/// button would report a shell error (D29). The invariant that came out of that — a localized
+/// catalogue value never reaches a shell, AppleScript, a TOML file or a terminal's input — is the
+/// same class as `{cd}` being exempt from the character whitelist.
+///
+/// It is enforced by the type rather than by remembering: the only initialiser takes a
+/// `StaticString`, so a value can be written as a literal in this source and **cannot** be built
+/// from a `String` computed at runtime. `localized(…)` returns a `String`, so it does not compile
+/// here — which is the point.
+struct ShellPayload: ExpressibleByStringLiteral, CustomStringConvertible {
+    let command: String
+
+    init(stringLiteral value: StaticString) {
+        command = value.withUTF8Buffer { String(decoding: $0, as: UTF8.self) }
+    }
+
+    var description: String { command }
 }

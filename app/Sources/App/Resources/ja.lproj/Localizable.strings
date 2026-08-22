@@ -1,3 +1,5 @@
-/* See en.lproj/Localizable.strings. Machine-translated first pass; item 24 owns the bodies. */
+/* See en.lproj/Localizable.strings. Machine-translated first pass; item 24 owns the
+   bodies — this one key exists so the five-locale skeleton stays provable while the other
+   catalogues are still empty. */
 
-"app.setup.window.title" = "Terminal Checkout セットアップ";
+"app.window.title" = "Terminal Checkout セットアップ";

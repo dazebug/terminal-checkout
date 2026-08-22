@@ -23,10 +23,10 @@ final class LocalizationBundleTests: XCTestCase {
             .path
     }
 
-    /// The one key the skeleton carries. The bodies arrive with items 23 and 24; what has to hold
-    /// now is that five catalogs exist, that each is reachable, and that each answers with **its
-    /// own** value rather than with a neighbour's.
-    private let probeKey = "app.setup.window.title"
+    /// The key every catalogue carries. It was a skeleton probe (`app.setup.window.title`) until
+    /// item 10 moved the window's strings in and the window title got its real key; the other four
+    /// catalogues still hold only this one, because their bodies are item 24's.
+    private let probeKey = "app.window.title"
 
     func testEachBundledCatalogAnswersInItsOwnLanguage() throws {
         var answers: [String: String] = [:]

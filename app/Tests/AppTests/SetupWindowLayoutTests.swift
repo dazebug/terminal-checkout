@@ -11,15 +11,35 @@ import XCTest
 final class SetupWindowLayoutTests: XCTestCase {
     private var savedTerminal: Terminal!
 
+    private var savedResources: String?
+
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
+        // Without this the window draws **raw keys**, and a key is shorter than every sentence it
+        // stands for — a layout test that passed on keys would be silent about the case it exists
+        // for. `swift test` has no app bundle, so the source tree is where the catalogues are
+        savedResources = AppLocalization.resourcesPath
+        AppLocalization.resourcesPath = SetupWindowLayoutTests.sourceResources
     }
 
     override func tearDown() {
         Settings.terminal = savedTerminal
+        AppLocalization.resourcesPath = savedResources
         super.tearDown()
     }
+
+    static var sourceResources: String {
+        URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/SetupWindowLayoutTests.swift
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/Resources").path
+    }
+
+    /// The catalogues that have bodies today. `ja` and the two Chinese ones carry a single key
+    /// until item 24, so putting them in this list would measure a window of raw keys and call it
+    /// a pass — the list grows when the catalogues do.
+    static let populatedLocales = ["en", "ko"]
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
@@ -38,6 +58,40 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// content". Tall enough that no layout in this window reaches the clamp — the clamp has its
     /// own test, and mixing the two makes a pass depend on the display the suite runs on.
     private let roomyScreen = NSRect(x: 0, y: 0, width: 1600, height: 2000)
+
+    /// **The window has to fit its content in every language it can be drawn in.** This is the only
+    /// automatic check of that: a translated sentence is longer or shorter than the Korean it
+    /// replaced, and a card that fits one can clip in another. It walks the catalogues rather than a
+    /// hardcoded pair, so the day item 24 fills the other three, they are covered by adding them to
+    /// `populatedLocales` — the failure it would otherwise produce is silent.
+    func testTheWindowFitsItsContentInEveryPopulatedLocale() throws {
+        for tag in Self.populatedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            defer { AppLocalization.tagOverrideForTesting = nil }
+
+            let controller = makeController(.warp)
+            let window = try XCTUnwrap(controller.window)
+            // The same measurement the transition test uses: the stack asks, the window answers.
+            // A roomy screen because the property only holds while the content fits — past that
+            // the clamp is deliberate and has its own test
+            controller.rootStack.visibleFrameOverride = roomyScreen
+            settle(window)
+
+            let needed = controller.rootStack.fittingSize.height
+            XCTAssertGreaterThan(needed, 0, "\(tag) measured nothing")
+            XCTAssertGreaterThanOrEqual(
+                contentHeight(window), needed - 0.5,
+                "the window is shorter than its content in \(tag) — cards will overlap"
+            )
+            XCTAssertEqual(
+                controller.rootStack.frame.height, needed, accuracy: 0.5, "\(tag) squeezed the stack"
+            )
+            // And the sentences really are that locale's, not keys or another locale's
+            let title = localized("app.card.baseDir.title")
+            XCTAssertFalse(title.hasPrefix("app."), "\(tag) drew a raw key")
+            XCTAssertEqual(title, tag == "en" ? "Repository base folder" : "저장소 기본 폴더")
+        }
+    }
 
     /// Every status line must wrap. One of them (`accessibilityStatusLabel`) was declared beside
     /// its siblings but missed the styling loop, so it kept the default font and a single line —
@@ -160,23 +214,85 @@ final class ClaudeWrapperAdviceTests: XCTestCase {
 /// opposite of what the app does since the precondition gate landed: the request is refused and no
 /// tab opens (round 8, Codex P2). A card that contradicts the behaviour is worse than no card.
 final class WarpAccessibilityHelpTextTests: XCTestCase {
-    func testTheCardSaysTheRequestIsRefusedRatherThanPartlyRun() {
-        let text = warpAccessibilityHelpText()
-        XCTAssertFalse(text.contains("그대로 실행되지만"), text)
-        XCTAssertTrue(text.contains("거절"), text)
+    /// **The subject moved, so the test moved with it.** These sentences used to be literals in
+    /// `SetupWindowController.swift`, and this class read that file. After item 10 they live in the
+    /// catalogues, and a check that still scanned the source would pass by finding nothing —
+    /// vacuously green, which is worse than deleted.
+    private func catalogue(_ tag: String) throws -> [String: String] {
+        let path = (SetupWindowLayoutTests.sourceResources as NSString)
+            .appendingPathComponent("\(tag).lproj/Localizable.strings")
+        let parsed = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: URL(fileURLWithPath: path)), format: nil
+        ) as? [String: String]
+        return try XCTUnwrap(parsed, "\(tag) catalogue did not parse")
+    }
+
+    func testTheCardSaysTheRequestIsRefusedRatherThanPartlyRun() throws {
+        let refusal = ["en": "refused", "ko": "거절"]
+        for tag in SetupWindowLayoutTests.populatedLocales {
+            let help = try XCTUnwrap(catalogue(tag)["app.section.accessibility.help"], tag)
+            XCTAssertTrue(help.contains(try XCTUnwrap(refusal[tag])), "\(tag): \(help)")
+        }
     }
 
     /// The same promise was made in two more places — the permission status line and the pipeline
-    /// row — and round 8 fixed only the card. They are plain string literals with no seam, so the
-    /// source itself is the thing to check: no window text may say the command still runs
+    /// row — and round 8 fixed only the card. **No value in any catalogue** may say the command
+    /// still runs without the permission; scanning every value is what keeps the next translation
+    /// from reintroducing it in one locale only.
     func testNoWindowTextStillPromisesTheCommandRunsWithoutThePermission() throws {
-        let source = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Sources/App/SetupWindowController.swift")
-        let text = try String(contentsOf: source, encoding: .utf8)
-        for promise in ["명령은 실행되지만", "명령은 실행되고"] {
-            XCTAssertFalse(text.contains(promise), promise)
+        let promises = [
+            "en": ["the command still runs", "command still runs", "only the claude input"],
+            "ko": ["명령은 실행되지만", "명령은 실행되고", "그대로 실행되지만"],
+        ]
+        for tag in SetupWindowLayoutTests.populatedLocales {
+            let values = try catalogue(tag)
+            XCTAssertFalse(values.isEmpty, "\(tag) catalogue is empty — this would pass on nothing")
+            for promise in try XCTUnwrap(promises[tag]) {
+                for (key, value) in values {
+                    XCTAssertFalse(value.contains(promise), "\(tag) \(key): \(promise)")
+                }
+            }
+        }
+    }
+
+    /// **A body quotes a label by receiving it, never by repeating it** (D28). Eight places in this
+    /// window and the extension name another control in their text; spelled out, each is a copy that
+    /// goes stale the moment the label is reworded — in five locales independently, so four of them
+    /// can be wrong while the one you read is right.
+    ///
+    /// The relationship's real gate is item 12, which will check the placeholder against the key it
+    /// receives. This is the half that can be checked from here: no value may contain another key's
+    /// label as literal text.
+    func testNoValueSpellsOutALabelInsteadOfReceivingIt() throws {
+        let labelKeys = [
+            "app.button.registerUpdate", "app.button.installInChrome", "app.button.chooseFolder",
+            "app.button.requestItermPermission", "app.button.openSystemSettings",
+            "app.button.requestAccessibility", "app.button.runInTerminal",
+            "app.button.openOptionsPage", "app.button.showSetupGuide", "app.button.restartNow",
+        ]
+        for tag in SetupWindowLayoutTests.populatedLocales {
+            let values = try catalogue(tag)
+            for labelKey in labelKeys {
+                let label = try XCTUnwrap(values[labelKey], "\(tag) \(labelKey)")
+                for (key, value) in values where key != labelKey {
+                    XCTAssertFalse(
+                        value.localizedCaseInsensitiveContains(label),
+                        "\(tag) \(key) spells out \(labelKey) (\"\(label)\") instead of taking it as %@"
+                    )
+                }
+            }
+        }
+    }
+
+    /// The markup that never rendered. `NSTextField` draws `**bold**` and `` `code` `` literally,
+    /// so those characters were on screen as themselves — and translating them would have copied
+    /// the defect into five catalogues at once.
+    func testNoCatalogueValueCarriesMarkupThatDoesNotRender() throws {
+        for tag in SetupWindowLayoutTests.populatedLocales {
+            for (key, value) in try catalogue(tag) {
+                XCTAssertFalse(value.contains("**"), "\(tag) \(key) carries ** **")
+                XCTAssertFalse(value.contains("`"), "\(tag) \(key) carries a backtick")
+            }
         }
     }
 }
