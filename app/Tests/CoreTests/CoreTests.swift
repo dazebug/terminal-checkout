@@ -4032,3 +4032,181 @@ final class AppVariableSyncTests: XCTestCase {
         XCTAssertEqual(appVariablesFromDefaults("const APP_VARIABLES = [];"), [])
     }
 }
+
+// MARK: - Locale resolution (which of the five bundled catalogs the app renders in)
+
+/// Everything the verdict depends on is passed in — the stored preference, the system's language
+/// order, and the tags the bundle actually carries. None of it is read from the host machine here,
+/// and that is what makes these assertions mean the same thing on a ko-KR laptop and on an `en` CI
+/// runner. Measured (D7): a `Bundle(url:)` lookup resolves through the host language, so an oracle
+/// that touched the bundle would be answering a different question on each machine.
+final class LocaleResolutionTests: XCTestCase {
+    /// What the app ships a catalog for, spelled out instead of read from `supportedLocales` —
+    /// changing the constant has to fail here rather than quietly redefine what the rest of these
+    /// tests are asserting.
+    private let bundled = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
+
+    /// The three tags in the R0 measurement that no bundle carries: they can only be answered by
+    /// dropping the region (`en-GB`) or by reading the script the region implies (`zh-HK`,
+    /// `zh-MO`). The first loop is what makes the name true — if one of them were ever bundled,
+    /// the equalities below would still pass while proving nothing.
+    func testAutoMatchesOnlyThroughRegionFallback() {
+        for tag in ["zh-HK", "zh-MO", "en-GB"] {
+            XCTAssertFalse(bundled.contains(tag), "\(tag) is bundled — an exact match would answer first")
+        }
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["zh-HK"], available: bundled), "zh-Hant")
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["zh-MO"], available: bundled), "zh-Hant")
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["en-GB"], available: bundled), "en")
+        // An absent preference is the same path as the stored `auto`, not a third one
+        XCTAssertEqual(resolveLocale(preference: nil, systemPreferred: ["zh-HK"], available: bundled), "zh-Hant")
+    }
+
+    /// The system list here would answer `ko`. An explicit choice we cannot honour must not fall
+    /// through to it: the user asked for a language, and answering with a third one they never
+    /// named would be a guess. What is left is the fallback the project chose, `en`.
+    func testUnsupportedExplicitLocaleFallsBackToEnglish() {
+        let system = ["ko-KR", "ja-JP"]
+        XCTAssertEqual(resolveLocale(preference: nil, systemPreferred: system, available: bundled), "ko")
+        for tag in ["fr", "pt-BR", "de-DE", "xx", "und"] {
+            XCTAssertEqual(resolveLocale(preference: tag, systemPreferred: system, available: bundled), "en", tag)
+        }
+    }
+
+    /// A stored value that is not a string at all, and a string that names nothing, are both
+    /// answered without consulting the system list — the assertion is the gap between `ko` (what
+    /// the auto path answers for this system order) and `en`. Folding them into `auto` would make
+    /// a corrupt byte indistinguishable from a user who asked to follow the system, and the fold
+    /// is silent: nothing on screen would say the stored choice was dropped.
+    ///
+    /// The type list is what `UserDefaults.object(forKey:)` can hand back after a hand-edited
+    /// plist or a future build that wrote another type. `auto` is our own token, not a language
+    /// tag, so it is matched exactly — `AUTO` and `auto ` are not it.
+    func testCorruptStoredPreferenceIsNotTrusted() {
+        let system = ["ko-KR"]
+        XCTAssertEqual(resolveLocale(preference: nil, systemPreferred: system, available: bundled), "ko")
+
+        let corrupt: [Any] = [
+            42, 3.5, true, ["ko"], ["locale": "ko"], Data(), Date(timeIntervalSince1970: 0),
+            "", " ko ", "auto ", "AUTO", "-", "1234", "-ko", "-zh-Hant",
+        ]
+        for value in corrupt {
+            XCTAssertEqual(
+                resolveLocale(preference: value, systemPreferred: system, available: bundled), "en",
+                "\(type(of: value)) \(value) reached the auto path"
+            )
+        }
+    }
+
+    /// The output is always a member of the list it was given, by identity — never the caller's
+    /// input echoed back, and never a tag assembled here. That is what lets the caller turn it
+    /// straight into `<tag>.lproj`; a resolver that returned `en` when `en` is not in the bundle
+    /// would name a directory that does not exist.
+    ///
+    /// The shape check is the other half: a tag ends up in a filesystem path and, if it ever
+    /// leaks into a command, in a shell word. All five pass the same character whitelist a
+    /// request variable does, and none of them carries `/` or `.`, which that whitelist allows.
+    func testResolvedTagAlwaysNamesABundledLproj() {
+        XCTAssertEqual(supportedLocales, bundled)
+        for tag in supportedLocales {
+            XCTAssertEqual(try? sanitizeValue(tag), tag)
+            XCTAssertTrue(tag.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "-") }, tag)
+        }
+
+        let availabilities = [bundled, ["en"], ["ja", "ko"], ["zh-Hans"], ["zh-Hant", "en"]]
+        let preferences: [Any?] = [nil, "auto", "ko", "zh-Hant", "zh-HK", "fr", "", 7, ["x"]]
+        let systems = [[], ["ko-KR"], ["zh-HK", "en"], ["pt-BR"], ["fr", "ja"], ["zh"]]
+        for available in availabilities {
+            for preference in preferences {
+                for system in systems {
+                    let resolved = resolveLocale(
+                        preference: preference, systemPreferred: system, available: available
+                    )
+                    XCTAssertTrue(
+                        available.contains(resolved),
+                        "\(resolved) is not one of \(available) (preference \(preference ?? "nil"), system \(system))"
+                    )
+                }
+            }
+        }
+    }
+
+    /// The R0 measurement (D12), taken against five real `.lproj` bundles: this is what macOS
+    /// itself answered for these tags. The rules in `Localization.swift` were derived from this
+    /// table, not the other way round, so the table is the oracle and stays spelled out.
+    ///
+    /// `pt-BR` is the row that is not a fallback at all — nothing we ship speaks it, so what
+    /// answered there was the bundle itself (D2 measured that the development region decides that
+    /// answer; that the probe's region was `en` is inference from the value). We reach the same
+    /// tag by our own last resort: the road differs, the answer is the one that was measured.
+    func testTheMeasuredSystemFallbackTableHolds() {
+        let measured = [
+            ("zh-HK", "zh-Hant"), ("zh-Hant-HK", "zh-Hant"), ("zh-MO", "zh-Hant"),
+            ("zh-TW", "zh-Hant"), ("zh", "zh-Hans"), ("zh-SG", "zh-Hans"),
+            ("en-GB", "en"), ("pt-BR", "en"),
+        ]
+        for (tag, expected) in measured {
+            XCTAssertEqual(
+                resolveLocale(preference: "auto", systemPreferred: [tag], available: bundled),
+                expected, tag
+            )
+        }
+    }
+
+    /// The user's order decides, not ours. Walking `available` instead and asking "is any of
+    /// these in the system list" reads the same and answers `ko` for a list that starts with
+    /// Japanese — the first two lines are the same set in two orders precisely to catch that.
+    func testAutoFollowsTheSystemOrderNotOurOwn() {
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["ja-JP", "ko-KR"], available: bundled), "ja")
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["ko-KR", "ja-JP"], available: bundled), "ko")
+        // A language we ship nothing for is skipped, not read as the end of the list
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: ["pt-BR", "fr", "ko-KR"], available: bundled), "ko")
+        XCTAssertEqual(resolveLocale(preference: "auto", systemPreferred: [], available: bundled), "en")
+    }
+
+    /// An explicit choice is honoured whatever the system says, and it is matched by the same
+    /// function the system list goes through: `zh-HK` names Traditional Chinese wherever it was
+    /// read from. Two matchers would be two verdicts, and only one of them would get fixed.
+    func testAnExplicitChoiceOverridesTheSystemList() {
+        for tag in bundled {
+            XCTAssertEqual(
+                resolveLocale(preference: tag, systemPreferred: ["ko-KR", "ja-JP"], available: bundled),
+                tag
+            )
+        }
+        XCTAssertEqual(resolveLocale(preference: "zh-HK", systemPreferred: ["ko-KR"], available: bundled), "zh-Hant")
+        XCTAssertEqual(resolveLocale(preference: "ko-KR", systemPreferred: ["ja-JP"], available: bundled), "ko")
+        XCTAssertEqual(resolveLocale(preference: "zh_TW", systemPreferred: ["ko-KR"], available: bundled), "zh-Hant")
+    }
+
+    /// `epoch` counts revisions of the **resolved** locale, not of the preference (D48). The
+    /// preference stays `auto` for the whole of the last block below while the language changes
+    /// underneath it — counting preference edits there would leave the extension on the old
+    /// language forever, because its rule is to accept a same-install snapshot only when the
+    /// epoch is strictly greater (D32).
+    ///
+    /// Republishing an unchanged locale returns the snapshot untouched: every launch resolves and
+    /// publishes, and if that moved the number, the extension would redraw on every launch and no
+    /// epoch would ever mean anything.
+    func testTheEpochAdvancesOnlyWhenTheResolvedLocaleChanges() {
+        let first = localeSnapshotToPublish(resolved: "ko", lastPublished: nil)
+        XCTAssertEqual(first, LocaleSnapshot(tag: "ko", epoch: 0))
+        XCTAssertEqual(localeSnapshotToPublish(resolved: "ko", lastPublished: first), first)
+
+        let second = localeSnapshotToPublish(resolved: "ja", lastPublished: first)
+        XCTAssertEqual(second, LocaleSnapshot(tag: "ja", epoch: 1))
+
+        // Returning to a tag published before is a new revision, not the old number again
+        XCTAssertEqual(
+            localeSnapshotToPublish(resolved: "ko", lastPublished: second),
+            LocaleSnapshot(tag: "ko", epoch: 2)
+        )
+
+        let beforeChange = resolveLocale(preference: "auto", systemPreferred: ["ko-KR"], available: bundled)
+        let afterChange = resolveLocale(preference: "auto", systemPreferred: ["ja-JP"], available: bundled)
+        let published = localeSnapshotToPublish(resolved: beforeChange, lastPublished: nil)
+        XCTAssertEqual(
+            localeSnapshotToPublish(resolved: afterChange, lastPublished: published),
+            LocaleSnapshot(tag: "ja", epoch: 1)
+        )
+    }
+}
