@@ -1,0 +1,4 @@
+/* Info.plist keys that face the user. Deliberately empty for now: the only such key is
+   NSAppleEventsUsageDescription, whose wording item 11 owns, and a placeholder in the wrong
+   language would be a claim this skeleton has no business making. The file exists from the start
+   so the five catalogs have the same shape and item 7 has something to compare byte for byte. */

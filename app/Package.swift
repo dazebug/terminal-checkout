@@ -12,7 +12,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "Core"),
-        .executableTarget(name: "App", dependencies: ["Core"]),
+        // `exclude` and not `resources`: SwiftPM notices any `.lproj` under a target and, left to
+        // itself, demands `defaultLocalization` and starts producing a `Bundle.module` accessor —
+        // the machinery D1 rejected, because that accessor resolves through an absolute `.build`
+        // path on the machine that compiled it and so hides a missing copy exactly where it would
+        // be caught. `app/build.sh` copies these into `Contents/Resources/` and the app reads them
+        // with `Bundle(path:)`; this line is what keeps the two schemes from overlapping.
+        .executableTarget(name: "App", dependencies: ["Core"], exclude: ["Resources"]),
         .executableTarget(name: "Relay", dependencies: ["Core"]),
         .executableTarget(name: "WarpHelper", dependencies: ["Core"]),
         .testTarget(name: "CoreTests", dependencies: ["Core"]),

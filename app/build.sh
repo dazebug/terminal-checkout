@@ -19,6 +19,14 @@ cp "$BIN/terminal-checkout-warp-helper" "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/Info.plist"
 [ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/"
 
+# The string catalogs. They are copied here rather than declared as SwiftPM `resources:` because
+# the generated `Bundle.module` accessor resolves through an absolute .build path on the machine
+# that compiled it, which hides a missing copy exactly where it would be caught (D1). `cp -R` of
+# the directories keeps `<tag>.lproj/<file>` intact; item 7's gate compares what landed here
+# against these sources, file set included, so a catalog added to the sources and not to the
+# bundle is a red build rather than a language that silently falls back.
+cp -R Sources/App/Resources/*.lproj "$APP/Contents/Resources/"
+
 # Embed the extension in the bundle (the app copies and installs it into App Support)
 cp -R ../extension "$APP/Contents/Resources/extension"
 find "$APP/Contents/Resources/extension" -name '.DS_Store' -delete 2>/dev/null || true

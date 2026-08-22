@@ -1,0 +1,10 @@
+/* The app's string catalog. One key so far: the skeleton (item 6) proves the mechanism, the
+   bodies arrive with items 23 and 24, and the wiring into SetupWindowController is item 10 —
+   nothing reads this key yet.
+
+   This file is copied into Contents/Resources/en.lproj by app/build.sh and read through
+   Bundle(path:), never through SwiftPM resources or Bundle.module: the generated accessor resolves
+   to an absolute .build path on the machine that compiled it, so a missing copy stays invisible
+   right where it would be noticed. */
+
+"app.setup.window.title" = "Terminal Checkout Setup";

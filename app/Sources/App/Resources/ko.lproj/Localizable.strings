@@ -1,0 +1,4 @@
+/* See en.lproj/Localizable.strings for what this file is and when it fills up. This value is the
+   string the setup window carries today, moved here verbatim rather than retranslated. */
+
+"app.setup.window.title" = "Terminal Checkout 설정";
