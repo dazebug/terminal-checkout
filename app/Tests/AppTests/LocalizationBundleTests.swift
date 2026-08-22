@@ -109,6 +109,49 @@ final class LocalizationBundleTests: XCTestCase {
         XCTAssertNil(ourOwnCopy())
     }
 
+    /// **The value that answers afterwards is the one that answered before** (round 7 review).
+    ///
+    /// The test above proves our own copy of the key is gone, which is not the same claim: a
+    /// removal that also lost whatever the domain below was saying would satisfy it just as well.
+    /// What `auto` promises is that the system's list decides again, so the assertion is a
+    /// before/after comparison of the **effective** value — read through the search list rather
+    /// than out of our own domain.
+    ///
+    /// It also fixes the boundary of that promise. `auto` removes the **app-owned** override and
+    /// nothing else: an `-AppleLanguages` argument on the command line, or any domain with higher
+    /// precedence, still wins, and no amount of removing our key changes that. Users need to know
+    /// it (item 25 lists it in the README), and a future reader needs to know this test does not
+    /// claim otherwise.
+    func testAutomaticRestoresTheEffectiveValueItFound() throws {
+        let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
+        // What the search list answers with no override of ours in the way. It comes from a domain
+        // this suite does not own, which is exactly why the comparison is worth making
+        let before = defaults.array(forKey: "AppleLanguages") as? [String]
+        XCTAssertNotNil(before, "no effective AppleLanguages to restore — the comparison would be vacuous")
+
+        defaults.set("ja", forKey: languagePreferenceKey)
+        XCTAssertEqual(
+            AppLocalization.applyStoredLanguageToAppKit(defaults: defaults, systemPreferred: ["ko-KR"]),
+            "ja"
+        )
+        XCTAssertEqual(defaults.array(forKey: "AppleLanguages") as? [String], ["ja"], "the override did not take")
+
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
+        XCTAssertNil(AppLocalization.applyStoredLanguageToAppKit(
+            defaults: defaults, systemPreferred: ["ko-KR"]
+        ))
+
+        let after = defaults.array(forKey: "AppleLanguages") as? [String]
+        XCTAssertEqual(after, before, "auto removed our override but did not give the previous answer back")
+        XCTAssertNil(
+            UserDefaults.standard.persistentDomain(forName: suiteName)?["AppleLanguages"],
+            "our own copy is still there, so `after` may only be echoing it"
+        )
+    }
+
     /// The other half of the same rule: an explicit choice **is** written, and so is a stored value
     /// we cannot read — our own strings resolve that one to English, and chrome that disagreed with
     /// them would be exactly the split-language window D14 rules out.
@@ -136,6 +179,22 @@ final class LocalizationBundleTests: XCTestCase {
         )
     }
 
+    /// The bundle gate hardcodes the development region it expects, because a shell script cannot
+    /// read a Swift constant. That is the same drift `UninstallScriptSyncTests` guards for the
+    /// uninstall markers, so it is guarded the same way: change `fallbackLocale` alone and this
+    /// fails, rather than the gate quietly enforcing last year's answer.
+    func testTheBundleGateExpectsTheSameRegionWeFallBackTo() throws {
+        let script = try repoFile("app/verify-bundle.sh")
+        XCTAssertTrue(
+            script.contains("CFBundleDevelopmentRegion"),
+            "verify-bundle.sh no longer checks the development region at all"
+        )
+        XCTAssertTrue(
+            script.contains("\"$REGION\" != \"\(fallbackLocale)\""),
+            "verify-bundle.sh expects a different region than fallbackLocale (\(fallbackLocale))"
+        )
+    }
+
     /// `CFBundleDevelopmentRegion` is what macOS answers with when it can match nothing else.
     /// Measured (D2): with the region at `ko`, a process asking for `fr` resolved to `["ko"]`; with
     /// it at `en`, to `["en"]`. Leaving it at `ko` would put a French user in Korean while our own
@@ -149,4 +208,13 @@ final class LocalizationBundleTests: XCTestCase {
         ) as? [String: Any]
         XCTAssertEqual(parsed?["CFBundleDevelopmentRegion"] as? String, fallbackLocale)
     }
+}
+
+private func repoFile(_ name: String) throws -> String {
+    let root = URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/LocalizationBundleTests.swift
+        .deletingLastPathComponent() // AppTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // app
+        .deletingLastPathComponent() // the repository root
+    return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
 }
