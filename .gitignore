@@ -9,3 +9,9 @@ __pycache__
 # Swift build artifacts
 app/.build/
 app/build/
+
+# Personal agent preferences live in ~/.claude/local/ and are imported by CLAUDE.md,
+# so they survive a fresh worktree. These two are still ignored as a guard: Claude Code
+# loads them automatically if they ever appear, and they are nobody else's business
+CLAUDE.local.md
+AGENTS.local.md
