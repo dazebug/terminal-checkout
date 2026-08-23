@@ -642,11 +642,17 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// nothing can restart during the interval where we hold a slot but not yet an address, and a
 /// termination through that interval cannot be followed by a launch.
 ///
-/// **What remains is a launch already issued** — `open` has returned, Warp has yet to read the file
-/// and start the helper. The address is in the register, so the farewell is sent, but it reaches a
-/// socket nobody is listening on yet. Nothing in this process can reach a process that does not
-/// exist, so that helper's bound is its own: the idle cap and the lifetime cap it applies to itself
-/// (`Sources/WarpHelper/main.swift`).
+/// **A launch already issued used to be what remained** — the file written, `open` returned, the
+/// pane yet to come up — and the residual as round 16 wrote it was narrower than the window it
+/// described: it read as though the gap opened at `open`, when it opens at `record` and stays open
+/// across a directory creation, a file write and a launch with a fifteen-second timeout (round 17
+/// review). Nothing in this process can signal a process that does not exist yet, so the answer is
+/// not to reach that helper but to make sure it never answers: **shutting the gate withdraws the
+/// address** by binding it, and the helper takes that same address with `link` after it is already
+/// listening. Exactly one of the two operations succeeds, and each side learns which — a withdrawn
+/// helper exits before the advertised name has ever referred to it, and a helper that got there
+/// first is listening by definition, so the farewell connects. See `withdrawWarpHelperAddress` and
+/// `claimWarpHelperAddress` for the measurements.
 ///
 /// **The ordering inside the delivery's `defer` is still the invariant.** The helper is told to go
 /// *before* the entry is removed, so anyone who reads "nothing is being delivered" can conclude "no
@@ -721,6 +727,11 @@ public enum ClaudeDelivery {
 
     /// Whether anything is registered. A **query**, kept separate from `admitRestart` on purpose:
     /// asking must not latch, and the latching operation must not be mistaken for a question.
+    ///
+    /// **An observation, and nothing production reads it.** `admitRestart` asks the same thing
+    /// inside the lock, where the answer still means something when it is acted on. Reading it here
+    /// and deciding out there is the shape round 17 spent a class closing, so a new caller that
+    /// wants to act on it wants `admit`, `record` or `closeAdmission` instead.
     public static var isInFlight: Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -743,13 +754,24 @@ public enum ClaudeDelivery {
     ///
     /// Closing it also refuses every `record` from a slot reserved earlier, which is what makes the
     /// close total rather than merely forward-looking (round 16 review).
-    @discardableResult
-    private static func closeAdmission(requiringIdle: Bool) -> Bool {
+    ///
+    /// **And it withdraws the address of every helper that is not there yet** (round 17 review).
+    /// Refusing a `record` covers a request that has not reached the launch; it does nothing about
+    /// one that already has, because between `record` and the helper's birth there is a directory
+    /// creation, a file write and an `open` with a fifteen-second timeout. Those helpers used to be
+    /// born after their own farewell. Withdrawing takes the advertised address by binding it, which
+    /// answers both halves in one syscall: taken here means no helper can ever answer there, and
+    /// refused here means one already does. Nil is the refused restart; a list is the closed gate,
+    /// and it holds exactly the helpers a farewell can still reach.
+    private static func closeAdmission(requiringIdle: Bool) -> [String]? {
         lock.lock()
         defer { lock.unlock() }
-        if requiringIdle, !live.isEmpty { return false }
+        if requiringIdle, !live.isEmpty { return nil }
         admissionClosed = true
-        return true
+        return live.values.compactMap { handle -> String? in
+            guard case .warp(let socket) = handle else { return nil }
+            return withdrawWarpHelperAddress(socket) ? nil : socket
+        }.sorted()
     }
 
     /// **Evidence that the gate was shut**, and the only way to come by one is to shut it.
@@ -763,22 +785,31 @@ public enum ClaudeDelivery {
     /// `withdrawRestartAdmission` reopens it, for the restart whose relaunch failed to spawn. The
     /// path that terminates never withdraws, so the two cannot meet today — but the token cannot
     /// promise that, and a comment that said it could would be the class this work keeps sweeping.
+    ///
+    /// **It also carries the answer**, and that is what stops the farewell from being a second look
+    /// at the register. The register says which helpers were *admitted*; the withdrawal that shuts
+    /// the gate says which of them a farewell can still reach, and it says it in the same turn of
+    /// the lock. Reading the register again afterwards would ask a question whose answer had already
+    /// been decided — and would ask it of a value that no longer distinguishes the two cases.
     public struct Departure {
-        fileprivate init() {}
+        /// The helpers that had already taken their address when the gate shut. The rest were
+        /// withdrawn and will exit at birth, so they are not here: there is nothing to dismiss.
+        fileprivate let listening: [String]
+        fileprivate init(listening: [String]) { self.listening = listening }
     }
 
     /// Termination's half of the decision: it **cannot be refused** — the user quit or macOS is
     /// shutting us down, and saying no would not stop it — so this shuts the gate whatever is in
     /// flight and hands back what `endEveryHelper` needs.
     public static func depart() -> Departure {
-        closeAdmission(requiringIdle: false)
-        return Departure()
+        Departure(listening: closeAdmission(requiringIdle: false) ?? [])
     }
 
     /// The restart's half: refuse unless nothing is registered, because cutting a delivery in half
     /// is worse than not restarting. It is the same function with one argument different, and that
-    /// argument is the difference between asking and being told.
-    public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) }
+    /// argument is the difference between asking and being told. Nothing is registered when it
+    /// succeeds, so it never withdraws an address.
+    public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) != nil }
 
     /// Give the admission back when the restart did not happen — the relaunch failed to spawn, or a
     /// test finished. Without this an admission that led nowhere would refuse every delivery for the
@@ -789,8 +820,12 @@ public enum ClaudeDelivery {
         admissionClosed = false
     }
 
-    /// The Warp helper sockets currently kept alive by a delivery. Exposed so that termination can
-    /// reach them: a helper is a separate process, and nothing else knows where they are.
+    /// The Warp helper addresses this process has admitted. **An observation**, like `isInFlight`,
+    /// and since round 17 nothing in production reads it either: it used to be what termination
+    /// walked, and the farewell now takes the partition that shutting the gate produced, because
+    /// this list cannot tell a helper that is listening from one the withdrawal has already made
+    /// impossible. A caller that wants to reach helpers wants a `Departure`, which is a thing only
+    /// shutting the gate hands out.
     public static var liveWarpSockets: [String] {
         lock.lock()
         defer { lock.unlock() }
@@ -814,12 +849,14 @@ public enum ClaudeDelivery {
     /// would need a helper process on the other end. The registry half is what is proved; the socket
     /// half is the same `warpHelperRequest(.bye,…)` the delivery's own `defer` uses.
     ///
-    /// `departure` is not decoration: it cannot exist unless the gate has been shut, so the walk
-    /// below cannot be the thing that runs first.
+    /// `departure` is not decoration and it is no longer only an order: it cannot exist unless the
+    /// gate has been shut, and **the list below is the one that shutting produced**. Walking the
+    /// register here instead would put a farewell in front of every admitted helper, including the
+    /// ones the same act has just made impossible — and would leave the ones it could not reach
+    /// looking identical to the ones it could.
     public static func endEveryHelper(_ departure: Departure, farewell: ((String) -> Void)? = nil) {
-        _ = departure
         let send = farewell ?? { _ = warpHelperRequest(.bye, socket: $0) }
-        for socket in liveWarpSockets { send(socket) }
+        for socket in departure.listening { send(socket) }
     }
 }
 

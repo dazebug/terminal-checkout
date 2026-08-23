@@ -30,8 +30,11 @@ fi
 # The `/` before the glob is explicit: `$TMPDIR` carries a trailing slash on macOS but nothing
 # guarantees it, and without one the pattern would silently match nothing
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
-for sock in "${TMPDIR:-/tmp}"/tcw-*.sock /tmp/tcw-*.sock; do
-    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.sock$ ]]; then
+# Two suffixes, because a helper has two names: the staging one it binds and the advertised one it
+# takes with `link` once it is listening. A helper killed in between leaves the first, and a sweep
+# that only knew the second would leave it here for good
+for sock in "${TMPDIR:-/tmp}"/tcw-* /tmp/tcw-*; do
+    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.(sock|pre)$ ]]; then
         rm -f "$sock"
     fi
 done

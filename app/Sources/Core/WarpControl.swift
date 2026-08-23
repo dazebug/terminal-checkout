@@ -177,17 +177,32 @@ public func warpHelperToken() -> String {
 }
 
 /// Is this a socket file name we may reclaim — our prefix plus a hex token.
+///
+/// Both names a helper can leave behind are ours: the advertised one, and the staging one it binds
+/// before it is entitled to the advertised one (`warpHelperStagingPath`). A helper killed between
+/// `listen` and the claim leaves the second, and a reclaim that only knew the first would leave it
+/// in `/tmp` for good.
 public func warpHelperSocketFileIsOurs(name: String) -> Bool {
-    guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(".sock") else { return false }
-    return isOurRequestToken(name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count))
+    guard name.hasPrefix(warpHelperSocketPrefix) else { return false }
+    for suffix in [warpHelperAdvertisedSuffix, warpHelperStagingSuffix] where name.hasSuffix(suffix) {
+        return isOurRequestToken(name.dropFirst(warpHelperSocketPrefix.count).dropLast(suffix.count))
+    }
+    return false
 }
 
 public let warpHelperSocketPrefix = "tcw-"
+/// The name the app writes into the Tab Config and later talks to.
+public let warpHelperAdvertisedSuffix = ".sock"
+/// The name a helper listens on until it is allowed to answer to the advertised one. Shorter than
+/// the advertised suffix on purpose: a path that fits `sun_path`'s 104 bytes then has a staging
+/// name that fits too, so the length check on the advertised path answers for both.
+public let warpHelperStagingSuffix = ".pre"
 
 /// The first candidate directory whose path fits in sun_path's 104 bytes. nil when none of them fits.
 public func warpHelperSocketPath(token: String, directories: [String]) -> String? {
     for directory in directories {
-        let path = (directory as NSString).appendingPathComponent("\(warpHelperSocketPrefix)\(token).sock")
+        let path = (directory as NSString)
+            .appendingPathComponent("\(warpHelperSocketPrefix)\(token)\(warpHelperAdvertisedSuffix)")
         if makeUnixSockaddr(path) != nil { return path }
     }
     return nil
@@ -197,6 +212,74 @@ public func warpHelperSocketPath(token: String, directories: [String]) -> String
 /// The OS is not relied on to clean up what is left behind — when the helper ends on SIGKILL its `unlink` never runs, so the next run reclaims dead sockets itself (`reclaimDeadWarpHelperSockets`).
 public func warpHelperSocketPath(token: String) -> String? {
     warpHelperSocketPath(token: token, directories: [NSTemporaryDirectory(), "/tmp"])
+}
+
+// MARK: - The advertised address has one owner, and the kernel decides which
+
+// A helper is created by a line this app writes into a Tab Config, and it is created **late**: the
+// launch can take fifteen seconds and Warp brings the pane up 0.5∼0.7s after `open` returns
+// (measured). So the app can decide to go away between admitting a request and that helper being
+// born, and the farewell it sends on the way out then reaches a socket nobody is listening on.
+// Round 16 recorded that as a residual; round 17's review found the residual understated — the
+// window opens at `record`, not at `open`.
+//
+// It is closed by making the two sides race for **one name**, one operation each, with both
+// outcomes safe. Measured (`<scratchpad>/r18_claim_probe.swift`, `r18_link_probe2.swift`):
+//  - `link` onto a name that already exists is refused with `EEXIST`, and a *listening* socket
+//    reached through a hard link accepts connections normally — so the helper can bind privately,
+//    listen, and only then put itself where the app is looking;
+//  - `bind` on a name a socket already holds is refused with `EADDRINUSE`, so the app finds out
+//    that the helper got there first and that a farewell will reach it.
+// `rename` was measured and rejected: it **overwrites** the destination, so a helper would take an
+// address the app had already withdrawn and the fix would be no fix at all.
+
+/// The name a helper binds before it is entitled to answer on the advertised one.
+public func warpHelperStagingPath(advertised: String) -> String {
+    (advertised as NSString).deletingPathExtension + warpHelperStagingSuffix
+}
+
+/// **The helper's half**, taken after it is already listening — which is why the advertised name
+/// never exists in a state where a connection to it would be refused.
+///
+/// False means the app withdrew this address before the pane came up, and then this helper must not
+/// serve. The staging name is dropped either way: on success the socket has the advertised name, on
+/// failure this process is leaving, and in both cases the socket itself is held by the fd rather
+/// than by a name.
+///
+/// `errno` is put back after the `unlink` so the caller can still say *why* it lost — `EEXIST` is
+/// the withdrawal and anything else is not, and a diagnostic that could not tell them apart would
+/// report a vanished temporary directory as a decision the app made.
+public func claimWarpHelperAddress(from staging: String, as advertised: String) -> Bool {
+    let claimed = link(staging, advertised) == 0
+    let failure = errno
+    unlink(staging)
+    if !claimed { errno = failure }
+    return claimed
+}
+
+/// **The app's half**, taken as it goes away: bind the address the helper has not taken yet, so
+/// that it never can.
+///
+/// True means this process got there first — no helper will ever answer there, and there is
+/// nothing to dismiss. False means one is already listening, so the farewell will connect.
+///
+/// Every other failure answers false as well, and that is the direction to be wrong in: the cost of
+/// a farewell to nobody is a refused connection, and the cost of skipping one is a helper the app
+/// left behind.
+///
+/// What it leaves at the path is a socket file that refuses connections — the exact shape
+/// `reclaimDeadWarpHelperSockets` already removes, which matters because the process doing this is
+/// terminating and has no later moment of its own to clean up in.
+public func withdrawWarpHelperAddress(_ advertised: String) -> Bool {
+    guard var address = makeUnixSockaddr(advertised) else { return false }
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    return withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    } == 0
 }
 
 // MARK: - Install detection and the process tree

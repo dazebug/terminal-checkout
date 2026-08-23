@@ -32,10 +32,10 @@ private let foregroundRecheckStride = 16
 // **The boundary is the uid.** Processes running as the same uid are treated as inside the boundary; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
 //
 // What is possible inside this boundary (and is not prevented):
-//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime: the helper dies immediately on `bye` when delivery ends, and failing that it is caught by the 180-second idle cap and the 900-second lifetime cap.
+//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends: a helper whose app went away between admitting the request and this pane coming up never takes the advertised address at all, so it never listens (`claimWarpHelperAddress`); one that did take it dies immediately on `bye` when delivery ends; and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap.
 //  2. The TOCTOU in path-based `unlink` — socket reclaim, Tab Config reclaim, the scheduled deletion, and `uninstall.sh`. `lstat`/`fstat` plus an inode re-check narrowed the window to microseconds, but macOS has no `funlinkat`, so the last step is by path. Slipping into it requires knowing our random name in advance.
 //  3. Swapping the contents after the header has been checked — the verdict is reached through an fd but the deletion is by path (the same window as 2).
-//  4. Placing a file at the helper socket path in advance to make `bind` fail (a DoS that only defeats delivery).
+//  4. Placing a file at either of the helper's two paths in advance — the staging name it binds, or the advertised name it takes with `link` — so that the helper cannot come up (a DoS that only defeats delivery). The app does the second of these itself, deliberately, as it goes away: withdrawing an address is exactly this move, which is why the helper treats a refused claim as a decision rather than an error.
 //
 // The residuals that have **nothing to do with** the boundary (the ones that remain even with no malice) are kept separate — the two are never mixed:
 //  - the window in which the pane proof is valid only up to the moment the body is typed (see the `proveOurPane` comment)
@@ -319,9 +319,10 @@ guard tcgetsid(ttyFD) == getsid(0) else {
 }
 
 umask(0o077)
-// Deletes an existing file and binds. Anything that is not a socket was not made by us and is left alone — the app draws the path with a random token so collisions do not happen on the normal path, but if one did, that file is somebody else's
-socketPath.withCString { unlinkIfSocket($0) }
-guard var address = makeUnixSockaddr(socketPath) else { fail("the socket path is too long: \(socketPath)") }
+// **Listening comes before being reachable.** The advertised path is taken at the end, with `link`, so this binds a private name first. Deletes an existing file and binds. Anything that is not a socket was not made by us and is left alone — the app draws the path with a random token so collisions do not happen on the normal path, but if one did, that file is somebody else's
+let stagingPath = warpHelperStagingPath(advertised: socketPath)
+stagingPath.withCString { unlinkIfSocket($0) }
+guard var address = makeUnixSockaddr(stagingPath) else { fail("the socket path is too long: \(stagingPath)") }
 let server = socket(AF_UNIX, SOCK_STREAM, 0)
 guard server >= 0 else { fail("socket(): \(lastErrnoName())") }
 let bound = withUnsafePointer(to: &address) {
@@ -330,7 +331,12 @@ let bound = withUnsafePointer(to: &address) {
     }
 }
 guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoName())") }
-chmod(socketPath, 0o600)
+chmod(stagingPath, 0o600)
+// **This is where this helper finds out whether it is still wanted**, and it is one operation rather than a look at something the app could change a moment later: the app withdraws an address by binding it as it leaves, and `link` onto a name that exists is refused. So `File exists` here means the app decided to go away between admitting this request and this pane coming up — and exiting now is exiting before the advertised name has ever referred to this socket, which is the difference between a helper that was dismissed and one that never was anything
+guard claimWarpHelperAddress(from: stagingPath, as: socketPath) else {
+    close(server)
+    fail("the advertised address could not be taken (\(lastErrnoName())) — `File exists` is the app withdrawing it on the way out")
+}
 installSocketCleanupOnSignals(path: socketPath)
 
 private let state = HelperState(ttyFD: ttyFD, ttyPath: ttyPath)

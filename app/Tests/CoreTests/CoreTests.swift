@@ -4343,7 +4343,7 @@ final class UninstallScriptSyncTests: XCTestCase {
         let script = try repoFileContents("uninstall.sh")
         // What has to appear verbatim in the script. The `--serve` flag is deliberately absent — it is private to the WarpHelper target and cannot be seen from here, the damage from a divergence is only a missed pkill, and the helper dies on its own from the idle and lifetime caps
         let expected = [
-            warpHelperSocketPrefix + "*.sock",
+            warpHelperSocketPrefix + "*",
             warpTabConfigPrefix + "*.toml",
             warpTabConfigHeader,
             // The old header stays a reclaim target: files written before the token change are
@@ -4361,8 +4361,14 @@ final class UninstallScriptSyncTests: XCTestCase {
             claudePromptHandoffName,
             // Round 8: the socket sweep matched `tcw-*.sock` with no name check at all, so a
             // same-user socket like `/tmp/tcw-user.sock` was in range. The pattern below is the
-            // one the app writes — prefix plus 8 lower-case hex
-            "^tcw-[0-9a-f]{8}\\.sock$",
+            // one the app writes — prefix plus 8 lower-case hex.
+            // Round 17 added the second suffix: a helper binds a staging name and takes the
+            // advertised one with `link` only once it is listening, so both can be left behind.
+            // Assembled from the Swift constants rather than written out, because a suffix added
+            // on one side and not the other is a file nobody ever deletes
+            "^" + warpHelperSocketPrefix + "[0-9a-f]{8}\\.("
+                + [warpHelperAdvertisedSuffix, warpHelperStagingSuffix]
+                    .map { $0.dropFirst() }.joined(separator: "|") + ")$",
         ]
         for needle in expected {
             XCTAssertTrue(

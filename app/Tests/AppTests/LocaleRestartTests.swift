@@ -1,4 +1,5 @@
 import Core
+import Darwin
 import XCTest
 @testable import App
 
@@ -6,6 +7,62 @@ import XCTest
 /// is about to create — for the cases that are about what happens *after* that. A case about the
 /// refusal itself calls `record` directly; here a refusal throws out of the helper, so a case can
 /// never run on against an empty register.
+/// A place for the addresses these cases register.
+///
+/// They have to be **unique per run and cleaned up**, because a registered address is no longer only
+/// a string: shutting the gate withdraws it by binding it, so a fixed name in `/tmp` survives the
+/// process and the next run finds its own leftover already there — which flips the withdrawal's
+/// answer and makes a case pass for a reason that has nothing to do with what it asserts (observed
+/// while writing round 17's fix: `testTerminationClosesTheGateBeforeSayingGoodbye` went green
+/// against a socket file the previous run had left).
+final class SocketFixtures {
+    let directory = "/tmp/tc-fix-" + String(UUID().uuidString.prefix(8))
+    private var listeners: [Int32] = []
+
+    init() {
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        for fd in listeners { close(fd) }
+        try? FileManager.default.removeItem(atPath: directory)
+    }
+
+    func path(_ name: String) -> String { directory + "/" + name + ".sock" }
+
+    /// A helper that has come up in its pane and **taken** its address, through the same production
+    /// function the helper binary calls.
+    ///
+    /// A registered address used to be only a string, so a case could assert that termination said
+    /// goodbye to a socket nobody was ever on — which is the defect those cases were meant to be
+    /// about. Now the two are told apart by whether anything is listening, so a case that wants the
+    /// farewell has to put something there.
+    func liveHelper(
+        _ name: String, file: StaticString = #filePath, line: UInt = #line
+    ) -> String {
+        let advertised = path(name)
+        let staging = warpHelperStagingPath(advertised: advertised)
+        guard var address = makeUnixSockaddr(staging) else {
+            XCTFail("the staging path does not fit sun_path", file: file, line: line)
+            return advertised
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0, "the fixture helper could not bind", file: file, line: line)
+        XCTAssertEqual(listen(fd, 4), 0, file: file, line: line)
+        XCTAssertTrue(
+            claimWarpHelperAddress(from: staging, as: advertised),
+            "the fixture helper could not take its address", file: file, line: line
+        )
+        listeners.append(fd)
+        return advertised
+    }
+}
+
 private func admitted(
     _ handle: TerminalSessionHandle, file: StaticString = #filePath, line: UInt = #line
 ) throws -> ClaudeDelivery.Admission {
@@ -32,11 +89,13 @@ private func admitted(
 /// the one line that consumes the verdict is pinned by reading it. The socket farewell itself is the
 /// piece no test here takes — it needs a helper on the other end.
 final class LocaleRestartTests: XCTestCase {
+    private var sockets = SocketFixtures()
     private var restoredAdmit: (() -> Bool)!
     private var restoredWithdraw: (() -> Void)!
 
     override func setUp() {
         super.setUp()
+        sockets = SocketFixtures()
         restoredAdmit = LocaleRestartGate.admitRestart
         restoredWithdraw = LocaleRestartGate.withdrawAdmission
         // No draining here, and the first version of this file pretended otherwise: `endEveryHelper`
@@ -66,7 +125,7 @@ final class LocaleRestartTests: XCTestCase {
         XCTAssertTrue(ClaudeDelivery.admitRestart(), "idle should admit a restart")
         ClaudeDelivery.withdrawRestartAdmission()
 
-        let token = try admitted(.warp(helperSocket: "/tmp/tc-test-a.sock"))
+        let token = try admitted(.warp(helperSocket: sockets.path("test-a")))
         defer { token.end() }
         XCTAssertTrue(ClaudeDelivery.isInFlight)
         XCTAssertFalse(ClaudeDelivery.admitRestart(), "a restart was admitted during a delivery")
@@ -121,16 +180,16 @@ final class LocaleRestartTests: XCTestCase {
         XCTAssertFalse(ClaudeDelivery.admitRestart(), "a restart was admitted while a helper was being launched")
         XCTAssertEqual(ClaudeDelivery.liveWarpSockets, [], "a slot with no handle offered a socket")
 
-        try token.record(.warp(helperSocket: "/tmp/tc-test-late.sock"))
-        XCTAssertEqual(ClaudeDelivery.liveWarpSockets, ["/tmp/tc-test-late.sock"])
+        try token.record(.warp(helperSocket: sockets.path("test-late")))
+        XCTAssertEqual(ClaudeDelivery.liveWarpSockets, [sockets.path("test-late")])
     }
 
     /// Two deliveries can overlap — a second button pressed while the first is still typing — so the
     /// barrier has to count rather than latch. A boolean flag here would be lowered by whichever
     /// delivery finished first.
     func testASecondDeliveryKeepsTheBarrierUpUntilBothFinish() throws {
-        let first = try admitted(.warp(helperSocket: "/tmp/tc-test-a.sock"))
-        let second = try admitted(.warp(helperSocket: "/tmp/tc-test-b.sock"))
+        let first = try admitted(.warp(helperSocket: sockets.path("test-a")))
+        let second = try admitted(.warp(helperSocket: sockets.path("test-b")))
         defer { first.end(); second.end() }
         first.end()
         XCTAssertTrue(ClaudeDelivery.isInFlight, "the barrier fell while a delivery was still running")
@@ -142,7 +201,7 @@ final class LocaleRestartTests: XCTestCase {
     /// Ending a token twice is the `defer`'s prerogative — it must never have to know whether it
     /// already ran — and it must not disturb another delivery.
     func testEndingTheSameDeliveryTwiceIsHarmless() throws {
-        let token = try admitted(.warp(helperSocket: "/tmp/tc-test-a.sock"))
+        let token = try admitted(.warp(helperSocket: sockets.path("test-a")))
         let other = try admitted(.iterm(sessionID: "s1", tty: "/dev/ttys001"))
         defer { token.end(); other.end() }
         token.end()
@@ -155,14 +214,14 @@ final class LocaleRestartTests: XCTestCase {
     /// Termination has to reach the helpers, and only the helpers: a session with no helper has
     /// nothing to say goodbye to.
     func testTerminationSaysGoodbyeToEveryLiveHelperAndNothingElse() throws {
-        let warpA = try admitted(.warp(helperSocket: "/tmp/tc-test-a.sock"))
-        let warpB = try admitted(.warp(helperSocket: "/tmp/tc-test-b.sock"))
+        let warpA = try admitted(.warp(helperSocket: sockets.liveHelper("test-a")))
+        let warpB = try admitted(.warp(helperSocket: sockets.liveHelper("test-b")))
         let iterm = try admitted(.iterm(sessionID: "s7", tty: "/dev/ttys002"))
         defer { warpA.end(); warpB.end(); iterm.end() }
 
         var farewells: [String] = []
         ClaudeDelivery.endEveryHelper(ClaudeDelivery.depart(), farewell: { farewells.append($0) })
-        XCTAssertEqual(farewells, ["/tmp/tc-test-a.sock", "/tmp/tc-test-b.sock"])
+        XCTAssertEqual(farewells, [sockets.path("test-a"), sockets.path("test-b")])
 
         warpA.end()
         warpB.end()
@@ -283,6 +342,13 @@ final class LocaleRestartTests: XCTestCase {
 /// The two paths differ in one thing only, and it is the difference between asking and being told: a
 /// restart may be refused, a termination may not.
 final class AppTerminationAdmissionTests: XCTestCase {
+    private var sockets = SocketFixtures()
+
+    override func setUp() {
+        super.setUp()
+        sockets = SocketFixtures()
+    }
+
     override func tearDown() {
         ClaudeDelivery.withdrawRestartAdmission()
         super.tearDown()
@@ -291,7 +357,7 @@ final class AppTerminationAdmissionTests: XCTestCase {
     /// Termination closes the gate **even though something is in flight** — refusing would not stop
     /// it — and after it no delivery can be admitted.
     func testTerminationClosesAdmissionEvenWithADeliveryInFlight() throws {
-        let token = try admitted(.warp(helperSocket: "/tmp/tc-term-a.sock"))
+        let token = try admitted(.warp(helperSocket: sockets.path("term-a")))
         defer { token.end() }
 
         XCTAssertFalse(ClaudeDelivery.admitRestart(), "a restart should be refused while delivering")
@@ -303,7 +369,7 @@ final class AppTerminationAdmissionTests: XCTestCase {
             "a delivery was admitted after termination began — its helper would outlive the app"
         )
         XCTAssertEqual(
-            ClaudeDelivery.liveWarpSockets, ["/tmp/tc-term-a.sock"],
+            ClaudeDelivery.liveWarpSockets, [sockets.path("term-a")],
             "closing the gate lost the helper that still has to be dismissed"
         )
     }
@@ -338,7 +404,7 @@ final class AppTerminationAdmissionTests: XCTestCase {
         XCTAssertEqual(farewells, [], "a reservation with no address had something to dismiss")
 
         XCTAssertThrowsError(
-            try token.record(.warp(helperSocket: "/tmp/tc-term-late.sock")),
+            try token.record(.warp(helperSocket: sockets.path("term-late"))),
             "a helper was recorded after the farewells had gone out — nothing is left to dismiss it"
         ) { error in
             guard case TerminalError.goingAway = error else {
@@ -373,7 +439,7 @@ final class AppTerminationAdmissionTests: XCTestCase {
     /// gate. This case exercises the pair the app terminates with — after it, nothing can be
     /// admitted, and what was registered before is exactly what gets dismissed.
     func testTerminationClosesTheGateBeforeSayingGoodbye() throws {
-        let token = try admitted(.warp(helperSocket: "/tmp/tc-term-order.sock"))
+        let token = try admitted(.warp(helperSocket: sockets.liveHelper("term-order")))
         defer { token.end() }
 
         let departure = ClaudeDelivery.depart()
@@ -381,21 +447,30 @@ final class AppTerminationAdmissionTests: XCTestCase {
 
         var farewells: [String] = []
         ClaudeDelivery.endEveryHelper(departure, farewell: { farewells.append($0) })
-        XCTAssertEqual(farewells, ["/tmp/tc-term-order.sock"])
+        XCTAssertEqual(farewells, [sockets.path("term-order")])
     }
 
     /// Both ways of leaving reach the same decision, so a third one has to find it too. The two
     /// entries differ by the one argument that says whether they may be refused.
+    ///
+    /// Read as a **count** rather than as two lines of source. The lines were pinned verbatim and
+    /// went red the moment the decision grew a second job (round 17: shutting the gate also
+    /// withdraws the addresses of helpers that are not there yet) — a gate that fails when the thing
+    /// it guards is improved is a gate people delete. What has to stay true is that there is one
+    /// place, and that both ways of leaving arrive at it.
     func testRestartAndTerminationShareOneDecision() throws {
         let core = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
-        XCTAssertTrue(
-            core.contains("public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) }"),
-            "the restart path no longer delegates to the shared decision"
+        XCTAssertEqual(
+            core.components(separatedBy: "admissionClosed = true").count - 1, 1,
+            "the gate is shut in more than one place, so a third way of leaving can shut it differently"
         )
-        XCTAssertTrue(
-            core.contains("        closeAdmission(requiringIdle: false)\n        return Departure()"),
-            "termination no longer delegates to the shared decision"
-        )
+
+        XCTAssertTrue(ClaudeDelivery.admitRestart(), "the restart path does not reach the decision")
+        XCTAssertNil(ClaudeDelivery.admit(), "an admitted restart left the gate open")
+        ClaudeDelivery.withdrawRestartAdmission()
+
+        _ = ClaudeDelivery.depart()
+        XCTAssertNil(ClaudeDelivery.admit(), "termination left the gate open")
     }
 
     private static func source(_ relative: String) -> String {
