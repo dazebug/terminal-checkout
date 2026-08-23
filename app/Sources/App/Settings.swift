@@ -80,32 +80,35 @@ enum Settings {
         return publishInteractively(
             AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
             as: right, to: defaults
-        )
+        ) != nil
     }
 
     /// **The one door an interactive publication goes through**, so that "may this process move the
-    /// generation the extension orders by" is asked in one place by both writers rather than beside
-    /// each of them. `LocaleState.publish` asks the same question of the same value at the moment it
-    /// writes; this is where the answer becomes a log and a return value.
+    /// generation the extension orders by" is settled in one place by both writers rather than
+    /// beside each of them.
     ///
-    /// A right that has been given up (its socket is gone) is refused here as firmly as no right at
-    /// all: the process is no longer the one the relay can reach.
+    /// It used to *ask* — `right.isHeld` here, and `role.mayWrite` again inside the write — and both
+    /// answers could be stale by the time anything was written. `LocaleState.commit` now runs the
+    /// write inside the right's own lock and hands back what it wrote, so what comes back here is
+    /// not permission but **the publication that exists**. nil is a right that was not held, or was
+    /// given up before the write could happen; either way nothing was written and this instance is
+    /// no longer the one the relay can reach.
     ///
-    /// **The guard is load-bearing for the compiler too**, which is not a reason for it but is a
-    /// reason not to remove it as redundant: measured on Swift 6.3.3, a function that takes this
-    /// class and only *forwards* it into an inlined callee without reading it crashes the release
-    /// build in `CopyPropagation` ("Found a leaked owned value that was never consumed"). Debug
-    /// builds and `swift test` are unaffected, so `build.sh` is the only place it shows.
-    @discardableResult
+    /// **The read of `right` is load-bearing for the compiler too**, which is not a reason for it but
+    /// is a reason not to reduce this to a forward: measured on Swift 6.3.3, a function that takes
+    /// this class and only *forwards* it into an inlined callee without reading it crashes the
+    /// release build in `CopyPropagation` ("Found a leaked owned value that was never consumed").
+    /// Debug builds and `swift test` are unaffected, so `build.sh` is the only place it shows.
     private static func publishInteractively(
         _ resolved: SupportedLocale, as right: LocalePublicationRight?, to defaults: UserDefaults
-    ) -> Bool {
-        guard let right, right.isHeld else {
+    ) -> LocalePublication? {
+        guard let right, right.isHeld,
+              let committed = LocaleState.commit(resolved: resolved, defaults: defaults, right: right)
+        else {
             checkoutLog("this instance does not own the socket, so no locale was published")
-            return false
+            return nil
         }
-        _ = LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive(right))
-        return true
+        return committed
     }
 
     /// Publishes the locale this launch resolved to — the GUI's other writer, beside the picker.
@@ -134,11 +137,18 @@ enum Settings {
     /// order of two lines in `AppDelegate` said otherwise (round 16 review). Item 39 of this work's
     /// own plan says it: a rule kept by convention at each call site is broken by the next call site.
     /// A caller that does not own the socket now has nothing to pass.
+    ///
+    /// **And it reports.** It used to answer `Void`, so `HostServer.start` armed the accept loop
+    /// whether or not anything had been published — the invariant the code held was "a publication
+    /// was attempted" while the one written above it was "the publication is committed before
+    /// anything is answered" (round 18 review). Nil is that gap made visible: the right was given up
+    /// between the bind and the write, nothing is on disk for this launch, and the caller has to
+    /// decide rather than assume. It is deliberately not `@discardableResult`.
     static func publishLocaleAtLaunch(
         resolved: SupportedLocale,
         right: LocalePublicationRight,
         defaults: UserDefaults = .standard
-    ) {
+    ) -> LocalePublication? {
         publishInteractively(resolved, as: right, to: defaults)
     }
 
@@ -281,16 +291,6 @@ enum LocaleWriterRole {
     case interactive(LocalePublicationRight)
     /// The headless server: publishes what the GUI last wrote, and writes nothing.
     case headless
-
-    /// **The one question the write path asks**, so that "may this call write" is answered in a
-    /// single place from the value itself. A right given up with its socket answers no — a process
-    /// that has stopped listening is a reader, exactly like the headless one.
-    var mayWrite: Bool {
-        switch self {
-        case .interactive(let right): return right.isHeld
-        case .headless: return false
-        }
-    }
 }
 
 /// What goes out to the extension: which locale, and how the extension is to order it.
@@ -388,20 +388,40 @@ enum LocaleState {
     /// was still a rule about where the call sat rather than about what the caller had.
     private static let writeLock = NSLock()
 
+    /// **The write, taken inside the lock that decides whether it may happen.**
+    ///
+    /// It used to be two locks: `role.mayWrite` (the right's) answered, `writeLock` was taken, and
+    /// the write followed — with `HostServer.stop()` free to relinquish in between. The comment here
+    /// called that narrowed rather than closed and gave as its reason that merging them "would mean
+    /// teardown taking the publication lock". **That reason did not survive being tried**: teardown
+    /// takes only the right's lock, and this is the one path that holds both, always in the order
+    /// writeLock → the right's. One order is no inversion (`LocalePublicationRight.whileHeld`).
+    ///
+    /// Nil means **nothing was written**, and it is the only thing nil can mean here — which is what
+    /// makes this, rather than `publish`, the function a launch can ask "did it happen".
+    static func commit(
+        resolved: SupportedLocale, defaults: UserDefaults = .standard, right: LocalePublicationRight
+    ) -> LocalePublication? {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        return right.whileHeld {
+            published(resolved: resolved, mayWrite: true, defaults: defaults)
+        } ?? nil
+    }
+
+    /// What this process should say, writing it first if it is entitled to. The two nils it can
+    /// return are not the same fact, which is why the writer's half is `commit` and this composes
+    /// it: a refused write falls through to reading, and a reader with nothing stored answers
+    /// nothing at all (D51).
     @discardableResult
     static func publish(
         resolved: SupportedLocale, defaults: UserDefaults = .standard, role: LocaleWriterRole
     ) -> LocalePublication? {
-        guard role.mayWrite else { return published(resolved: resolved, mayWrite: false, defaults: defaults) }
-        writeLock.lock()
-        defer { writeLock.unlock() }
-        // Asked again **inside** the lock, because the right can be given up between the two lines
-        // above: `HostServer.stop()` runs on whichever thread is terminating. This narrows the
-        // window rather than closing it — the right's own lock and this one are different locks, and
-        // making them one would mean teardown taking the publication lock. What is left is a
-        // publication written microseconds after the socket went, by the process that held it until
-        // then; the next owner's publication supersedes it
-        return published(resolved: resolved, mayWrite: role.mayWrite, defaults: defaults)
+        guard case .interactive(let right) = role else {
+            return published(resolved: resolved, mayWrite: false, defaults: defaults)
+        }
+        return commit(resolved: resolved, defaults: defaults, right: right)
+            ?? published(resolved: resolved, mayWrite: false, defaults: defaults)
     }
 
     /// `mayWrite` and not the role, because the role is a question that has already been answered by

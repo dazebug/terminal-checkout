@@ -13,6 +13,24 @@ import XCTest
 /// `StaticString`, so a key cannot be computed; the literals in the sources are therefore the whole
 /// set of keys the app can ask for, and "every key exists" and "every key is used" are enumerations
 /// rather than best guesses. `testAKeyCannotBeComputed` is what keeps that premise true.
+/// The walk itself, separated so that "does it descend" is a question a test can ask, and at file
+/// scope so that **every** gate in this target that enumerates sources reaches the same walk.
+/// Nothing is nested under `Sources/App` today, which is exactly why the recursion could not
+/// otherwise be asserted: a flat tree gives the same answer either way, and a gate would have gone
+/// on reporting about a set it had never seen. Round 18 found a gate written one round earlier that
+/// used `contentsOfDirectory` — the defect this comment warns about, committed beside the comment —
+/// which is why the helper stopped being a member of one class.
+func swiftFiles(under root: URL) throws -> [URL] {
+    let enumerator = try XCTUnwrap(
+        FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
+        "could not walk \(root.path)"
+    )
+    return enumerator
+        .compactMap { $0 as? URL }
+        .filter { $0.pathExtension == "swift" }
+        .sorted { $0.path < $1.path }
+}
+
 final class LocalizationCatalogTests: XCTestCase {
     /// **Empty, and emptying it was item 24's completion condition.** Every shipped locale is now
     /// held to the full key set, so the exemption branch below is unreachable and stays only as the
@@ -58,21 +76,6 @@ final class LocalizationCatalogTests: XCTestCase {
         return try files
             .map { try String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
-    }
-
-    /// The walk itself, separated so that "does it descend" is a question a test can ask. Nothing is
-    /// nested under `Sources/App` today, which is exactly why the recursion could not otherwise be
-    /// asserted: a flat tree gives the same answer either way, and the gate would have gone on
-    /// reporting "no unreferenced keys" about a set it had never seen.
-    func swiftFiles(under root: URL) throws -> [URL] {
-        let enumerator = try XCTUnwrap(
-            FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
-            "could not walk \(root.path)"
-        )
-        return enumerator
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "swift" }
-            .sorted { $0.path < $1.path }
     }
 
     /// **The scan descends.** A directory listing is not a source tree, and this read only the

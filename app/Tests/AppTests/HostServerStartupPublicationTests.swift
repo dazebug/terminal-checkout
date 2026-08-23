@@ -121,6 +121,44 @@ final class HostServerStartupPublicationTests: XCTestCase {
         )
     }
 
+    /// **A publication that did not happen does not open the door** (round 18 review).
+    ///
+    /// `publishLocaleAtLaunch` used to answer `Void` and this call used to ignore it, so the accept
+    /// loop was armed whether or not anything had been written. The invariant above it says *the
+    /// publication is committed before anything is answered*; what the code held was *a publication
+    /// was attempted*. The failure lands where a failed bind already lands: nothing is served, the
+    /// path is given back, and the log says this instance publishes no locale.
+    func testStartDoesNotArmAfterPublicationIsRefused() throws {
+        defaults.set(
+            ["installId": "install-before", "epoch": 3, "tag": "ko"],
+            forKey: LocaleState.publicationKey
+        )
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(["query": localeQueryName], at: path, givingUp: 3)
+
+        let japanese = try XCTUnwrap(SupportedLocale("ja"))
+        XCTAssertThrowsError(
+            try server.start(announcing: .publish(japanese), publish: { _, _, _ in nil }),
+            "a refused publication still started a server"
+        ) { error in
+            guard case HostServer.ServerError.publicationRefused = error else {
+                return XCTFail("start failed for another reason: \(error)")
+            }
+        }
+
+        XCTAssertFalse(
+            waits(for: { relay.answer != nil }, upTo: 1),
+            "the server answered although this launch published nothing"
+        )
+        XCTAssertNil(connectToUnixSocket(path: path), "the refused instance is still listening")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path), "the refused instance kept the path")
+        XCTAssertNil(LocalePublicationRight.current, "the refused instance kept the right to publish")
+        XCTAssertEqual(
+            defaults.dictionary(forKey: LocaleState.publicationKey)?["tag"] as? String, "ko",
+            "the store moved although the publication was refused"
+        )
+    }
+
     /// **The headless server answers too, and announcing nothing is how it says what it is.**
     ///
     /// It draws nothing and has no picker, so inventing a revision there is what D49 rules out — but

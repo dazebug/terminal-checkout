@@ -195,6 +195,10 @@ final class HostProtocolTests: XCTestCase {
     /// and that two interactive writers cannot collide
     /// (`testTwoInteractiveWritersCannotPublishDifferentTagsAtTheSameEpoch`); what is left uncovered
     /// is only "which role this one call site passes", and that is what this line pins.
+    /// **The subject is `serve`, not the file.** It used to read the whole of `HostServer.swift`,
+    /// and since round 17 that file also holds the launch publication — so "this file does not
+    /// publish" became false about the file while staying true about the request path, which is the
+    /// thing the claim was ever about (round 18, while narrowing the same contract).
     func testTheServerPublishesAsAReaderOnly() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
@@ -203,12 +207,17 @@ final class HostProtocolTests: XCTestCase {
                 .appendingPathComponent("Sources/App/HostServer.swift"),
             encoding: .utf8
         )
+        let start = try XCTUnwrap(
+            source.range(of: "private func serve(fd: Int32) {"),
+            "the request path is no longer where this lint reads it from"
+        ).upperBound
+        let serve = String(source[start...])
         XCTAssertTrue(
-            source.contains("role: .headless"),
+            serve.contains("role: .headless"),
             "the server no longer publishes as a reader"
         )
         XCTAssertFalse(
-            source.contains("role: .interactive"),
+            serve.contains("role: .interactive"),
             "the server publishes as a writer, which races the picker for an epoch"
         )
     }

@@ -499,15 +499,28 @@ final class LocalePublicationTests: XCTestCase {
             "main.swift no longer resolves the launch language next to the AppleLanguages write"
         )
 
-        let sources = try FileManager.default
-            .contentsOfDirectory(atPath: Self.appSource("")).filter { $0.hasSuffix(".swift") }.sorted()
-        XCTAssertTrue(sources.contains("HostServer.swift"), "the App sources were not found at all")
+        // **The walk descends**, through the one helper this target has for it. Written a round ago
+        // with `contentsOfDirectory`, this gate could not see a file in a subdirectory of
+        // `Sources/App` — the defect a comment beside `swiftFiles(under:)` already warned about, in
+        // the same words (round 18 review)
+        let sources = try swiftFiles(under: URL(fileURLWithPath: Self.appSource("")))
+        XCTAssertTrue(
+            sources.contains { $0.lastPathComponent == "HostServer.swift" },
+            "the App sources were not found at all"
+        )
         var callers: [String] = []
-        for name in sources {
-            let text = try String(contentsOfFile: Self.appSource(name), encoding: .utf8)
-            // The declaration in `Settings.swift` spells the label list, a call spells an argument
-            let calls = text.components(separatedBy: "Settings.publishLocaleAtLaunch(").count - 1
-            callers.append(contentsOf: Array(repeating: name, count: calls))
+        for file in sources {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            // The qualified name and not the call syntax: the publisher is reached through a
+            // parameter with a default now, so the reference spells no parenthesis. Counting `(`
+            // would have made this gate go quiet at the exact moment the call moved.
+            // Comment lines are dropped first — the subject is what the program does, and a
+            // sentence naming the function is not a second publisher
+            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            let uses = code.components(separatedBy: "Settings.publishLocaleAtLaunch").count - 1
+            callers.append(contentsOf: Array(repeating: file.lastPathComponent, count: uses))
         }
         XCTAssertEqual(
             callers, ["HostServer.swift"],

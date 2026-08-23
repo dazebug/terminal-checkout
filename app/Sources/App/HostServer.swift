@@ -92,6 +92,25 @@ func hostResponse(
     }
 }
 
+/// Whether that descriptor really is a unix socket bound to that exact name.
+///
+/// A free function rather than a private member so that what it discriminates can be exercised
+/// against real descriptors — a regular file, a socket that never bound, one bound somewhere else —
+/// instead of being taken on faith at the one call site that matters. It decides nothing on its own:
+/// the only caller is `LocalePublicationRight.mint`.
+func unixSocketIsBound(_ fd: Int32, to path: String) -> Bool {
+    var storage = sockaddr_un()
+    var size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let named = withUnsafeMutablePointer(to: &storage) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &size) }
+    }
+    guard named == 0, storage.sun_family == sa_family_t(AF_UNIX) else { return false }
+    let bound = withUnsafeBytes(of: &storage.sun_path) { raw in
+        String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
+    }
+    return !bound.isEmpty && bound == path
+}
+
 /// **The right to publish a locale, as a thing you have rather than a question you ask.**
 ///
 /// Round 14 bound the launch publisher to the socket and left the picker unbound; round 15 made both
@@ -106,8 +125,8 @@ func hostResponse(
 /// stops listening, another binds the same path, and from then on the relay is talking to that one.
 /// A right that outlived its socket would let this process go on moving a generation the extension
 /// orders by while nothing can reach it. So `stop()` gives the right up, and a right that has been
-/// given up writes nothing (`LocaleWriterRole.mayWrite`) — the same behaviour as the headless reader,
-/// which is what a process that no longer owns the machine's socket is.
+/// given up runs no write (`whileHeld`) — the same behaviour as the headless reader, which is what a
+/// process that no longer owns the machine's socket is.
 final class LocalePublicationRight {
     private static let lock = NSLock()
     private static var holder: LocalePublicationRight?
@@ -127,9 +146,31 @@ final class LocalePublicationRight {
 
     private init() {}
 
-    /// Minted by a successful bind. Any right this process was holding is given up first: two live
-    /// rights would mean two answers to a question with one true answer.
-    fileprivate static func mint() -> LocalePublicationRight {
+    /// **Minted from the bound socket itself, and there is nothing else to mint from.**
+    ///
+    /// A `private` initialiser stops every other file and stopped nothing in this one: a second
+    /// declaration here could call a no-argument `mint()` and publish without ever having bound
+    /// (round 17 review). That was provenance kept by habit. The mint is handed the socket now and
+    /// checks it, and what it checks is what the right *means* — this process holds the name the
+    /// relay reaches. `bind` on a unix path is exclusive, so an fd carrying that name **is**
+    /// ownership of it, and a right that never bound stops being a rule anybody keeps and becomes a
+    /// value nobody can make.
+    ///
+    /// **The two obvious checks are unavailable on this platform, and that is measured rather than
+    /// assumed** (`<scratchpad>/r19_sockname_probe.swift`, `r19_ino_probe.swift`):
+    /// `getsockopt(SO_ACCEPTCONN)` answers `ENOPROTOOPT` for *every* socket here, listening or not,
+    /// and a bound unix socket's `fstat` inode is a synthetic one with `st_dev == -1` that has
+    /// nothing to do with the filesystem inode of its path. So neither "is it listening" nor "is
+    /// this fd that file" can be asked. `getsockname` answers enough and answers it exactly:
+    /// `ENOTSOCK` for anything that is not a socket, the family, and the **path that was passed to
+    /// `bind`** — empty for a socket that never bound and for a connected client. Listening is not
+    /// a property worth carrying here anyway: since round 17 the accept loop is armed by the same
+    /// call, after this.
+    ///
+    /// Any right this process was holding is given up first: two live rights would mean two answers
+    /// to a question with one true answer.
+    fileprivate static func mint(boundTo path: String, on fd: Int32) -> LocalePublicationRight? {
+        guard unixSocketIsBound(fd, to: path) else { return nil }
         lock.lock()
         let previous = holder
         let right = LocalePublicationRight()
@@ -139,11 +180,40 @@ final class LocalePublicationRight {
         return right
     }
 
-    /// Still ours? False once the socket it came from has been let go.
+    /// Still ours? False once the socket it came from has been let go. **A question, and a question
+    /// is not a permission**: a caller that means to write wants `whileHeld`, where the answer
+    /// cannot go stale between being given and being acted on.
     var isHeld: Bool {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         return held
+    }
+
+    /// **Runs `body` under the lock that decides whether this right is still held, and only while it
+    /// is.**
+    ///
+    /// The check and the write used to sit under **different** locks: `LocaleState.publish` asked
+    /// `mayWrite` — this class's lock — and then wrote under its own, so `HostServer.stop()` could
+    /// give the right up in between. What lands then is not "one stale write". `published()` is a
+    /// read-modify-write against a shared `UserDefaults`, and the process that loses the socket in a
+    /// **language restart** is exactly the process that can still be inside the write. A write
+    /// arriving at the new owner's epoch leaves the extension ordered by an epoch it has already
+    /// accepted while the value under it is the old language — permanent until something else
+    /// publishes, in the scenario this feature was built for.
+    ///
+    /// **The recorded reason for leaving it open did not survive being tried.** It was that merging
+    /// them "would mean teardown taking the publication lock"; teardown takes only this one, and
+    /// `LocaleState.commit` is the single path that holds both — always in the order writeLock →
+    /// this one. With one order there is no inversion to have.
+    ///
+    /// nil is a **report** and not an absence: it says the body did not run. That is what lets a
+    /// caller tell a publication that happened from one that did not, which is the other half of
+    /// the same question.
+    func whileHeld<T>(_ body: () -> T) -> T? {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
+        guard held else { return nil }
+        return body()
     }
 
     /// Given up with the socket. Idempotent, and it clears the process-wide holder only if that is
@@ -188,11 +258,17 @@ final class HostServer {
     enum ServerError: Error, CustomStringConvertible {
         case alreadyRunning
         case socketFailed(String)
+        /// The bind succeeded and the launch publication did not — the right was given up in
+        /// between. Answering on that socket would mean answering out of the previous launch's
+        /// snapshot, so the bind is given back instead of being served.
+        case publicationRefused
 
         var description: String {
             switch self {
             case .alreadyRunning: return "another Terminal Checkout instance is already running"
             case .socketFailed(let reason): return "creating the socket failed: \(reason)"
+            case .publicationRefused:
+                return "the socket was bound but the launch locale could not be published"
             }
         }
     }
@@ -240,8 +316,24 @@ final class HostServer {
     ///
     /// It is `@discardableResult` because the announcement is now what a caller says, and the value
     /// is a fact about the bind that only the tests and the process-wide `current` still read.
+    ///
+    /// `publish` is the launch publisher, as a parameter with the production default — the same
+    /// arrangement `warpInjectionSetup` uses, and for the same reason: the branch where a
+    /// publication does not happen is otherwise unreachable from outside. With the seam closed
+    /// (`LocalePublicationRight.whileHeld`) a right cannot be lost *during* the write, so the only
+    /// remaining way to be refused is a right already given up when this line is reached, which
+    /// takes another thread relinquishing between two statements here. **It cannot weaken what this
+    /// call establishes**: whatever is passed runs before the accept loop is armed and its refusal
+    /// is still handled here, so the ordering and the guard are both outside it. The default being
+    /// the real publisher is not taken on faith either —
+    /// `testNoRequestIsAnsweredBeforeTheLaunchPublicationIsCommitted` drives this call with no
+    /// argument and observes the real write.
     @discardableResult
-    func start(announcing announcement: LocaleAnnouncement) throws -> LocalePublicationRight {
+    func start(
+        announcing announcement: LocaleAnnouncement,
+        publish: (SupportedLocale, LocalePublicationRight, UserDefaults) -> LocalePublication?
+            = Settings.publishLocaleAtLaunch
+    ) throws -> LocalePublicationRight {
         let dir = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true,
@@ -277,11 +369,24 @@ final class HostServer {
         chmod(socketPath, 0o600)
         serverFD = fd
         boundIdentity = Self.identity(ofPathAt: socketPath)
-        let right = LocalePublicationRight.mint()
+        guard let right = LocalePublicationRight.mint(boundTo: socketPath, on: fd) else {
+            stop()
+            throw ServerError.socketFailed("the socket just bound does not carry the path it was bound to")
+        }
         self.right = right
         switch announcement {
         case .publish(let resolved):
-            Settings.publishLocaleAtLaunch(resolved: resolved, right: right, defaults: defaults)
+            // **What was attempted is not what was claimed.** `publishLocaleAtLaunch` used to answer
+            // nothing and this line used to ignore it, so the accept loop was armed whether or not a
+            // publication had happened — the invariant held was "a publication was attempted" while
+            // the one written down was "the publication is committed before anything is answered"
+            // (round 18 review). The right can be given up between the mint above and the write, and
+            // then the answer to give is the one a failed bind already gets: this instance owns
+            // nothing and says nothing, and it does not answer either
+            guard publish(resolved, right, defaults) != nil else {
+                stop()
+                throw ServerError.publicationRefused
+            }
         case .nothing:
             break
         }
