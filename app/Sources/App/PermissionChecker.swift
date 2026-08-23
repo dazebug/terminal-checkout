@@ -96,9 +96,8 @@ enum PermissionChecker {
                 do {
                     // `count windows`: a harmless query that is guaranteed to send an Apple Event —
                     // `version` and `name` can be answered locally and so raise no consent prompt
-                    let result = try runProcess(
-                        "/usr/bin/osascript",
-                        ["-e", "tell application id \"\(iTermBundleID)\" to count windows"],
+                    let result = try runAppleScript(
+                        "tell application id \"\(iTermBundleID)\" to count windows",
                         timeout: 300 // waits for the user to answer the prompt
                     )
                     DispatchQueue.main.async {

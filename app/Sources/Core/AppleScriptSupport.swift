@@ -3,6 +3,40 @@ import Foundation
 /// The iTerm2 bundle ID. AppleScript targets this ID rather than the name — that keeps working when the app file is called iTerm.app, or when a copy has confused LaunchServices' name resolution (this is what avoids -1728).
 public let iTermBundleID = "com.googlecode.iterm2"
 
+/// **The only door AppleScript goes out through**, and the delivery is stdin rather than `-e`.
+///
+/// **Why not `-e`.** Foundation re-encodes `Process.arguments` to NFD on Darwin
+/// (`ProcessArgumentBoundaryTests`), so a script handed over as an argument reaches the interpreter
+/// decomposed — measured for `설계`: `-e` gives it `1109 1165 11AF 1100 1168`, stdin and a script
+/// file both give `C124 ACC4`. That is the user's own sentence to claude, in whichever of the five
+/// languages they wrote it, and when the input is a `!` one it is the **shell** that receives the
+/// decomposed bytes — the failure mode this repository has already met once, where a Korean pattern
+/// stopped matching the NFC bytes on disk with no error anywhere.
+///
+/// **Why the carrier and not a normalisation of ours.** Composing to NFC would equally change what
+/// a user who typed NFD wrote. The promise is the bytes they wrote, so the fix is to stop passing
+/// them through something that rewrites them.
+///
+/// **Why stdin and not a script file**, which measures the same: a file has to be created, secured
+/// and deleted on a path taken several times per input (marker, clear, body, CR, cleanup), and a
+/// deletion that fails leaves residue this repository would then have to reclaim — it already
+/// carries two such reclaimers. Measured alongside: stdin reports the **same status and the same
+/// stderr** as `-e` for both a syntax error and a missing target, and a 200 KB script goes through
+/// without the write blocking.
+///
+/// **What is not measured**: the last hop. Whether iTerm2's `write text` puts these bytes on the tty
+/// unchanged needs iTerm2 running. What is established is that the bytes leave AppleScript itself
+/// intact — measured through two independent sinks, `do shell script` and AppleScript's own UTF-8
+/// writer.
+///
+/// There is no default timeout on purpose: the four call sites want 10s (twice), 180s and 300s, and
+/// a default none of them used would be a value no test ever exercises.
+public func runAppleScript(
+    _ script: String, timeout: TimeInterval
+) throws -> (status: Int32, stdout: String, stderr: String) {
+    try runProcess("/usr/bin/osascript", ["-"], input: script, timeout: timeout)
+}
+
 /// Escapes text so it can sit safely inside an AppleScript string literal.
 public func escapeForAppleScript(_ text: String) -> String {
     var s = text.replacingOccurrences(of: "\\", with: "\\\\")

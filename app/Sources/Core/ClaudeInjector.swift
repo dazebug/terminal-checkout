@@ -837,7 +837,7 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
         case claudeClearInputKey: script = iTermClearInputScript(sessionID: sessionID)
         default: script = iTermWriteToSessionScript(sessionID: sessionID, text: text, submit: false)
         }
-        guard let result = try? runProcess("/usr/bin/osascript", ["-e", script], timeout: 10),
+        guard let result = try? runAppleScript(script, timeout: 10),
               result.status == 0 else { return false }
         if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" {
             checkoutLog("the iTerm session closed — claude input delivery stops")
@@ -874,9 +874,8 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
 private func screenText(of handle: TerminalSessionHandle) -> String? {
     switch handle {
     case .iterm(let sessionID, _):
-        guard let result = try? runProcess(
-            "/usr/bin/osascript", ["-e", iTermSessionContentsScript(sessionID: sessionID)],
-            timeout: 10
+        guard let result = try? runAppleScript(
+            iTermSessionContentsScript(sessionID: sessionID), timeout: 10
         ), result.status == 0 else { return nil }
         let text = result.stdout
         return text.trimmingCharacters(in: .whitespacesAndNewlines) == "gone" ? nil : text

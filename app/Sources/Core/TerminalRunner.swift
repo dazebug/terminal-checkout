@@ -236,7 +236,7 @@ public func runInTerminal(
 @discardableResult
 public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
     // Generous timeout: on the first run the automation permission prompt appears and blocks until the user answers
-    let result = try runProcess("/usr/bin/osascript", ["-e", iTermScript(for: command)], timeout: 180)
+    let result = try runAppleScript(iTermScript(for: command), timeout: 180)
     guard result.status == 0 else {
         throw TerminalError.appleScriptFailed(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -414,6 +414,57 @@ public func findWezTermFocusedWindow(cli: String, env: [String: String]) -> Stri
     return wezTermFocusedWindowID(clientsJSON: Data(clients.stdout.utf8), listJSON: Data(list.stdout.utf8))
 }
 
+/// Spells text as a **bash ANSI-C literal** (`$'…'`) that is itself pure ASCII.
+///
+/// The reason is one boundary: Foundation re-encodes `Process.arguments` to NFD
+/// (`ProcessArgumentBoundaryTests`), and an argument that is **already ASCII cannot be changed by
+/// that re-encoding**. So the bytes are spelled out on our side and bash puts them back. Measured
+/// on `/bin/bash` 3.2.57 (the system bash this launches by absolute path) for a byte followed by a
+/// hex digit, a newline, a tab, a quote, a backslash and Korean/Japanese/Chinese text — `\xHH`
+/// takes at most two hex digits, so `설계1` survives.
+///
+/// `$'…'` is bash syntax and not POSIX; the only caller hands `wezterm start` the absolute path
+/// `/bin/bash`, so the interpreter is not the user's login shell and cannot be something else.
+///
+/// Printable ASCII passes through unescaped, which is not decoration: an all-ASCII command has to
+/// stay readable in `ps` and in the pane the user is looking at. Only `'` (it would close the
+/// literal), `\` (it would start an escape) and everything outside printable ASCII are spelled out.
+func bashANSICQuoted(_ text: String) -> String {
+    var literal = "$'"
+    for byte in Data(text.utf8) {
+        if byte >= 0x20, byte < 0x7F, byte != UInt8(ascii: "'"), byte != UInt8(ascii: "\\") {
+            literal.unicodeScalars.append(UnicodeScalar(byte))
+        } else {
+            literal += String(format: "\\x%02x", byte)
+        }
+    }
+    return literal + "'"
+}
+
+/// The argv for the WezTerm fallback launch — a new process, so there is no mux pane to write to and
+/// the command has nowhere to ride but argv.
+///
+/// **This is the same normalisation boundary as the iTerm2 one and it is reachable.** A request
+/// whose claude input is a single plain-text message has that message appended to the command
+/// (`appendedPromptCommand`) and comes back with `claudeInputs` empty, so `injectsClaudeInput` is
+/// false and `wezTermFallbackRejection` lets the fallback run — carrying the user's sentence. This
+/// is the no-mux path, i.e. every first click before WezTerm has ever been started.
+///
+/// The two carriers that work elsewhere are both unavailable here: the mux path writes the command
+/// to `send-text` on **stdin**, and Warp writes it to a **file**, but a fresh `wezterm start` has
+/// neither. The environment is no way out either — measured, `Process.environment` decomposes just
+/// like argv. What is left is to make the argument ASCII, which `bashANSICQuoted` does, and `eval`
+/// is what turns the literal back into a command line (in command position a `$'…'` would be read
+/// as a program name).
+///
+/// `eval` **replaces** the outer parse rather than adding one, so the command text is parsed exactly
+/// once either way. Compared against the interpolation it replaces, `echo a!b`, a quoted `!`, and a
+/// `cd … && …` chain came out identical in exit status, stdout and stderr — four cases, which is
+/// what was checked and not a claim about every command.
+func wezTermFallbackArguments(command: String) -> [String] {
+    ["start", "--", "/bin/bash", "-ic", "eval \(bashANSICQuoted(command)); exec bash"]
+}
+
 /// Opens a new tab in the WezTerm window currently being looked at and runs the command (falling back to a new process when the spawn fails).
 /// With `injectsClaudeInput` that fallback is not reachable — the pane cannot be addressed there, so the input would vanish (`wezTermFallbackRejection`).
 @discardableResult
@@ -447,7 +498,7 @@ public func runInWezTerm(
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: cli)
-    process.arguments = ["start", "--", "/bin/bash", "-ic", "\(command); exec bash"]
+    process.arguments = wezTermFallbackArguments(command: command)
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     process.standardInput = FileHandle.nullDevice

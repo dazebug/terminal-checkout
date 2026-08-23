@@ -1607,18 +1607,18 @@ final class AppendedPromptPerTerminalTests: XCTestCase {
     )
 
     /// Asks osascript whether it really parses as an AppleScript literal — with no
-    /// `tell application` it touches no terminal and needs no permission
+    /// `tell application` it touches no terminal and needs no permission.
+    ///
+    /// It goes through `runAppleScript` because that is the carrier the shipped path uses, and the
+    /// second assertion is on **bytes**: `XCTAssertEqual` on the strings passes for NFC and NFD
+    /// alike, so on the old carrier the string check below was green while the Korean in this very
+    /// command was being decomposed.
     func testAppleScriptLiteralParsesBackToTheSameCommand() throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", "return \"\(escapeForAppleScript(command))\""]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try process.run()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0)
-        XCTAssertEqual(out.trimmingCharacters(in: .newlines), command)
+        let result = try runAppleScript("return \"\(escapeForAppleScript(command))\"", timeout: 30)
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let out = result.stdout.trimmingCharacters(in: .newlines)
+        XCTAssertEqual(out, command)
+        XCTAssertEqual(Array(out.utf8), Array(command.utf8), "the literal came back re-encoded")
     }
 
     /// Every `"` inside a TOML basic string has to be escaped — one leaking is enough for Warp to
@@ -3523,10 +3523,11 @@ final class WarpHelperProtocolTests: XCTestCase {
 /// bytes; the first thing this boundary broke was a test of ours that compared a Korean pattern
 /// against file bytes with `grep` and silently stopped matching (round 5).
 ///
-/// Where it reaches a user: `runInITerm` puts the claude message inside an AppleScript that goes to
-/// `osascript -e`, and the WezTerm fallback puts the command in argv the same way. That is the
-/// subject of its own item — this class only fixes what the platform does, so a change in it fails
-/// here rather than out there.
+/// Where it used to reach a user: `runInITerm` put the claude message inside an AppleScript handed
+/// to `osascript -e`, and the WezTerm fallback put the command in argv the same way. Both now avoid
+/// the boundary rather than survive it (`AppleScriptCarrierTests`, `WezTermFallbackCarrierTests`);
+/// this class only pins what the platform does, so a change in **that** fails here rather than out
+/// there. It is also why the two carrier classes measure bytes and not strings.
 final class ProcessArgumentBoundaryTests: XCTestCase {
     private let composed = "설계"
 
@@ -3565,6 +3566,147 @@ final class ProcessArgumentBoundaryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
         let result = try runProcess("/bin/cat", [path], timeout: 10)
         XCTAssertEqual(Array(result.stdout.utf8), Array(composed.utf8))
+    }
+}
+
+// MARK: - The carriers that were changing the user's bytes
+
+/// Every `.swift` file under `app/Sources`, keyed by its path relative to the repository root.
+/// Located from `#filePath` for the same reason `repoFileContents` is — the CWD depends on how the
+/// test was invoked, and in a worktree the wrong checkout would be read.
+private func appSourceFiles() throws -> [(path: String, text: String)] {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // CoreTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // app
+    let sources = root.appendingPathComponent("Sources")
+    guard let walk = FileManager.default.enumerator(atPath: sources.path) else {
+        throw CocoaError(.fileReadNoSuchFile)
+    }
+    var found: [(String, String)] = []
+    for case let name as String in walk where name.hasSuffix(".swift") {
+        found.append((name, try String(contentsOf: sources.appendingPathComponent(name), encoding: .utf8)))
+    }
+    // An empty walk would make every gate below pass without reading anything
+    guard !found.isEmpty else { throw CocoaError(.fileReadNoSuchFile) }
+    return found
+}
+
+/// **Where the boundary above reaches a user, and what was done about it.**
+///
+/// `ProcessArgumentBoundaryTests` pins the platform fact — Foundation re-encodes argv to NFD. The
+/// iTerm2 branch is where a user meets it: the command and every claude input are embedded in an
+/// AppleScript that used to be handed over as `osascript -e <script>`, so a message written in
+/// Korean, Japanese or Chinese arrived decomposed, and a `!` input carrying it arrived decomposed
+/// **at the shell** — which is exactly how round 5's own `grep` silently stopped matching.
+///
+/// The repair is the **carrier**, not a normalisation of our own. Normalising to NFC would change
+/// what a user who typed NFD wrote, and this feature's promise is the bytes they wrote. Measured
+/// three ways for `설계` (NFC `C124 ACC4`, NFD `1109 1165 11AF 1100 1168`): `-e` gives the
+/// interpreter the NFD code points and those NFD bytes leave AppleScript again through both
+/// `do shell script` and its own UTF-8 writer; `osascript -` and a script file both give `C124 ACC4`.
+/// `Process.environment` was measured at the same time and decomposes **just like argv**, so it is
+/// not an escape hatch for anything.
+///
+/// **The limit of what is measured here**: the last hop, iTerm2's `write text` putting those bytes
+/// on the tty, needs iTerm2 running and is not measured — the AppleScript string's own bytes are as
+/// far as this gets. It is one step further than round 6, which stopped at the interpreter's code
+/// points.
+final class AppleScriptCarrierTests: XCTestCase {
+    private let message = "설계 정리해줘"
+
+    /// AppleScript writes its own string out as UTF-8. That is the closest observable stand-in for
+    /// what `write text` hands the terminal, and it touches no terminal and needs no permission.
+    func testAScriptLiteralKeepsTheBytesTheUserWrote() throws {
+        let sink = NSTemporaryDirectory() + "tc-as-\(UInt32.random(in: .min ... .max)).bin"
+        defer { try? FileManager.default.removeItem(atPath: sink) }
+        let script = """
+        set f to open for access POSIX file "\(sink)" with write permission
+        write "\(escapeForAppleScript(message))" to f as «class utf8»
+        close access f
+        """
+        let result = try runAppleScript(script, timeout: 30)
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let written = try Data(contentsOf: URL(fileURLWithPath: sink))
+        XCTAssertEqual(
+            Array(written), Array(message.utf8),
+            "the AppleScript carrier changed the bytes (decomposed: "
+                + "\(Array(written) == Array(message.decomposedStringWithCanonicalMapping.utf8)))"
+        )
+    }
+
+    /// **The door has to be the only one.** Fixing one send site and missing another is the defect
+    /// this repository has already paid for once (body typing leaked past the session gate), so the
+    /// rule is enforced by counting rather than by discipline: the osascript path appears in exactly
+    /// one file. What this cannot see is a *new* carrier of some other kind — it answers "did an
+    /// AppleScript call go back to argv", not "is every process boundary byte-exact".
+    func testEveryAppleScriptRunGoesThroughTheOneDoor() throws {
+        let door = "Core/AppleScriptSupport.swift"
+        var sites: [String] = []
+        for (path, text) in try appSourceFiles() where text.contains("\"/usr/bin/osascript\"") {
+            sites.append(path)
+        }
+        XCTAssertEqual(sites, [door], "an AppleScript call outside \(door)")
+    }
+
+    /// The door must not grow an argv form again — `-e` is the spelling that decomposes.
+    func testTheDoorDeliversTheScriptOnStdin() throws {
+        let text = try appSourceFiles().first { $0.path.hasSuffix("Core/AppleScriptSupport.swift") }?.text
+        XCTAssertNotNil(text)
+        XCTAssertTrue(text?.contains(#"["-"], input: script"#) == true)
+        XCTAssertFalse(text?.contains(#""-e""#) == true, "the door is back on the argv form")
+    }
+}
+
+/// The WezTerm fallback is the same class and it is **reachable**: a request whose claude input is a
+/// single plain-text message has that message appended to the command (`appendedPromptCommand`) and
+/// comes back with `claudeInputs` empty, so `injectsClaudeInput` is false, so
+/// `wezTermFallbackRejection` lets the fallback run — with the user's sentence inside the command.
+/// It is the no-mux path, which is every first click before WezTerm has ever been started.
+///
+/// It has no stdin and no file to ride on, and the environment decomposes too, so the argument is
+/// made **ASCII** instead: an argument that is already ASCII cannot be changed by a re-encoding
+/// between NFC and NFD, and bash puts the bytes back.
+final class WezTermFallbackCarrierTests: XCTestCase {
+    private let message = "설계 — it's \"quoted\" $HOME `now`"
+
+    func testTheFallbackPutsNoNonASCIIIntoArgv() {
+        let command = "z remy && command claude -- \(shellSingleQuoted(message))"
+        for argument in wezTermFallbackArguments(command: command) {
+            XCTAssertTrue(
+                argument.allSatisfy(\.isASCII),
+                "a non-ASCII argument is re-encoded to NFD before the child sees it: \(argument)"
+            )
+        }
+    }
+
+    /// End to end through the real boundary: the exact two arguments `/bin/bash` is handed, run by
+    /// `/bin/bash`. Only WezTerm's own forwarding of argv is left out, and that is unchanged.
+    /// `exec bash` at the end reads EOF from the null stdin and exits, so this terminates.
+    func testTheFallbackScriptRunsTheCommandsExactBytes() throws {
+        let sink = NSTemporaryDirectory() + "tc-wez-\(UInt32.random(in: .min ... .max)).bin"
+        defer { try? FileManager.default.removeItem(atPath: sink) }
+        let command = "printf %s \(shellSingleQuoted(message)) > \(sink)"
+        let arguments = wezTermFallbackArguments(command: command)
+        XCTAssertEqual(Array(arguments.prefix(3)), ["start", "--", "/bin/bash"])
+        let result = try runProcess("/bin/bash", Array(arguments.suffix(2)), timeout: 20)
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let written = try Data(contentsOf: URL(fileURLWithPath: sink))
+        XCTAssertEqual(
+            Array(written), Array(message.utf8),
+            "the fallback changed the command's bytes (decomposed: "
+                + "\(Array(written) == Array(message.decomposedStringWithCanonicalMapping.utf8)))"
+        )
+    }
+
+    /// An all-ASCII command has to stay readable — in `ps`, and in the pane the user is looking at.
+    /// A blanket byte-by-byte escape would pass the test above and turn every command into hex.
+    func testAnASCIICommandStaysReadable() {
+        let arguments = wezTermFallbackArguments(command: "z remy && claude")
+        XCTAssertTrue(
+            arguments.last?.contains("z remy && claude") == true,
+            arguments.last ?? "no script argument"
+        )
     }
 }
 
