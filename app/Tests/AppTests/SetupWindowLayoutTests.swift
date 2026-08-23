@@ -41,7 +41,12 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// key is shorter than every sentence it stands for, so measuring one would have been a pass
     /// that meant nothing. A layout that fits English and Korean is likewise not evidence about
     /// Japanese or either Chinese, whose glyphs and line lengths differ.
-    static let populatedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
+    ///
+    /// **It reads `supportedLocales` rather than repeating it.** As a spelled-out list it was a
+    /// second source of truth: measured, a sixth tag added to the constant left every case in this
+    /// file green without the window ever being drawn in it — the silent failure this comment
+    /// already warned about, one level up from where it was looking.
+    static var populatedLocales: [String] { supportedLocales }
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal

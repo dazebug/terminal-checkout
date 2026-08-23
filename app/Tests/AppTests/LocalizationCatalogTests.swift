@@ -191,21 +191,18 @@ final class LocalizationCatalogTests: XCTestCase {
         // aim it at one catalogue at a time. Production reaching it directly would step around the
         // type, so the only callers meant to exist are the two shorthands in that same file.
         //
-        // **This half checks the top level of `Sources/App` only.** `contentsOfDirectory` does not
-        // descend, which is the exact failure `sourceText()` above was fixed for and this line was
-        // not — a caller placed in a subdirectory would pass unseen. Nothing is nested there today,
-        // so the gap is latent rather than open; widening it to `swiftFiles(under:)` changes what
-        // the gate checks, which is a decision of its own and not this audit's to make.
-        let names = try FileManager.default
-            .contentsOfDirectory(atPath: Self.appSources.path)
-            .filter { $0.hasSuffix(".swift") && $0 != "Localization.swift" }
-        for name in names {
-            let text = try String(
-                contentsOf: Self.appSources.appendingPathComponent(name), encoding: .utf8
-            )
+        // **It walks the same tree `sourceText()` does, through the same function.** This used to
+        // call `contentsOfDirectory`, which does not descend — the exact defect that walk was
+        // written to fix, left standing a few lines below three separate paragraphs explaining why a
+        // directory listing is not a source tree. Measured: a caller placed in a subdirectory of
+        // `Sources/App` passed unseen. Two walks is how one of them gets strengthened alone, so
+        // there is one.
+        for file in try swiftFiles(under: Self.appSources)
+        where file.lastPathComponent != "Localization.swift" {
+            let text = try String(contentsOf: file, encoding: .utf8)
             XCTAssertFalse(
                 text.contains("AppLocalization.string("),
-                "\(name) calls the lookup directly, which takes a String and skips the type"
+                "\(file.lastPathComponent) calls the lookup directly, which takes a String and skips the type"
             )
         }
     }

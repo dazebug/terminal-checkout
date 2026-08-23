@@ -13,18 +13,17 @@ import XCTest
 final class AppMessageTests: XCTestCase {
     private var savedResources: String?
 
-    /// The catalogues that have bodies, kept in step with `SetupWindowLayoutTests`. **All five**
-    /// since item 24 filled the three that were missing.
+    /// The locales every check below is asked of — **`supportedLocales` itself, not a copy of it**.
     ///
-    /// While it held only `en` and `ko`, every check below asked its question of two languages and
-    /// let the other three past; the assertions that count *distinct* answers were the ones that
-    /// mattered, because "the label changed with the language" is only evidence when every language
-    /// is in it.
+    /// It was a spelled-out list, and while that list held only `en` and `ko` every check here asked
+    /// its question of two languages and let the other three past. Even once it named all five it
+    /// was a second source of truth: measured, adding a sixth tag to `supportedLocales` left
+    /// `SetupWindowLayoutTests` and `CatalogueOwnershipTests` passing without ever drawing or
+    /// reading it. Reading the constant means a new language is covered by existing in it.
     ///
-    /// It is a second copy of `supportedLocales` rather than a reading of it, so a sixth locale
-    /// would be skipped here in silence — the same gap `CatalogueOwnershipTests.filledLocales`
-    /// records, and the same fix (assert the two are equal) applies to both.
-    private let populatedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
+    /// The assertions that count *distinct* answers are the ones this matters most for: "the label
+    /// changed with the language" is only evidence when every language is in it.
+    private var populatedLocales: [String] { supportedLocales }
 
     private static var sourceResources: String {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/AppMessageTests.swift
@@ -177,18 +176,20 @@ final class AppMessageTests: XCTestCase {
     /// language whose `InfoPlist.strings` says nothing — which is why that value must not go back to
     /// the Korean it once was.
     ///
-    /// **All five catalogues carry the key now**, so what this case still asserts is that English
-    /// and Korean differ and that the `Info.plist` fallback is the English sentence. The loop over
-    /// the languages *without* a body is **vacuous**: `populatedLocales` and `supportedLocales` hold
-    /// the same five, so its `where` clause selects nothing and nobody checks that `ja` and the two
-    /// Chinese files still carry theirs. `verify-bundle.sh` compares them byte for byte against the
-    /// bundle and lints them, but it does not require the key either — emptying one would go
-    /// unnoticed. Turning the loop around into "every shipped locale has a body" is a change to what
-    /// the gate checks and belongs to its own promotion.
+    /// **The subject is every shipped locale, so that is what is walked.** This used to loop over
+    /// the languages *without* a body — `supportedLocales where !populatedLocales.contains(tag)` —
+    /// which stopped selecting anything the moment the last three catalogues were filled. Measured:
+    /// emptying `ja`'s file and rebuilding left `swift test` and `build.sh` both green, because
+    /// `verify-bundle.sh` compares source against bundle and lints the syntax but never asks for a
+    /// key. Nothing anywhere noticed a language losing the sentence macOS shows when it asks for the
+    /// automation permission.
     ///
-    /// Absence, where it is asserted, is asserted on a file that **parsed**: measured while writing
-    /// this, a comment-only `.strings` file parses to an empty dictionary rather than failing, so
-    /// "no such key" means the file says nothing, not that it could not be read.
+    /// The values have to be **distinct** as well as present: a catalogue that copied English would
+    /// satisfy "has a body" and still show the wrong language in the prompt.
+    ///
+    /// Reading is asserted separately from content, because a `.strings` file holding only comments
+    /// parses to an empty dictionary rather than failing (measured) — so "no such key" has to mean
+    /// the file said nothing, not that it could not be read.
     func testTheUsageDescriptionIsWrittenForTheLanguagesThatHaveBodies() throws {
         let key = "NSAppleEventsUsageDescription"
         func infoPlistStrings(_ tag: String) throws -> [String: Any] {
@@ -199,12 +200,24 @@ final class AppMessageTests: XCTestCase {
             return try XCTUnwrap(parsed as? [String: Any], "\(tag) InfoPlist.strings is not a dictionary")
         }
 
-        let english = try XCTUnwrap(infoPlistStrings("en")[key] as? String)
-        let korean = try XCTUnwrap(infoPlistStrings("ko")[key] as? String)
-        XCTAssertNotEqual(english, korean)
-        for tag in supportedLocales where !populatedLocales.contains(tag) {
-            XCTAssertTrue(try infoPlistStrings(tag).isEmpty, "\(tag) has a body item 24 has not written yet")
+        var bodies: [String: String] = [:]
+        for tag in supportedLocales {
+            let parsed = try infoPlistStrings(tag)
+            XCTAssertFalse(parsed.isEmpty, "\(tag)/InfoPlist.strings says nothing at all")
+            let body = try XCTUnwrap(
+                parsed[key] as? String,
+                "\(tag) has no \(key) — macOS would show that language the Info.plist English instead"
+            )
+            XCTAssertFalse(body.isEmpty, "\(tag)/\(key) is empty")
+            bodies[tag] = body
         }
+        XCTAssertEqual(
+            Set(bodies.values).count, supportedLocales.count,
+            "two locales share a usage description, so one of them is showing another language: \(bodies)"
+        )
+        let english = try XCTUnwrap(bodies[fallbackLocale])
+        let korean = try XCTUnwrap(bodies["ko"])
+        XCTAssertNotEqual(english, korean)
 
         let plistData = try Data(contentsOf: URL(fileURLWithPath: repoPath("app/Info.plist")))
         let plist = try XCTUnwrap(

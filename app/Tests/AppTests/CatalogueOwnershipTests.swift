@@ -1,3 +1,4 @@
+import Core
 import XCTest
 @testable import App
 
@@ -75,20 +76,31 @@ final class CatalogueOwnershipTests: XCTestCase {
         return try XCTUnwrap(parsed as? [String: Any], "\(tag)/messages.json is not an object")
     }
 
-    /// The locales both catalogues have actually been filled for.
+    /// The locales both catalogues have actually been filled for — **derived from
+    /// `supportedLocales`, not a second copy of it**.
     ///
-    /// **Only the filledness is derived; the locale set is spelled out here**, and that is a second
-    /// copy of `supportedLocales` — the shape this comment used to claim it avoided. It is a
-    /// narrowing rather than a false answer: a sixth locale added to `supportedLocales` is simply
-    /// not visited, so every ownership rule below would skip it while still passing, and
-    /// `testTheStoresAreActuallyBeingRead` compares against the same literal so it would not notice
-    /// either. `LocaleResolutionTests` shows the shape that works — spell the list out *and* assert
-    /// it equals the constant — and adopting it here changes what the gate checks, so it is left as
-    /// a recorded gap rather than repaired in an audit.
+    /// It used to spell the five out, which is exactly the shape this comment claimed to avoid, and
+    /// it was a narrowing rather than a false answer: measured, a sixth tag added to
+    /// `supportedLocales` was simply never visited, so every ownership rule below passed without
+    /// having seen it. `testTheStoresAreActuallyBeingRead` compared against the same literal, so it
+    /// did not notice either — that comparison is now against the constant, which turns "a shipped
+    /// locale we cannot read" into a failure instead of a shorter loop.
     private func filledLocales() throws -> [String] {
-        try ["en", "ko", "ja", "zh-Hans", "zh-Hant"].filter { locale in
+        try supportedLocales.filter { locale in
             try !appCatalogue(locale).isEmpty && !extensionDictionary(locale).isEmpty
         }
+    }
+
+    /// The `_locales/` directories, read rather than listed. Chrome's namespace uses its own
+    /// spelling (`zh_CN`, `zh_TW` for our `zh-Hans`, `zh-Hant`) and no code maps between the two —
+    /// `extension/i18n.js` says so deliberately — so the only honest way to name the set is to ask
+    /// the filesystem. A hardcoded pair is what let three of them go unchecked when D95 took this
+    /// from two locales to five.
+    private func chromeLocaleTags() throws -> [String] {
+        try FileManager.default
+            .contentsOfDirectory(atPath: Self.repositoryRoot.appendingPathComponent("extension/_locales").path)
+            .filter { !$0.hasPrefix(".") }
+            .sorted()
     }
 
     // MARK: - The rules
@@ -118,11 +130,16 @@ final class CatalogueOwnershipTests: XCTestCase {
         // Chrome's own namespace holds those two names and nothing from ours. The *count* is item
         // 17's assertion, on the side that owns the file; what is checked here is ownership.
         //
-        // **Two of the five, not all of them.** `_locales/` held `en` and `ko` when this was
-        // written and D95 later took it to five (`ja`, `zh_CN`, `zh_TW` as well, in Chrome's own
-        // spelling), which this loop was never widened to. A foreign key in one of those three
-        // would pass unseen, so the sentence above is the rule and this is a sample of it.
-        for tag in ["en", "ko"] {
+        // **Every directory that is there, not a pair named here.** This visited `en` and `ko`
+        // because that is what existed when it was written; D95 took `_locales/` to five and the
+        // loop did not follow, so a foreign key in `ja`, `zh_CN` or `zh_TW` passed unseen
+        // (measured). Reading the directory means the next one is covered by existing.
+        let chromeTags = try chromeLocaleTags()
+        XCTAssertEqual(
+            chromeTags.count, supportedLocales.count,
+            "_locales has \(chromeTags) but we ship \(supportedLocales.count) languages"
+        )
+        for tag in chromeTags {
             for key in try chromeMessages(tag).keys {
                 XCTAssertTrue(
                     ["extName", "extDescription"].contains(key),
@@ -246,9 +263,12 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// The reader itself, because a gate that reads nothing passes everything. This is the failure
     /// mode item 7 named for the bundle check, in a different file.
     func testTheStoresAreActuallyBeingRead() throws {
+        // Against the constant, not against a literal: with a literal on both sides this compared a
+        // list to itself and a shipped locale missing a catalogue produced a shorter loop rather
+        // than a failure
         XCTAssertEqual(
-            try filledLocales(), ["en", "ko", "ja", "zh-Hans", "zh-Hant"],
-            "a catalogue emptied out — every check in this file silently skips a locale it cannot read"
+            try filledLocales(), supportedLocales,
+            "a shipped locale has an unreadable or empty catalogue — every check in this file skips it"
         )
         XCTAssertGreaterThan(try appCatalogue("en").count, 90)
         XCTAssertGreaterThan(try extensionDictionary("en").count, 110)

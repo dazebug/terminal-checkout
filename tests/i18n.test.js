@@ -488,7 +488,13 @@ const optionsHtml = read('options.html');
 // **Every file that can name a message**, not only the options page: item 22 moved the presets, the
 // button phase markers and the update notice's prose into the dictionaries too, and a gate that
 // scanned one file would have called all of those unreferenced.
-const SPEAKING_FILES = ['options.js', 'defaults.js', 'content.js', 'background.js', 'migrations.js'];
+//
+// The set is **read from the directory**, not listed. As a list of five it was complete — the two
+// scripts it omitted name no messages — but "every file" was then a promise about a directory that
+// can grow, and a new script naming a key nobody put in the catalogue would have gone unseen in
+// exactly the direction that shows a user a raw key (measured with a planted file).
+const SPEAKING_FILES = fs.readdirSync(extension).filter(name => name.endsWith('.js')).sort();
+assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 const speakingSource = SPEAKING_FILES.map(read).join('\n');
 
 // A message id can only be named by a literal (checked below), and `options.html` names them in an
@@ -577,7 +583,7 @@ test('text and markup are separate halves, and nothing is on both', () => {
   // label six sentences quote. What may not happen is the one direction that breaks something — a
   // value carrying markup being asked for as text, where the tags would be drawn as characters.
   for (const key of textKeys) {
-    for (const tag of ['en', 'ko']) {
+    for (const tag of TC_I18N_LOCALES) {
       assert.deepEqual(tagsOf(globalThis.TC_I18N[tag][key]), [], `${tag}/${key} carries markup into textContent`);
     }
   }
@@ -640,7 +646,7 @@ test('prose that names a control receives the label, it does not spell it out ag
     'ext.status.importedWithNotes': ['ext.button.save'],
   };
   for (const [key, labels] of Object.entries(quoting)) {
-    for (const tag of ['en', 'ko']) {
+    for (const tag of TC_I18N_LOCALES) {
       const value = globalThis.TC_I18N[tag][key];
       assert.ok(placeholdersOf(value).length >= labels.length, `${tag}/${key}: fewer placeholders than labels`);
     }
@@ -656,7 +662,7 @@ test('prose that names a control receives the label, it does not spell it out ag
     }
     // English also has to be free of the spelled-out label. Only English: a Korean label is a short
     // word that turns up inside ordinary ones (`저장` lives inside `저장된`), so the same check
-    // there reports a hit that is not one — the relation above is what covers both languages.
+    // there reports a hit that is not one — the relation above is what covers every language.
     const english = globalThis.TC_I18N.en[key];
     for (const label of labels) {
       const literal = globalThis.TC_I18N.en[label];
@@ -670,7 +676,7 @@ test('a count sits behind a noun, and the two outcomes are two messages', () => 
   // D31a. The English needed `command`/`commands` and `was`/`were` to agree with two counts, and a
   // translation cannot be assembled out of the pieces that made them agree — so the count moved
   // behind a noun and a colon, where nothing inflects, and each outcome became its own message.
-  for (const tag of ['en', 'ko']) {
+  for (const tag of TC_I18N_LOCALES) {
     for (const key of ['ext.migration.applied', 'ext.migration.appliedWithDeclined']) {
       const value = globalThis.TC_I18N[tag][key];
       assert.ok(!/\(s\)/.test(value), `${tag}/${key} still carries an English plural marker`);
@@ -1162,8 +1168,14 @@ test('a translation cannot break out of an HTML attribute', () => {
       .map(m => m[1]),
   );
   assert.ok(attributeKeys.size >= 5, `only ${attributeKeys.size} attribute interpolations found`);
+  // **Every shipped language, not the two this used to visit.** Four loops in this file walked
+  // `['en', 'ko']` because that is what existed when they were written, and three of the five are
+  // the machine-translated first pass — the values most likely to carry a stray quote and the ones
+  // nobody was checking. Measured: an English plural marker planted in `zh-Hant` passed the old
+  // scope and fails this one. Widening them caught nothing in the shipped values, which says they
+  // are clean, not that two of five was enough.
   for (const key of attributeKeys) {
-    for (const tag of ['en', 'ko']) {
+    for (const tag of TC_I18N_LOCALES) {
       const value = globalThis.TC_I18N[tag][key];
       assert.ok(!value.includes('"'), `${tag}/${key} would close the attribute it is written into`);
       assert.ok(!value.includes('<'), `${tag}/${key} carries markup into an attribute`);

@@ -135,13 +135,13 @@ final class ExtensionCopyTests: XCTestCase {
     func testNeitherInstallPathDeletesItsDestinationFirst() throws {
         let installer = try String(contentsOfFile: Self.repositoryFile("app/Sources/App/Installer.swift"), encoding: .utf8)
         let copyFunction = try XCTUnwrap(installer.range(of: "static func installExtensionCopy() throws {"))
-        // **A fixed window, and the two directions do not fail alike.** The body is 1147 characters
-        // against this 1400 — about five lines of headroom. The positive assertions fail *closed*
-        // if the function outgrows it (the text moves out of the window and they go red), but the
-        // `XCTAssertFalse` below fails *open*: a destination delete added past character 1400 would
-        // simply not be seen. Widening it, or matching to the closing brace, is a change to the
-        // gate rather than to a comment.
-        let body = String(installer[copyFunction.upperBound...].prefix(1400))
+        // **The window is the function, found by matching its braces.** It was a fixed 1400
+        // characters over a 1147-character body — five lines of headroom — and the two directions
+        // did not fail alike: the positive assertions failed *closed* when the function outgrew it,
+        // while the `XCTAssertFalse` below failed *open*, because a destination delete written past
+        // the cut simply was not in the text being searched (measured — the lint stayed green).
+        // Widening the number would have left the same class in place with a larger constant.
+        let body = try balancedBody(of: installer, after: copyFunction.upperBound)
         XCTAssertTrue(body.contains("extensionStagingPath()"), "the Swift path no longer stages")
         // **The copy has to land in the staging path**, not merely mention it. The first version of
         // this lint asked whether the name appeared and a toggle walked straight through it by
@@ -172,6 +172,28 @@ final class ExtensionCopyTests: XCTestCase {
                       "install.sh no longer builds beside the old bundle")
         XCTAssertTrue(script.contains(#"mv "$STAGING" "$INSTALL_DIR/$APP_NAME""#),
                       "install.sh no longer swaps the staged bundle in")
+    }
+
+    /// The text from an opening brace to the one that closes it. A lint over a Swift function has to
+    /// read the whole function or its negative assertions stop meaning anything, and the only
+    /// boundary that grows with the code is the brace.
+    ///
+    /// Braces inside string literals and comments would fool this; there are none in the function it
+    /// is used on. An unbalanced count **fails** — not skips, which is a pass wearing another name,
+    /// and not "return the rest of the file", which is the truncated-window failure being removed.
+    private func balancedBody(of text: String, after start: String.Index) throws -> String {
+        var depth = 1
+        var index = start
+        while index < text.endIndex {
+            if text[index] == "{" { depth += 1 }
+            if text[index] == "}" {
+                depth -= 1
+                if depth == 0 { return String(text[start..<index]) }
+            }
+            index = text.index(after: index)
+        }
+        XCTFail("the function's braces do not balance — the lint would be reading the rest of the file")
+        return ""
     }
 
     private static func repositoryFile(_ relative: String) -> String {
