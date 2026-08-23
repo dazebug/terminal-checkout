@@ -28,23 +28,41 @@ func hostRequestKind(_ json: [String: Any]) -> HostRequestKind {
     (json["query"] as? String) == localeQueryName ? .localeQuery : .command
 }
 
-/// Attaches the published locale to a response — **only to one that succeeded**.
+/// Attaches the published locale to a response — **to every response this app composes**.
 ///
-/// The four responses this app can produce fall on two sides of that single test. A successful
-/// command and an answered query carry the generation; a validation failure and the internal-error
-/// literal do not, and neither does anything the extension receives when the app is old, absent, or
-/// the socket broke. That is the contract D51 settled: metadata is a statement the app makes about
-/// itself, and **a response without it is no input to the cache** rather than a reason to change or
-/// to clear it. Attaching it to failures would have been safe too — a rejected command says nothing
-/// about the language — but a rule with no exceptions is the one the extension can implement
-/// without a table, and the cold-start query already covers the user whose requests keep failing.
+/// That is a correction. The rule used to be "only one that succeeded", and the reasoning behind it
+/// was that a rule with no exceptions is the one the extension can implement without a table. The
+/// rule was exceptionless; it was also wrong about which question it was answering.
+///
+/// **A validation failure can be the first successful contact with the running app.** The
+/// extension's cold-start query may never have run, may have failed, or may have been answered by an
+/// older app — and then the user presses a button, the relay launches this app, and this app refuses
+/// the command. The app is up and has a language; under the old rule the one response that could
+/// have said so said nothing, and the extension stayed in the wrong language for as long as the
+/// user kept making mistakes. The cold-start query does not cover that: it already happened.
+///
+/// Carrying it costs nothing, which is the other half. The publication is in hand before
+/// `handleRequest` is even called, so a refusal has the same thing to say as a success does.
+///
+/// The boundary is now **origin, not outcome**, and it is the rule with fewer exceptions of the two:
+/// everything this app composes about itself — a successful command, a refused one, an answered
+/// query — carries the generation, and everything it did not compose carries nothing and is no input
+/// to the extension's cache. The things it did not compose are not a list to remember: a relay
+/// error, a transport failure and an older app's answer never pass through this function at all.
+///
+/// The one response that comes close to the line is the internal-error literal in `serve` — this app
+/// emits it, but it emits it *instead of* a statement about itself, at the moment it could not turn
+/// its own response into JSON. It does not come through here, and it should not: attaching the
+/// generation would mean hand-assembling JSON exactly where JSON assembly has just failed, with an
+/// install id that would then need escaping. A response the app could not compose is not a response
+/// the app made a claim in.
 ///
 /// A `nil` publication means nothing has been published on this machine yet — the headless server
 /// never invents one (D49) — and it produces the same metadata-free response for the same reason.
 func responseCarryingLocale(
     _ response: [String: Any], publication: LocalePublication?
 ) -> [String: Any] {
-    guard response["success"] as? Bool == true, let publication else { return response }
+    guard let publication else { return response }
     var carried = response
     carried[localeResponseKey] = publication.snapshot.tag
     carried[localeInstallIdResponseKey] = publication.installId

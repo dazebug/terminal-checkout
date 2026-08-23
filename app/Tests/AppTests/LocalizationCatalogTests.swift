@@ -41,15 +41,50 @@ final class LocalizationCatalogTests: XCTestCase {
 
     /// Every Swift file of the App target, concatenated. The subject is "what the app asks for", so
     /// tests are deliberately not part of it — a key only a test mentions is a key nothing draws.
+    ///
+    /// **Recursive, because a directory listing is not a source tree.** This read only the immediate
+    /// children, so the first file put in a subdirectory of `Sources/App` would leave the gate
+    /// green while asking for keys nobody checked — the gate would answer "no unreferenced keys"
+    /// about a set it had never seen. Nothing is nested today; that is precisely why it had to be
+    /// fixed now rather than when something is.
     private func sourceText() throws -> String {
-        let names = try FileManager.default
-            .contentsOfDirectory(atPath: Self.appSources.path)
-            .filter { $0.hasSuffix(".swift") }
-            .sorted()
-        XCTAssertGreaterThan(names.count, 1, "the source scan found almost nothing — check the path")
-        return try names
-            .map { try String(contentsOf: Self.appSources.appendingPathComponent($0), encoding: .utf8) }
+        let files = try swiftFiles(under: Self.appSources)
+        XCTAssertGreaterThan(files.count, 1, "the source scan found almost nothing — check the path")
+        return try files
+            .map { try String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
+    }
+
+    /// The walk itself, separated so that "does it descend" is a question a test can ask. Nothing is
+    /// nested under `Sources/App` today, which is exactly why the recursion could not otherwise be
+    /// asserted: a flat tree gives the same answer either way, and the gate would have gone on
+    /// reporting "no unreferenced keys" about a set it had never seen.
+    func swiftFiles(under root: URL) throws -> [URL] {
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
+            "could not walk \(root.path)"
+        )
+        return enumerator
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
+    }
+
+    /// **The scan descends.** A directory listing is not a source tree, and this read only the
+    /// immediate children — so the first file anyone put in a subdirectory of `Sources/App` would
+    /// have left every check here green while asking for keys nobody compared against the catalogue.
+    func testTheSourceScanDescendsIntoSubdirectories() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("tc-scan-\(UUID().uuidString)")
+        let nested = root.appendingPathComponent("Feature/Deeper")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// top".write(to: root.appendingPathComponent("Top.swift"), atomically: true, encoding: .utf8)
+        try "// deep".write(to: nested.appendingPathComponent("Deep.swift"), atomically: true, encoding: .utf8)
+        try "not swift".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let found = try swiftFiles(under: root).map { $0.lastPathComponent }
+        XCTAssertEqual(found, ["Deep.swift", "Top.swift"], "the scan did not descend")
     }
 
     private func matches(_ pattern: String, in text: String, group: Int = 1) throws -> [String] {

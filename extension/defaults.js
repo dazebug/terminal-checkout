@@ -464,9 +464,19 @@ function executionPayload(button) {
   };
 }
 
-// The question the fingerprint answers is "is the same thing executed", not "is this the same
-// button" — which button was clicked is answered by its index within its section, and identity is
-// the pair of the two: `(kind, index, executionFingerprint)`.
+// The question the fingerprint answers is "is this still the button that was drawn" — where a
+// *button* is the command and the inputs it carries, and not its face or its tooltip. Which button
+// was clicked is answered by its index within its section, and the pair of the two is what names it:
+// `(kind, index, executionFingerprint)`.
+//
+// **It is not the identity of the request**, and the earlier wording here — "execution identity",
+// "the same thing executed" — claimed that it was. The message also carries `variables`, which this
+// does not cover and must not: they are read from the live DOM at click time, not frozen when the
+// button was drawn, so a PR whose branch moved between the two runs the command against the branch
+// it has *now*, which is the behaviour anyone pressing "check out this PR" is asking for. Whether
+// the page is still the page is a different question with a different answer — `requestIsCoherent`,
+// which compares identity (`kind/owner/repo/number`) and deliberately not content, because content
+// changing underneath a page is expected and is not a reason to refuse.
 //
 // `face` and `label` were part of this and had to come out. They are display text: they never leave
 // the browser (runButton sends the command template, the page's variables and the claude inputs —
@@ -475,11 +485,11 @@ function executionPayload(button) {
 // click, and the cache reaches the service worker before the page redraws — and with a display
 // string in the key, that difference refused a command that had not changed by a character.
 //
-// So this is **execution identity**. It is not a security identity and not a UX one: two buttons
-// with the same command and the same inputs are one button to this check. That is deliberate — the
-// request and the run are identical, so there is no wrong command it could pick — and it is the
-// residual to revisit if buttons ever need telling apart individually, which would mean a
-// persistent id in the stored schema and therefore a SETTINGS_VERSION bump.
+// So this is the identity of **what the button will run**. It is not a security identity and not a
+// UX one: two buttons with the same command and the same inputs are one button to this check. That
+// is deliberate — the request and the run are identical, so there is no wrong command it could pick
+// — and it is the residual to revisit if buttons ever need telling apart individually, which would
+// mean a persistent id in the stored schema and therefore a SETTINGS_VERSION bump.
 function buttonFingerprint(button) {
   return JSON.stringify(executionPayload(button));
 }

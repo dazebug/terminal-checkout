@@ -101,19 +101,47 @@ const TC_LOCALE_CACHE_KEY = 'localeCache';
 // A cache entry we are willing to render from. Anything else is treated as if there were no cache:
 // not adopted, and — this is the half that is easy to lose — **not rewritten either**. Normalising a
 // value we do not understand would destroy the evidence of what actually went wrong.
+//
+// `appliedSeqScope` is optional because a cache written before the scope existed is still a perfectly
+// good answer to "what language" — it is only the *fence* that cannot apply to it, which is exactly
+// right: the sequence in it was minted by a worker that is gone.
+//
+// A negative `appliedSeq` is refused rather than clamped. It cannot arise from anything we write, so
+// its presence means the value came from somewhere else, and a number we cannot account for is not a
+// number to compare against.
 function isUsableLocaleCache(value) {
   return !!value
     && typeof value === 'object'
     && TC_I18N_LOCALES.includes(value.locale)
     && typeof value.installId === 'string' && value.installId.length > 0
     && Number.isInteger(value.epoch) && value.epoch >= 0
-    && Number.isInteger(value.appliedSeq);
+    && Number.isInteger(value.appliedSeq) && value.appliedSeq >= 0
+    && (value.appliedSeqScope === undefined
+      || (typeof value.appliedSeqScope === 'string' && value.appliedSeqScope.length > 0));
 }
 
-// The metadata a response carries, once. The app attaches it only to a response it produced and
-// succeeded at (item 15), so everything else — a failure, an old app, a dead socket — arrives here
-// as `null` and is **no input at all** rather than a reason to change or clear anything.
-function localeGenerationOf(response, seq) {
+// The metadata a response carries, paired with the request of ours it answers.
+//
+// **The test is whether the app produced the response, not whether the app liked the request.** That
+// is a correction: item 15 attached the generation to successful responses only, and it was wrong.
+// A validation failure can be the **first successful contact with the running app** — the cold-start
+// query never ran, or failed, or an older app answered it, and then the user presses a button, the
+// relay launches the app, and the app refuses the command. The app is running and has a language;
+// the response that says so is a failure. Under a success-only rule the extension stays in the wrong
+// language for as long as the user keeps making mistakes.
+//
+// So the boundary is **origin**: everything the app composes about itself — a successful command, a
+// refused one, an answered query — carries the generation, and everything the app did not compose —
+// a relay error, a transport failure, an older app's answer, the internal-error literal emitted when
+// the app could not serialize its own response — simply has no such fields and is no input here.
+// That is a rule with fewer exceptions than "success only", because the criterion is where a
+// response came from rather than how it turned out.
+//
+// `seq` and `scope` together name **our** request. The scope is the worker that sent it (see
+// `localeCacheUpdate`), and both are required: a generation that could not say which request it
+// answers cannot be ordered against one, and silently treating it as unordered would put the very
+// hole back that the fence exists to close.
+function localeGenerationOf(response, seq, scope) {
   if (!response || typeof response !== 'object') return null;
   const locale = response.locale;
   const installId = response.locale_install_id;
@@ -121,22 +149,42 @@ function localeGenerationOf(response, seq) {
   if (!TC_I18N_LOCALES.includes(locale)) return null;
   if (typeof installId !== 'string' || installId.length === 0) return null;
   if (!Number.isInteger(epoch) || epoch < 0) return null;
-  if (!Number.isInteger(seq)) return null;
-  return { locale, installId, epoch, seq };
+  if (!Number.isInteger(seq) || seq < 0) return null;
+  if (typeof scope !== 'string' || scope.length === 0) return null;
+  return { locale, installId, epoch, seq, seqScope: scope };
 }
 
 // The whole cache decision, as one pure function: what to keep, and whether anything changed.
 //
 // Three rules, in this order, and the order is the point.
 //
-// **1. Our own sequence fence** (D50). Every request this extension sends takes the next number, and
-// a response is ignored when its request is older than the newest one already applied. This is the
-// rule that makes the two below safe: without it, a delayed response from an app instance that was
-// replaced — a reset, a reinstall — arrives with a *different* `installId` and rule 2 accepts it
-// unconditionally, overwriting a newer locale for good (round 10 review, D81). The number never goes
-// on the wire: `sendNativeMessage` resolves per call, so the extension already knows which request
-// each response answers, and ordering by **what we sent** rather than by anything the app says is
-// what makes the fence work against an older app that knows nothing about any of this.
+// **1. Our own sequence fence, and only within the worker that minted it** (D50). Every request this
+// extension sends takes the next number, and a response is ignored when its request is older than
+// the newest one already applied **by the same worker**. The number never goes on the wire:
+// `sendNativeMessage` resolves per call, so the extension already knows which request each response
+// answers, and ordering by **what we sent** rather than by anything the app says is what makes the
+// fence work against an older app that knows nothing about any of this.
+//
+// The scope is the correction, and the defect it repairs was ours. `appliedSeq` is persisted and the
+// counter is not: it restarts at zero with every service worker, so a cache holding `appliedSeq: 10`
+// refused the next worker's perfectly good `seq: 1` **forever**, whatever its epoch or install id
+// said. The comment that used to sit on that counter argued the opposite — that a fresh worker was
+// safe *because* the cache carries the last applied sequence — which is the cause presented as the
+// reassurance. It is the class this loop keeps sweeping for, committed by us.
+//
+// **Why a worker-scoped fence is enough, and where that stands as evidence.** The fence orders
+// *writes to the cache*, and every such write is made by `applyLocaleGeneration`, which runs in the
+// same worker that awaited the response — so a worker that has been terminated writes nothing at
+// all, whatever the native host later does with its reply. Two responses can only need ordering
+// against each other while both are outstanding, and both can only be outstanding in one realm. That
+// argument is read off our own control flow, not off Chrome's termination semantics: Chrome
+// documents that a pending extension API call keeps the worker alive, so a worker is not normally
+// killed with one outstanding, but a forced termination is not something this repository can drive
+// from `node --test`. **It is reasoning, not a measurement**, and it is the reason to prefer this
+// over the alternative of seeding the counter from the cached `appliedSeq` at startup: that
+// alternative pretends the number is meaningful across workers, and if a cross-worker reply ever
+// were delivered it would rank a dead worker's high sequence above a live worker's low one — the
+// regression this fence exists to prevent, reintroduced by the repair.
 //
 // **2. A different `installId` is accepted unconditionally** (D32). That is what makes a reset
 // distinguishable from a stale message — a single counter cannot express "the app's data is new
@@ -149,7 +197,13 @@ function localeGenerationOf(response, seq) {
 function localeCacheUpdate(cached, incoming) {
   const usable = isUsableLocaleCache(cached) ? cached : null;
   if (!incoming) return { cache: cached, changed: false };
-  if (usable && incoming.seq <= usable.appliedSeq) return { cache: cached, changed: false };
+  // Same worker, so the two sequences are comparable. Both sides have to name a scope: two entries
+  // that merely fail to name one are not thereby the same worker, and treating `undefined` as a
+  // match would fence a fresh worker out on the strength of a number it never minted.
+  const sameScope = !!usable
+    && typeof usable.appliedSeqScope === 'string' && usable.appliedSeqScope.length > 0
+    && usable.appliedSeqScope === incoming.seqScope;
+  if (sameScope && incoming.seq <= usable.appliedSeq) return { cache: cached, changed: false };
   if (usable && incoming.installId === usable.installId && incoming.epoch <= usable.epoch) {
     return { cache: cached, changed: false };
   }
@@ -159,8 +213,67 @@ function localeCacheUpdate(cached, incoming) {
       installId: incoming.installId,
       epoch: incoming.epoch,
       appliedSeq: incoming.seq,
+      appliedSeqScope: incoming.seqScope,
     },
     changed: true,
+  };
+}
+
+// Read, reduce, write, notify — as one step that cannot interleave with another of itself.
+//
+// The reducer is pure and its fence is exact, and neither helps if two calls read the same cache
+// before either writes. That is what the caller used to do: `storage.local.get`, reduce, `set`, with
+// awaits in between and nothing holding the door. Request 12 reads and writes first; request 11 read
+// the same old value and writes second; the fence in the reducer never saw request 12 because it was
+// handed the cache as it was *before* it. The cache goes backwards, and every open page is told to
+// redraw in the older language.
+//
+// The queue is a promise chain rather than a lock because there is exactly one place that needs it:
+// a service worker is **one per extension**, so two tabs clicking at once are two messages handled by
+// the same worker, in the same realm, on the same task queue. The race is interleaving *inside* the
+// worker across `await`, not two workers contending — there is no second writer to lock against, only
+// a second continuation. (`storage.local` offers no compare-and-set, so ordering is the only tool
+// available even if there were.)
+//
+// `read`, `write` and `notify` are injected so a test can force the interleaving that the real
+// storage will not reliably produce.
+function createLocaleCacheWriter({ read, write, notify }) {
+  let queue = Promise.resolve();
+  return function applyLocaleGeneration(incoming) {
+    const result = queue.then(async () => {
+      if (!incoming) return null;
+      const { cache, changed } = localeCacheUpdate(await read(), incoming);
+      if (!changed) return null;
+      await write(cache);
+      await notify(cache.locale);
+      return cache;
+    });
+    // The chain must survive a failing step: one rejected write must not stop every later update.
+    // The caller still sees its own rejection through `result`.
+    queue = result.then(() => {}, () => {});
+    return result;
+  };
+}
+
+// The first draw waits for the cached locale — and for nothing else.
+//
+// D15 says rendering does not wait for **the app's answer**, and that is the whole of it: a relay
+// that has to launch the app blocks for up to 25 seconds, and a page that waited would show no
+// buttons at all for that long. A `storage.local` read is not that. It is local, it answers in
+// microseconds, and it is the only thing that knows the language the user already has. Drawing
+// before it lands means a valid Korean cache loses to the English fallback — and if the app's answer
+// then equals the cache, the reducer reports no change, no notification goes out, and nothing ever
+// repairs the page. Our own wording was the reason that looked acceptable: "rendering does not wait
+// for the locale query" was written broadly enough to read as "does not wait for anything".
+//
+// Resolved once and shared: every insertion path awaits the same promise, so the read happens once
+// however many times the page tries to draw. It never rejects — a cache that cannot be read leaves
+// the fallback in place, which is a language, whereas a rejected gate would be no buttons forever.
+function createFirstRenderGate(prepare) {
+  let pending = null;
+  return function ready() {
+    if (!pending) pending = (async () => prepare())().catch(() => null);
+    return pending;
   };
 }
 
@@ -205,12 +318,21 @@ function localeToRenderIn(cached, uiLanguage) {
 // the rule — and a test can count both without a browser.
 function createLocaleRenderer({ subscribe, redraw }) {
   let subscribed = false;
+  // Redraws do not overlap. A redraw reads the cache and then assigns the language it drew in, with
+  // an await in between, so two of them running at once can finish in the order they did not start
+  // in and leave the **older** language on screen — the same shape as the unserialized cache write,
+  // found by sweeping for it rather than by being reported. Two notifications in quick succession is
+  // all it takes, and the app sends one per accepted response.
+  let queue = Promise.resolve();
   return {
     // Returns whether it registered, so a caller (and a test) can tell a first call from a repeat.
     start() {
       if (subscribed) return false;
       subscribed = true;
-      subscribe(() => redraw());
+      subscribe(() => {
+        queue = queue.then(() => redraw()).then(() => {}, () => {});
+        return queue;
+      });
       return true;
     },
     get subscribed() {

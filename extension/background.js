@@ -229,11 +229,21 @@ async function clickedButton(kind, index, shown) {
   return button;
 }
 
-// Every request this extension sends takes the next number. It never leaves the browser:
-// `sendNativeMessage` resolves per call, so the pairing of request to response is already ours, and
-// ordering by what **we** sent is what makes the fence hold against an app too old to know about any
-// of this (D50). It resets when the service worker restarts, which is safe for the same reason a
-// fresh worker has no applied sequence either — the cache carries the last one it accepted.
+// Every request this extension sends takes the next number, and the number means something only
+// inside this worker. It never leaves the browser: `sendNativeMessage` resolves per call, so the
+// pairing of request to response is already ours, and ordering by what **we** sent is what makes the
+// fence hold against an app too old to know about any of this (D50).
+//
+// The counter restarts at zero with the worker while `appliedSeq` is persisted, so the two are only
+// comparable when they came from the same worker — which is what this identity says, and why the
+// cache stores it alongside the number (`localeCacheUpdate`). Without it a cache holding
+// `appliedSeq: 10` refused this worker's first response for as long as the profile lived. The
+// comment that used to stand here claimed the reset was safe *because* the cache carries the last
+// applied sequence; that is the cause, offered as the reassurance.
+//
+// A fresh value per worker start, and it only ever has to differ from the previous worker's — it
+// names a lifetime, not a machine, and it never leaves this browser profile.
+const workerSequenceScope = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 let nativeRequestSeq = 0;
 
 // Hand a message to the app and take the locale generation out of the answer — **whatever the
@@ -260,7 +270,7 @@ async function sendToNativeHost(message) {
     throw error; // a transport failure carries no metadata, and is no input to the cache
   }
   console.log('Native host response:', response);
-  await applyLocaleGeneration(response, seq);
+  await applyLocaleGeneration(localeGenerationOf(response, seq, workerSequenceScope));
   if (!response?.success) throw new Error(response?.error || 'native host returned no result');
   return response;
 }
@@ -270,16 +280,22 @@ async function sendToNativeHost(message) {
 // Nothing is written when the reducer says no: a cache write plus a notification for a response that
 // changes nothing would redraw every open page for no reason, and a corrupt stored value would be
 // rewritten into a shape we invented rather than left as the evidence it is.
-async function applyLocaleGeneration(response, seq) {
-  const incoming = localeGenerationOf(response, seq);
-  if (!incoming) return null;
-  const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
-  const { cache, changed } = localeCacheUpdate(stored?.[TC_LOCALE_CACHE_KEY], incoming);
-  if (!changed) return null;
-  await chrome.storage.local.set({ [TC_LOCALE_CACHE_KEY]: cache });
-  await notifyLocaleChanged(cache.locale);
-  return cache;
-}
+//
+// The read, the reduce, the write and the notification are **one step that cannot interleave with
+// another of itself** — that serialization is `createLocaleCacheWriter`'s, along with why a promise
+// chain is the right shape for a context there is only one of. This file supplies the storage.
+const applyLocaleGeneration = createLocaleCacheWriter({
+  async read() {
+    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
+    return stored?.[TC_LOCALE_CACHE_KEY];
+  },
+  write(cache) {
+    return chrome.storage.local.set({ [TC_LOCALE_CACHE_KEY]: cache });
+  },
+  notify(locale) {
+    return notifyLocaleChanged(locale);
+  },
+});
 
 // Tell every GitHub page that the language moved. A page that is not listening (none of ours, or one
 // still loading) rejects the message, and that is not an error worth reporting — hence the catch.

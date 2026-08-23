@@ -342,6 +342,10 @@ async function tryInsertRepoButtons() {
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
+  // The cached language, before anything is drawn. One local read, shared by every caller of this
+  // function (`localeReady`), and never the app's answer — see the gate for which of the two D15 is
+  // about.
+  await localeReady();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
 
@@ -387,10 +391,16 @@ function onUrlChange() {
 
 // The language the buttons are drawn in, and the one redraw that follows it.
 //
-// **Reading it does not block a render** (D15). The cache is whatever the last response left in
-// `storage.local`; with none, `localeToRenderIn` falls back to Chrome's own UI language. A page that
-// waited for the app to answer would show no buttons for as long as the relay takes to launch it,
-// which is up to 25 seconds on a cold start.
+// **A render waits for the cache and never for the app** (D15, stated exactly). The cache is
+// whatever the last response left in `storage.local` — a local read, microseconds — and waiting for
+// it is what stops a valid Korean cache losing the first draw to the English fallback. What a render
+// must never wait for is the app's answer: the relay launches the app on a cold start, which blocks
+// for up to 25 seconds, and a page that waited for that would show no buttons at all.
+//
+// The two were run together in one sentence here, and the broad reading is what made drawing before
+// the cache read look correct. It was not: if the app's answer then matches the cache, the reducer
+// reports no change, no notification goes out, and the page stays in the wrong language until
+// something else redraws it.
 let localeToDrawIn = TC_I18N_FALLBACK;
 
 async function refreshLocaleToDrawIn() {
@@ -423,7 +433,12 @@ const localeRenderer = createLocaleRenderer({
   },
 });
 localeRenderer.start();
-refreshLocaleToDrawIn();
+
+// Every path that draws waits on this once — the initial run below, the poll, the navigation events
+// and the MutationObserver alike. Putting the wait inside `tryInsertButton` rather than in front of
+// the first call is what makes that true of the paths nobody remembers: the observer can fire before
+// the initial run, and gating only the initial run would leave it drawing in the fallback.
+const localeReady = createFirstRenderGate(refreshLocaleToDrawIn);
 
 // Detect History API events
 const originalPushState = history.pushState;

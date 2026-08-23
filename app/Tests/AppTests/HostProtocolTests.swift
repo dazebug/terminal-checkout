@@ -13,17 +13,49 @@ final class HostProtocolTests: XCTestCase {
         installId: "install-a", snapshot: LocaleSnapshot(tag: "ko", epoch: 7)
     )
 
+    /// `#filePath` and not `Bundle`: the sources are what this asserts about, and a bundle would
+    /// answer with whatever the build happened to copy (D7).
+    private var hostServerSourcePath: String {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // AppTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // app
+            .appendingPathComponent("Sources/App/HostServer.swift")
+            .path
+    }
+
     private func carriesGeneration(_ response: [String: Any]) -> Bool {
         response[localeResponseKey] != nil
             || response[localeInstallIdResponseKey] != nil
             || response[localeEpochResponseKey] != nil
     }
 
-    /// **A successful command and an answered query carry the generation; a validation failure does
-    /// not.** One test, `success == true`, decides all three — the contract the extension reads is
-    /// "metadata present or no input at all" (D51), and a rule with no exceptions is the one it can
-    /// implement without a table.
-    func testOnlyASuccessfulResponseCarriesTheLocaleGeneration() throws {
+    /// **Every response this app composes carries the generation — the refused one included.**
+    ///
+    /// This reverses the earlier rule, which attached it to successes only. The argument for that
+    /// one was that an exceptionless rule is the one the extension can implement without a table;
+    /// the rule was exceptionless and still answered the wrong question. A validation failure can be
+    /// the **first successful contact with the running app**: the cold-start query never ran, or
+    /// failed, or an older app answered it, and then a button press makes the relay launch this app,
+    /// which refuses the command. The app is up and has a language, and under the old rule the only
+    /// response that could have said so said nothing.
+    ///
+    /// The boundary is origin, not outcome, and that is the rule with *fewer* exceptions: what the
+    /// app composes carries it, what the app did not compose never reaches this function.
+    func testFailureResponseCarriesLocaleGeneration() throws {
+        let rejected = hostResponse(
+            json: ["command_template": "z {repo}", "variables": ["evil": "x"]],
+            publication: publication, baseDirectory: ""
+        ) { _ in }
+        XCTAssertEqual(rejected["success"] as? Bool, false)
+        XCTAssertNotNil(rejected["error"], "the refusal stopped saying why")
+        XCTAssertEqual(rejected[localeResponseKey] as? String, "ko")
+        XCTAssertEqual(rejected[localeInstallIdResponseKey] as? String, "install-a")
+        XCTAssertEqual(rejected[localeEpochResponseKey] as? Int, 7)
+    }
+
+    /// The other two responses the app composes, unchanged by the reversal above.
+    func testAppComposedResponsesAllCarryTheLocaleGeneration() throws {
         let success = hostResponse(
             json: ["command_template": "z {repo}", "variables": ["repo": "r"]],
             publication: publication, baseDirectory: ""
@@ -37,19 +69,31 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(query["success"] as? Bool, true)
         XCTAssertEqual(query[localeResponseKey] as? String, "ko")
         XCTAssertEqual(query[localeEpochResponseKey] as? Int, 7)
+    }
 
-        let rejected = hostResponse(
-            json: ["command_template": "z {repo}", "variables": ["evil": "x"]],
-            publication: publication, baseDirectory: ""
-        ) { _ in }
-        XCTAssertEqual(rejected["success"] as? Bool, false)
-        XCTAssertNotNil(rejected["error"])
-        XCTAssertFalse(carriesGeneration(rejected), "a failure carried a generation")
-
-        // The fourth response is a literal built after JSON serialisation fails, so it never passes
-        // through here at all. This pins the rule that would cover it if it ever did.
-        let internalError: [String: Any] = ["success": false, "error": "internal error"]
-        XCTAssertFalse(carriesGeneration(responseCarryingLocale(internalError, publication: publication)))
+    /// **The internal-error literal is the one response that stays bare, and not by omission.**
+    ///
+    /// `serve` builds it when `JSONSerialization` could not turn the composed response into bytes.
+    /// The app emits it, but it emits it *instead of* a statement about itself — so under a rule that
+    /// asks "did the app compose this", it did not. It does not pass through `responseCarryingLocale`
+    /// and must not be routed through it: attaching the generation would mean hand-assembling JSON at
+    /// the exact point JSON assembly failed, with an install id that would then need escaping.
+    ///
+    /// The extension reads the absence correctly — no fields, no input to the cache — which is the
+    /// truth: a response that could not be composed says nothing about the language.
+    func testTheInternalErrorLiteralIsNotComposedAndCarriesNothing() throws {
+        let literal = #"{"success":false,"error":"internal error"}"#
+        let parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(literal.utf8)) as? [String: Any]
+        )
+        XCTAssertFalse(carriesGeneration(parsed), "the literal grew a generation")
+        // and the source still emits exactly that literal, rather than routing it through the
+        // function above — a lint, because the branch needs a failed serialisation to reach
+        let source = try String(contentsOfFile: hostServerSourcePath, encoding: .utf8)
+        XCTAssertTrue(
+            source.contains(#"Data(#"{"success":false,"error":"internal error"}"#),
+            "the fallback literal moved; decide again whether it may claim a locale"
+        )
     }
 
     /// **Nothing published yet means no metadata**, on every response. The headless server does not
