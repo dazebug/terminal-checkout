@@ -225,3 +225,86 @@ final class LocaleRestartTests: XCTestCase {
     private static func appSource(_ name: String) -> String { source("Sources/App/\(name)") }
     private static func coreSource(_ name: String) -> String { source("Sources/Core/\(name)") }
 }
+
+/// **Going away is one decision, and both ways of going away take it** (round 15 review).
+///
+/// Round 14 gave the language restart an admission gate. Normal termination — the user quitting, or
+/// macOS shutting the app down — called `endEveryHelper` and stopped the listener with the gate
+/// still open, so a request already accepted on the socket queue could reach `runInTerminal` and
+/// launch a Warp helper *after* the farewells had gone out. That helper would outlive the app with
+/// nothing left to dismiss it, which is the boundary `CLAUDE.md` says its lifetime is the only
+/// defence of.
+///
+/// The two paths differ in one thing only, and it is the difference between asking and being told: a
+/// restart may be refused, a termination may not.
+final class AppTerminationAdmissionTests: XCTestCase {
+    override func tearDown() {
+        ClaudeDelivery.withdrawRestartAdmission()
+        super.tearDown()
+    }
+
+    /// Termination closes the gate **even though something is in flight** — refusing would not stop
+    /// it — and after it no delivery can be admitted.
+    func testTerminationClosesAdmissionEvenWithADeliveryInFlight() throws {
+        let token = try XCTUnwrap(ClaudeDelivery.begin(.warp(helperSocket: "/tmp/tc-term-a.sock")))
+        defer { ClaudeDelivery.end(token) }
+
+        XCTAssertFalse(ClaudeDelivery.admitRestart(), "a restart should be refused while delivering")
+        XCTAssertTrue(
+            ClaudeDelivery.closeAdmission(requiringIdle: false),
+            "termination was refused, but nothing can refuse a termination"
+        )
+        XCTAssertNil(
+            ClaudeDelivery.admit(),
+            "a delivery was admitted after termination began — its helper would outlive the app"
+        )
+        XCTAssertEqual(
+            ClaudeDelivery.liveWarpSockets, ["/tmp/tc-term-a.sock"],
+            "closing the gate lost the helper that still has to be dismissed"
+        )
+    }
+
+    /// And the restart half of the same function still refuses, so sharing it did not widen it.
+    func testTheRestartHalfStillRefusesWhileSomethingIsRegistered() throws {
+        let token = try XCTUnwrap(ClaudeDelivery.admit())
+        defer { ClaudeDelivery.end(token) }
+        XCTAssertFalse(ClaudeDelivery.closeAdmission(requiringIdle: true))
+        let after = try XCTUnwrap(ClaudeDelivery.admit(), "a refused close left the gate shut anyway")
+        ClaudeDelivery.end(after)
+    }
+
+    /// **The order is the invariant.** Closing the gate has to precede the farewells: a request
+    /// admitted between the two would launch a helper `endEveryHelper` has already walked past.
+    /// Read from the source, because reaching that method means terminating the test runner.
+    func testTerminationClosesTheGateBeforeSayingGoodbye() throws {
+        let source = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
+        let function = try XCTUnwrap(source.range(of: "func applicationWillTerminate("))
+        let body = source[function.upperBound...]
+        let close = try XCTUnwrap(
+            body.range(of: "ClaudeDelivery.closeAdmission(requiringIdle: false)"),
+            "termination no longer closes the admission gate"
+        ).lowerBound
+        let farewell = try XCTUnwrap(body.range(of: "ClaudeDelivery.endEveryHelper()")).lowerBound
+        XCTAssertLessThan(close, farewell, "the farewells go out before the gate is closed")
+    }
+
+    /// Both callers reach the same function, so a third way of leaving has to find it too.
+    func testRestartAndTerminationShareOneDecision() throws {
+        let core = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
+        XCTAssertTrue(
+            core.contains("public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) }"),
+            "the restart path no longer delegates to the shared decision"
+        )
+    }
+
+    private static func source(_ relative: String) -> String {
+        URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/LocaleRestartTests.swift
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(relative)
+            .path
+    }
+
+    private static func appSource(_ name: String) -> String { source("Sources/App/\(name)") }
+    private static func coreSource(_ name: String) -> String { source("Sources/Core/\(name)") }
+}

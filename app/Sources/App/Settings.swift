@@ -43,18 +43,45 @@ enum Settings {
     /// **object** it came back as — a value that is not a string must not read as "follow the
     /// system", which is the same fold `baseDirectory` refuses just above.
     ///
-    /// Setting it is what makes this process a writer (D49): the picker lives in the setup window,
-    /// so only the GUI reaches here. It publishes immediately, so the revision moves in the same
-    /// process that took the click rather than on the next launch.
+    /// Setting it is what makes this process a writer (D49). It publishes immediately, so the
+    /// revision moves in the same process that took the click rather than on the next launch.
+    ///
+    /// **Only if this process owns the socket.** The comment here used to read "the picker lives in
+    /// the setup window, so only the GUI reaches here", which is true and answers a different
+    /// question — a *second* GUI instance has a setup window too, and it reached this line and
+    /// published (round 15 review). The window that cannot publish is disabled and says so, so this
+    /// guard is the enforcement rather than the notice; it exists because a guard on the control is
+    /// a guard on one caller, and this is the state.
+    ///
+    /// The preference itself is still written: it is an ordinary user setting in a shared domain,
+    /// last writer wins, and the owner reads it on its next launch. What must not happen without
+    /// ownership is the **publication**, because that carries a generation the extension orders by.
     static var language: String {
         get { languagePreference(in: .standard) }
-        set {
-            UserDefaults.standard.set(newValue, forKey: languagePreferenceKey)
-            LocaleState.publish(
-                resolved: AppLocalization.resolvedLocale(), role: .interactive
-            )
-            NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        set { _ = setLanguage(newValue) }
+    }
+
+    /// The setter's body, with its store and its eligibility as arguments — so the rule can be
+    /// exercised against the real code rather than a stand-in, and without writing into the domain
+    /// the installed app is using. Returns whether it published.
+    @discardableResult
+    static func setLanguage(
+        _ newValue: String,
+        defaults: UserDefaults = .standard,
+        mayPublish: Bool = LocalePublicationRight.isOurs(),
+        systemPreferred: [String] = Locale.preferredLanguages
+    ) -> Bool {
+        defaults.set(newValue, forKey: languagePreferenceKey)
+        defer { NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil) }
+        guard mayPublish else {
+            checkoutLog("this instance does not own the socket, so the language change was not published")
+            return false
         }
+        LocaleState.publish(
+            resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
+            defaults: defaults, role: .interactive
+        )
+        return true
     }
 
     /// Publishes the locale this launch resolved to — the GUI's other writer, beside the picker.
@@ -210,6 +237,35 @@ enum LocaleRestartGate {
 /// same key can publish **different locales under the same epoch** — after which the extension,
 /// whose rule is "same install, accept only a strictly greater epoch", drops the newer of the two.
 /// Making the second writer impossible removes the case rather than locking around it.
+/// **May this process publish a locale at all?**
+///
+/// Round 14 bound the *launch* publisher to owning the socket and left the *picker* unbound, and the
+/// comment on `startServer` then declared the whole rule from half of it — "only the instance that
+/// owns the socket publishes a locale" was true of one of the two writers (round 15 review). The
+/// answer lives here so that both writers ask the same question, and so that adding a third writer
+/// means finding this type rather than remembering a sentence.
+///
+/// Ownership is decided exactly once, by the bind in `AppDelegate.startServer`: `HostServer.start()`
+/// throws `alreadyRunning` when another instance answers on the path, and that is the only singleton
+/// test this app has. It is settable rather than computed because the socket is not something a
+/// getter can re-ask cheaply or safely, and injectable because the alternative is standing up two
+/// GUI processes in a test.
+enum LocalePublicationRight {
+    private static var owned = false
+
+    /// Recorded by the process that bound the socket, and by nothing else.
+    static func recordSocketOwnership() { owned = true }
+
+    /// Injectable for tests; in production it answers what the bind decided.
+    static var isOurs: () -> Bool = { owned }
+
+    /// Restores the production answer — for a test that overrode it.
+    static func reset() {
+        owned = false
+        isOurs = { owned }
+    }
+}
+
 enum LocaleWriterRole {
     /// The GUI: has a picker, may mint an identity and advance the revision.
     case interactive

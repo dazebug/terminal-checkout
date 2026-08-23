@@ -627,6 +627,40 @@ test('markup in a value is balanced, and the same in every locale', () => {
   }
 });
 
+test('every text-bearing attribute in the markup is a message or a declared literal', () => {
+  // **The scan looked at values and at interpolations, never at the static markup** (round 15
+  // review). `options.html` can carry a `placeholder`, `title`, `aria-label` or `alt` written
+  // straight into the tag, and such a string is invisible to every check here: it is not a
+  // catalogue value, so the parity gates never see it, and it is not built by `t(...)`, so the
+  // attribute-escaping gate never sees it either. A sentence put there would ship untranslated in
+  // five languages with nothing red.
+  //
+  // Each one is therefore either **a message** — filled in from a dictionary at runtime — or a
+  // **declared literal**, named here with the reason it is not prose. `main` is the default branch
+  // name: it is what the user's command will contain, so translating it would produce a branch that
+  // does not exist, which is the same rule the command literals above are held to.
+  const DECLARED_LITERALS = {
+    main: 'the default branch name — it goes into a command, so it is not prose',
+  };
+  const html = read('options.html');
+  const found = [...html.matchAll(/(?:placeholder|title|aria-label|alt)="([^"]*)"/g)].map(m => m[1]);
+  assert.ok(found.length > 0, 'the attribute scan found nothing — check the pattern');
+  for (const value of found) {
+    // An interpolated attribute is a message by construction and is covered by the escaping gate
+    if (value.includes('${')) continue;
+    assert.ok(
+      Object.hasOwn(DECLARED_LITERALS, value),
+      `options.html carries the untranslated attribute text ${JSON.stringify(value)} — `
+        + 'make it a message, or declare it here with the reason it is a literal',
+    );
+  }
+  // ...and a declaration that stopped being true has to go, or the list becomes a place where old
+  // judgements accumulate unread — the same rule the duplicate-value tables are held to.
+  for (const literal of Object.keys(DECLARED_LITERALS)) {
+    assert.ok(found.includes(literal), `${literal} is declared but no longer in the markup`);
+  }
+});
+
 test('what a <code> span holds is a literal, so it is identical in every locale', () => {
   // This is the half of the markup policy that matters: a tag around translated text may be
   // translated with it, but `<code>{branch_underbar}</code>` is a variable name, and a translation
@@ -1043,7 +1077,11 @@ test('the messages that only reach a console are not in the dictionaries', () =>
   // The boundary, stated as a set. `console.*` is an English diagnostic surface by policy, and a
   // key for one of those would be a translation nobody reads — so the gate is that none of the
   // catalogue's values is one of these sentences.
-  const values = new Set(Object.values(globalThis.TC_I18N.en));
+  // Every locale, not English alone: the sweep that re-ran after these fixes found this one
+  // reading a single catalogue for no reason (D104's rule — a sweep run before the fixes does
+  // not cover them). A translation that left one of these sentences in English would be the
+  // case it misses, and widening costs one line.
+  const values = new Set(TC_I18N_LOCALES.flatMap(tag => Object.values(globalThis.TC_I18N[tag])));
   const diagnostics = [
     'This button no longer matches your saved settings — reload the page and try again.',
     'The page changed while this was running — reload and try again.',

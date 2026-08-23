@@ -498,7 +498,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
+    /// What the card says, in the order the states exclude each other.
+    ///
+    /// **Not owning the socket comes first** because it is the only one of the three that makes the
+    /// control useless: this window cannot publish a language, so offering a picker that appears to
+    /// work would be the silent divergence this project keeps closing — the preference would move,
+    /// the other window would not, and nothing on screen would say why.
     private func languageNote(restartBlocked: Bool = false) -> String {
+        if !LocalePublicationRight.isOurs() {
+            return localized("app.language.notOwner")
+        }
         if restartBlocked {
             return localized("app.language.restartDeferred")
         }
@@ -833,6 +842,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             stored: Settings.language, drawn: AppLocalization.resolvedTag(),
             entries: languagePopUp.itemArray.map { $0.representedObject as? String }
         ))
+        // A window that cannot publish does not offer the control. The guard that matters is in
+        // `Settings.language`; this is so the user is not invited to press something inert
+        let mayPublish = LocalePublicationRight.isOurs()
+        languagePopUp.isEnabled = mayPublish
+        languageRestartButton.isEnabled = mayPublish
         languageNoteLabel.stringValue = languageNote()
 
         let manifest = Installer.manifestState()

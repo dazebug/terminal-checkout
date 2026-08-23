@@ -1668,12 +1668,14 @@ updateLoadedGate();
 renderStaleBanner();
 loadSettings();
 
-// The page's own `lang`, from the cache the app fills. It is the resolved tag itself rather than a
-// translated string, which is why it is applied here instead of being looked up in a dictionary —
-// assistive technology and hyphenation read it, and a page announcing `en` while rendering Korean is
-// telling them something untrue. With no cache this lands on the browser's language, exactly as the
-// buttons do, and the markup's `lang="en"` is only the value before this runs.
-chrome.storage.local.get([TC_LOCALE_CACHE_KEY]).then((stored) => {
-  const uiLanguage = chrome.i18n?.getUILanguage ? chrome.i18n.getUILanguage() : '';
-  applyDocumentLanguage(localeToRenderIn(stored?.[TC_LOCALE_CACHE_KEY], uiLanguage));
-}).catch(() => {});
+// The page's own `lang` is **not written here**, and the storage read that used to do it is gone.
+//
+// It was a second writer outside the serialized renderer: an unqueued `storage.local.get` whose
+// callback could land after a newer queued redraw and put the older tag back (round 15 review). The
+// queue exists precisely so that the last decision wins, and a path that skips it is the defect the
+// queue was added to prevent — the same shape this page already fixed once, on the adoption call.
+//
+// Removing it rather than queueing it is not a shortcut: `redrawInCurrentLocale` already applies the
+// language on every adoption, and the synchronous first paint above applies it before any of that.
+// The two computed the same value from the same inputs — `browserLanguage()` *is*
+// `chrome.i18n.getUILanguage()` — so the second writer added a race and nothing else.

@@ -688,16 +688,30 @@ public enum ClaudeDelivery {
         return !live.isEmpty
     }
 
-    /// Grant a restart, atomically, or refuse. On success **admission closes** — every later
-    /// `admit()` returns nil — so the interval between "the picker decided" and "the process is
-    /// gone" cannot acquire a new helper. Refusing leaves the state untouched.
-    public static func admitRestart() -> Bool {
+    /// **The one decision "this process is going away" is made through**, taken by both ways of
+    /// going away. On success **admission closes** — every later `admit()` returns nil — so the
+    /// interval between deciding and being gone cannot acquire a new helper.
+    ///
+    /// `requiringIdle` is the only difference between the two callers, and it is the difference
+    /// between asking and being told. A **language restart** may be refused: it is the app's own
+    /// idea, and cutting a delivery in half is worse than not restarting. **Termination cannot be**:
+    /// the user quit or macOS is shutting us down, and refusing would not stop it — so the gate
+    /// closes regardless and the caller dismisses whatever is still registered.
+    ///
+    /// Round 14 closed this for the restart path alone and left termination calling cleanup with the
+    /// gate still open, so a request already accepted could launch a helper *after* the farewells had
+    /// gone out (round 15 review). One function now, so a third way of leaving has to find it.
+    @discardableResult
+    public static func closeAdmission(requiringIdle: Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard live.isEmpty else { return false }
+        if requiringIdle, !live.isEmpty { return false }
         restartAdmitted = true
         return true
     }
+
+    /// The restart's half of that decision: refuse unless nothing is registered.
+    public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) }
 
     /// Give the admission back when the restart did not happen — the relaunch failed to spawn, or a
     /// test finished. Without this an admission that led nowhere would refuse every delivery for the

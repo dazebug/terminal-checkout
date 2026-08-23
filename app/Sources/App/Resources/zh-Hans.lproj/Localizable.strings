@@ -46,6 +46,7 @@
 "app.install.feedback" = "路径已复制到剪贴板，Chrome 已打开。请按上面的 ① → ④ 操作。";
 "app.language.followSystem" = "跟随系统语言";
 "app.language.note" = "本应用绘制的文字会立即改变。系统对话框（文件选择器、警告）从下次启动起使用该语言。";
+"app.language.notOwner" = "另一个 Terminal Checkout 正在运行并拥有此设置。请在那个窗口中更改语言。";
 "app.language.restartDeferred" = "正在传送 claude 输入，因此现在不会重新启动。请在传送完成后再按一次。";
 "app.menu.close" = "关闭";
 "app.menu.copy" = "拷贝";

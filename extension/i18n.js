@@ -111,9 +111,10 @@ function tr(key, ...args) {
 // hyphenation read it, and a page that says `lang="en"` while rendering Korean is telling assistive
 // technology something false.
 //
-// The locale is a parameter because the extension cannot yet decide one: the app publishes it and
-// the cache that receives it is item 16's. Until then `options.html` ships `lang="en"`, which is
-// the truth while English is the only rendered language.
+// The locale is a parameter rather than something looked up here, so that every caller applies the
+// answer its own renderer just settled on — which is what lets the options page keep all of this
+// inside one serialized queue. `options.html` still ships `lang="en"` as the value before the first
+// paint decides.
 function applyDocumentLanguage(locale, documentRef = globalThis.document) {
   if (!documentRef || !documentRef.documentElement) return null;
   const tag = TC_I18N_LOCALES.includes(locale) ? locale : TC_I18N_FALLBACK;

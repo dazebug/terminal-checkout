@@ -54,6 +54,7 @@
 "app.install.feedback" = "The path is on the clipboard and Chrome is open. Follow ① → ④ above.";
 "app.language.followSystem" = "Follow the system language";
 "app.language.note" = "The strings this app draws change immediately. System dialogs (file pickers, alerts) use this language from the next launch.";
+"app.language.notOwner" = "Another copy of Terminal Checkout is running and owns this setting. Change the language in that window.";
 "app.language.restartDeferred" = "claude input is being delivered, so the app is not restarting right now. Press again once the delivery has finished.";
 "app.menu.close" = "Close";
 "app.menu.copy" = "Copy";

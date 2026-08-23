@@ -184,6 +184,26 @@ final class LocalizationBundleTests: XCTestCase {
     /// read a Swift constant. That is the same drift `UninstallScriptSyncTests` guards for the
     /// uninstall markers, so it is guarded the same way: change `fallbackLocale` alone and this
     /// fails, rather than the gate quietly enforcing last year's answer.
+    /// The bundle gate spells the shipped languages out, because a shell script cannot read
+    /// `supportedLocales`. Same arrangement as the development region below, and the same reason:
+    /// change the constant alone and this fails, rather than the gate quietly admitting a language
+    /// the app does not ship or rejecting one it does.
+    func testTheBundleGateKnowsExactlyTheLanguagesWeShip() throws {
+        let script = try repoFile("app/verify-bundle.sh")
+        let line = try XCTUnwrap(
+            script.split(separator: "\n").first { $0.hasPrefix("SUPPORTED_LPROJ=") },
+            "verify-bundle.sh no longer closes the catalogue set"
+        )
+        let listed = String(line)
+            .replacingOccurrences(of: "SUPPORTED_LPROJ=", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            .split(separator: " ").map(String.init)
+        XCTAssertEqual(
+            listed.sorted(), supportedLocales.sorted(),
+            "verify-bundle.sh and supportedLocales disagree about which languages ship"
+        )
+    }
+
     func testTheBundleGateExpectsTheSameRegionWeFallBackTo() throws {
         let script = try repoFile("app/verify-bundle.sh")
         XCTAssertTrue(

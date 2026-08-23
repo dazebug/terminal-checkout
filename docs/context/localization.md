@@ -160,6 +160,11 @@ A language change moves AppKit's own chrome only on the next launch, so the card
 **Source:** ledger D90 in `docs/plans/i18n-five-locales.md`
 **Revisit when:** a browser API can prove at most one service-worker realm writes the cache, or the cache moves somewhere with a compare-and-set
 
+**What this limits is the monotonicity claim itself.** The cache is described elsewhere as one a stale
+or out-of-order answer can never move backwards; that holds **inside one service-worker realm**, and
+this entry is the boundary of the word "never". Anyone repeating the promise should repeat it with
+this beside it.
+
 The extension's cache is fenced against stale writes inside one service-worker realm. A realm that keeps running after a new one has started is outside that fence: the two have different scopes, so the fence does not see them as competing, and because the ordering rule accepts a different `installId` unconditionally, an old realm's write can land on top of a new one.
 
 It is written down rather than fixed because it cannot be observed from where we stand — nothing in the extension can ask "is another realm of me still alive", and the scenario has never been reproduced. The damage is bounded to a wrong language that the next publication corrects.

@@ -56,12 +56,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// establish**: macOS allows a few seconds, each farewell is one socket round trip, and there is
     /// no way here to observe the case where that is not enough. The claim is that the attempt is
     /// made and ordered first, not that it always finishes.
+    /// **The gate closes before the farewells go out**, and that order is the point.
+    ///
+    /// Round 14 gave the language restart an admission gate and left this path calling cleanup
+    /// without it: a request already accepted on the socket queue could reach `runInTerminal` and
+    /// launch a Warp helper *after* `endEveryHelper` had said goodbye to everyone it could see, and
+    /// that helper would outlive the app with nobody to dismiss it (round 15 review). Termination is
+    /// not refusable, so it takes the same decision function with `requiringIdle: false` — the gate
+    /// shuts either way and whatever is still registered is then dismissed.
     func applicationWillTerminate(_ notification: Notification) {
+        ClaudeDelivery.closeAdmission(requiringIdle: false)
         ClaudeDelivery.endEveryHelper()
         server?.stop()
     }
 
-    /// **Only the instance that owns the socket publishes a locale.**
+    /// **This is where publication eligibility is decided**, and the only place it is.
     ///
     /// `start()` throws `alreadyRunning` when another instance answers on the path, and that is the
     /// only singleton test this app has — `NSLock` is process-local and cannot see a second process
@@ -70,14 +79,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// does not own the socket produces two different locales under the same install id and epoch,
     /// which the extension's ordering rule cannot separate — it keeps whichever it saw first.
     ///
-    /// The publication is therefore here, after the bind, and not in `main.swift` where it used to
-    /// be. What stayed there is the *resolution*, so the answer published is still the one this
-    /// launch decided on before AppKit was touched.
+    /// The publication moved here from `main.swift` in round 14; what stayed there is the
+    /// *resolution*, so the answer published is still the one this launch decided on before AppKit
+    /// was touched. **What round 14 got wrong was the scope of the claim**: this bound the launch
+    /// writer and the sentence here said "only the instance that owns the socket publishes", while
+    /// the picker went on publishing from anywhere (round 15 review). Both writers now ask
+    /// `LocalePublicationRight`, which is what this records into.
     private func startServer() {
         let server = HostServer(socketPath: defaultSocketPath())
         do {
             try server.start()
             self.server = server
+            LocalePublicationRight.recordSocketOwnership()
             Settings.publishLocaleAtLaunch(resolved: launchLocale)
         } catch {
             checkoutLog(

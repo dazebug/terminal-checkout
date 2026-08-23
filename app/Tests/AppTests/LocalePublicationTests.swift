@@ -490,6 +490,62 @@ final class LocalePublicationTests: XCTestCase {
         XCTAssertLessThan(publish, catchStart, "the publication is outside the branch that owns the socket")
     }
 
+    /// **A window that does not own the socket must not publish** (round 15 review, P0).
+    ///
+    /// Round 14 bound the launch publisher to the bind and left the picker unbound, while the
+    /// comment on `startServer` declared the rule for both. A second GUI instance has a setup window
+    /// too — that is what `open -n` gives you, and the language restart uses it — so a picker there
+    /// moved the shared publication while the owner's window and the extension stayed where they
+    /// were.
+    ///
+    /// The preference itself is still written: it is an ordinary shared user setting, last writer
+    /// wins. What must not move without ownership is the generation the extension orders by.
+    func testOnlyTheSocketOwnerPublishesALanguageChange() throws {
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
+        XCTAssertTrue(
+            Settings.setLanguage("ja", defaults: defaults, mayPublish: true, systemPreferred: ["ko-KR"]),
+            "the owner did not publish"
+        )
+        let owned = storedTriple()
+        XCTAssertEqual(owned.2, "ja")
+
+        XCTAssertFalse(
+            Settings.setLanguage("ko", defaults: defaults, mayPublish: false, systemPreferred: ["ko-KR"]),
+            "a non-owner published a language change"
+        )
+        XCTAssertEqual(storedTriple().2, owned.2, "a non-owner moved the published locale")
+        XCTAssertEqual(storedTriple().1 as? Int, owned.1 as? Int, "a non-owner moved the generation")
+        XCTAssertEqual(
+            Settings.languagePreference(in: defaults), "ko",
+            "the preference is a shared user setting and should still have been written"
+        )
+    }
+
+    /// Both writers ask the same question, and the window that cannot publish says so rather than
+    /// offering a control that does nothing. Read from the source: the picker's branch ends in
+    /// `NSApp.terminate` and a second instance needs a second process.
+    func testBothWritersAskTheSameQuestionAndTheWindowSaysSo() throws {
+        let settings = try String(contentsOfFile: Self.appSource("Settings.swift"), encoding: .utf8)
+        XCTAssertTrue(
+            settings.contains("guard mayPublish else {"),
+            "the picker's writer no longer asks whether it may publish"
+        )
+        let delegate = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
+        XCTAssertTrue(
+            delegate.contains("LocalePublicationRight.recordSocketOwnership()"),
+            "nothing records who owns the socket"
+        )
+        let window = try String(contentsOfFile: Self.appSource("SetupWindowController.swift"), encoding: .utf8)
+        XCTAssertTrue(
+            window.contains("languagePopUp.isEnabled = mayPublish"),
+            "a window that cannot publish still offers the picker"
+        )
+        XCTAssertTrue(
+            window.contains("localized(\"app.language.notOwner\")"),
+            "a window that cannot publish does not say why"
+        )
+    }
+
     private static func appSource(_ name: String) -> String {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/LocalePublicationTests.swift
             .deletingLastPathComponent().deletingLastPathComponent()

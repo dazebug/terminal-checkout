@@ -163,6 +163,25 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// **No sentence has two homes.** A message that reads the same in two catalogues is one message
     /// that two places will translate separately, and they will drift — that is the whole reason
     /// this gate exists rather than a naming convention alone.
+    /// **The catalogue set is closed, not merely consistent.**
+    ///
+    /// Everything else here compares the stores to each other, which says nothing about a language
+    /// we do not ship: an `fr.lproj` dropped into the sources was copied into the bundle, matched
+    /// byte for byte and parsed, and every check stayed green while macOS advertised a localization
+    /// the app cannot resolve to (round 15 review). The same rule is enforced on the built bundle by
+    /// `verify-bundle.sh`; this is the source side, where it is cheaper to notice.
+    func testNoCatalogueExistsForALanguageWeDoNotShip() throws {
+        let resources = Self.repositoryRoot.appendingPathComponent("app/Sources/App/Resources")
+        let found = try FileManager.default.contentsOfDirectory(atPath: resources.path)
+            .filter { $0.hasSuffix(".lproj") }
+            .map { ($0 as NSString).deletingPathExtension }
+            .sorted()
+        XCTAssertEqual(
+            found, supportedLocales.sorted(),
+            "the catalogues on disk are not the languages we ship"
+        )
+    }
+
     func testNoValueHasTwoHomes() throws {
         for locale in try filledLocales() {
             let app = try appCatalogue(locale)

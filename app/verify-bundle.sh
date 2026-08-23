@@ -106,6 +106,21 @@ while IFS= read -r catalogue; do
     fi
 done < <(find "$BUNDLED" -maxdepth 2 -path '*.lproj/*' -name '*.strings' | sort)
 
+# **The catalogue set is closed.** Everything above compares the two sides to each other, which is
+# silent about a language we do not ship: an `fr.lproj` added to the sources is copied by `build.sh`,
+# matches byte for byte, has equal directory sets, and parses — so every check passed while macOS
+# advertised a localization nothing resolves to (round 15 review). The list is spelled out because a
+# shell script cannot read `supportedLocales`, and `LocalizationBundleTests` fails if the two drift,
+# which is the same arrangement `CFBundleDevelopmentRegion` below already has.
+SUPPORTED_LPROJ="en ko ja zh-Hans zh-Hant"
+while IFS= read -r dir; do
+    name="$(basename "$dir" .lproj)"
+    case " $SUPPORTED_LPROJ " in
+        *" $name "*) ;;
+        *) fail "not a language we ship: $(basename "$dir")" ;;
+    esac
+done < <(find "$SOURCES" "$BUNDLED" -maxdepth 1 -name '*.lproj' | sort)
+
 # The development region is what macOS answers with when it can match nothing else, so a wrong value
 # here is a language nobody asked for rather than a missing file. `UninstallScriptSyncTests`-style
 # drift between this literal and `fallbackLocale` is covered by a test that reads this script.
