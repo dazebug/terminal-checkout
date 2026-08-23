@@ -371,6 +371,82 @@ final class LocalePublicationTests: XCTestCase {
         XCTAssertEqual(Settings.languagePreference(in: defaults), "ja")
     }
 
+    /// **⑩ Two interactive writers cannot publish different tags at the same epoch** — and this
+    /// time by construction rather than by an enum argument (round 10 review).
+    ///
+    /// Item 15 is where the second writer arrives: a launch publisher stands beside the picker. Two
+    /// callers reading epoch 3 and both writing epoch 4 with different tags is a state the extension
+    /// cannot recover from — its rule is "same install, accept only a strictly greater epoch", so it
+    /// keeps whichever landed first and drops the other for good.
+    ///
+    /// Both production writers are on the main queue, which is a second reason they cannot
+    /// interleave; the case drives them concurrently on purpose, because that fact belongs to AppKit
+    /// and not to this contract.
+    ///
+    /// **The interleaving is arranged, not hoped for.** Simply running two writers concurrently
+    /// proved nothing — measured: with the lock removed, four concurrent writers still produced four
+    /// distinct epochs on three runs out of three, because the read-modify-write is microseconds
+    /// long and nothing made the threads meet inside it. So the store holds the first reader at the
+    /// exact moment that matters, until the second has read the same epoch or half a second passes.
+    /// Without the lock that produces the collision every time; with it, the second reader cannot
+    /// even start, the wait times out, and the two publications come out one after the other.
+    func testTwoInteractiveWritersCannotPublishDifferentTagsAtTheSameEpoch() throws {
+        let coordinating = try XCTUnwrap(ReadCoordinatingDefaults(suiteName: suiteName))
+        seed(installId: "install-a", epoch: 3, tag: "en")
+        let tags = try ["ko", "ja"].map { try locale($0) }
+        let box = NSLock()
+        var published: [LocalePublication] = []
+        coordinating.coordinateReads = true
+
+        DispatchQueue.concurrentPerform(iterations: tags.count) { index in
+            if let result = LocaleState.publish(
+                resolved: tags[index], defaults: coordinating, role: .interactive
+            ) {
+                box.lock()
+                published.append(result)
+                box.unlock()
+            }
+        }
+        coordinating.coordinateReads = false
+
+        XCTAssertEqual(published.count, tags.count)
+        XCTAssertEqual(Set(published.map(\.installId)), ["install-a"], "an identity was minted")
+        // The contract itself: an epoch identifies one tag. Distinct epochs are how it is kept here,
+        // but the sentence the extension depends on is this one.
+        let tagsByEpoch = Dictionary(grouping: published, by: { $0.snapshot.epoch })
+            .mapValues { Set($0.map(\.snapshot.tag)) }
+        for (epoch, tagsAtEpoch) in tagsByEpoch {
+            XCTAssertEqual(tagsAtEpoch.count, 1, "epoch \(epoch) carries \(tagsAtEpoch)")
+        }
+        XCTAssertEqual(Set(published.map(\.snapshot.epoch)), [4, 5])
+
+        // What is on disk is the last of them, whichever order they ran in
+        let last = try XCTUnwrap(published.max(by: { $0.snapshot.epoch < $1.snapshot.epoch }))
+        XCTAssertEqual(storedTriple().1 as? Int, last.snapshot.epoch)
+        XCTAssertEqual(storedTriple().2, last.snapshot.tag)
+    }
+
+    /// **The launch publisher publishes what the window draws, not what is stored.** The two answers
+    /// differ on exactly one input — a preference that is not a string — and publishing the stored
+    /// one would tell the extension a language nothing renders in (round 10 review).
+    func testTheLaunchPublisherPublishesTheResolvedLocale() throws {
+        defaults.set(42, forKey: languagePreferenceKey)
+        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ko-KR"])
+
+        XCTAssertEqual(storedTriple().2, fallbackLocale, "the launch publisher stored the preference itself")
+        XCTAssertNotEqual(Settings.languagePreference(in: defaults), fallbackLocale, "the fixture proves nothing")
+
+        // An `auto` user whose system language moved while the app was not running: the launch
+        // publisher is what makes that reach the extension at all (D48)
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
+        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ko-KR"])
+        XCTAssertEqual(storedTriple().2, "ko")
+        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ja-JP"])
+        XCTAssertEqual(storedTriple().2, "ja")
+        XCTAssertEqual(storedTriple().1 as? Int, 1, "the revision did not move with the system language")
+    }
+
     /// And what the picker does with that third state. All three rows are enumerated here rather
     /// than driven through the window, which would mean writing the preference into the domain the
     /// installed app uses.
@@ -399,6 +475,39 @@ final class LocalePublicationTests: XCTestCase {
 /// and `rA_spy_dict_probe.swift` — one dictionary write is one call, one removal is two). Relying
 /// on that routing would be relying on something whose failure mode is silence, so the hooks stay
 /// on all three and the cases assert that a read happened at all.
+/// A `UserDefaults` that holds the **first** reader inside the read, until a second one has read the
+/// same value or half a second has passed.
+///
+/// It exists because the race it arranges cannot be reached by asking for it: four writers running
+/// concurrently against an unlocked publish produced four distinct epochs on every attempt, since
+/// the window between the read and the write is microseconds wide. Holding the first reader open is
+/// what makes "both saw epoch 3" a fact of the test rather than a hope.
+///
+/// The wait has a timeout because the correct implementation is the one where the second reader
+/// **never arrives** — it is still waiting for the write lock — and a test that deadlocked on
+/// correct code would be worse than one that proves nothing.
+private final class ReadCoordinatingDefaults: UserDefaults {
+    var coordinateReads = false
+    private let bookkeeping = NSLock()
+    private var readers = 0
+    private let secondReaderArrived = DispatchSemaphore(value: 0)
+
+    override func dictionary(forKey defaultName: String) -> [String: Any]? {
+        let value = super.dictionary(forKey: defaultName)
+        guard coordinateReads else { return value }
+        bookkeeping.lock()
+        readers += 1
+        let order = readers
+        bookkeeping.unlock()
+        if order == 1 {
+            _ = secondReaderArrived.wait(timeout: .now() + 0.5)
+        } else if order == 2 {
+            secondReaderArrived.signal()
+        }
+        return value
+    }
+}
+
 private final class WriteObservingDefaults: UserDefaults {
     var afterWrite: (() -> Void)?
 

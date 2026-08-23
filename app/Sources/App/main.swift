@@ -23,6 +23,12 @@ if CommandLine.arguments.contains("--headless-server") {
 // no window has no business rewriting the user's language defaults.
 AppLocalization.applyStoredLanguageToAppKit()
 
+// The launch publisher, in the one file the headless server provably never reaches (it exits
+// above). It runs here rather than in `AppDelegate` for that reason and for one more: this is
+// already the place that decides what language this launch is in, and publishing what was just
+// resolved keeps the two answers from being computed at different moments.
+Settings.publishLocaleAtLaunch()
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

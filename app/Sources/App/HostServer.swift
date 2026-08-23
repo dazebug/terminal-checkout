@@ -1,6 +1,79 @@
 import Core
 import Foundation
 
+/// The names the protocol uses for the locale generation. Snake case, like `command_template` and
+/// `claude_inputs` — the extension reads these, so they are the wire format rather than a detail.
+let localeQueryName = "locale"
+let localeResponseKey = "locale"
+let localeInstallIdResponseKey = "locale_install_id"
+let localeEpochResponseKey = "locale_epoch"
+
+/// What the extension asked for.
+///
+/// The query exists because the extension has to know the language **before** it draws anything, and
+/// the only other way to find out would be to send a command — which opens a terminal tab nobody
+/// asked for. It is answered here and not in `Request.swift`: a query is a concern of the app's
+/// protocol envelope, and Core's command resolver must not learn about app state (D23). Core
+/// ignoring unknown top-level keys is also what lets an **older** app answer this request at all —
+/// it sees a request with no `command_template`, says so, and that answer carries no locale
+/// metadata, which is exactly how the extension is told "no input" rather than "change nothing".
+enum HostRequestKind: Equatable {
+    case localeQuery
+    case command
+}
+
+/// One field decides. Anything that does not name a query is a command request, including the empty
+/// and the malformed ones — they keep going to Core and keep getting Core's verdict, unchanged.
+func hostRequestKind(_ json: [String: Any]) -> HostRequestKind {
+    (json["query"] as? String) == localeQueryName ? .localeQuery : .command
+}
+
+/// Attaches the published locale to a response — **only to one that succeeded**.
+///
+/// The four responses this app can produce fall on two sides of that single test. A successful
+/// command and an answered query carry the generation; a validation failure and the internal-error
+/// literal do not, and neither does anything the extension receives when the app is old, absent, or
+/// the socket broke. That is the contract D51 settled: metadata is a statement the app makes about
+/// itself, and **a response without it is no input to the cache** rather than a reason to change or
+/// to clear it. Attaching it to failures would have been safe too — a rejected command says nothing
+/// about the language — but a rule with no exceptions is the one the extension can implement
+/// without a table, and the cold-start query already covers the user whose requests keep failing.
+///
+/// A `nil` publication means nothing has been published on this machine yet — the headless server
+/// never invents one (D49) — and it produces the same metadata-free response for the same reason.
+func responseCarryingLocale(
+    _ response: [String: Any], publication: LocalePublication?
+) -> [String: Any] {
+    guard response["success"] as? Bool == true, let publication else { return response }
+    var carried = response
+    carried[localeResponseKey] = publication.snapshot.tag
+    carried[localeInstallIdResponseKey] = publication.installId
+    carried[localeEpochResponseKey] = publication.snapshot.epoch
+    return carried
+}
+
+/// The whole decision for one decoded request: which kind it is, what it answers, and what rides
+/// along.
+///
+/// A function of its arguments, so that all four responses can be enumerated in a test — the
+/// alternative is a socket, a terminal, and a machine whose stored publication decides the outcome.
+/// `run` is never called for a query, which is the half of this contract that keeps a cold start
+/// from opening a tab.
+func hostResponse(
+    json: [String: Any], publication: LocalePublication?, baseDirectory: String,
+    run: (ResolvedRequest) throws -> Void
+) -> [String: Any] {
+    switch hostRequestKind(json) {
+    case .localeQuery:
+        return responseCarryingLocale(["success": true], publication: publication)
+    case .command:
+        return responseCarryingLocale(
+            handleRequest(json: json, baseDirectory: baseDirectory, run: run),
+            publication: publication
+        )
+    }
+}
+
 /// The unix socket server that takes the relay's requests and runs them in the terminal.
 final class HostServer {
     /// A diagnostic surface and not a message to the user: the only reader is `AppDelegate`, which
@@ -101,11 +174,21 @@ final class HostServer {
             // arrived**, so every "total" below it is on the same axis as the wait the user feels
             // after pressing the button
             let timeline = DeliveryTimeline()
+            // What this process may say about the language: whatever the GUI last published. The
+            // role is `.headless` **in both processes**, and that is the point — the server is a
+            // reader. A server publishing as `.interactive` would be a second writer racing the
+            // picker for the same epoch, which is the P0 round 10 named; the one writer is the GUI,
+            // at launch and at the picker (`Settings.publishLocaleAtLaunch`, `Settings.language`).
+            let publication = LocaleState.publish(
+                resolved: AppLocalization.resolvedLocale(), role: .headless
+            )
             let response = execQueue.sync {
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
-                handleRequest(json: json, baseDirectory: Settings.baseDirectory) { resolved in
+                hostResponse(
+                    json: json, publication: publication, baseDirectory: Settings.baseDirectory
+                ) { resolved in
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)

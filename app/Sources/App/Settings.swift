@@ -57,6 +57,30 @@ enum Settings {
         }
     }
 
+    /// Publishes the locale this launch resolved to — the GUI's other writer, beside the picker.
+    ///
+    /// It exists because `auto` is a promise about the **system's** language, and the system's
+    /// language can change while this app is not running: without a publication at launch, an
+    /// `auto` user's extension would keep the tag from whenever they last touched the picker (D48).
+    ///
+    /// What it publishes is `AppLocalization.resolvedLocale()` and **not** `Settings.language`. The
+    /// two disagree on exactly one input and it matters here: a stored preference that is not a
+    /// string reads as a third state from the setting, while the resolver folds it to English —
+    /// which is what the window is drawing. Publishing the preference would tell the extension a
+    /// language nothing is rendering in (round 10 review).
+    ///
+    /// The headless server never calls this. It has no picker, draws nothing, and inventing a
+    /// revision there is what D49 rules out.
+    static func publishLocaleAtLaunch(
+        defaults: UserDefaults = .standard,
+        systemPreferred: [String] = Locale.preferredLanguages
+    ) {
+        LocaleState.publish(
+            resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
+            defaults: defaults, role: .interactive
+        )
+    }
+
     /// What a stored preference reads as.
     ///
     /// The doc above says a value that is not a string must not read as "follow the system", and
@@ -250,9 +274,29 @@ enum LocaleState {
     /// a headless process arrives on the next GUI launch, which is the promise `auto` already
     /// makes. With nothing stored it publishes **nothing** (nil) — a response carrying no locale
     /// metadata, which the extension treats as no input rather than as a reason to change (D51).
+    /// Held across the read-modify-write of an `.interactive` publication.
+    ///
+    /// The single-writer rule used to be **an enum argument and nothing else** (round 10 review),
+    /// which orders nothing: two `.interactive` callers could read epoch 3 and both write epoch 4
+    /// with different tags, and the extension — whose rule is "same install, accept only a strictly
+    /// greater epoch" — would keep whichever arrived first and drop the other for good. Item 15 is
+    /// where that stopped being hypothetical, because a launch publisher stands beside the picker.
+    /// Both of them run on the main queue today, which is a second reason they cannot interleave;
+    /// the lock is here because that is a fact about AppKit rather than about this contract.
+    private static let writeLock = NSLock()
+
     @discardableResult
     static func publish(
         resolved: SupportedLocale, defaults: UserDefaults = .standard, role: LocaleWriterRole
+    ) -> LocalePublication? {
+        guard role == .interactive else { return published(resolved: resolved, defaults: defaults, role: role) }
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        return published(resolved: resolved, defaults: defaults, role: role)
+    }
+
+    private static func published(
+        resolved: SupportedLocale, defaults: UserDefaults, role: LocaleWriterRole
     ) -> LocalePublication? {
         // The one writer is also the one cleaner. Removing the earlier schema's keys used to happen
         // inside `write`, which never runs when a valid envelope is already there — so an envelope
