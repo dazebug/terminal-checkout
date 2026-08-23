@@ -41,6 +41,12 @@ final class SocketFixtures {
         _ name: String, file: StaticString = #filePath, line: UInt = #line
     ) -> String {
         let advertised = path(name)
+        // `runInWarp` makes this beside the register entry, and the app links from it to take an
+        // address back — a fixture without one would be measuring a state production does not have
+        XCTAssertTrue(
+            createWarpHelperPin(forAdvertised: advertised), "the pin could not be made",
+            file: file, line: line
+        )
         let staging = warpHelperStagingPath(advertised: advertised)
         guard var address = makeUnixSockaddr(staging) else {
             XCTFail("the staging path does not fit sun_path", file: file, line: line)

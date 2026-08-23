@@ -182,6 +182,14 @@ public func warpHelperToken() -> String {
 /// before it is entitled to the advertised one (`warpHelperStagingPath`). A helper killed between
 /// `listen` and the claim leaves the second, and a reclaim that only knew the first would leave it
 /// in `/tmp` for good.
+/// And the pin, which is not a socket and so is not one of the two names above.
+public func warpHelperPinFileIsOurs(name: String) -> Bool {
+    guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(warpHelperPinSuffix) else { return false }
+    return isOurRequestToken(
+        name.dropFirst(warpHelperSocketPrefix.count).dropLast(warpHelperPinSuffix.count)
+    )
+}
+
 public func warpHelperSocketFileIsOurs(name: String) -> Bool {
     guard name.hasPrefix(warpHelperSocketPrefix) else { return false }
     for suffix in [warpHelperAdvertisedSuffix, warpHelperStagingSuffix] where name.hasSuffix(suffix) {
@@ -197,6 +205,9 @@ public let warpHelperAdvertisedSuffix = ".sock"
 /// the advertised suffix on purpose: a path that fits `sun_path`'s 104 bytes then has a staging
 /// name that fits too, so the length check on the advertised path answers for both.
 public let warpHelperStagingSuffix = ".pre"
+/// The file the app links from to take an address back (`warpHelperPinPath`). Not a socket and
+/// never bound, so it needs no room in `sun_path`.
+public let warpHelperPinSuffix = ".pin"
 
 /// The first candidate directory whose path fits in sun_path's 104 bytes. nil when none of them fits.
 public func warpHelperSocketPath(token: String, directories: [String]) -> String? {
@@ -224,48 +235,93 @@ public func warpHelperSocketPath(token: String) -> String? {
 // window opens at `record`, not at `open`.
 //
 // It is closed by making the two sides race for **one name**, one operation each, with both
-// outcomes safe. Measured (`<scratchpad>/r18_claim_probe.swift`, `r18_link_probe2.swift`,
-// `r20_mkdir_probe.swift`):
-//  - `link` onto a name that already exists is refused with `EEXIST`, and a *listening* socket
-//    reached through a hard link accepts connections normally — so the helper can bind privately,
-//    listen, and only then put itself where the app is looking;
-//  - `mkdir` on that name is refused with `EEXIST` once the helper's `link` has landed, and takes
-//    the name outright when it has not.
-// `rename` was measured and rejected: it **overwrites** the destination, so a helper would take an
-// address the app had already withdrawn and the fix would be no fix at all.
+// outcomes safe.
 //
-// **The app occupies the name with `mkdir`, not with `bind`** (round 19 review), and the two
-// reasons are the two gaps `bind` left:
-//  - `bind` needs a descriptor, so it fails where `socket()` fails, and every such failure used to
-//    read as "the helper won" — a farewell to nobody while the delayed helper's `link` still
-//    succeeded. `mkdir` needs no descriptor at all, which removes that whole family of failures
-//    rather than classifying it;
-//  - what `bind` leaves is a socket file that refuses connections, which is *exactly* the shape
-//    `reclaimDeadWarpHelperSockets` removes. A later run's sweep deleting the tombstone while the
-//    delayed helper is still alive on its staging name puts the address back within reach. A
-//    directory is not a socket, so both that sweep and `uninstall.sh` (`[ -S ]`) already pass it
-//    by: the hole closes by **removing** a property rather than by teaching two sweeps a rule.
-// What is lost is `EADDRINUSE`'s specificity, and it turns out not to be needed: `EEXIST` says the
-// name is taken, the only thing this design puts there is the helper's listening socket, and a
-// farewell to anything else costs one refused connection (measured: connecting to a directory is
-// `ENOTSOCK`, not a hang).
+// **The app occupies the name with the same operation the helper claims it with — `link`** (round
+// 21 review). `bind` and then `mkdir` were each better than the last and each left the same shape of
+// gap, which is what this decides against:
+//  - `bind` needs a descriptor, so it failed where `socket()` failed, and every such failure read as
+//    "the helper won" — a farewell to nobody while the delayed helper's `link` still succeeded;
+//  - `mkdir` needs no descriptor but it does need an **inode**, and `link` reuses the socket's. The
+//    previous round wrote that sliver down and then took the unsafe branch inside it: an inode
+//    shortage answered `.failed`, which sends no farewell, while the helper's `link` went through.
+//    "Shares some failure modes" had been allowed to stand for "shares all of them".
+// Linking from a file the app already holds removes the argument instead of narrowing it: both sides
+// create a directory entry in the **same parent** and neither allocates an inode, so *the app could
+// not occupy* implies *the helper cannot claim* **by construction**. The file to link from is made
+// when the helper is registered rather than when the app is leaving, which is what keeps
+// termination-time pressure out of the path (`warpHelperPinPath`).
+//
+// Measured (`<scratchpad>/r22_pin_probe.swift`, and `r18_claim_probe.swift`, `r18_link_probe2.swift`,
+// `r20_mkdir_probe.swift` before it):
+//  - `link` onto a name that already exists is refused with `EEXIST`, either way round, and a
+//    *listening* socket reached through a hard link accepts connections normally — so the helper can
+//    bind privately, listen, and only then put itself where the app is looking;
+//  - the two links fail together: parent missing is `ENOENT` for both, parent read-only `EACCES` for
+//    both, and the advertised name ends up carrying the source's inode (`nlink` 2), so nothing new
+//    is allocated on either side;
+//  - `rename` overwrites its destination and is therefore useless here — the helper would take back
+//    an address the app had already occupied.
+// What is lost is `EADDRINUSE`'s specificity, and what replaces it is narrower than it looks:
+// `EEXIST` says the name is **occupied** and nothing more — not who by. That is why the value says
+// `occupied` and the farewell is best effort (measured: connecting to a non-socket is `ENOTSOCK`,
+// not a hang).
 
 /// The name a helper binds before it is entitled to answer on the advertised one.
 public func warpHelperStagingPath(advertised: String) -> String {
     (advertised as NSString).deletingPathExtension + warpHelperStagingSuffix
 }
 
+/// The file the app links from when it takes an address back.
+///
+/// It sits beside the advertised name so that the occupation and the helper's claim are entries in
+/// the same directory — that is what makes their failures the same failures. It is created when the
+/// helper is registered, because a source made at termination would put the allocation this design
+/// exists to avoid back into the moment that must not fail.
+public func warpHelperPinPath(advertised: String) -> String {
+    (advertised as NSString).deletingPathExtension + warpHelperPinSuffix
+}
+
+/// What is written inside the pin, and therefore inside the occupied name — they are two names for
+/// one inode, so proving one proves the other.
+///
+/// It exists because the sweep that removes them has to tell our file from a file somebody else put
+/// at the same name, and a name cannot do that: the socket sweeps are narrow on purpose ("anyone can
+/// drop a regular file or a symlink under the same name"), and widening one to regular files would
+/// have given that away. Content is how `warpTabConfigIsOurs` already answers the same question. A
+/// language-neutral token, for the reason D25 gives — nothing here is ever translated.
+public let warpHelperPinMarker = "terminal-checkout/warp-helper-pin v1\n"
+
+/// Makes that file. Called once per Warp request that schedules claude input, next to the register
+/// entry it belongs to. False when it could not be made — the caller runs anyway, because a request
+/// that cannot be taken back is still a request the user asked for, and the failure shows up as
+/// `.failed` at the moment it matters rather than as a refusal now.
+@discardableResult
+public func createWarpHelperPin(forAdvertised advertised: String) -> Bool {
+    let fd = open(warpHelperPinPath(advertised: advertised), O_CREAT | O_EXCL | O_WRONLY, 0o600)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    return writeAll(fd: fd, data: Data(warpHelperPinMarker.utf8))
+}
+
+/// Removes it when the delivery is over. The advertised name, if the app took it, keeps the inode —
+/// they are two names for one file, and dropping this one does not give the address back.
+public func removeWarpHelperPin(forAdvertised advertised: String) {
+    unlink(warpHelperPinPath(advertised: advertised))
+}
+
 /// **The helper's half**, taken after it is already listening — which is why the advertised name
 /// never exists in a state where a connection to it would be refused.
 ///
-/// False means the app withdrew this address before the pane came up, and then this helper must not
-/// serve. The staging name is dropped either way: on success the socket has the advertised name, on
-/// failure this process is leaving, and in both cases the socket itself is held by the fd rather
-/// than by a name.
+/// False means the advertised name was already occupied — by the app taking it back before the pane
+/// came up, which is the case this exists for, or by anything else at that name — and then this
+/// helper must not serve. The staging name is dropped either way: on success the socket has the
+/// advertised name, on failure this process is leaving, and in both cases the socket itself is held
+/// by the fd rather than by a name.
 ///
 /// `errno` is put back after the `unlink` so the caller can still say *why* it lost — `EEXIST` is
-/// the withdrawal and anything else is not, and a diagnostic that could not tell them apart would
-/// report a vanished temporary directory as a decision the app made.
+/// occupancy and anything else is not, and a diagnostic that could not tell them apart would report
+/// a vanished temporary directory as a decision the app made.
 public func claimWarpHelperAddress(from staging: String, as advertised: String) -> Bool {
     let claimed = link(staging, advertised) == 0
     let failure = errno
@@ -281,52 +337,56 @@ public func claimWarpHelperAddress(from staging: String, as advertised: String) 
 /// false became an address to say goodbye to. The comment defending that argued the cost of a
 /// farewell to nobody is a refused connection — true when the outcomes are two. They are three: if
 /// nothing was withdrawn *and* nobody holds the name, the farewell reaches nobody, the delayed
-/// helper's `link` succeeds, and it outlives the app. The branch meant to be conservative arrived
-/// at the P0 this work opened the item for.
+/// helper's `link` succeeds, and it outlives the app.
 public enum WarpHelperAddressWithdrawal: Equatable {
     /// Taken. No helper can ever answer there, and there is nothing to dismiss.
     case withdrawn
-    /// Something already holds the name. In this design that is the helper's listening socket, and
-    /// it is what the farewell goes to.
-    case alreadyTaken
+    /// **Something is at that name.** Not "a helper is listening": `EEXIST` is returned for a helper
+    /// socket, for a leftover from an earlier run, and for anything else the same uid put there, and
+    /// nothing in an errno separates them (round 21 review). The farewell is attempted because the
+    /// occupant may be a helper; a refused connection is the expected outcome when it is not.
+    case occupied
     /// Neither, and **this is not an address to say goodbye to**. What it is instead is a fact to
     /// report: this process could not act, and saying goodbye would record a dismissal that did not
-    /// happen.
+    /// happen. Since the occupation became a `link`, this also means the helper cannot claim — the
+    /// two operations fail together (see the section preamble).
     case failed(String)
 }
 
 /// Why a claim was refused, in words that are true for **that** errno.
 ///
 /// It lives here rather than at the one `fail(...)` in the helper because a diagnostic nobody can
-/// exercise is a diagnostic that goes wrong quietly: the previous one named the withdrawal for
-/// every errno, so a vanished temporary directory was reported as a decision the app had made
-/// (round 19 review) — the class this work has swept since round 1, committed by the round that
-/// swept it. Here it is a pure function of the code, and a case can ask it.
+/// exercise is a diagnostic that goes wrong quietly: an earlier one named the withdrawal for every
+/// errno, so a vanished temporary directory was reported as a decision the app had made (round 19
+/// review) — the class this work has swept since round 1, committed by the round that swept it.
+///
+/// **`EEXIST` says occupied, not who by** (round 21 review). The app taking the address back is one
+/// way the name comes to be occupied; a leftover from an earlier run and anything else with this
+/// uid are others, and this process cannot tell them apart from an errno. The sentence says what is
+/// known.
 public func warpHelperClaimFailure(_ code: Int32) -> String {
     let reason = String(cString: strerror(code))
     return code == EEXIST
-        ? "the app withdrew this helper's address on its way out (\(reason))"
+        ? "the advertised address is already occupied (\(reason)) — the app takes it that way when it goes away, and it is not the only thing that can"
         : "the advertised address could not be taken (\(reason))"
 }
 
 /// **The app's half**, taken as it goes away: occupy the address the helper has not taken yet, so
 /// that it never can.
 ///
-/// `mkdir` and not `bind`, for the two reasons in the section preamble — no descriptor is needed,
-/// and what it leaves behind is not the shape the reclaim removes.
+/// `link` from the pin, for the reason in the section preamble: it is the same operation the helper
+/// claims with, into the same parent, and neither allocates an inode — so **whatever stops this
+/// stops that**. `mkdir` was the previous answer and left a sliver it named and then took the unsafe
+/// branch inside; there is no enumeration of shared failure modes here to be incomplete.
 ///
-/// **How narrow `.failed` is, measured rather than argued** (`<scratchpad>/r20_mkdir_probe.swift`):
-/// `mkdir` and the helper's `link` create a directory entry in the *same* parent, so the path-level
-/// failures are shared — a missing parent answers `ENOENT` to both, a read-only one `EACCES` to
-/// both. Whenever this fails for such a reason the helper cannot claim either. It is folded into
-/// `.failed` all the same rather than reported as a withdrawal, because "we could not act" and "the
-/// name is ours" are different facts and only one of them is this process's doing. What is left
-/// over is the sliver where the two differ: `mkdir` also needs an inode, `link` reuses the socket's,
-/// so an inode shortage could stop one and not the other.
+/// A missing pin is itself a `.failed`, with `ENOENT` — and the same `ENOENT` is what the helper's
+/// `link` would get if the parent were gone, which is the only way the pin can be missing without
+/// somebody having removed it. Removing it is a same-uid act and is residual 5 in the helper's
+/// preamble.
 public func withdrawWarpHelperAddress(_ advertised: String) -> WarpHelperAddressWithdrawal {
-    guard mkdir(advertised, 0o700) != 0 else { return .withdrawn }
+    guard link(warpHelperPinPath(advertised: advertised), advertised) != 0 else { return .withdrawn }
     let reason = errno
-    guard reason != EEXIST else { return .alreadyTaken }
+    guard reason != EEXIST else { return .occupied }
     return .failed(String(cString: strerror(reason)))
 }
 
@@ -513,7 +573,70 @@ func reclaimDeadWarpHelperSockets(
             guard isUnixSocketFile(path) else { continue }
             unlink(path)
         }
+        reclaimStaleWarpHelperOccupations(in: directory)
     }
+}
+
+/// **How long an occupied address can still be protecting something.**
+///
+/// A helper claims its address in the instruction after `listen`, so the only interval in which a
+/// taken-back name matters is between the launch and that claim. The numbers bounding it are already
+/// measured and already constants: `open` is given `warpTabConfigLifetime`-order time (its own
+/// timeout is 15s), Warp brings the pane up 0.5∼0.7s after `open` returns, and no helper can be born
+/// at all once the Tab Config is gone — which the app schedules for `warpTabConfigLifetime` (20s)
+/// and the next run's `reclaimStaleWarpTabConfigs` finishes. That puts any possible time-to-claim
+/// under a minute.
+///
+/// This is fifteen, which is deliberately far above it and matches the order of the helper's own
+/// lifetime cap. Round 19 chose not to sweep these at all, and that was right for the reason it gave
+/// — deleting one reopens the late-helper race — but "not swept" is not a bound, and this repository
+/// does not treat the OS emptying its temporary directory as a lifecycle (round 21 review).
+let warpHelperOccupationLifetime: TimeInterval = 15 * 60
+
+/// Removes what taking an address back leaves: the occupied name and the pin it was linked from.
+///
+/// Both are **regular files**, which is why the socket sweep above passes them by and why they
+/// needed a rule of their own. A live helper's address is a socket and is never in range here.
+func reclaimStaleWarpHelperOccupations(
+    in directory: String, olderThan lifetime: TimeInterval = warpHelperOccupationLifetime
+) {
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
+    for name in names where warpHelperSocketFileIsOurs(name: name) || warpHelperPinFileIsOurs(name: name) {
+        let path = (directory as NSString).appendingPathComponent(name)
+        guard let modified = fileModificationDate(path),
+              Date().timeIntervalSince(modified) > lifetime
+        else { continue }
+        removeWarpHelperPinIfOurs(path: path)
+    }
+}
+
+/// Deletes one only when its **contents** say it is ours.
+///
+/// The name is not enough and deliberately so: the socket sweeps are narrow because anyone can drop
+/// a regular file under one of our names, and a sweep that took regular files by name would hand
+/// that protection back. The verdict is reached through an fd — `O_NOFOLLOW` excludes links from the
+/// outset and the `fstat` and the read are on that same descriptor, so "what was checked" and "what
+/// was read" are one file — and then one more `lstat` before the `unlink` narrows the window that
+/// remains, exactly as `removeWarpTabConfigIfOurs` does for a Tab Config.
+private func removeWarpHelperPinIfOurs(path: String) {
+    let fd = open(path, O_RDONLY | O_NOFOLLOW)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+
+    var opened = stat()
+    guard fstat(fd, &opened) == 0, (opened.st_mode & S_IFMT) == S_IFREG else { return }
+
+    var head = [UInt8](repeating: 0, count: warpHelperPinMarker.utf8.count)
+    let count = read(fd, &head, head.count)
+    guard count == head.count,
+          String(decoding: head[0..<count], as: UTF8.self) == warpHelperPinMarker
+    else { return }
+
+    var current = stat()
+    guard lstat(path, &current) == 0,
+          current.st_ino == opened.st_ino, current.st_dev == opened.st_dev
+    else { return }
+    unlink(path)
 }
 
 /// A type check that does not follow symbolic links — following one deletes whatever file the link points at.

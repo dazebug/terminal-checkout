@@ -293,6 +293,17 @@ public func runInWarp(
         // instead of skipping the record, which is how "no address" would become "launched
         // unregistered"
         guard let socketPath else { throw claudeInputRejection(.warpHelperUnavailable) }
+        // The file the app will link from if it has to take this address back. Made **here**, with
+        // the register entry, because making it at termination would put an allocation into the one
+        // moment that must not fail — which is the sliver `mkdir` left (round 21 review).
+        //
+        // **And the request is refused when it cannot be made.** Without the pin there is nothing to
+        // link from, so the address could not be taken back and a late helper would answer with
+        // nothing left to dismiss it — the P0 itself, arrived at by carrying on. Refusing costs the
+        // user this delivery; not refusing costs them a helper the app cannot reach
+        guard createWarpHelperPin(forAdvertised: socketPath) else {
+            throw claudeInputRejection(.warpHelperUnavailable)
+        }
         try claudeInput.record(.warp(helperSocket: socketPath))
     }
 
