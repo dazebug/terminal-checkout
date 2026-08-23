@@ -156,18 +156,20 @@ A single `Bool` gave "another process group was observed" and "the lookup failed
 ## Non-ASCII text changes normalization when it crosses `Process.arguments`
 
 **Type:** constraint
-**Status:** open
-**Evidence:** confirmed (measured; the fix is not written)
-**Source:** ledger D73 and item 31 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/TerminalRunner.swift:239`
-**Revisit when:** the iTerm2 branch stops going through `osascript -e`, or a user reports a message arriving in a form they did not type
+**Status:** superseded — the delivery paths no longer cross this boundary (commit `682b6c7`); the platform behaviour it describes is unchanged
+**Evidence:** confirmed (measured)
+**Source:** ledger D73 and D100, item 31 in `docs/plans/i18n-five-locales.md`; `ProcessArgumentBoundaryTests` in `app/Tests/CoreTests/CoreTests.swift`
+**Revisit when:** a delivery path has to put a value that is not a path into `Process.arguments` or the environment again
 
-Measured by reading codepoints with AppleScript's `id of`: text handed to `osascript -e` arrives **decomposed** (NFD — `4361 4453 4527 4352 4456`), while the same text read from a script file or from stdin arrives **composed** (NFC — `49444 44228`). So a claude message a user wrote in Korean or Japanese reaches the iTerm2 path in a different form from the one they typed.
+Measured by reading codepoints with AppleScript's `id of`: text handed to `osascript -e` arrives **decomposed** (NFD — `4361 4453 4527 4352 4456`), while the same text read from a script file or from stdin arrives **composed** (NFC — `49444 44228`). So a claude message a user wrote in Korean or Japanese reached the iTerm2 path in a different form from the one they typed, and where the input was a `!` one the decomposed bytes reached the shell.
 
 **The first probe was wrong, and that is worth recording.** AppleScript's `count of characters` counts grapheme clusters, so it answered `2` for both forms and measured nothing at all. The generalization drawn from it — that this is a rule about non-ASCII in shell and path strings generally — was too broad as well.
 
-**It is a boundary rule, not a path rule.** The site that bites is the free-text message in `runInITerm`'s `osascript -e`. The WezTerm fallback and the Warp helper path carry ASCII today, and `uninstall.sh` is safe in normal operation because its script comes from a file and `$HOME` from the environment.
+**And the correction was too narrow.** "The WezTerm fallback carries ASCII today" was wrong: a single plain-text input is appended to the command, which then holds the user's sentence, so the fallback carried it on the first click of anyone who had not started WezTerm. `Process.environment` was later measured to decompose exactly like `Process.arguments`, which widened the boundary again. Both corrections came from following the value rather than from re-reading the rule.
 
-**Unmeasured.** What iTerm2 itself received. The measurement stops at the codepoints the AppleScript interpreter was handed.
+**What was done about it is a *decision* and lives in `localization.md`** ("The bytes a user typed are carried, not normalized"): the carriers changed — one stdin door for every AppleScript run, and an ASCII-only argument for the WezTerm fallback — rather than the app normalizing anything.
+
+**Unmeasured.** What iTerm2 itself received. The measurement now reaches one step further than the interpreter's codepoints — those decomposed bytes were confirmed to leave AppleScript *as bytes*, through `do shell script` and through AppleScript's own UTF-8 writer — but the last hop, `write text` putting them on the tty, needs iTerm2 running.
 
 ## Residuals kept rather than closed
 

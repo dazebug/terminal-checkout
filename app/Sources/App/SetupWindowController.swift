@@ -466,10 +466,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// **The picker asks, it does not decide.** Whether a restart is safe right now is item 13's
-    /// question — there is asynchronous claude input delivery in flight to consider, and a Warp
-    /// helper whose only defence is its lifetime. Until that lands the gate answers yes, and the
-    /// hole is deliberate rather than forgotten: the seam is here so item 13 has one place to fill.
+    /// **The picker asks, it does not decide.** Whether a restart is safe right now is
+    /// `LocaleRestartGate`'s question, and its answer is "no claude input delivery is in flight" —
+    /// restarting through one would cut it off and orphan a Warp helper whose only defence is its
+    /// lifetime.
+    ///
+    /// A refusal is **not** a deferral: it changes the note and stops, leaving the user holding the
+    /// trigger. Queueing the restart would need the queue to outlive a delivery that may never end,
+    /// which is the same self-lifetime problem this gate exists to avoid.
     @objc private func restartForLanguage() {
         guard LocaleRestartGate.isSafeNow() else {
             languageNoteLabel.stringValue = languageNote(restartBlocked: true)

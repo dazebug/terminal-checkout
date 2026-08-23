@@ -32,7 +32,8 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
         throw CommandError.invalidBaseDirectory(.notAbsolute, trimmed)
     }
 
-    // Strip trailing slashes so composing `<base>/<repo>` never yields `//` (root stays root)
+    // Strip trailing slashes so the `<base>/<repo>` join never adds a `//` (root stays root). A
+    // `//` the user typed *inside* the path survives — the kernel collapses it, and this owns the join
     var path = expanded
     while path.count > 1, path.hasSuffix("/") { path.removeLast() }
 

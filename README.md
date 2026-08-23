@@ -15,6 +15,7 @@ Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository 
 - **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
 - **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all three use `!`.
 - **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
+- **Five languages** — English, Korean, Japanese, Simplified Chinese and Traditional Chinese, picked once in the app and followed by the extension. See [Language](#language) for how `auto` resolves and which translations are a machine-translated first pass.
 
 ## How it works
 
@@ -77,8 +78,6 @@ cd terminal-checkout
 
 ### 3. Finish in the setup window
 
-> **Note:** The app's own UI is still in Korean — localization is tracked in [#24](https://github.com/dazebug/terminal-checkout/issues/24). Until it lands, the English labels used in this README appear in the app as: Install in Chrome = 「Chrome에 설치하기」, Request iTerm2 Permission = 「iTerm2 권한 요청」, Run in Terminal = 「터미널에서 실행」, Run Test = 「동작 테스트」, Open Extension Options Page = 「확장 옵션 페이지 열기」, Show Setup Guide Again = 「설치 안내 다시 보기」, Open System Settings = 「시스템 설정 열기」, Register/Update = 「등록/업데이트」, Repository base folder = 「저장소 기본 폴더」, Choose Folder… = 「폴더 선택…」.
-
 When the app opens, walk through the setup window in order. Native Host registration and extension-folder preparation finish automatically at launch; the window is state-driven — completed cards disappear, remaining only as the pipeline lights (●) at the top.
 
 1. **Extension** — click [Install in Chrome]. The extension folder path is copied to your clipboard, `chrome://extensions` opens, and the window shows a ①→④ guide:
@@ -86,14 +85,15 @@ When the app opens, walk through the setup window in order. Native Host registra
    - Click **Load unpacked** (top left)
    - In the file picker: **⇧⌘G → ⌘V (paste) → Enter → [Select]**
    - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
-   - This step is marked complete when the app first receives a request from the extension — press any Terminal Checkout button on GitHub once
-2. **Terminal** — choose iTerm2, WezTerm, or Warp
-3. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
+   - This step is marked complete when the app first receives a request from the extension. The extension asks the app which language to draw in as soon as Chrome loads it, so this usually happens on its own within a few seconds of [Select]; if the card is still waiting, press any Terminal Checkout button on GitHub once
+2. **Language** — English, Korean, Japanese, Simplified Chinese, Traditional Chinese, or [Follow the system language] (the default). See [Language](#language)
+3. **Terminal** — choose iTerm2, WezTerm, or Warp
+4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
    - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the three shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path.
-4. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
-5. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
+5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
+6. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
-Once setup completes, the window keeps only the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
+Once setup completes, the window keeps only the language, the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
 
 > Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
@@ -189,6 +189,18 @@ Installation, terminal selection, and permissions live in the app's setup window
 - Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
 - The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply. The file records which generation of the presets it was written against: an older backup gets the same update notice, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
 
+### Language
+
+Terminal Checkout ships **English, Korean, Japanese, Simplified Chinese and Traditional Chinese**. The language is chosen in one place — the **Language** card in the app's setup window — and the extension follows it; there is no language setting in the extension. The setup window is what you see before the extension is installed, so the app is the only side that can always answer.
+
+- **[Follow the system language]** is the default. It follows your macOS language order and picks the first of the five it can answer; a language none of them covers falls back to **English**. Choose an explicit language and it is honoured as chosen — it never falls through to a third language you did not name. The list is written in each language's own script, so you can find your way back out of one you cannot read.
+- **The app's own text changes immediately.** System dialogs drawn by macOS — file pickers, alerts, the menu bar's standard items — follow from the **next launch**, which is why the card offers a restart. Pressing restart while a claude input is still being delivered does nothing except say so: the delivery would be cut off, so it is refused rather than queued, and you press again when it has finished.
+- **The extension catches up shortly after.** It asks the app and caches the answer, so right after the app launches — or while it is not running — the page and the app can briefly show two different languages. Switching language does not require reinstalling or reloading the extension.
+- `zh-Hant` covers Hong Kong and Macau as well, which is what macOS itself does with those regions.
+- **[Follow the system language] clears only this app's own override.** If you launch the app with an `-AppleLanguages` argument, or something with higher priority sets that key, it still wins — and the symptom looks the same from outside: every app follows the macOS language except this one. The macOS permission prompt is a separate case again: it is drawn by macOS itself, and whether it follows your choice here is not known.
+
+> **Translation notice.** English and Korean are written by hand. **Japanese, Simplified Chinese and Traditional Chinese are a machine-translated first pass and have not been reviewed by a speaker.** They are shipped that way on purpose — a rough translation you can read beats a language you cannot — and corrections are welcome as issues or pull requests. Nothing we translate reaches a shell: the test command and the clause the app builds to enter a repository are fixed English by construction — your own command templates are yours and are never touched — so a translation cannot change what runs.
+
 ### Getting into the repository
 
 Every preset opens with `{cd}`, the clause that moves into the repository. The app renders it from the **base directory** in its setup window:
@@ -234,7 +246,9 @@ app/build.sh           # build the app bundle (app/build/Terminal Checkout.app)
 app/e2e.sh             # relay ↔ socket ↔ server round-trip regression test (after building)
 ```
 
-Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLAUDE.md). Adding support for a new terminal? Start from [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md).
+Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLAUDE.md). Adding support for a new terminal? Start from [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md). Why the project is shaped the way it is lives in [`docs/context/`](docs/context/index.md).
+
+**Adding a language.** Four places, and the gates find the rest: add the tag to `supportedLocales` (`app/Sources/Core/Localization.swift`), add `app/Sources/App/Resources/<tag>.lproj/` with `Localizable.strings` and `InfoPlist.strings`, add `extension/_i18n/<tag>.js`, and add `extension/_locales/<chrome-code>/messages.json` — that last one carries only the extension's name and description, because Chrome will not read those from anywhere else, and its directory is named in **Chrome's** locale codes rather than ours (`zh-Hans` is `zh_CN` there, `zh-Hant` is `zh_TW`). Then run the gates: the catalogue tests fail on a missing or extra key and on placeholders that disagree between languages, and `app/build.sh` fails if the built bundle does not match the source `.lproj` files byte for byte. Values are never translated for anything that reaches a shell — see the `ShellPayload` type and the note in [Language](#language).
 
 ## Security
 

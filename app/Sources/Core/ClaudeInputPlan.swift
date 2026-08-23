@@ -591,14 +591,22 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
 
 // MARK: - Where the append may go
 
-/// Shells that can run the appended text. **csh and tcsh have no `$( )`**: the append is a parse
-/// error there and the shell throws away the whole line, so even the part in front of `&&` — the
-/// user's actual command — never runs (measured: `/bin/tcsh -c 'echo START; echo -- "$(/bin/echo
-/// hi)"'` prints no START). Merging must not be able to break a command that works today.
+/// Shells that can run the appended text. Unknown names type instead of merging, the same fallback
+/// everything else uses, and the rule this list serves is that appending must not be able to break
+/// a command that works today.
 ///
-/// Unknown names type instead of merging, the same fallback everything else uses. fish is left out
-/// on purpose: `{ }` grouping and `[ … ]` differ enough there that the shipped presets do not run
-/// in it at all.
+/// **The list is about the whole command, not only the tail we add** — and the tail stopped being
+/// the reason in round 10. The append used to carry `$( )`, which csh and tcsh do not have, and the
+/// parse error there threw away the whole line, the part in front of `&&` included; that
+/// measurement still reproduces (`/bin/tcsh -c 'echo START; echo -- "$(/bin/echo hi)"'` prints no
+/// START, exit 1). But the append is now `command claude -- '<message>'`, and **that shape runs in
+/// tcsh** — measured, exit 0, `command` and `--` both fine there.
+///
+/// What keeps csh out is the command being appended **to**: the shipped presets are `&&` chains
+/// with `{ …; }` grouping, the same reason fish is left out (`{ }` and `[ … ]` differ enough there
+/// that the presets do not run in it at all). Whether every preset fails in csh was **not**
+/// measured, and it does not have to be — an unrecognised shell types instead, which costs a merge
+/// and nothing else.
 let posixFamilyShellNames: Set<String> = [
     "sh", "bash", "zsh", "dash", "ksh", "ksh93", "mksh", "ash", "yash",
 ]
@@ -664,11 +672,14 @@ public func appendedPromptCommand(_ command: String, message: String) -> String 
 
 /// A request prepared up to the moment of execution.
 public struct PreparedRequest {
-    /// The final command for the terminal (an all-plain-text input list may be appended to it)
+    /// The final command for the terminal (a list holding **exactly one** plain-text input may be
+    /// appended to it)
     public let command: String
     /// Inputs for the typing path, `!` runs already merged. **Empty means neither the Warp helper
-    /// nor the Accessibility permission is needed** — which, since round 10, is only true for
-    /// buttons whose inputs are all plain text or have none at all
+    /// nor the Accessibility permission is needed** — which, since round 10, is true only for
+    /// buttons scheduling **exactly one** plain-text input, or none at all. "All plain text" is not
+    /// the condition: two plain lines cannot ride argv together (`claudeArgvOpeningMessage`), so
+    /// they are typed, and then both are needed
     public let claudeInputs: [String]
 }
 
@@ -755,7 +766,8 @@ public func prepareRequest(
     claudeIsExecutable: Bool = true
 ) -> PreparedRequest {
     // Clear out directories an **older build** left in the temp directory (it pre-ran `!` inputs
-    // into files there). Nothing creates them now; this is the last thing that cleans them up
+    // into files there). Nothing creates them now — this sweep and `uninstall.sh` are what is left
+    // to clear them
     reclaimStaleClaudePromptDirectories()
 
     let typed = claudeTypedInputs(resolved.claudeInputs)

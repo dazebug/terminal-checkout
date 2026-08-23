@@ -34,7 +34,7 @@ The requirement is one language across the app and the extension, chosen by the 
 
 `chrome.i18n` still has exactly two keys to itself, `name` and `description` in `manifest.json`, because nothing else can localize those.
 
-**State today:** only the app half exists — the picker, the resolved locale, and the published snapshot. The protocol that carries it to the extension and the cache that consumes it are still plan items 15 and 16.
+**State today:** both halves ship — the picker, the resolved locale and the published snapshot in the app, and the protocol that carries it plus the cache that consumes it in the extension.
 
 ## The boundary for `AppleLanguages` is the first localization lookup, not the existence of AppKit
 
@@ -95,3 +95,83 @@ The marker is `#!terminal-checkout/tab-config/v1`. `#` is a TOML comment, so War
 **Why the match is on the whole line.** A prefix match would delete a user's file whose header merely starts with our string — `…/tab-config/v10` is enough. Splitting the human-readable explanation onto the following line is what made a whole-line match possible; the legacy Korean header keeps its prefix match because its explanation is on the same line.
 
 **Residual, not a solved design.** Rollback is forward-only: an older binary cannot collect a file carrying the new token. The damage is a leftover file in `~/.warp/tab_configs/`, which is why this is accepted and written down rather than engineered around.
+
+## The bytes a user typed are carried, not normalized
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured); the last hop into the terminal is unmeasured and marked so below
+**Source:** ledger D73 and D100, item 31 in `docs/plans/i18n-five-locales.md`; commit `682b6c7`; `runAppleScript` in `app/Sources/Core/AppleScriptSupport.swift`, `wezTermFallbackArguments` in `app/Sources/Core/TerminalRunner.swift`
+**Revisit when:** a value that is not a path has to cross `Process.arguments` or the environment, or Foundation stops re-encoding them
+
+Shipping five languages means users write to claude in Korean, Japanese and Chinese, and text handed to a subprocess in `Process.arguments` arrives **decomposed** — Foundation re-encodes it to NFD on Darwin. On the iTerm2 branch the message is embedded in an AppleScript that used to go out as `osascript -e`, so what reached claude was not what was typed; when the input is a `!` one, the decomposed bytes reach the **shell**, where a byte-literal tool like `grep` stops matching.
+
+**Composing to NFC was rejected, and this is the fork worth keeping.** Read as an encoding bug, normalization looks like the answer. Read as *whose bytes are preserved*, it is the same defect from the other side: someone who typed NFD would have their bytes rewritten just as surely. So the carrier changed instead — the script is delivered on stdin, measured to preserve the bytes, with a script file measured equivalent but rejected because that path runs several times per input and a file adds a lifetime to reclaim.
+
+**The class is wider than it looked.** `Process.environment` decomposes exactly like `Process.arguments` (measured), which is why the WezTerm fallback — the no-mux launch, where the command has no stdin and no file to ride on — makes its argument **pure ASCII** rather than moving it to an environment variable. Pipes, file contents, unix sockets and JSON decoding were measured to preserve bytes, which is why Warp's tab-config file and WezTerm's normal `send-text` path were never affected.
+
+**What the paths that remain rest on.** Everything else crossing that boundary is a *path*, and those survive because the filesystem resolves NFC and NFD to the same node (measured on APFS, including a socket bound one way and connected the other) — not because the value is unchanged. On a normalization-sensitive volume that stops being true.
+
+**Unmeasured.** Whether iTerm2's `write text` puts those bytes on the tty unchanged needs iTerm2 running and was not measured; what is established is that they leave AppleScript itself intact, through two independent sinks.
+
+## A localized string may never become machine input, and the type says so
+
+**Type:** constraint
+**Status:** active
+**Evidence:** confirmed
+**Source:** ledger D29 and D34 in `docs/plans/i18n-five-locales.md`; `ShellPayload` and `localized` in `app/Sources/App/Localization.swift`, `testCommand` in `app/Sources/App/SetupWindowController.swift:177`, `renderCommand` in `app/Sources/Core/CommandRenderer.swift`
+**Revisit when:** a string has to be both translated and executed, or a second value earns the whitelist exemption
+
+`testCommand` is shown on screen *and* run in the user's terminal. Translate it and an apostrophe in the new language breaks the `echo '…'` quoting, so the test button reports a shell error — a translator, working only in the catalogue, would have no way to see that coming.
+
+The rule that came out of it is that a localized catalogue value never reaches a shell, AppleScript, a TOML file or a terminal's input. **It is carried by types rather than by memory**, in both directions: `localized(…)` takes a `StaticString`, so a key cannot be computed and the catalogue gates can enumerate rather than estimate; `ShellPayload` also takes only a `StaticString`, so a value can be written as a literal in the source and cannot be built from a `String` — and since `localized(…)` returns a `String`, a translated value does not compile in that position.
+
+**Where a type cannot reach, the module boundary does.** The one value exempt from the character whitelist is `{cd}`, because its value *is* shell syntax. What earns the exemption is that the app assembled it out of already-validated ingredients — and since a plain `[String: String]` cannot express "assembled by us", the exemption lives on a non-public overload of `renderCommand` whose only caller builds the dictionary from `repoEntryCommand`. The guarantee is "no request-supplied text can appear in this dictionary", and it holds by there being one caller, not by the type.
+
+## The installer scripts stay English
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** `install.sh:117-120`, `uninstall.sh:122-125`; issue #24's checklist item on removing the transitional label glosses
+**Revisit when:** the app gains a way to be configured before its first launch, or installation stops going through a shell script
+
+`install.sh` and `uninstall.sh` print in English and are not localized. Two reasons, and the first one is enough on its own: **at install time there is no language yet.** The preference is stored by the app's own picker, so the first run of `install.sh` happens before any language could have been chosen, and reading a preference that cannot exist would only produce a wrong guess. The second is that a shell script cannot reach the catalogues — they are `.lproj` bundles read through `Bundle(path:)`, and teaching a script to parse them would create a second reader of the same files that could drift from the first.
+
+The transitional Korean glosses these scripts and `README.md` carried while the app was Korean-only are gone now that the `en` catalogue ships, which is what issue #24 asked for.
+
+## Rejected: deferring a language restart instead of refusing it
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** ledger D92 in `docs/plans/i18n-five-locales.md`; `LocaleRestartGate` in `app/Sources/App/Settings.swift:189-194`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
+**Revisit when:** claude input delivery gains a bounded worst case, or the restart stops being user-initiated
+
+A language change moves AppKit's own chrome only on the next launch, so the card offers a restart. Restarting through an in-flight claude input delivery would cut it off and orphan a Warp injection helper whose only defence is its lifetime, so the gate answers "not now".
+
+**Rejected alternative — defer the restart until the delivery finishes.** Two reasons. The window already says "not restarting right now, press again when the delivery has finished", and a queue that fired by itself would contradict a sentence about to exist in five languages. More fundamentally, deferring needs the deferral to outlive whatever it waits for — including a delivery that never ends — which is the same self-lifetime problem the gate exists to avoid. The user keeps the trigger.
+
+## Residual: the extension's fence is per worker, not per account
+
+**Type:** constraint
+**Status:** active
+**Evidence:** unknown — the interleaving is a reviewer's scenario and was not reproduced
+**Source:** ledger D90 in `docs/plans/i18n-five-locales.md`
+**Revisit when:** a browser API can prove at most one service-worker realm writes the cache, or the cache moves somewhere with a compare-and-set
+
+The extension's cache is fenced against stale writes inside one service-worker realm. A realm that keeps running after a new one has started is outside that fence: the two have different scopes, so the fence does not see them as competing, and because the ordering rule accepts a different `installId` unconditionally, an old realm's write can land on top of a new one.
+
+It is written down rather than fixed because it cannot be observed from where we stand — nothing in the extension can ask "is another realm of me still alive", and the scenario has never been reproduced. The damage is bounded to a wrong language that the next publication corrects.
+
+## What the atomic extension-folder swap does not buy
+
+**Type:** constraint
+**Status:** active
+**Evidence:** confirmed (measured — one mixed read in roughly 10,200)
+**Source:** ledger D19, D98 and D99 in `docs/plans/i18n-five-locales.md`; `<scratchpad>/probe_replace.swift`; `Installer.swift`
+**Revisit when:** Chrome gains a way to snapshot an unpacked extension folder, or the folder stops being read file by file
+
+Adding locale files meant the extension copy had to be replaced rather than edited in place, and the replacement is atomic: the folder is built complete beside the old one and swapped, so it is never observed missing or half-built (measured, zero occurrences in roughly 10,200 reads; `rename(2)` cannot be used because it refuses a non-empty directory, so it is `replaceItemAt`).
+
+**Atomic does not mean a reader sees one generation.** Measured once in that same run: a reader opened `manifest.json` before the swap and a nested file after it, and mixed two generations. There is no filesystem primitive that protects a reader opening several files in sequence — the reader has to take a snapshot, and ours is Chrome, which we do not control. The `try?` that used to swallow the failure is gone, so a swap that fails is reported instead of leaving a half-state, but this residual is not closed by that.
