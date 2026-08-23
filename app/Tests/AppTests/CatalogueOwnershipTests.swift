@@ -75,9 +75,16 @@ final class CatalogueOwnershipTests: XCTestCase {
         return try XCTUnwrap(parsed as? [String: Any], "\(tag)/messages.json is not an object")
     }
 
-    /// The locales both catalogues have actually been filled for. Derived rather than listed: `ja`
-    /// and the two Chinese catalogues are item 24's, and a hardcoded list here would be a second
-    /// copy of item 12's `incompleteLocales` — two lists that can disagree about the same fact.
+    /// The locales both catalogues have actually been filled for.
+    ///
+    /// **Only the filledness is derived; the locale set is spelled out here**, and that is a second
+    /// copy of `supportedLocales` — the shape this comment used to claim it avoided. It is a
+    /// narrowing rather than a false answer: a sixth locale added to `supportedLocales` is simply
+    /// not visited, so every ownership rule below would skip it while still passing, and
+    /// `testTheStoresAreActuallyBeingRead` compares against the same literal so it would not notice
+    /// either. `LocaleResolutionTests` shows the shape that works — spell the list out *and* assert
+    /// it equals the constant — and adopting it here changes what the gate checks, so it is left as
+    /// a recorded gap rather than repaired in an audit.
     private func filledLocales() throws -> [String] {
         try ["en", "ko", "ja", "zh-Hans", "zh-Hant"].filter { locale in
             try !appCatalogue(locale).isEmpty && !extensionDictionary(locale).isEmpty
@@ -110,6 +117,11 @@ final class CatalogueOwnershipTests: XCTestCase {
 
         // Chrome's own namespace holds those two names and nothing from ours. The *count* is item
         // 17's assertion, on the side that owns the file; what is checked here is ownership.
+        //
+        // **Two of the five, not all of them.** `_locales/` held `en` and `ko` when this was
+        // written and D95 later took it to five (`ja`, `zh_CN`, `zh_TW` as well, in Chrome's own
+        // spelling), which this loop was never widened to. A foreign key in one of those three
+        // would pass unseen, so the sentence above is the rule and this is a sample of it.
         for tag in ["en", "ko"] {
             for key in try chromeMessages(tag).keys {
                 XCTAssertTrue(

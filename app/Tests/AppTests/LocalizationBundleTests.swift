@@ -23,9 +23,10 @@ final class LocalizationBundleTests: XCTestCase {
             .path
     }
 
-    /// The key every catalogue carries. It was a skeleton probe (`app.setup.window.title`) until
-    /// item 10 moved the window's strings in and the window title got its real key; the other four
-    /// catalogues still hold only this one, because their bodies are item 24's.
+    /// The key this file probes with. It was a skeleton key (`app.setup.window.title`) until item 10
+    /// moved the window's strings in and the window title got its real one. All five catalogues are
+    /// full now, so it is a probe by choice rather than by necessity: one key every catalogue is
+    /// certain to carry, which is all these cases need to tell five files apart.
     private let probeKey = "app.window.title"
 
     func testEachBundledCatalogAnswersInItsOwnLanguage() throws {

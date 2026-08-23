@@ -135,6 +135,12 @@ final class ExtensionCopyTests: XCTestCase {
     func testNeitherInstallPathDeletesItsDestinationFirst() throws {
         let installer = try String(contentsOfFile: Self.repositoryFile("app/Sources/App/Installer.swift"), encoding: .utf8)
         let copyFunction = try XCTUnwrap(installer.range(of: "static func installExtensionCopy() throws {"))
+        // **A fixed window, and the two directions do not fail alike.** The body is 1147 characters
+        // against this 1400 — about five lines of headroom. The positive assertions fail *closed*
+        // if the function outgrows it (the text moves out of the window and they go red), but the
+        // `XCTAssertFalse` below fails *open*: a destination delete added past character 1400 would
+        // simply not be seen. Widening it, or matching to the closing brace, is a change to the
+        // gate rather than to a comment.
         let body = String(installer[copyFunction.upperBound...].prefix(1400))
         XCTAssertTrue(body.contains("extensionStagingPath()"), "the Swift path no longer stages")
         // **The copy has to land in the staging path**, not merely mention it. The first version of

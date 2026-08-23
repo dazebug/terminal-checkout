@@ -63,9 +63,12 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     /// **The window has to fit its content in every language it can be drawn in.** This is the only
     /// automatic check of that: a translated sentence is longer or shorter than the Korean it
-    /// replaced, and a card that fits one can clip in another. It walks the catalogues rather than a
-    /// hardcoded pair, so the day item 24 fills the other three, they are covered by adding them to
-    /// `populatedLocales` — the failure it would otherwise produce is silent.
+    /// replaced, and a card that fits one can clip in another.
+    ///
+    /// It walks `populatedLocales`, which is a **hardcoded list** — now of five rather than the
+    /// original pair, but still a list and not a reading of `supportedLocales`. A locale that is
+    /// shipped and not added there is simply never drawn here, and the failure that hides is a
+    /// silent one: a clipped card in a language nobody measured.
     func testTheWindowFitsItsContentInEveryPopulatedLocale() throws {
         for tag in Self.populatedLocales {
             AppLocalization.tagOverrideForTesting = tag

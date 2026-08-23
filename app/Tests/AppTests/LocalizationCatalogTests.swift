@@ -14,18 +14,18 @@ import XCTest
 /// set of keys the app can ask for, and "every key exists" and "every key is used" are enumerations
 /// rather than best guesses. `testAKeyCannotBeComputed` is what keeps that premise true.
 final class LocalizationCatalogTests: XCTestCase {
-    /// The catalogues item 24 has still to write. Being on this list buys an exemption from the
-    /// key-set check and nothing else — a key that *is* there still has to be a real one, with the
-    /// same placeholders.
+    /// **Empty, and emptying it was item 24's completion condition.** Every shipped locale is now
+    /// held to the full key set, so the exemption branch below is unreachable and stays only as the
+    /// shape a future partly-written catalogue would use.
     ///
-    /// The list cannot quietly outlive its reason: a locale on it has to be **genuinely
-    /// incomplete**, so the day item 24 fills one, this file turns red until the entry is removed.
-    /// That is the completion condition item 24 carries.
-    /// **Empty, and emptying it was item 24's completion condition.** While it named the three
-    /// locales nobody had filled, this file's key check *licensed* them: a catalogue with one key
-    /// out of ninety-seven satisfied "a subset of English". The exemption was honest while the
-    /// translations did not exist and it is a hole the moment they do, so it goes before they land
-    /// rather than after — a gate written after the thing it guards cannot have caught it arriving.
+    /// Why it had to empty *before* the translations landed rather than after: while it named the
+    /// three locales nobody had filled, the key check *licensed* them — a catalogue with one key out
+    /// of ninety-seven satisfied "a subset of English". The exemption was honest while the
+    /// translations did not exist and became a hole the moment they did, and a gate written after
+    /// the thing it guards cannot have caught it arriving.
+    ///
+    /// Being on the list would buy an exemption from the key-set check and nothing else: a key that
+    /// *is* there still has to be a real one, with the same placeholders.
     private let incompleteLocales: Set<String> = []
 
     private static var appSources: URL {
@@ -189,7 +189,13 @@ final class LocalizationCatalogTests: XCTestCase {
 
         // `AppLocalization.string` is the lookup underneath and does take a `String`, because tests
         // aim it at one catalogue at a time. Production reaching it directly would step around the
-        // type, so the only callers allowed are the two shorthands in that same file.
+        // type, so the only callers meant to exist are the two shorthands in that same file.
+        //
+        // **This half checks the top level of `Sources/App` only.** `contentsOfDirectory` does not
+        // descend, which is the exact failure `sourceText()` above was fixed for and this line was
+        // not — a caller placed in a subdirectory would pass unseen. Nothing is nested there today,
+        // so the gap is latent rather than open; widening it to `swiftFiles(under:)` changes what
+        // the gate checks, which is a decision of its own and not this audit's to make.
         let names = try FileManager.default
             .contentsOfDirectory(atPath: Self.appSources.path)
             .filter { $0.hasSuffix(".swift") && $0 != "Localization.swift" }

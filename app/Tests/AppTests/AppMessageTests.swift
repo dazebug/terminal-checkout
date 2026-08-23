@@ -13,12 +13,17 @@ import XCTest
 final class AppMessageTests: XCTestCase {
     private var savedResources: String?
 
-    /// The catalogues that have bodies today, kept in step with `SetupWindowLayoutTests`. `ja` and
-    /// the two Chinese ones are item 24's, and asserting against them now would measure raw keys.
-    /// **All five now** — item 24 filled the three that were missing, which is what emptying this
-    /// list means. While it held two, every check below asked its question of two languages and let
-    /// the other three past; the assertions that count distinct answers were the ones that mattered,
-    /// because "the label changed with the language" is only evidence when every language is in it.
+    /// The catalogues that have bodies, kept in step with `SetupWindowLayoutTests`. **All five**
+    /// since item 24 filled the three that were missing.
+    ///
+    /// While it held only `en` and `ko`, every check below asked its question of two languages and
+    /// let the other three past; the assertions that count *distinct* answers were the ones that
+    /// mattered, because "the label changed with the language" is only evidence when every language
+    /// is in it.
+    ///
+    /// It is a second copy of `supportedLocales` rather than a reading of it, so a sixth locale
+    /// would be skipped here in silence — the same gap `CatalogueOwnershipTests.filledLocales`
+    /// records, and the same fix (assert the two are equal) applies to both.
     private let populatedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
 
     private static var sourceResources: String {
@@ -168,13 +173,22 @@ final class AppMessageTests: XCTestCase {
     }
 
     /// `NSAppleEventsUsageDescription` is the sentence tccd shows when the automation permission is
-    /// first asked for. English and Korean have bodies; the other three deliberately do not, and
-    /// macOS falls back to the value in `Info.plist` for them — which is why that value has to be
-    /// the English one rather than the Korean it used to be.
+    /// first asked for. `Info.plist` carries the English one because macOS falls back to it for any
+    /// language whose `InfoPlist.strings` says nothing — which is why that value must not go back to
+    /// the Korean it once was.
     ///
-    /// Absence is asserted on a file that **parsed**: measured while writing this, a comment-only
-    /// `.strings` file parses to an empty dictionary rather than failing, so "no such key" here
-    /// means the file says nothing, not that it could not be read.
+    /// **All five catalogues carry the key now**, so what this case still asserts is that English
+    /// and Korean differ and that the `Info.plist` fallback is the English sentence. The loop over
+    /// the languages *without* a body is **vacuous**: `populatedLocales` and `supportedLocales` hold
+    /// the same five, so its `where` clause selects nothing and nobody checks that `ja` and the two
+    /// Chinese files still carry theirs. `verify-bundle.sh` compares them byte for byte against the
+    /// bundle and lints them, but it does not require the key either — emptying one would go
+    /// unnoticed. Turning the loop around into "every shipped locale has a body" is a change to what
+    /// the gate checks and belongs to its own promotion.
+    ///
+    /// Absence, where it is asserted, is asserted on a file that **parsed**: measured while writing
+    /// this, a comment-only `.strings` file parses to an empty dictionary rather than failing, so
+    /// "no such key" means the file says nothing, not that it could not be read.
     func testTheUsageDescriptionIsWrittenForTheLanguagesThatHaveBodies() throws {
         let key = "NSAppleEventsUsageDescription"
         func infoPlistStrings(_ tag: String) throws -> [String: Any] {
