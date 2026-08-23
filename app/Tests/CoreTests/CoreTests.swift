@@ -3649,6 +3649,37 @@ final class AppleScriptCarrierTests: XCTestCase {
         XCTAssertEqual(sites, [door], "an AppleScript call outside \(door)")
     }
 
+    /// **The literal above is evadable by spelling, so the token is banned as well.**
+    ///
+    /// Measured: a second call site written `let tool = "/usr/bin/" + "osascript"` passed the check
+    /// above — the scope was right (it walks every source) and the predicate was narrower than the
+    /// property, because a computed path is not the literal it searches for.
+    ///
+    /// **This cannot be made exact and is not claimed to be.** What a computed string turns out to
+    /// be is undecidable from the text, and `"osas" + "cript"` defeats any spelling of this rule. So
+    /// the rule is deliberately blunt: outside the door, the seven characters may not appear in code
+    /// at all. Getting past it now takes a name assembled from pieces that never spell it — which is
+    /// an act of intent, not the accident this is here to catch.
+    ///
+    /// **Comments are exempt**, and that is not laziness: six files explain *why* AppleScript is
+    /// confined to one door, and a rule that punished the explanation would be deleted the first
+    /// time someone documented this properly. Code is where the process gets launched.
+    func testNoSourceOutsideTheDoorEvenNamesTheInterpreter() throws {
+        let door = "Core/AppleScriptSupport.swift"
+        var offenders: [String] = []
+        for (path, text) in try appSourceFiles() where !path.hasSuffix(door) {
+            for (number, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//") else { continue }
+                if code.contains("osascript") { offenders.append("\(path):\(number + 1)") }
+            }
+        }
+        XCTAssertEqual(
+            offenders, [],
+            "a source outside \(door) names the AppleScript interpreter in code — every run goes through runAppleScript"
+        )
+    }
+
     /// The door must not grow an argv form again — `-e` is the spelling that decomposes.
     func testTheDoorDeliversTheScriptOnStdin() throws {
         let text = try appSourceFiles().first { $0.path.hasSuffix("Core/AppleScriptSupport.swift") }?.text

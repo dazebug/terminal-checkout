@@ -1254,24 +1254,48 @@ test('a command literal reads the same in every language', () => {
   // The most dangerous thing a translator can do to this catalogue is translate `z {repo}`. It is
   // not a phrase; it is what the user's button will run. These sit in plain sentences with no
   // markup around them, so the `<code>` gate above cannot see them.
+  // **The expected count is not read off English.** It used to be, and `expected === 0 -> continue`
+  // meant English losing a literal switched the check off for that key rather than failing it:
+  // measured, deleting `{cd}` from `ext.migration.v1.describe`'s English value — a plain sentence
+  // with no markup, which is the case this gate's own comment says it exists for — passed. The
+  // locales are compared to **each other** instead, so whichever one drops a literal disagrees with
+  // the rest and English has no special standing.
+  //
+  // The remaining hole is deliberate and small: a literal deleted from all five at once leaves them
+  // agreeing, and nothing here can tell that from a token that was never there. That is one act
+  // across five files, not the slip this catches.
   let compared = 0;
-  for (const [key, english] of Object.entries(globalThis.TC_I18N.en)) {
+  for (const key of Object.keys(globalThis.TC_I18N.en)) {
     for (const literal of COMMAND_LITERALS) {
-      const expected = (english.match(literal) ?? []).length;
-      if (expected === 0) continue;
-      for (const tag of TC_I18N_LOCALES) {
-        const value = globalThis.TC_I18N[tag][key];
-        if (value === undefined) continue; // the key gate above owns that failure
-        const found = (value.match(literal) ?? []).length;
+      const counts = TC_I18N_LOCALES
+        .filter(tag => globalThis.TC_I18N[tag][key] !== undefined) // the key gate owns that failure
+        .map(tag => [tag, (globalThis.TC_I18N[tag][key].match(literal) ?? []).length]);
+      const highest = Math.max(...counts.map(([, n]) => n));
+      if (highest === 0) continue; // no locale claims this literal in this message
+      for (const [tag, found] of counts) {
         assert.equal(
-          found, expected,
-          `${tag}/${key}: ${literal} appears ${found} times, en has ${expected}`,
+          found, highest,
+          `${tag}/${key}: ${literal} appears ${found} times, ${highest} elsewhere`,
         );
       }
       compared += 1;
     }
   }
   assert.ok(compared >= 20, `only ${compared} literal occurrences were compared`);
+
+  // The `{...}` tokens above are only worth comparing if they are variables the app actually
+  // substitutes, and that canon lives in defaults.js rather than in this list — a token renamed
+  // there would leave this gate faithfully comparing a string nothing fills in.
+  const defaults = read('defaults.js');
+  const known = new Set([
+    ...[...defaults.matchAll(/'([a-z_]+)'/g)].map(m => m[1]),
+  ]);
+  for (const literal of COMMAND_LITERALS) {
+    const brace = /^\\\{([a-z_]+)\\\}$/.exec(literal.source);
+    if (brace) {
+      assert.ok(known.has(brace[1]), `{${brace[1]}} is not a variable defaults.js knows about`);
+    }
+  }
 });
 
 // Characters that are written differently in simplified and traditional Chinese. Each pair is one

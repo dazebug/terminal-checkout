@@ -207,6 +207,45 @@ final class LocalizationCatalogTests: XCTestCase {
         }
     }
 
+    /// **The oracle for a placeholder is the call site, not English.**
+    ///
+    /// `testEveryLocaleUsesTheSamePlaceholders` above compares every catalogue to English, so
+    /// English is both a subject and the yardstick — measured, deleting `%@` from one key in **all
+    /// five** catalogues passed, because they still agreed with each other. What actually decides
+    /// whether a sentence needs a placeholder is how many arguments the code hands it, and that is
+    /// written somewhere else: the call site.
+    ///
+    /// So the two directions are read off the source. A key called as `localized("k", x)` must carry
+    /// a placeholder in **every** language, and one called as `localized("k")` must carry none — a
+    /// stray `%@` there renders as the literal characters, since nothing is substituted.
+    ///
+    /// **Its limit**: a key nothing calls through `localized(` is skipped, which is why the count is
+    /// asserted at the end. It reads the argument list only far enough to see whether one exists; it
+    /// does not count arguments, so a sentence taking two placeholders while the call passes one is
+    /// still only caught by the parity check against English.
+    func testAPlaceholderIsRequiredByTheCallSiteRatherThanByEnglish() throws {
+        let sources = try sourceText()
+        var checked = 0
+        for (key, _) in try catalogue(fallbackLocale) {
+            let escaped = NSRegularExpression.escapedPattern(for: key)
+            let called = try matches("localized\\(\\s*\"\(escaped)\"\\s*([,)])", in: sources)
+            guard !called.isEmpty else { continue }
+            checked += 1
+            let takesArguments = called.contains(",")
+            for tag in supportedLocales {
+                let value = try XCTUnwrap(try catalogue(tag)[key])
+                let hasPlaceholder = !(try placeholders(value).isEmpty)
+                XCTAssertEqual(
+                    hasPlaceholder, takesArguments,
+                    takesArguments
+                        ? "\(tag)/\(key) is called with an argument but has no placeholder to put it in"
+                        : "\(tag)/\(key) carries a placeholder nothing substitutes — it draws as %@"
+                )
+            }
+        }
+        XCTAssertGreaterThan(checked, 50, "the call-site scan matched almost nothing — check the pattern")
+    }
+
     /// **A sentence that quotes a button names the button's key** (D28), and that key is real.
     ///
     /// The relation is what the gate checks, not the wording: a body carrying `[%@]` has to be
