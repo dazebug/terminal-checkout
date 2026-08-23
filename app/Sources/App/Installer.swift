@@ -112,6 +112,28 @@ enum Installer {
 
     /// Copies the extension bundled inside the app to a fixed path under App Support, so that moving
     /// or rebuilding the app leaves the extension's path and ID unchanged.
+    ///
+    /// **Built beside the old copy, then swapped.** It used to delete the destination and copy into
+    /// it, which meant the folder Chrome reads was *absent* for the length of a recursive copy and
+    /// then partially populated — and that window grew when five locales added `_locales/` and
+    /// `_i18n/` to it. What Chrome would find there is not a stale extension but a broken one: no
+    /// manifest at all, or dictionaries without the code that reads them.
+    ///
+    /// `replaceItemAt` is Foundation's replacement primitive and the reason this is possible at all.
+    /// Measured on a populated directory (`<scratchpad>/probe_replace.swift`): plain `rename(2)`
+    /// refuses with `ENOTEMPTY` (errno 66), while `replaceItemAt` succeeds, consumes the staged
+    /// directory, and left the destination **present on every one of ~10,200 reads** from a thread
+    /// doing nothing but opening files inside it across four runs.
+    ///
+    /// **What that does not buy**, and the probe showed this too: a reader that opens two files in
+    /// sequence can still take one from each generation, because its first `open` happened before
+    /// the swap and its second after. No filesystem primitive prevents that — only a reader that
+    /// snapshots. The claim here is that the directory is never absent and never half-built, not
+    /// that a reader mid-flight sees one generation.
+    ///
+    /// The staged copy is removed on the way out. On success there is nothing left to remove —
+    /// `replaceItemAt` consumes it — so the cleanup matters on the failure path, which is the one
+    /// that would otherwise leave a full copy of the extension lying beside it.
     static func installExtensionCopy() throws {
         guard let source = bundledExtensionPath,
               FileManager.default.fileExists(atPath: source) else {
@@ -122,10 +144,31 @@ enum Installer {
             atPath: appSupportDirectory(), withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        let staging = extensionStagingPath()
+        try? FileManager.default.removeItem(atPath: staging)
+        defer { try? FileManager.default.removeItem(atPath: staging) }
+        try FileManager.default.copyItem(atPath: source, toPath: staging)
+
         if FileManager.default.fileExists(atPath: dest) {
-            try FileManager.default.removeItem(atPath: dest)
+            _ = try FileManager.default.replaceItemAt(
+                URL(fileURLWithPath: dest), withItemAt: URL(fileURLWithPath: staging)
+            )
+        } else {
+            // Nothing to replace on a first install, and `replaceItemAt` wants something there. A
+            // rename onto an absent path is atomic on its own.
+            try FileManager.default.moveItem(atPath: staging, toPath: dest)
         }
-        try FileManager.default.copyItem(atPath: source, toPath: dest)
+    }
+
+    /// Where the next copy is built. A sibling of the destination, so the swap is a rename within
+    /// one filesystem rather than a copy across two — and hidden, because a folder that exists only
+    /// between two instants should not invite anyone to load it into Chrome.
+    ///
+    /// The name is fixed rather than unique on purpose: a crash between the copy and the swap leaves
+    /// exactly one piece of debris, and the next run removes it before staging. A unique name would
+    /// leave one per crash, with nobody to collect them.
+    static func extensionStagingPath() -> String {
+        (appSupportDirectory() as NSString).appendingPathComponent(".extension.staging")
     }
 
     static func extensionState() -> SetupState {
@@ -168,7 +211,16 @@ enum Installer {
         // button for it. Chrome reads an unpacked extension's files from disk, so a refresh in
         // chrome://extensions is all that is needed for it to take effect
         if extensionCopyNeedsUpdate() {
-            try? installExtensionCopy()
+            // Not `try?`. There is no window to report into at launch, but a swallowed failure here
+            // is the difference between "Chrome has the old extension" and "Chrome has whatever was
+            // there", and the only place that distinction can still be recovered is the log. The
+            // swap itself leaves the previous copy in place on failure, so the state this reports is
+            // a known one rather than a mystery.
+            do {
+                try installExtensionCopy()
+            } catch {
+                checkoutLog("updating the installed extension copy failed — \(errorMessage(error))")
+            }
         }
         if case .ok = manifestState() {} else {
             try? installManifest() // self-healing when the app has moved

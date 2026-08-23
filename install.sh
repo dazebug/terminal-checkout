@@ -70,8 +70,27 @@ if pgrep -x TerminalCheckout >/dev/null 2>&1; then
     pkill -x TerminalCheckout || true
     sleep 1
 fi
-rm -rf "$INSTALL_DIR/$APP_NAME"
-ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
+# Build the new bundle beside the old one, then swap — rather than deleting the installed app and
+# copying into the hole. The same class as the extension folder's replacement (`Installer.swift`),
+# on a different target: what reads this path is LaunchServices and the user, not Chrome.
+#
+# **This is narrowed, not atomic, and the difference is worth stating.** The shell has no equivalent
+# of `replaceItemAt`, and `mv` onto a populated directory fails the same way `rename(2)` does, so
+# the window cannot be closed here — only shrunk from "the length of a recursive copy" to "the
+# length of two renames". It cannot be delegated to the app either: this script is replacing the
+# very binary that would have to perform it.
+#
+# What it does buy besides the shorter window: a failure between the two renames leaves the previous
+# bundle sitting at `.<name>.previous`, so there is something to put back. The old form left nothing.
+STAGING="$INSTALL_DIR/.$APP_NAME.staging"
+PREVIOUS="$INSTALL_DIR/.$APP_NAME.previous"
+rm -rf "$STAGING" "$PREVIOUS"
+ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$STAGING"
+if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
+    mv "$INSTALL_DIR/$APP_NAME" "$PREVIOUS"
+fi
+mv "$STAGING" "$INSTALL_DIR/$APP_NAME"
+rm -rf "$PREVIOUS"
 "$LSREGISTER" -f "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
 echo "[3/3] Installed: $INSTALL_DIR/$APP_NAME"
 
