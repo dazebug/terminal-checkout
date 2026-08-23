@@ -16,7 +16,7 @@ An input starting with `!` is typed into the running TUI so that claude's own sh
 
 **Rejected alternative — carry the `!` line in argv instead of typing it.** This would have kept the speed of the paste route without the paste. Measured, it does not exist: `claude -- '!echo x'` does **not** enter shell mode. The line arrives as an ordinary message and the model then decides to run it through its Bash tool — which can stop at a permission prompt, is a judgement rather than a shell fact, and spends a turn. The official CLI reference documents no flag or prefix for it either.
 
-**Rejected alternative — keep pre-execution as an option.** Dropped rather than kept behind a switch: it doubles the delivery paths that every later change has to be correct in, and the whole hardening effort that followed was about removing paths, not adding them.
+**Implementation consideration — keeping pre-execution behind a switch.** Written down as a rejected alternative once, and demoted here because it never was one: `git log -S`, the commit body of PR #36 and that PR's comments carry no proposal, no branch, and no reproduction for it (searched round 10). What is true is the reason it was not built — a second delivery path is a second path every later change has to be correct in — and that is a design consideration rather than a road anyone took.
 
 **Consequence, accepted:** every shipped preset that schedules claude input is `!`-only, so all of them are typed. On Warp that makes the Accessibility permission a hard requirement for those three buttons, where the paste route had needed nothing.
 
@@ -125,13 +125,13 @@ The commit that added gate ② also added a way past it: when `stty` could not b
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed (measured against live and dead ptys)
+**Evidence:** confirmed for the case measured — one pty, three states, plus three unreadable ttys
 **Source:** ledger D75 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/ClaudeInjector.swift:52` and `:73`
 **Revisit when:** a terminal appears where `stty` cannot be read while the tty is genuinely usable
 
 `ttyIsRawMode(...) ?? true` became `== true`: an undecidable raw-mode check no longer opens the gate.
 
-**Reason, measured.** A live pty always answers — `icanon` in canonical mode, `-icanon` in raw mode. The cases where `stty` produces no token at all are a tty that does not exist, a closed pty, and a file that is not a terminal, and in every one of those `ps -t` is empty too, so the first gate has already refused. What is left for "could not read `stty`" to mean is "the tty we are about to type into cannot be read", which is precisely the state gate ② exists to stop: without it, the kernel echo in the canonical window right after `exec` gets mistaken for claude rendering the input, and the first input is lost.
+**Reason, measured — and the measurement is small.** One pty on macOS 26.4.1, asked in three states: canonical answered `icanon`, raw answered `-icanon`, and canonical again answered `icanon` (13 lines of output each time). The cases that produced nothing were a tty path with no device, a pty whose ends had both been closed, and a file that is not a terminal, and in every one of those `ps -t` is empty too, so the first gate has already refused. That supports **"every live pty we measured answered", not "a live pty always answers"** — the earlier wording here claimed the second, which is the overclaim class this loop keeps finding in other people's sentences. A previous evidence line also read "13 lines, 650 characters" as *thirteen ptys*; it was the size of one pty's output, and one careful reader has already drawn the wrong number from it. What is left for "could not read `stty`" to mean is "the tty we are about to type into cannot be read", which is precisely the state gate ② exists to stop: without it, the kernel echo in the canonical window right after `exec` gets mistaken for claude rendering the input, and the first input is lost.
 
 **Cost, not hidden.** If `stty` is unreadable for good, polling now runs to its deadline and the log does not say why.
 

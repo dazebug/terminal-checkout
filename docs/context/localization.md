@@ -58,7 +58,7 @@ Measured with an `LSUIElement` probe bundle that writes only its own domain: wri
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed (the torn read was reproduced as a failing test before the change)
+**Evidence:** confirmed at the API level — the torn read was reproduced as a failing test before the change; the cross-process and crash behaviour underneath it was not measured
 **Source:** round 9 review; ledger D80 and item 34 in `docs/plans/i18n-five-locales.md`; `LocaleState` in `app/Sources/App/Settings.swift`, `app/Tests/AppTests/LocalePublicationTests.swift`
 **Revisit when:** a second process gains a reason to write the publication, or the extension stops ordering by `(installId, epoch)`
 
@@ -66,9 +66,13 @@ The app tells the extension three things — an install id, an epoch, and a tag 
 
 **A single-writer rule does not make readers atomic.** The rule that only the GUI may write removed the race between two *writers*; it says nothing about a *reader*, which could observe the writer's half-finished sequence: between the epoch write and the tag write, the new epoch carrying the old tag — a pair that was never published. The extension accepts that pair, and then turns down the correct publication behind it for carrying an epoch it already holds, so the language stays wrong for good. The two failures are different axes, and several rounds of designing this contract asked only what to publish, never how to commit it.
 
-One key now holds one dictionary, so a read lands on the complete old triple or the complete new one.
+One key now holds one dictionary, and what that buys has two halves worth keeping apart.
 
-**Rejected alternative — JSON with `Codable`.** All-or-nothing decoding sounds like the tighter answer, but it introduces an encode-failure branch that cannot be reached, and every way of handling an unreachable branch produces a comment that claims more than the code does. The validation that actually matters — non-empty id, epoch in range, tag among the ones we ship — is unchanged either way, so the shape with no failure mode won.
+**At the API level**, a publication is one `set` of one value, so there is no longer a moment when the writer has stored part of it — the observing `UserDefaults` subclass in `LocalePublicationTests` reads after every write the writer makes and sees only the complete old triple or the complete new one.
+
+**Below that level, this is inference and not measurement.** The subclass proves there is no intermediate callback **inside one process**; it says nothing about what a second process sees through `cfprefsd`, and nothing about what survives a crash between the write and the flush. Neither was measured — no two-process run was made — so the claim stops at "a single value has no parts for a reader to mix", which is a property of the API's shape rather than an observed guarantee of the store underneath it.
+
+**Implementation consideration — JSON with `Codable`.** Not a rejected alternative: nothing was built either way, and this was a choice made at the keyboard before the first line (round 10 asked, and there is no branch or commit to point at). All-or-nothing decoding sounds like the tighter answer, and what argued against it is that it introduces an encode-failure branch that cannot be reached, while every way of handling an unreachable branch produces a comment claiming more than the code does. The validation that actually matters — non-empty id, epoch in range, tag among the ones we ship — is unchanged either way, so the shape with no failure mode was the one written.
 
 **The three old keys are ignored rather than adopted.** A triple written in three steps cannot be shown to have been committed as one, which is the defect itself, so it is not evidence of anything. Ignoring them lands on a state the design already defines: no readable snapshot, so the next publication mints a new identity, which the extension accepts unconditionally. They are deleted as well, and the deletion goes **first** — with the old state ignored, the new envelope carries a freshly minted identity, so an interruption between the two writes would leave two publications with different install ids, each accepted unconditionally, and two builds trading the language back and forth. Deleting first leaves nothing behind, which a mint recovers from.
 
