@@ -232,20 +232,84 @@ async function clickedButton(kind, index, shown) {
   return button;
 }
 
-// Send a message to the native host. The app reports variable validation failures and terminal
-// launch failures as a normal {success:false, error} response rather than an exception, so we have
-// to throw here for the failure to surface on the button
+// Every request this extension sends takes the next number. It never leaves the browser:
+// `sendNativeMessage` resolves per call, so the pairing of request to response is already ours, and
+// ordering by what **we** sent is what makes the fence hold against an app too old to know about any
+// of this (D50). It resets when the service worker restarts, which is safe for the same reason a
+// fresh worker has no applied sequence either — the cache carries the last one it accepted.
+let nativeRequestSeq = 0;
+
+// Hand a message to the app and take the locale generation out of the answer — **whatever the
+// answer is**.
+//
+// The split matters: this used to throw on a failure response and the metadata went with it, so
+// nothing could have learned the language from a request whose command was rejected. The generation
+// now comes off the response first and the failure is raised afterwards, which is also the order
+// that keeps the button's error behaviour exactly as it was (the app reports validation and launch
+// failures as `{success:false, error}` rather than as an exception, so this throw is what surfaces
+// them on the button).
+//
+// Item 15 attaches the generation only to a successful response, so in practice the extraction is
+// idle on the failing path. It is written this way regardless because "the response carries it or it
+// does not" is the contract, and a reader here should not have to know which responses the app
+// chooses to decorate.
 async function sendToNativeHost(message) {
+  const seq = ++nativeRequestSeq;
   let response;
   try {
     response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
   } catch (error) {
     console.error('Native host error:', error);
-    throw error;
+    throw error; // a transport failure carries no metadata, and is no input to the cache
   }
   console.log('Native host response:', response);
+  await applyLocaleGeneration(response, seq);
   if (!response?.success) throw new Error(response?.error || 'native host returned no result');
   return response;
+}
+
+// Put a response's generation through the reducer, and tell the pages only when something changed.
+//
+// Nothing is written when the reducer says no: a cache write plus a notification for a response that
+// changes nothing would redraw every open page for no reason, and a corrupt stored value would be
+// rewritten into a shape we invented rather than left as the evidence it is.
+async function applyLocaleGeneration(response, seq) {
+  const incoming = localeGenerationOf(response, seq);
+  if (!incoming) return null;
+  const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
+  const { cache, changed } = localeCacheUpdate(stored?.[TC_LOCALE_CACHE_KEY], incoming);
+  if (!changed) return null;
+  await chrome.storage.local.set({ [TC_LOCALE_CACHE_KEY]: cache });
+  await notifyLocaleChanged(cache.locale);
+  return cache;
+}
+
+// Tell every GitHub page that the language moved. A page that is not listening (none of ours, or one
+// still loading) rejects the message, and that is not an error worth reporting — hence the catch.
+async function notifyLocaleChanged(locale) {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: 'https://github.com/*' });
+  } catch (error) {
+    console.log('Could not list tabs to notify:', error);
+    return;
+  }
+  await Promise.all(tabs.map(tab =>
+    chrome.tabs.sendMessage(tab.id, { action: 'localeChanged', locale }).catch(() => {})
+  ));
+}
+
+// The cold start. The extension has to know the language before it draws anything, and the only
+// other way to ask would be to send a command — which opens a terminal tab nobody asked for. An app
+// that is not running is launched by the relay for this, which is the same cost the first button
+// press would pay, moved to a moment when nobody is waiting on it.
+async function queryLocale() {
+  try {
+    await sendToNativeHost({ query: 'locale' });
+  } catch (error) {
+    // An app that is absent, old, or broken answers nothing usable, and that is a no-op by design
+    console.log('Locale query did not answer:', error?.message || error);
+  }
 }
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
@@ -428,3 +492,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   });
   return true; // return true to respond asynchronously
 });
+
+// Ask once when the worker starts, and again when Chrome says the extension was installed or
+// updated. A service worker is torn down and restarted constantly, so this is the cheap, frequent
+// path — and the reducer makes a repeat answer a no-op rather than a redraw.
+queryLocale();
+chrome.runtime.onInstalled.addListener(() => { queryLocale(); });

@@ -134,3 +134,197 @@ test('nothing in the skeleton touches chrome at load time', () => {
   // and the check is not vacuous: the prose that was skipped really does mention it
   assert.ok(/chrome\.i18n/.test(read('i18n.js')));
 });
+
+// ---------------------------------------------------------------------------------------------
+// The cache reducer. Every case names what it asserts, because "the callback came back" is not an
+// assertion (D54) — what is checked is the **final cache value** and whether anything was written.
+// ---------------------------------------------------------------------------------------------
+
+const { localeCacheUpdate, localeGenerationOf, isUsableLocaleCache, localeToRenderIn, createLocaleRenderer } =
+  vm.runInThisContext(
+    '({ localeCacheUpdate, localeGenerationOf, isUsableLocaleCache, localeToRenderIn, createLocaleRenderer })',
+  );
+
+const cache = (over = {}) => ({ locale: 'ko', installId: 'install-a', epoch: 3, appliedSeq: 10, ...over });
+const generation = (over = {}) => ({ locale: 'ja', installId: 'install-a', epoch: 4, seq: 11, ...over });
+
+test('a different installId is adopted unconditionally, and a late response from the prior install does not undo it', () => {
+  const reset = localeCacheUpdate(cache(), generation({ installId: 'install-b', epoch: 0, seq: 11 }));
+  assert.equal(reset.changed, true);
+  assert.deepEqual(reset.cache, { locale: 'ja', installId: 'install-b', epoch: 0, appliedSeq: 11 });
+
+  // The stale install response: the old instance answers a request we sent *earlier*, and its
+  // `installId` differs, which rule 2 alone would accept. The sequence fence is what refuses it.
+  const late = localeCacheUpdate(reset.cache, generation({ installId: 'install-a', epoch: 99, seq: 9 }));
+  assert.equal(late.changed, false, 'a stale install response replaced a newer cached locale');
+  assert.deepEqual(late.cache, reset.cache);
+});
+
+test('an out-of-order response leaves the newer locale in the cache', () => {
+  const newer = localeCacheUpdate(cache(), generation({ epoch: 7, locale: 'ja', seq: 11 }));
+  assert.equal(newer.cache.epoch, 7);
+  const older = localeCacheUpdate(newer.cache, generation({ epoch: 5, locale: 'en', seq: 12 }));
+  assert.equal(older.changed, false);
+  assert.deepEqual(older.cache, newer.cache, 'the final cache is not the newer locale');
+});
+
+test('the same installId with an equal epoch and a different locale is refused', () => {
+  const result = localeCacheUpdate(cache(), generation({ epoch: 3, locale: 'ja', seq: 11 }));
+  assert.equal(result.changed, false, 'equal counted as greater');
+  assert.equal(result.cache.locale, 'ko', 'the cache took a second locale at one epoch');
+});
+
+test('a failed query writes nothing and notifies nobody', () => {
+  const start = cache();
+  for (const response of [null, undefined, { success: false, error: 'command_template is required' }, {}]) {
+    const result = localeCacheUpdate(start, localeGenerationOf(response, 11));
+    assert.equal(result.changed, false, `${JSON.stringify(response)} changed the cache`);
+    assert.deepEqual(result.cache, start);
+  }
+});
+
+test('a successful response without locale metadata preserves the cache', () => {
+  // The ordinary command path, carrying a real result and no generation — not a discarded throat
+  const response = { success: true };
+  const result = localeCacheUpdate(cache(), localeGenerationOf(response, 11));
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.cache, cache());
+});
+
+test('a corrupt storage.local value is neither adopted nor rewritten', () => {
+  const corruptValues = [
+    'ko',
+    42,
+    null,
+    { locale: 'ko' },
+    { locale: 'fr', installId: 'a', epoch: 1, appliedSeq: 0 },
+    { locale: 'ko', installId: '', epoch: 1, appliedSeq: 0 },
+  ];
+  for (const corrupt of corruptValues) {
+    assert.equal(isUsableLocaleCache(corrupt), false, `${JSON.stringify(corrupt)} passed validation`);
+    // Nothing valid arriving: the corrupt value stays exactly as it is, evidence intact
+    const idle = localeCacheUpdate(corrupt, null);
+    assert.equal(idle.changed, false);
+    assert.equal(idle.cache, corrupt);
+    // Something valid arriving: it is adopted, because a value we cannot read is not a generation
+    const adopted = localeCacheUpdate(corrupt, generation());
+    assert.equal(adopted.changed, true);
+    assert.deepEqual(adopted.cache, { locale: 'ja', installId: 'install-a', epoch: 4, appliedSeq: 11 });
+  }
+});
+
+test('an unknown locale in a response is not a generation', () => {
+  for (const locale of ['fr', 'zh', 'KO', '', null, 42]) {
+    assert.equal(
+      localeGenerationOf({ success: true, locale, locale_install_id: 'a', locale_epoch: 1 }, 1),
+      null,
+      String(locale),
+    );
+  }
+  assert.deepEqual(localeGenerationOf({ locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1), {
+    locale: 'ko', installId: 'a', epoch: 1, seq: 1,
+  });
+});
+
+test('a malformed generation field is not a generation', () => {
+  const base = { locale: 'ko', locale_install_id: 'a', locale_epoch: 1 };
+  const broken = [
+    { ...base, locale_epoch: '1' },
+    { ...base, locale_epoch: 1.5 },
+    { ...base, locale_epoch: -1 },
+    { ...base, locale_install_id: '' },
+    { ...base, locale_install_id: 7 },
+  ];
+  for (const response of broken) {
+    assert.equal(localeGenerationOf(response, 1), null, JSON.stringify(response));
+  }
+  // and the sequence has to be one of ours, not whatever a caller passed
+  assert.equal(localeGenerationOf(base, undefined), null);
+  assert.equal(localeGenerationOf(base, '3'), null);
+});
+
+test('rendering never waits for the app: the language comes from what is already there', () => {
+  assert.equal(localeToRenderIn(cache(), 'en-US'), 'ko', 'a usable cache did not win');
+  // No cache: Chrome's own language, folded to something we ship
+  assert.equal(localeToRenderIn(null, 'ko'), 'ko');
+  assert.equal(localeToRenderIn(null, 'ja-JP'), 'ja');
+  assert.equal(localeToRenderIn(null, 'zh-TW'), 'zh-Hant');
+  assert.equal(localeToRenderIn(null, 'zh-CN'), 'zh-Hans');
+  assert.equal(localeToRenderIn(null, 'fr-CA'), 'en', 'an unshipped browser language did not fall back');
+  assert.equal(localeToRenderIn(undefined, undefined), 'en');
+  assert.equal(
+    localeToRenderIn({ locale: 'fr', installId: 'a', epoch: 1, appliedSeq: 0 }, 'ja'),
+    'ja',
+    'a corrupt cache was rendered from',
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// The redraw contracts. Counted, not inspected: what goes wrong here is a listener registered twice
+// and a click that fires twice, neither of which shows up in the shape of the DOM.
+// ---------------------------------------------------------------------------------------------
+
+test('the locale observer is registered once, not once per redraw', () => {
+  let subscriptions = 0;
+  let redraws = 0;
+  const renderer = createLocaleRenderer({
+    subscribe: () => { subscriptions += 1; },
+    redraw: () => { redraws += 1; },
+  });
+  assert.equal(renderer.start(), true);
+  for (let i = 0; i < 5; i += 1) assert.equal(renderer.start(), false, 'it subscribed again');
+  assert.equal(subscriptions, 1, `subscribed ${subscriptions} times`);
+  assert.equal(renderer.subscribed, true);
+  assert.equal(redraws, 0, 'starting drew something on its own');
+});
+
+test('a redraw does not detach a button whose click is in flight', async () => {
+  // The click is modelled the way the page runs it: it holds its own handle and reports on that
+  // handle when it comes back, so a redraw replacing the nodes cannot silence it.
+  let released;
+  const inFlight = new Promise(resolve => { released = resolve; });
+  const button = { label: 'A', feedback: null };
+  const click = (async () => { await inFlight; button.feedback = 'done'; })();
+
+  let redraws = 0;
+  const renderer = createLocaleRenderer({
+    subscribe: notify => { notify(); },
+    redraw: () => { redraws += 1; },
+  });
+  renderer.start(); // the subscription fires a redraw immediately, mid-click
+  assert.equal(redraws, 1);
+  assert.equal(button.feedback, null, 'the click finished early — the case proves nothing');
+
+  released();
+  await click;
+  assert.equal(button.feedback, 'done', 'a redraw during the click lost its result');
+});
+
+test('a redraw does not invalidate a command already sent to the host', async () => {
+  let sends = 0;
+  const send = async () => { sends += 1; return { success: true }; };
+  const renderer = createLocaleRenderer({
+    subscribe: notify => { notify(); notify(); }, // two notifications
+    redraw: () => {},                             // drawing draws; it does not send
+  });
+  await send();
+  renderer.start();
+  assert.equal(sends, 1, `the redraw path sent ${sends} commands`);
+  await send();
+  assert.equal(sends, 2, 'the counter is not measuring anything');
+});
+
+test('the generation is taken off a response before a failure is raised (lint)', () => {
+  // A **lint**: it reads the source, not the behaviour. The wiring it pins needs a `chrome` global
+  // to exercise, and what the reducer does with the extracted value is covered above — what is left
+  // uncovered is only "does the send path extract at all, and before it throws", which is exactly
+  // the line that used to lose the metadata.
+  const source = read('background.js');
+  const extract = source.indexOf('await applyLocaleGeneration(response, seq)');
+  const raise = source.indexOf("if (!response?.success) throw new Error(");
+  assert.ok(extract > 0, 'the send path no longer reads the generation off a response');
+  assert.ok(raise > 0, 'the failure is no longer raised on the button');
+  assert.ok(extract < raise, 'the failure is raised before the generation is read, which loses it');
+  // and every request takes a number of ours, which is what the fence orders by
+  assert.ok(/const seq = \+\+nativeRequestSeq;/.test(source), 'requests are no longer numbered');
+});

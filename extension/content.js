@@ -381,6 +381,46 @@ function onUrlChange() {
   setTimeout(tryInsertButton, 300);
 }
 
+// The language the buttons are drawn in, and the one redraw that follows it.
+//
+// **Reading it does not block a render** (D15). The cache is whatever the last response left in
+// `storage.local`; with none, `localeToRenderIn` falls back to Chrome's own UI language. A page that
+// waited for the app to answer would show no buttons for as long as the relay takes to launch it,
+// which is up to 25 seconds on a cold start.
+let localeToDrawIn = TC_I18N_FALLBACK;
+
+async function refreshLocaleToDrawIn() {
+  let cached = null;
+  try {
+    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
+    cached = stored?.[TC_LOCALE_CACHE_KEY];
+  } catch (error) {
+    console.log('Locale cache unreadable, drawing in the browser language:', error);
+  }
+  const uiLanguage = chrome.i18n?.getUILanguage ? chrome.i18n.getUILanguage() : '';
+  localeToDrawIn = localeToRenderIn(cached, uiLanguage);
+  return localeToDrawIn;
+}
+
+// The redraw the service worker asks for when the app's answer changed the cache. It goes through
+// the same remove-and-insert the page already uses for a URL change, so there is one way buttons get
+// replaced rather than two.
+const localeRenderer = createLocaleRenderer({
+  subscribe(onLocaleChanged) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.action !== 'localeChanged') return;
+      onLocaleChanged();
+    });
+  },
+  async redraw() {
+    await refreshLocaleToDrawIn();
+    removeInsertedButtons();
+    await tryInsertButton();
+  },
+});
+localeRenderer.start();
+refreshLocaleToDrawIn();
+
 // Detect History API events
 const originalPushState = history.pushState;
 history.pushState = function(...args) {

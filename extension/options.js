@@ -1495,3 +1495,13 @@ document.getElementById('retry-btn').addEventListener('click', () => {
 updateLoadedGate();
 renderStaleBanner();
 loadSettings();
+
+// The page's own `lang`, from the cache the app fills. It is the resolved tag itself rather than a
+// translated string, which is why it is applied here instead of being looked up in a dictionary —
+// assistive technology and hyphenation read it, and a page announcing `en` while rendering Korean is
+// telling them something untrue. With no cache this lands on the browser's language, exactly as the
+// buttons do, and the markup's `lang="en"` is only the value before this runs.
+chrome.storage.local.get([TC_LOCALE_CACHE_KEY]).then((stored) => {
+  const uiLanguage = chrome.i18n?.getUILanguage ? chrome.i18n.getUILanguage() : '';
+  applyDocumentLanguage(localeToRenderIn(stored?.[TC_LOCALE_CACHE_KEY], uiLanguage));
+}).catch(() => {});
