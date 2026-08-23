@@ -298,10 +298,14 @@ final class LocaleRestartTests: XCTestCase {
         XCTAssertEqual(asked, 0, "a window that does not own the socket took a restart admission")
 
         let directory = "/tmp/tc-restart-\(UUID().uuidString.prefix(8))"
+        // The window asks `LocalePublicationRight.current`, and that answers for **the** socket —
+        // owning some socket is not owning the one the relay reaches (round 24 review)
+        let canonical = CanonicalSocketOverride(directory + "/s.sock")
         let server = HostServer(socketPath: directory + "/s.sock")
         try server.start(announcing: .nothing)
         defer {
             server.stop()
+            _ = canonical
             try? FileManager.default.removeItem(atPath: directory)
         }
         controller.perform(NSSelectorFromString("restartForLanguage"))

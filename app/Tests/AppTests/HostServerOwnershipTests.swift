@@ -16,6 +16,7 @@ import XCTest
 final class HostServerOwnershipTests: XCTestCase {
     private var directory = ""
     private var path = ""
+    private var canonical: CanonicalSocketOverride?
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -23,9 +24,14 @@ final class HostServerOwnershipTests: XCTestCase {
         // most of that on its own
         directory = "/tmp/tc-own-\(UUID().uuidString.prefix(8))"
         path = directory + "/s.sock"
+        // What `current` answers and what may publish are both about **the** socket now, so the one
+        // these cases bind has to be it
+        canonical = nil
+        canonical = CanonicalSocketOverride(path)
     }
 
     override func tearDown() {
+        canonical = nil
         try? FileManager.default.removeItem(atPath: directory)
         super.tearDown()
     }
@@ -254,19 +260,21 @@ final class HostServerOwnershipTests: XCTestCase {
         // own settings, reachable by every case after it — in the round after the injection was
         // added to stop exactly that (round 22 review). The argument existed; this went around it
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
-        let store = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let store = try XCTUnwrap(WriteHoldingDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
 
-        let server = HostServer(socketPath: path)
+        // The hold goes through the store, which is injectable — the publisher closure that used to
+        // do it was a production capability and is gone (round 24 review)
         let inPublication = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        store.beforeWritingThePublication = {
+            inPublication.signal()
+            release.wait()
+        }
+        let server = HostServer(socketPath: path, defaults: store)
         let started = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
-            _ = try? server.start(announcing: .publish(.fallback), publish: { _, right, _ in
-                inPublication.signal()
-                release.wait()
-                return LocaleState.commit(resolved: .fallback, defaults: store, right: right)
-            })
+            _ = try? server.start(announcing: .publish(.fallback))
             started.signal()
         }
         XCTAssertEqual(inPublication.wait(timeout: .now() + 10), .success, "the startup never got that far")
@@ -285,6 +293,7 @@ final class HostServerOwnershipTests: XCTestCase {
             "the socket was torn down while the startup was still deciding whether it owned it"
         )
 
+        store.beforeWritingThePublication = nil
         release.signal()
         XCTAssertEqual(started.wait(timeout: .now() + 10), .success)
         XCTAssertEqual(stopped.wait(timeout: .now() + 10), .success)
@@ -300,26 +309,45 @@ final class HostServerOwnershipTests: XCTestCase {
         )
     }
 
-    /// Two binds in one process is not a shape production has, but `mint` has to answer for it
-    /// anyway: the second bind is the owner, and the first right stops being one. Ending the second
-    /// must not resurrect the first, which is why the holder is cleared only when it is still that
-    /// same right.
-    func testAlaterBindSupersedesTheEarlierRight() throws {
-        let first = HostServer(socketPath: path)
-        let firstRight = try first.start(announcing: .nothing)
-        let otherPath = directory + "/t.sock"
-        let second = HostServer(socketPath: otherPath)
-        let secondRight = try second.start(announcing: .nothing)
+    /// **Binding another name does not unseat the one that counts** (round 24 review).
+    ///
+    /// A single holder meant that any bind at all replaced whoever held the canonical socket, so any
+    /// file in the module could take a temporary name and leave the process the relay reaches unable
+    /// to publish — a denial dressed as a handover. Two binds of different paths are not two answers
+    /// to one question, and `bind` is exclusive, so the same path cannot be held twice at once. What
+    /// a right is *for* is the thing that decides.
+    func testBindingAnotherNameDoesNotUnseatTheCanonicalRight() throws {
+        let owner = HostServer(socketPath: path)
+        let ownersRight = try owner.start(announcing: .nothing)
+        XCTAssertTrue(LocalePublicationRight.current === ownersRight)
 
-        XCTAssertFalse(firstRight.isHeld, "two rights were live at once")
-        XCTAssertTrue(LocalePublicationRight.current === secondRight)
+        let elsewhere = HostServer(socketPath: directory + "/t.sock")
+        let strayRight = try elsewhere.start(announcing: .nothing)
 
-        first.stop()
+        XCTAssertTrue(ownersRight.isHeld, "a bind of another name gave up the canonical right")
         XCTAssertTrue(
-            LocalePublicationRight.current === secondRight,
-            "stopping the superseded server took the live right with it"
+            LocalePublicationRight.current === ownersRight,
+            "a bind of another name became what the picker reads"
         )
-        second.stop()
+        XCTAssertTrue(strayRight.isHeld, "the stray right is still a real right to a real bind")
+        XCTAssertNotEqual(strayRight.path, defaultSocketPath(), "the fixture proves nothing")
+
+        // And it publishes nothing, which is the half that makes the rest safe
+        let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
+        let store = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        XCTAssertNil(
+            Settings.publishLocaleAtLaunch(resolved: .fallback, right: strayRight, defaults: store),
+            "a right for another name published"
+        )
+        XCTAssertNil(store.dictionary(forKey: LocaleState.publicationKey), "it wrote anyway")
+
+        elsewhere.stop()
+        XCTAssertTrue(
+            LocalePublicationRight.current === ownersRight,
+            "stopping the stray server took the canonical right with it"
+        )
+        owner.stop()
         XCTAssertNil(LocalePublicationRight.current)
     }
 }

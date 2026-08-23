@@ -25,6 +25,7 @@ final class HostServerStartupPublicationTests: XCTestCase {
     private var directory = ""
     private var path = ""
     private var server: HostServer!
+    private var canonical: CanonicalSocketOverride?
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -34,12 +35,16 @@ final class HostServerStartupPublicationTests: XCTestCase {
         // most of them on its own
         directory = "/tmp/tc-boot-\(UUID().uuidString.prefix(8))"
         path = directory + "/s.sock"
+        // A launch that publishes has to own the socket the relay reaches, so this case is it
+        canonical = nil
+        canonical = CanonicalSocketOverride(path)
         server = HostServer(socketPath: path, defaults: defaults)
     }
 
     override func tearDown() {
         defaults.beforeWritingThePublication = nil
         server.stop()
+        canonical = nil
         try? FileManager.default.removeItem(atPath: directory)
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         super.tearDown()
@@ -133,12 +138,20 @@ final class HostServerStartupPublicationTests: XCTestCase {
             ["installId": "install-before", "epoch": 3, "tag": "ko"],
             forKey: LocaleState.publicationKey
         )
+        // **The refusal is production's own.** It used to be injected — `publish: { _,_,_ in nil }` —
+        // and that parameter was a test seam that compiled in production, where it let the
+        // announcement and the publisher disagree (round 24 review). A server bound to a path the
+        // relay does not use is refused by the same line that refuses a rogue, so the fixture is now
+        // the real reason rather than a stand-in for it
+        canonical = nil
+        canonical = CanonicalSocketOverride(directory + "/elsewhere.sock")
+
         let relay = RelayAtTheDoor()
         relay.connectAndAsk(["query": localeQueryName], at: path, givingUp: 3)
 
         let japanese = try XCTUnwrap(SupportedLocale("ja"))
         XCTAssertThrowsError(
-            try server.start(announcing: .publish(japanese), publish: { _, _, _ in nil }),
+            try server.start(announcing: .publish(japanese)),
             "a refused publication still started a server"
         ) { error in
             guard case HostServer.ServerError.publicationRefused = error else {

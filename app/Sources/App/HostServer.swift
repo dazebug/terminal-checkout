@@ -189,23 +189,15 @@ final class HostServer {
     /// It is `@discardableResult` because the announcement is now what a caller says, and the value
     /// is a fact about the bind that only the tests and the process-wide `current` still read.
     ///
-    /// `publish` is the launch publisher, as a parameter with the production default — the same
-    /// arrangement `warpInjectionSetup` uses, and for the same reason: the branch where a
-    /// publication does not happen is otherwise unreachable from outside. With the seam closed
-    /// (`LocalePublicationRight.whileHeld`) a right cannot be lost *during* the write, so the only
-    /// remaining way to be refused is a right already given up when this line is reached, which
-    /// takes another thread relinquishing between two statements here. **It cannot weaken what this
-    /// call establishes**: whatever is passed runs before the accept loop is armed and its refusal
-    /// is still handled here, so the ordering and the guard are both outside it. The default being
-    /// the real publisher is not taken on faith either —
-    /// `testNoRequestIsAnsweredBeforeTheLaunchPublicationIsCommitted` drives this call with no
-    /// argument and observes the real write.
+    /// **There is no injectable publisher any more** (round 24 review). One was added so a case could
+    /// reach the branch where publication does not happen, and it was a test seam that compiled in
+    /// production: `start(announcing: .publish(.ja), publish: { … .ko … })` announced one locale and
+    /// wrote another. Two things removed the need for it — the store is injectable, so a case can
+    /// hold the write open through that; and a right now names the path it bound, so a server on a
+    /// path that is not the relay's is refused **the way production would refuse it**, which is a
+    /// better fixture than a closure that returns nil.
     @discardableResult
-    func start(
-        announcing announcement: LocaleAnnouncement,
-        publish: (SupportedLocale, LocalePublicationRight, UserDefaults) -> LocalePublication?
-            = { Settings.publishLocaleAtLaunch(resolved: $0, right: $1, defaults: $2) }
-    ) throws -> LocalePublicationRight {
+    func start(announcing announcement: LocaleAnnouncement) throws -> LocalePublicationRight {
         lifecycle.lock()
         defer { lifecycle.unlock() }
 
@@ -241,7 +233,9 @@ final class HostServer {
             // (round 18 review). The right can be given up between the mint above and the write, and
             // then the answer to give is the one a failed bind already gets: this instance owns
             // nothing and says nothing, and it does not answer either
-            guard publish(resolved, right, defaults) != nil else {
+            guard Settings.publishLocaleAtLaunch(
+                resolved: resolved, right: right, defaults: defaults
+            ) != nil else {
                 tearDown()
                 throw ServerError.publicationRefused
             }

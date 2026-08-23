@@ -13,12 +13,34 @@ import XCTest
 ///
 /// Every case runs against a private suite. The subject is `UserDefaults` writes, and running them
 /// against `.standard` would rewrite the language state of the app installed on this machine.
+/// Points `defaultSocketPath()` at a path this case owns, for as long as it lives.
+///
+/// Publication asks for **the** socket now, not for a socket, so a case that publishes has to be the
+/// canonical owner — binding a temporary name is exactly what the production check refuses, which is
+/// the point of the check. The environment variable is the lever `e2e.sh` already uses, and it is
+/// restored on the way out so no case inherits another's idea of canonical.
+final class CanonicalSocketOverride {
+    private let previous: String?
+
+    init(_ path: String) {
+        previous = ProcessInfo.processInfo.environment["TERMINAL_CHECKOUT_SOCKET"]
+        setenv("TERMINAL_CHECKOUT_SOCKET", path, 1)
+    }
+
+    deinit {
+        if let previous { setenv("TERMINAL_CHECKOUT_SOCKET", previous, 1) } else {
+            unsetenv("TERMINAL_CHECKOUT_SOCKET")
+        }
+    }
+}
+
 final class LocalePublicationTests: XCTestCase {
     private var suiteName = ""
     private var defaults: UserDefaults!
     private var socketDirectory = ""
     private var server: HostServer!
     private var right: LocalePublicationRight!
+    private var canonical: CanonicalSocketOverride?
 
     /// **Every case that publishes binds a socket to be allowed to**, because that is the only thing
     /// in the program that produces the right — and a suite that could publish without one would be
@@ -31,12 +53,16 @@ final class LocalePublicationTests: XCTestCase {
         suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         socketDirectory = "/tmp/tc-pub-\(UUID().uuidString.prefix(8))"
+        // These cases publish, and publishing takes the canonical socket — so this one is it
+        canonical = nil
+        canonical = CanonicalSocketOverride(socketDirectory + "/s.sock")
         server = HostServer(socketPath: socketDirectory + "/s.sock")
         right = try server.start(announcing: .nothing)
     }
 
     override func tearDown() {
         server.stop()
+        canonical = nil
         try? FileManager.default.removeItem(atPath: socketDirectory)
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         super.tearDown()

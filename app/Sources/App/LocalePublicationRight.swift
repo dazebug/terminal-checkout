@@ -15,9 +15,10 @@ import Foundation
 // edit rather than the whole server implementation. A producer added *here* is still possible and is
 // the residual — it is what `private` means.
 //
-// `bindingSocket` is `internal` for the same reason and it costs nothing: reaching it means
-// performing the bind, which is the thing the value attests. `relinquish` is `internal` too, and
-// giving a right up is the fail-closed direction.
+// `bindingSocket` is `internal`, and since round 24 that carries nothing: what it hands back names
+// the path it bound, and only the canonical one publishes, so reaching the factory with a temporary
+// name buys a right to that name and no more. `relinquish` is `internal` too, and giving a right up
+// is the fail-closed direction.
 
 /// **What a successful bind produced: the descriptor to accept on, and the right it is the reason
 /// for.**
@@ -60,11 +61,22 @@ struct BoundSocket {
 /// one at the top of this file.** `private` does not exclude an extension written beside the type,
 /// so what bounds a producer is the file, not the keyword (round 22 review).
 ///
-/// What the sentence does *not* say, because it would not be true: which path was bound. A same-file
-/// caller can bind a path of its own and get a right for it. What it cannot do is get one without
-/// binding something and still holding it — and on the path this server names, `bind` is exclusive,
-/// so while the real server owns it nobody else can. Which path a server is asked to serve is its
-/// constructor's argument, and both production call sites pass `defaultSocketPath()`.
+/// **And a right says which socket, because binding *a* socket is not owning *the* one.** That
+/// sentence used to end at "reaching the factory means performing the bind", which was true and
+/// insufficient (round 24 review): `bind` is exclusive *per path*, so a right that did not carry its
+/// path was a right to nothing in particular — any file in the module could bind a temporary name,
+/// receive a right, and hand it to the picker. Worse, minting gave up the previous holder, so that
+/// right **unseated the real server's** and the process the relay actually reaches could no longer
+/// publish.
+///
+/// So the path is part of the value, holders are kept per path, and publication asks for the
+/// canonical one (`Settings.publishInteractively`). A right for a temporary name is still a real
+/// right to a real bind — it simply publishes nothing and unseats nobody.
+///
+/// **This is deliberately not a fifth tightening of visibility.** Four rounds went any file → the
+/// same file → a same-file extension → the whole module, and each one moved the producer rather than
+/// removing it. What a value *attests* is the axis that closes it: `bindingSocket` can stay reachable
+/// because what it hands back is now specific.
 ///
 /// **Ownership lasts exactly as long as the socket does.** The path can be taken over: this process
 /// stops listening, another binds the same path, and from then on the relay is talking to that one.
@@ -74,22 +86,31 @@ struct BoundSocket {
 /// process that no longer owns the machine's socket is.
 final class LocalePublicationRight {
     private static let lock = NSLock()
-    private static var holder: LocalePublicationRight?
+    /// One live right per path. It was a single holder, which is what let a bind of *any* name unseat
+    /// the real server's right — two binds of different paths are not competitors for anything, and a
+    /// bind of the same path cannot happen while the first is held (round 24 review).
+    private static var holders: [String: LocalePublicationRight] = [:]
 
-    /// What this process holds. Nil in an instance that lost the bind (`alreadyRunning`), in a
-    /// process that never started a server, and after the socket has been given up. It is read
-    /// rather than passed in the two places that cannot be handed a value — the picker and the
-    /// window that draws it — and reading it is not a way around anything: **what it answers is
-    /// whether we hold one, and holding one is the fact.**
+    /// What this process holds **for the socket the relay reaches**. Nil in an instance that lost the
+    /// bind (`alreadyRunning`), in a process that never started a server, after the socket has been
+    /// given up, and for a right bound to any other name. It is read rather than passed in the two
+    /// places that cannot be handed a value — the picker and the window that draws it — and reading
+    /// it is not a way around anything: **what it answers is whether we hold the one that counts.**
     static var current: LocalePublicationRight? {
         lock.lock()
         defer { lock.unlock() }
-        return holder
+        return holders[defaultSocketPath()]
     }
+
+    /// The name this right's bind holds. Not decoration: it is the difference between "a socket" and
+    /// "the socket", and publication asks for it.
+    let path: String
 
     private var held = true
 
-    private init() {}
+    private init(path: String) {
+        self.path = path
+    }
 
     /// **The bind, and the right it is the reason for.**
     ///
@@ -97,10 +118,11 @@ final class LocalePublicationRight {
     /// every other file — including an `extension LocalePublicationRight` written in one, measured.
     /// Inside this file it is reachable, and that is what the note at the top is about.
     ///
-    /// It is `internal` because `HostServer` is in another file now, and that costs nothing: reaching
-    /// this means **performing the bind**, which is exactly what a right attests. What stays out of
-    /// reach is the making of one without it — `mint` and the initialiser are `private`, and this
-    /// file is the boundary that means something (see the note at the top).
+    /// It is `internal` because `HostServer` is in another file, and that no longer has to carry the
+    /// invariant: the right it hands back names the path it bound, so reaching this with a temporary
+    /// name yields a right that publishes nothing. What stays out of reach is the making of one
+    /// without a bind at all — `mint` and the initialiser are `private`, and this file is the
+    /// boundary that means something (see the note at the top).
     static func bindingSocket(at path: String) throws -> BoundSocket {
         guard var address = makeUnixSockaddr(path) else {
             throw HostServer.ServerError.socketFailed("the path is too long: \(path)")
@@ -119,7 +141,7 @@ final class LocalePublicationRight {
             close(fd)
             throw HostServer.ServerError.socketFailed(reason)
         }
-        return BoundSocket(fd: fd, right: mint())
+        return BoundSocket(fd: fd, right: mint(for: path))
     }
 
     /// **The previous right stops being one before the new one is visible.**
@@ -129,12 +151,17 @@ final class LocalePublicationRight {
     /// **both rights report held**, and the old one could enter `whileHeld` and write. Not a doc
     /// gone stale — a doc that described an order the code had never had, in the function the round
     /// before this one rewrote (round 20 review).
-    private static func mint() -> LocalePublicationRight {
+    ///
+    /// **Only a right for the same path is given up.** A single holder meant that binding any name at
+    /// all unseated whoever held the canonical one — a denial of publication dressed as a handover
+    /// (round 24 review). Two binds of different paths are not two answers to one question; they are
+    /// answers to different ones.
+    private static func mint(for path: String) -> LocalePublicationRight {
         lock.lock()
         defer { lock.unlock() }
-        holder?.giveUp()
-        let right = LocalePublicationRight()
-        holder = right
+        holders[path]?.giveUp()
+        let right = LocalePublicationRight(path: path)
+        holders[path] = right
         return right
     }
 
@@ -162,7 +189,7 @@ final class LocalePublicationRight {
     static func supersededButStillHeld(_ right: LocalePublicationRight) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return right.held && holder !== right
+        return right.held && holders[right.path] !== right
     }
 
     /// **Runs `body` under the lock that decides whether this right is still held, and only while it
@@ -203,11 +230,11 @@ final class LocalePublicationRight {
 
     /// The same thing **with the class lock already held**, which is the only reason it exists
     /// separately: `NSLock` is not recursive, and a reader's first instinct inside `mint` is to call
-    /// `relinquish` — which deadlocks. Idempotent, and it clears the process-wide holder only if
-    /// that is still this one, so a right superseded by a later bind does not take the newer one
-    /// down with it.
+    /// `relinquish` — which deadlocks. Idempotent, and it clears **this path's** holder only if that
+    /// is still this one, so a right superseded by a later bind of the same name does not take the
+    /// newer one down with it, and a right for another name never touches it at all.
     private func giveUp() {
         held = false
-        if Self.holder === self { Self.holder = nil }
+        if Self.holders[path] === self { Self.holders[path] = nil }
     }
 }

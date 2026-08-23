@@ -65,9 +65,12 @@ enum Settings {
     /// against the real code rather than a stand-in, and without writing into the domain the
     /// installed app is using. Returns whether it published.
     ///
-    /// `right` defaults to whatever this process holds, and that default is not a way around the
-    /// rule: nothing outside `HostServer.swift` can produce one, so a caller can pass the right this
-    /// process was given or nothing at all.
+    /// `right` defaults to whatever this process holds for the relay's socket, and that default is
+    /// not a way around the rule. The sentence here used to be "nothing outside `HostServer.swift`
+    /// can produce one", which was stale twice over — the type moved to its own file and the factory
+    /// is `internal` anyway (round 24 review). What holds is that a right names the path it bound and
+    /// `publishInteractively` asks for the canonical one, so passing a different right publishes
+    /// nothing.
     @discardableResult
     static func setLanguage(
         _ newValue: String,
@@ -108,7 +111,11 @@ enum Settings {
     private static func publishInteractively(
         _ resolved: SupportedLocale, as right: LocalePublicationRight?, to defaults: UserDefaults
     ) -> LocalePublication? {
-        guard let right,
+        // **The socket, not a socket.** A right names the path its bind holds, and only the path the
+        // relay reaches carries any standing here: without this line any file in the module could
+        // bind a temporary name and publish with what came back (round 24 review). `bind` is
+        // exclusive per path, so this is the whole of "this process is the one Chrome is talking to"
+        guard let right, right.path == defaultSocketPath(),
               let committed = LocaleState.commit(resolved: resolved, defaults: defaults, right: right)
         else {
             checkoutLog("this instance does not own the socket, so no locale was published")
