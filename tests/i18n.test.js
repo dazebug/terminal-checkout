@@ -1115,3 +1115,26 @@ test('no text ships in the markup without a message behind it', () => {
   }
   assert.deepEqual(stray, [], 'markup carries text that no message owns');
 });
+
+// ---------------------------------------------------------------------------------------------
+// The shape another gate depends on (item 20).
+// ---------------------------------------------------------------------------------------------
+
+test('a dictionary file is one JSON object, so the ownership gate can read it', () => {
+  // `CatalogueOwnershipTests` is the only place that can see all three catalogues at once — Swift
+  // parses `.strings` natively — and it reads these files as text rather than running them. That
+  // works because the body of the assignment is JSON apart from its trailing comma. The assumption
+  // is asserted **here**, on the side that owns these files, so a hand edit that breaks it fails
+  // where its author is looking rather than in a Swift test about the app.
+  for (const tag of TC_I18N_LOCALES) {
+    const source = read(`_i18n/${tag}.js`);
+    const opening = source.indexOf('] = {');
+    const closing = source.lastIndexOf('};');
+    assert.ok(opening > 0 && closing > opening, `${tag}.js no longer assigns one object literal`);
+    const body = `${source.slice(opening + 4, closing)}}`.replace(/,(\s*)\}$/, '$1}');
+    let parsed;
+    assert.doesNotThrow(() => { parsed = JSON.parse(body); }, `${tag}.js is not readable as JSON`);
+    // and it agrees with what running the file produced, which is the real dictionary
+    assert.deepEqual(parsed, globalThis.TC_I18N[tag], `${tag}.js reads differently as text and as code`);
+  }
+});
