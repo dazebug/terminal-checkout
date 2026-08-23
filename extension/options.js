@@ -14,6 +14,131 @@ const SECTIONS = [
 // Emoji commonly used as a face — clicking one appends it to the face field (they can be combined)
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
+// --- What this page says ---
+// Every sentence comes from the dictionaries in `_i18n/`, and `options.html` carries message ids
+// (`data-i18n`) rather than prose. One copy of each sentence, therefore, instead of one in the
+// markup and one in the catalog kept equal by hand — which is also what keeps item 20's ownership
+// gate answerable about this page.
+//
+// **Which language, before anything has answered.** The cache the app fills lives in
+// `storage.local` and is read asynchronously, so it cannot decide the *first* paint; what can is
+// `chrome.i18n.getUILanguage()`, which answers without waiting, and `localeToRenderIn` already
+// treats the browser language as the stand-in for "no cache yet" (D15). So the page fills itself
+// while the parser is still blocked on this script and corrects itself when the cache answers.
+// Leaving the English in the markup would have meant the opposite order — English painted first and
+// translated afterwards — for every user whose language is not English.
+//
+// What this removes is the **asynchronous** gap, the one that lasts a storage round trip. Whether
+// Chrome paints a half-parsed document before a parser-blocking script at the end of `<body>` runs
+// is not something this repository can measure, and it is not claimed here.
+let uiLocale = TC_I18N_FALLBACK;
+
+function browserLanguage() {
+  return chrome.i18n?.getUILanguage?.() || '';
+}
+
+// A message as **text**. Everything that lands in `textContent`, a `title`, a placeholder or
+// `confirm()` comes through here, and no value it returns carries markup.
+//
+// The split from `tHTML` is the point, and it is the same shape as the app's shell-payload type: a
+// value that will be parsed as HTML and a value that may contain something the user typed must not
+// be reachable through one function. A repository name goes into a validation message; that message
+// is set with `textContent`, so it can only ever be text. A test pins the halves apart — a key whose
+// value contains a tag is used only through `tHTML`, and never the other way around.
+function t(key, ...args) {
+  return formatMessage(i18nText(key, uiLocale), args);
+}
+
+// A message as **markup**, for the two places that build HTML: the static prose in `options.html`
+// and the button card template. Its arguments are ours — a constant, a preset name, another
+// message — and never anything a user typed.
+function tHTML(key, ...args) {
+  return formatMessage(i18nText(key, uiLocale), args);
+}
+
+// The arguments the static prose takes, in one table, so that "what can reach innerHTML on this
+// page" is a list to read rather than a search to run. Thunks rather than values: the labels they
+// quote are themselves messages, and the language can change after this file is loaded.
+//
+// The quotations are D28 relations. Prose that names another control used to spell that control's
+// label out again — and the two had already drifted apart here, with one paragraph calling the
+// field `Face` and another calling it `face`. Naming the message instead of the string means a
+// translator cannot make them disagree.
+const STATIC_TEXT_ARGS = {
+  'ext.section.pr.help1': () => [MAX_BUTTONS, t('ext.field.face'), t('ext.field.tooltip')],
+  'ext.section.pr.help2': () => [t('ext.card.duplicate')],
+  'ext.section.issue.help': () => [MAX_BUTTONS],
+  'ext.section.repo.help': () => [
+    MAX_BUTTONS,
+    presetById(section('repo').presets, 'repo.open').name,
+    t('ext.field.face'),
+  ],
+  'ext.section.backup.help2': () => [t('ext.button.save')],
+  'ext.button.addLimit': () => [MAX_BUTTONS],
+};
+
+// Fill every node that names a message. Called once while the parser is still here, and again
+// whenever the language moves.
+function applyStaticText(root = document) {
+  for (const node of root.querySelectorAll('[data-i18n]')) {
+    const key = node.dataset.i18n;
+    const args = Object.hasOwn(STATIC_TEXT_ARGS, key) ? STATIC_TEXT_ARGS[key]() : [];
+    node.innerHTML = tHTML(key, ...args);
+  }
+}
+
+// Everything on screen, in the current language. The button and override values are the user's own
+// data and come from the edit state, so a redraw moves the words and not the settings — but it does
+// rebuild the cards, which costs the caret of anyone typing at that moment. The language only moves
+// when the app publishes a new one, so that is a rare cost for a correct screen.
+function redrawInCurrentLocale() {
+  applyDocumentLanguage(uiLocale);
+  applyStaticText();
+  presetTemplates = buildPresetTemplates();
+  SECTIONS.forEach(({ kind }) => renderButtons(kind));
+  renderOverrides();
+  renderMigration();
+}
+
+// The first answer, taken synchronously so that the first paint is already in a language.
+uiLocale = localeToRenderIn(null, browserLanguage());
+applyDocumentLanguage(uiLocale);
+applyStaticText();
+
+// And the app's own answer, which arrives a storage round trip later. `changed` is returned so a
+// test can tell "adopted" from "already right" — a redraw that was not needed is not a redraw.
+async function adoptLocaleFromCache() {
+  let cached;
+  try {
+    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
+    cached = stored?.[TC_LOCALE_CACHE_KEY];
+  } catch (error) {
+    // The page is already drawn in the browser language; an unreadable cache leaves it there
+    console.log('Locale cache unreadable, keeping the browser language:', error);
+    return false;
+  }
+  const next = localeToRenderIn(cached, browserLanguage());
+  if (next === uiLocale) return false;
+  uiLocale = next;
+  redrawInCurrentLocale();
+  return true;
+}
+
+// The options page is not one of the tabs the service worker notifies — that message goes to GitHub
+// pages — so this page watches the cache itself. `createLocaleRenderer` is what keeps the
+// subscription to one: registering it from inside the redraw path is the leak that makes one
+// language change cost five redraws.
+const localeRenderer = createLocaleRenderer({
+  subscribe(onLocaleChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes[TC_LOCALE_CACHE_KEY]) onLocaleChanged();
+    });
+  },
+  redraw() { adoptLocaleFromCache(); },
+});
+localeRenderer.start();
+adoptLocaleFromCache();
+
 // Unlike the storage schema, overrides are kept as an array. Keying them by repo would mean
 // deleting and re-adding the key on every keystroke in the name, and redrawing the row each time
 // would throw away the input focus.
@@ -78,16 +203,26 @@ function section(kind) {
   return SECTIONS.find(s => s.kind === kind);
 }
 
-// The preset list is fixed per section, so build it once and clone it for each card
-const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
-  const select = document.createElement('select');
-  select.className = 'preset-select';
-  select.add(new Option('Apply preset…', ''));
-  // The value is the preset's id and the text is its name — a name is display text and will be
-  // translated, so it cannot be what the selection is read back as (defaults.js, presetOptions)
-  presetOptions(presets).forEach(({ value, text }) => select.add(new Option(text, value)));
-  return [kind, select];
-}));
+// The preset list is fixed per section, so build it once and clone it for each card.
+//
+// Rebuilt when the language changes, though, rather than cloned forever: a template built at load
+// is a long-lived capture of the language it was built in, and every card cloned from it afterwards
+// carries that language no matter what the page has since been redrawn in. The app's settings
+// window had exactly this — a picker still speaking the old language with everything around it
+// changed — and the fix there was the same, to rebuild rather than to keep.
+let presetTemplates = buildPresetTemplates();
+
+function buildPresetTemplates() {
+  return Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
+    const select = document.createElement('select');
+    select.className = 'preset-select';
+    select.add(new Option(t('ext.field.preset.placeholder'), ''));
+    // The value is the preset's id and the text is its name — a name is display text and will be
+    // translated, so it cannot be what the selection is read back as (defaults.js, presetOptions)
+    presetOptions(presets).forEach(({ value, text }) => select.add(new Option(text, value)));
+    return [kind, select];
+  }));
+}
 
 // Buttons enter the edit state through `adoptButton` (anything from outside: storage, a file, a
 // preset — it gets a uid we mint) or `reshapeButton` (a button already here, keeping its name).
@@ -97,11 +232,11 @@ const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
 // state. Every entry point that would write, or that would change what a later write contains, asks
 // here first. The page is also inert until then (updateLoadedGate), but that is the fence; this is
 // the rule, and code paths that do not come from a click still have to pass it.
-const LOADING_MESSAGE = 'Still loading your settings — one moment.';
+const LOADING_MESSAGE = () => t('ext.status.loading');
 
 function requireLoaded() {
   if (state.loaded) return true;
-  showStatus('info', LOADING_MESSAGE);
+  showStatus('info', LOADING_MESSAGE());
   return false;
 }
 
@@ -230,37 +365,37 @@ function renderButtons(kind) {
     card.innerHTML = `
       <div class="btn-card-header">
         <span class="btn-number">
-          ${count > 1 ? '<button class="drag-handle" aria-label="Reorder" title="Drag, or use the ↑↓ keys, to reorder">⠿</button>' : ''}
+          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.card.reorder.tooltip')}">⠿</button>` : ''}
           <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
         </span>
         <span class="card-actions">
-          ${count < MAX_BUTTONS ? '<button class="duplicate-btn" title="Duplicate this button">Duplicate</button>' : ''}
-          ${count > 1 ? '<button class="remove-btn">Delete</button>' : ''}
+          ${count < MAX_BUTTONS ? `<button class="duplicate-btn" title="${t('ext.card.duplicate.tooltip')}">${t('ext.card.duplicate')}</button>` : ''}
+          ${count > 1 ? `<button class="remove-btn">${t('ext.card.delete')}</button>` : ''}
         </span>
       </div>
       <div class="btn-row">
         <div class="field field-face">
-          <label for="${kind}-${i}-face">Face</label>
+          <label for="${kind}-${i}-face">${t('ext.field.face')}</label>
           <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="24">
         </div>
         <div class="field field-preview">
-          <label>Preview</label>
+          <label>${t('ext.field.preview')}</label>
           <span class="face-preview"></span>
         </div>
         <div class="field field-label">
-          <label for="${kind}-${i}-label">Tooltip</label>
-          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="Button tooltip">
+          <label for="${kind}-${i}-label">${t('ext.field.tooltip')}</label>
+          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="${t('ext.field.tooltip.placeholder')}">
         </div>
         <div class="field field-preset">
-          <label for="${kind}-${i}-preset">Preset</label>
+          <label for="${kind}-${i}-preset">${t('ext.field.preset')}</label>
         </div>
       </div>
       <div class="face-palette">
-        <span class="palette-label">Add to face:</span>
-        ${FACE_EMOJI.map(e => `<button class="palette-btn" title="Add ${e} to the face">${e}</button>`).join('')}
+        <span class="palette-label">${t('ext.card.palette.label')}</span>
+        ${FACE_EMOJI.map(e => `<button class="palette-btn" title="${t('ext.card.palette.tooltip', e)}">${e}</button>`).join('')}
       </div>
       <div class="field field-command">
-        <label for="${kind}-${i}-command">command</label>
+        <label for="${kind}-${i}-command">${t('ext.field.command')}</label>
         <div class="cmd-block">
           <span class="cmd-prompt">$</span>
           <textarea id="${kind}-${i}-command" class="command-input" data-field="command" rows="2"
@@ -268,13 +403,13 @@ function renderButtons(kind) {
         </div>
       </div>
       <div class="claude-queue">
-        <div class="claude-queue-head"><span class="ret">⏎</span> claude inputs
-          <span class="help-inline">— delivered in order; <code>!</code> lines run in claude's shell mode</span>
+        <div class="claude-queue-head"><span class="ret">⏎</span> ${t('ext.field.claudeInputs')}
+          <span class="help-inline">${tHTML('ext.field.claudeInputs.help')}</span>
         </div>
-        <div class="claude-hint" hidden><code>!</code> lines are typed into claude's shell mode so they really run as commands — consecutive ones go in as a single line joined with <code>;</code>, each behind a banner. On Warp that typing needs the Accessibility permission. A single plain-text input, with nothing else in the list, skips typing entirely and becomes claude's opening message — that additionally needs the command to end in a bare <code>claude</code>.</div>
-        <div class="claude-warn" hidden>⚠ The command doesn't start claude, so these inputs won't be delivered</div>
+        <div class="claude-hint" hidden>${tHTML('ext.field.claudeInputs.hint')}</div>
+        <div class="claude-warn" hidden>${t('ext.field.claudeInputs.warn')}</div>
         <div class="claude-rows"></div>
-        <button class="add-input-btn">+ Add Input</button>
+        <button class="add-input-btn">${t('ext.button.addInput')}</button>
       </div>
     `;
 
@@ -293,8 +428,8 @@ function renderButtons(kind) {
       row.dataset.ci = j;
       row.innerHTML = `
         <span class="ci-marker">⏎${j + 1}</span>
-        <input class="ci-input" placeholder="!gh issue view {number}, or: summarize this issue">
-        <button class="ci-remove" title="Remove">×</button>
+        <input class="ci-input" placeholder="${t('ext.field.claudeInput.placeholder')}">
+        <button class="ci-remove" title="${t('ext.button.remove')}">×</button>
       `;
       row.querySelector('.ci-input').value = text;
       rows.appendChild(row);
@@ -343,7 +478,7 @@ function renderOverrides() {
     tr.innerHTML = `
       <td><input type="text" class="override-repo" placeholder="remy-worker"></td>
       <td><input type="text" class="override-branch" placeholder="master"></td>
-      <td><button class="remove-row" title="Remove">✕</button></td>
+      <td><button class="remove-row" title="${t('ext.button.remove')}">✕</button></td>
     `;
     tr.querySelector('.override-repo').value = row.repo;
     tr.querySelector('.override-branch').value = row.branch;
@@ -423,6 +558,7 @@ function clearDirty() {
   document.getElementById('dirty-indicator').hidden = true;
 }
 
+
 // --- Applying a preset ---
 // The dropdown does not represent the current state. The card shows the state; the dropdown is
 // merely an action that loads a template, so it snaps back to its placeholder as soon as one is
@@ -439,7 +575,7 @@ function applyPreset(select) {
 
   const current = state.buttons[kind][index].command.trim();
   const isCustom = current !== '' && !section(kind).presets.some(p => p.command === current);
-  if (isCustom && !confirm(`Button ${index} will be overwritten with the "${preset.name}" preset. Continue?`)) {
+  if (isCustom && !confirm(t('ext.confirm.presetOverwrite', index, preset.name))) {
     return;
   }
 
@@ -455,20 +591,23 @@ function applyPreset(select) {
 
 // --- Validation ---
 
+// A complete sentence per field, not a noun phrase spliced into one. `enter ${label}.` needed
+// `a face` to carry an English article, and an article is a fact about English grammar that no
+// other language here inflects the same way (D36: never assemble a translated clause).
 const REQUIRED_FIELDS = [
-  { field: 'face', label: 'a face' },
-  { field: 'label', label: 'a tooltip' },
-  { field: 'command', label: 'a command' },
+  { field: 'face', describe: (key, index) => t('ext.validate.face', key, index) },
+  { field: 'label', describe: (key, index) => t('ext.validate.tooltip', key, index) },
+  { field: 'command', describe: (key, index) => t('ext.validate.command', key, index) },
 ];
 
 function validateButtons() {
   for (const { kind } of SECTIONS) {
     const name = section(kind).storageKey;
     for (let i = 0; i < state.buttons[kind].length; i++) {
-      for (const { field, label } of REQUIRED_FIELDS) {
+      for (const { field, describe } of REQUIRED_FIELDS) {
         if (state.buttons[kind][i][field].trim()) continue;
         return {
-          message: `${name}[${i}]: enter ${label}.`,
+          message: describe(name, i),
           focus: cardElement(kind, i, `[data-field="${field}"]`),
         };
       }
@@ -490,7 +629,7 @@ function serializeOverrides() {
     if (!repo || !branch) {
       return {
         error: {
-          message: `Override ${i + 1}: enter both a repository and a main branch.`,
+          message: t('ext.validate.override.incomplete', i + 1),
           focus: overrideInput(i, repo ? '.override-branch' : '.override-repo'),
         },
       };
@@ -498,7 +637,7 @@ function serializeOverrides() {
     if (entries.has(repo)) {
       return {
         error: {
-          message: `Override ${i + 1}: the repository "${repo}" appears more than once.`,
+          message: t('ext.validate.override.duplicate', i + 1, repo),
           focus: overrideInput(i, '.override-repo'),
         },
       };
@@ -673,7 +812,7 @@ async function saveSettings() {
     } catch (error) {
       // The read that decides whether writing is safe failed, so writing is not safe. It used to
       // reject unhandled: no status, no refusal, and the save simply evaporated.
-      showStatus('error', `Could not save: ${error.message}`);
+      showStatus('error', t('ext.status.saveFailed', error.message));
       return;
     }
     const outcome = planSave({
@@ -704,7 +843,7 @@ async function saveSettings() {
       state.pendingWrite = payload;
       await chrome.storage.sync.set(outcome.write);
     } catch (error) {
-      showStatus('error', `Could not save: ${error.message}`);
+      showStatus('error', t('ext.status.saveFailed', error.message));
       return;
     }
     settleSave({ payload, cleaned, defaultMain, overrides, savedRevision });
@@ -739,7 +878,7 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // was adopted, the selection snapped back to the defaults, and Apply rewrote a candidate they had
   // declined. One predicate now guards the whole settlement.
   if (!nothingHappenedSince(savedRevision, state.revision)) {
-    showStatus('success', 'Settings saved. Changes made since then are not saved yet.');
+    showStatus('success', t('ext.status.savedWithPendingEdits'));
     return;
   }
   state.reviewTouched = false;
@@ -764,7 +903,7 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   setPlan(planMigration(editStateSnapshot(), version));
 
   clearDirty();
-  showStatus('success', 'Settings saved.');
+  showStatus('success', t('ext.status.saved'));
 }
 
 // Saving happens through the Save button alone. This only resets the view; storage is untouched.
@@ -783,7 +922,7 @@ function resetSettings() {
     // generation by construction — taking that as a decision keeps the notice from lingering over
     // settings that have nothing stale left in them.
     markReviewed();
-    showStatus('info', 'Reset to defaults. Press Save to apply.');
+    showStatus('info', t('ext.status.reset', t('ext.button.save')));
   });
 }
 
@@ -821,10 +960,10 @@ function migrationItemRow(item, { checkbox }) {
       <span class="mig-label"></span>
       <span class="mig-where"></span>
       ${checkbox ? `<span class="mig-source"></span>` : ''}
-      ${checkbox && item.effect === 'behavior-change' ? `<span class="mig-effect">behavior change</span>` : ''}
+      ${checkbox && item.effect === 'behavior-change' ? `<span class="mig-effect">${t('ext.migration.effect.behaviorChange')}</span>` : ''}
     </div>
   `;
-  row.querySelector('.mig-label').textContent = item.label || '(no tooltip)';
+  row.querySelector('.mig-label').textContent = item.label || t('ext.migration.noTooltip');
   row.querySelector('.mig-where').textContent = where;
   if (checkbox) {
     // 'verbatim' = this was one of our old presets; 'prefix' = you had edited it, and only the
@@ -877,8 +1016,8 @@ function renderMigration() {
   let intro = migrationDescription(plan.fromVersion);
   if (summary.reviewOnly) {
     intro = summary.informationalCount
-      ? 'Nothing here can be rewritten safely, but these commands still use the old form:'
-      : 'Nothing to change — your commands are already current. Press Got it to mark them as reviewed.';
+      ? t('ext.migration.intro.nothingSafe')
+      : t('ext.migration.intro.nothingToDo', t('ext.migration.gotIt'));
   }
   document.getElementById('migration-describe').textContent = intro;
 
@@ -899,10 +1038,10 @@ function renderMigration() {
   apply.hidden = summary.reviewOnly;
   apply.disabled = summary.nothingToApply;
   const keep = document.getElementById('migration-keep');
-  keep.textContent = summary.reviewOnly ? 'Got it' : 'Keep mine';
+  keep.textContent = summary.reviewOnly ? t('ext.migration.gotIt') : t('ext.migration.keep');
   document.getElementById('migration-hint').textContent = summary.reviewOnly
-    ? 'Dismissing this marks your settings as reviewed — press Save afterwards.'
-    : `${summary.selectedCount} of ${summary.actionableCount} selected. Applying fills the form; press Save to store it.`;
+    ? t('ext.migration.hint.reviewOnly', t('ext.button.save'))
+    : t('ext.migration.hint.selected', summary.selectedCount, summary.actionableCount, t('ext.button.save'));
 }
 
 // Fills the edit state with the selected rewrites. Storage is untouched until Save, exactly like
@@ -923,10 +1062,14 @@ function applyMigration() {
       renderButtons(kind);
     }
     markReviewed();
-    const missed = declined > 0
-      ? ` ${declined} changed since the preview was built and ${declined === 1 ? 'was' : 'were'} left alone.`
-      : '';
-    showStatus('info', `${applied} command${applied === 1 ? '' : 's'} updated in the form.${missed} Press Save to apply.`);
+    // Two complete messages, not one message with a clause bolted on. The English needed
+    // `command`/`commands` and `was`/`were` to agree with two different counts, and a translation
+    // cannot be assembled out of the pieces that made those agree (D31a/D46) — so the count moved
+    // behind a noun and a colon, where no language here inflects anything, and the two states each
+    // became a message of their own.
+    showStatus('info', declined > 0
+      ? t('ext.migration.appliedWithDeclined', applied, declined, t('ext.button.save'))
+      : t('ext.migration.applied', applied, t('ext.button.save')));
   });
 }
 
@@ -948,10 +1091,10 @@ function parseImportedSettings(raw) {
   try {
     data = JSON.parse(raw);
   } catch {
-    throw new Error('This file could not be read as JSON.');
+    throw new Error(t('ext.import.notJSON'));
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('The top level of the settings file is not an object.');
+    throw new Error(t('ext.import.notObject'));
   }
 
   // A file from a newer extension is refused whole, before anything is read out of it: we do not
@@ -990,7 +1133,7 @@ function parseImportedSettings(raw) {
   }
 
   if (Object.keys(settings).length === 0) {
-    throw new Error(`Nothing to import (one of ${BACKUP_KEYS.join(', ')} is required).`);
+    throw new Error(t('ext.import.nothingToImport', BACKUP_KEYS.join(', ')));
   }
   return { settings, skipped, unreadable, version };
 }
@@ -1002,13 +1145,13 @@ async function exportSettings() {
   } catch (error) {
     // An unhandled rejection here produced a button that did nothing and said nothing — and this is
     // the path a user takes precisely when they are trying not to lose their settings.
-    showStatus('error', `Could not export: ${error.message}`);
+    showStatus('error', t('ext.status.exportFailed', error.message));
     return;
   }
   // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
-    showStatus('error', 'No settings have been saved yet. Save first, then export.');
+    showStatus('error', t('ext.export.nothingSaved'));
     return;
   }
 
@@ -1021,7 +1164,7 @@ async function exportSettings() {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
 
-  if (state.dirty) showStatus('info', 'Unsaved changes were not included in the export.');
+  if (state.dirty) showStatus('info', t('ext.export.excludedUnsaved'));
 }
 
 // Saving happens through the Save button alone — this too only fills in the view and leaves storage
@@ -1061,7 +1204,7 @@ async function importSettings(file) {
     return;
   }
   if (file.size > MAX_IMPORT_BYTES) {
-    showStatus('error', 'The settings file is too large (256KB max).');
+    showStatus('error', t('ext.import.fileTooLarge'));
     return;
   }
 
@@ -1081,7 +1224,7 @@ async function importSettings(file) {
       // hands an old generation to content a newer extension wrote, and the next Save records it.
       mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
     } catch (error) {
-      showStatus('error', `Could not import: ${error.message}`);
+      showStatus('error', t('ext.status.importFailed', error.message));
       return;
     }
 
@@ -1102,8 +1245,13 @@ async function importSettings(file) {
     if (!applyImportedSettings(outcome.apply, mergedVersion)) return;
 
     const notes = [...imported.unreadable];
-    if (imported.skipped.length) notes.push(`skipped: ${imported.skipped.join(', ')}`);
-    showStatus('info', `Settings imported. Press Save to apply.${notes.length ? ` (${notes.join('; ')})` : ''}`);
+    if (imported.skipped.length) notes.push(t('ext.import.skippedNote', imported.skipped.join(', ')));
+    // The notes are a list of complete diagnostic sentences, not a clause of this one, which is why
+    // they may ride in a placeholder where the declined count above may not: what varies here is how
+    // many sentences follow, never the grammar of this one.
+    showStatus('info', notes.length
+      ? t('ext.status.importedWithNotes', t('ext.button.save'), notes.join('; '))
+      : t('ext.status.imported', t('ext.button.save')));
   } finally {
     state.importing = false;
     // Same settlement as the save: a change held while this ran gets asked again now
@@ -1419,7 +1567,7 @@ document.getElementById('migration-keep').addEventListener('click', () => {
   if (!requireLoaded()) return;
   editAndReview(() => {
     markReviewed();
-    showStatus('info', 'Marked as reviewed. Press Save to keep your commands as they are.');
+    showStatus('info', t('ext.migration.markedReviewed', t('ext.button.save')));
   });
 });
 
@@ -1487,7 +1635,7 @@ window.addEventListener('beforeunload', (e) => {
 // fresh attempt — a new generation, so an earlier answer that turns up late cannot win.
 document.getElementById('retry-btn').addEventListener('click', () => {
   hideLoadFailure();
-  showStatus('info', LOADING_MESSAGE);
+  showStatus('info', LOADING_MESSAGE());
   loadSettings();
 });
 

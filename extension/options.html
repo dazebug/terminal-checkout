@@ -343,105 +343,105 @@
   <main id="app" inert>
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
-    <p class="term-sub">PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window</p>
-    <button id="migration-badge" hidden>● Your saved buttons predate the current presets — review</button>
+    <p class="term-sub" data-i18n="ext.header.subtitle"></p>
+    <button id="migration-badge" hidden data-i18n="ext.migration.badge"></button>
     <!-- Raised as soon as another device's change arrives, so the warning is on screen before Save is
          pressed. Save re-reads and decides for itself: a change event can be missed, and a banner
          that never appeared must not be read as "nothing changed". -->
-    <p id="stale-banner" hidden>⚠ Settings changed on another device since this page loaded. Reload to see them — export first if you want to keep unsaved edits.</p>
+    <p id="stale-banner" hidden data-i18n="ext.banner.stale"></p>
   </header>
 
   <!-- Shown only when the stored settings were reviewed against an older generation of the presets.
        Applying fills the edit state and leaves the write to the same Save button as everything
        else — nothing here touches storage on its own. -->
   <section class="section" id="migration-section" hidden>
-    <h2 class="section-prompt"><span class="prompt">❯</span> update <span class="section-where">— saved commands versus the current presets</span></h2>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.update.title"></span></h2>
     <p class="help" id="migration-describe"></p>
     <div id="migration-actionable"></div>
     <div id="migration-informational"></div>
     <div style="margin-top:12px">
-      <button class="btn-primary" id="migration-apply">Apply selected</button>
-      <button class="btn-secondary" id="migration-keep">Keep mine</button>
+      <button class="btn-primary" id="migration-apply" data-i18n="ext.migration.apply"></button>
+      <button class="btn-secondary" id="migration-keep" data-i18n="ext.migration.keep"></button>
       <span class="add-hint" id="migration-hint"></span>
     </div>
   </section>
 
   <section class="section">
-    <h2 class="section-prompt"><span class="prompt">❯</span> buttons <span class="section-where">— PR pages</span></h2>
-    <p class="help">Buttons that sit next to the branch name on a PR page (up to 3). <b>Face</b> is what the button shows — a single emoji, several of them (🌳🤖), or a short name (Review, WT). <b>Tooltip</b> appears on hover, and picking a preset fills the card with that template.</p>
-    <p class="help">Drag the <code>⠿</code> handle on the left of a card, or use the <code>↑</code> <code>↓</code> keys, to reorder — this is the order the buttons appear in on GitHub, and clicking the extension icon runs the first one. <b>Duplicate</b> is for making another button like an existing one — the copy's tooltip gets a number such as <code>(1)</code> appended.</p>
-    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — the app fills this in from its repository base folder setting, so it works on every page)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(PR number, digits only)</span> <code>{branch}</code> <span class="faint">(head — the branch being merged)</span> <code>{base}</code> <span class="faint">(base — the branch it merges into)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class="faint">(branch with / replaced by _)</span></p>
-    <p class="help">Rewrites of presets we shipped are pre-checked. A command you customized is offered <b>unchecked</b> and marked as a behavior change: only its leading jump is replaced, and the rest of it will now run wherever the new entry clause lands. Every preset starts with <code>{cd}</code>. With no base folder set it is just <code>z {repo}</code>; with one, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally.</p>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.pr.title"></span></h2>
+    <p class="help" data-i18n="ext.section.pr.help1"></p>
+    <p class="help" data-i18n="ext.section.pr.help2"></p>
+    <p class="help" data-i18n="ext.section.pr.variables"></p>
+    <p class="help" data-i18n="ext.section.pr.migrationHelp"></p>
     <div id="pr-buttons"></div>
     <div style="margin-top:10px">
-      <button class="btn-secondary" id="pr-add">+ Add Button</button>
-      <span class="add-hint" id="pr-add-hint" hidden>You can add up to 3 buttons.</span>
+      <button class="btn-secondary" id="pr-add" data-i18n="ext.button.addButton"></button>
+      <span class="add-hint" id="pr-add-hint" hidden data-i18n="ext.button.addLimit"></span>
     </div>
   </section>
 
   <section class="section">
-    <h2 class="section-prompt"><span class="prompt">❯</span> issueButtons <span class="section-where">— Issue pages</span></h2>
-    <p class="help">Buttons that sit next to the status badge (Open/Closed) on an issue page (up to 3). They are configured separately from the PR buttons, and on an issue page clicking the extension icon runs the first button here. Reordering (drag <code>⠿</code>, or <code>↑</code> <code>↓</code>) and duplicating work just like they do for PR buttons.</p>
-    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class="faint">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable.</p>
-    <p class="help">A claude input that starts with <code>!</code> is typed into claude's shell mode, so the command really runs in that session — the default preset uses <code>gh</code> to put the issue body, its comments and the issues that mention it in front of claude. Consecutive <code>!</code> inputs are typed as one line.</p>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.issue.title"></span></h2>
+    <p class="help" data-i18n="ext.section.issue.help"></p>
+    <p class="help" data-i18n="ext.section.issue.variables"></p>
+    <p class="help" data-i18n="ext.section.issue.claudeHelp"></p>
     <div id="issue-buttons"></div>
     <div style="margin-top:10px">
-      <button class="btn-secondary" id="issue-add">+ Add Button</button>
-      <span class="add-hint" id="issue-add-hint" hidden>You can add up to 3 buttons.</span>
+      <button class="btn-secondary" id="issue-add" data-i18n="ext.button.addButton"></button>
+      <span class="add-hint" id="issue-add-hint" hidden data-i18n="ext.button.addLimit"></span>
     </div>
   </section>
 
   <section class="section">
-    <h2 class="section-prompt"><span class="prompt">❯</span> repoButtons <span class="section-where">— Repository pages</span></h2>
-    <p class="help">Buttons that sit next to the repository name in the header of a repository page (code, issue list, Actions, and so on) — up to 3. Unlike the PR and issue buttons these look like GitHub's green action button, so a name such as <code>Open in Terminal</code> suits the <b>face</b> better than an emoji. On GitHub pages that are neither a PR nor an issue, clicking the extension icon runs the first button here.</p>
-    <p class="help">Available variables: <code>{cd}</code> <span class="faint">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — a repository page has neither a PR or issue number nor a branch, so <code>{number}</code>, the <code>{branch}</code> family, and <code>{base}</code> are unavailable. <code>{main}</code> is resolved from the repository default branch GitHub embeds in the page — a <code>master</code> repository comes out right without an override.</p>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.repo.title"></span></h2>
+    <p class="help" data-i18n="ext.section.repo.help"></p>
+    <p class="help" data-i18n="ext.section.repo.variables"></p>
     <div id="repo-buttons"></div>
     <div style="margin-top:10px">
-      <button class="btn-secondary" id="repo-add">+ Add Button</button>
-      <span class="add-hint" id="repo-add-hint" hidden>You can add up to 3 buttons.</span>
+      <button class="btn-secondary" id="repo-add" data-i18n="ext.button.addButton"></button>
+      <span class="add-hint" id="repo-add-hint" hidden data-i18n="ext.button.addLimit"></span>
     </div>
   </section>
 
   <section class="section">
-    <h2 class="section-prompt"><span class="prompt">❯</span> main branch</h2>
-    <p class="help">How <code>{main}</code> is resolved: per-repository override → detected from the page → the default below. Detection reads the base branch on a PR page, and the repository default branch on repository and issue pages — the setting below is the fallback for when detection fails. To always use the branch a PR will actually be merged into, use <code>{base}</code>, which skips both the override and the default.</p>
-    <label for="default-main">Default</label>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.main.title"></span></h2>
+    <p class="help" data-i18n="ext.section.main.help"></p>
+    <label for="default-main" data-i18n="ext.field.defaultMain"></label>
     <input type="text" id="default-main" placeholder="main" style="width:200px; margin-bottom:18px">
     <table class="override-table">
       <thead>
         <tr>
-          <th style="width:45%">repository</th>
-          <th style="width:45%">main branch</th>
+          <th style="width:45%" data-i18n="ext.table.repository"></th>
+          <th style="width:45%" data-i18n="ext.table.mainBranch"></th>
           <th style="width:10%"></th>
         </tr>
       </thead>
       <tbody id="overrides-body"></tbody>
     </table>
-    <div class="override-empty" id="overrides-empty" hidden>No overrides yet.</div>
-    <button class="btn-secondary" id="add-override" style="margin-top:8px">+ Add Override</button>
+    <div class="override-empty" id="overrides-empty" hidden data-i18n="ext.override.empty"></div>
+    <button class="btn-secondary" id="add-override" style="margin-top:8px" data-i18n="ext.button.addOverride"></button>
   </section>
 
   <section class="section">
-    <h2 class="section-prompt"><span class="prompt">❯</span> backup <span class="section-where">— export, import, account sync</span></h2>
-    <p class="help">Settings (PR, issue, and repository buttons, and the main branch) are stored in Chrome's account-synced area (<code>storage.sync</code>). This extension has a fixed ID (the manifest key), so any two Chrome profiles signed in to the <b>same Google account</b> with "Extensions" enabled in sync settings share these settings automatically. Export and import are for moving settings without an account, or for keeping a file backup.</p>
-    <p class="help">Export downloads the <b>saved</b> settings as a file; import only fills in the form — nothing takes effect until you press <b>Save</b>.</p>
-    <p class="help">The file also records which generation of the presets it was written against. Importing an older backup offers the same update notice as stored settings do — and since a file may cover only part of your settings, the notice then reviews the whole form, not just the keys the file carried. A backup written by a <b>newer</b> extension is refused rather than half-read; update the extension first.</p>
+    <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.backup.title"></span></h2>
+    <p class="help" data-i18n="ext.section.backup.help1"></p>
+    <p class="help" data-i18n="ext.section.backup.help2"></p>
+    <p class="help" data-i18n="ext.section.backup.help3"></p>
     <div style="display:flex; gap:10px; margin-top:10px">
-      <button class="btn-secondary" id="export-btn">Export (JSON)</button>
-      <button class="btn-secondary" id="import-btn">Import…</button>
+      <button class="btn-secondary" id="export-btn" data-i18n="ext.button.export"></button>
+      <button class="btn-secondary" id="import-btn" data-i18n="ext.button.import"></button>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
     </div>
   </section>
 
   <div class="actions">
-    <button class="btn-primary" id="save-btn">Save</button>
-    <button class="btn-secondary" id="reset-btn">Reset to Defaults</button>
-    <span id="dirty-indicator" hidden>● Unsaved changes</span>
+    <button class="btn-primary" id="save-btn" data-i18n="ext.button.save"></button>
+    <button class="btn-secondary" id="reset-btn" data-i18n="ext.button.reset"></button>
+    <span id="dirty-indicator" hidden data-i18n="ext.status.unsaved"></span>
   </div>
   </main>
 
   <div id="load-error" hidden>
-    <button class="btn-secondary" id="retry-btn">Retry</button>
+    <button class="btn-secondary" id="retry-btn" data-i18n="ext.button.retry"></button>
   </div>
   <div id="status" class="status"></div>
 

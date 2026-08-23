@@ -76,7 +76,7 @@ test('the document language attribute is the resolved tag, not a translation', (
   assert.equal(applyDocumentLanguage('ko', undefined), null, 'it reached for a document that is not there');
 });
 
-test('the key spaces are separate before there are keys to sort', () => {
+test('the key spaces are separate, whatever is in them', () => {
   for (const tag of TC_I18N_LOCALES) {
     for (const key of Object.keys(globalThis.TC_I18N[tag])) {
       assert.ok(key.startsWith('ext.'), `${tag} carries ${key}, which is not in the extension's space`);
@@ -327,4 +327,222 @@ test('the generation is taken off a response before a failure is raised (lint)',
   assert.ok(extract < raise, 'the failure is raised before the generation is read, which loses it');
   // and every request takes a number of ours, which is what the fence orders by
   assert.ok(/const seq = \+\+nativeRequestSeq;/.test(source), 'requests are no longer numbered');
+});
+
+// ---------------------------------------------------------------------------------------------
+// The options page's own catalogue (item 21).
+//
+// The page carries no prose: `options.html` names messages (`data-i18n`) and `options.js` asks for
+// them. Which means the two questions a catalogue gate has to answer — "is every key it can ask for
+// there" and "is every key there asked for" — are **enumerations** rather than estimates, and these
+// tests are what keeps them that way.
+// ---------------------------------------------------------------------------------------------
+
+const optionsJs = read('options.js');
+const optionsHtml = read('options.html');
+
+// Every message id the page can name. `options.js` can only name one with a literal (checked
+// below), and `options.html` names them in an attribute — so between them this is the whole set.
+const keysInJs = new Set([...optionsJs.matchAll(/'(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
+const keysInHtml = new Set([...optionsHtml.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1]));
+const referencedKeys = new Set([...keysInJs, ...keysInHtml]);
+
+// Which half of the text/markup split a key is on. A key reached through `t(` becomes textContent,
+// a title or a `confirm()`; a key reached through `tHTML(` or `data-i18n` becomes innerHTML.
+const textKeys = new Set([...optionsJs.matchAll(/\bt\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
+const markupKeys = new Set([
+  ...[...optionsJs.matchAll(/\btHTML\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
+  ...keysInHtml,
+]);
+
+const placeholdersOf = value => (value.match(/%\d+\$[sd]/g) ?? []).sort();
+const tagsOf = value => (value.match(/<\/?[a-z][^>]*>/g) ?? []).map(tag => tag.replace(/\s+class="[^"]*"/, '')).sort();
+const codeSpansOf = value => (value.match(/<code>[^<]*<\/code>/g) ?? []).sort();
+
+test('en and ko carry the same keys, and every value says something', () => {
+  const en = globalThis.TC_I18N.en;
+  const ko = globalThis.TC_I18N.ko;
+  assert.deepEqual(Object.keys(ko).sort(), Object.keys(en).sort());
+  assert.ok(Object.keys(en).length >= 89, `the catalogue shrank to ${Object.keys(en).length}`);
+  for (const [tag, table] of [['en', en], ['ko', ko]]) {
+    for (const [key, value] of Object.entries(table)) {
+      assert.equal(typeof value, 'string', `${tag}/${key}`);
+      assert.ok(value.trim().length > 0, `${tag}/${key} is empty`);
+    }
+  }
+  // ja and zh are item 24's; leaving them empty here is the state, not an oversight
+  for (const tag of ['ja', 'zh-Hans', 'zh-Hant']) {
+    assert.deepEqual(Object.keys(globalThis.TC_I18N[tag]), [], `${tag} was filled early`);
+  }
+});
+
+test('the page can only ask for keys the catalogue has, and asks for all of them', () => {
+  const en = Object.keys(globalThis.TC_I18N.en);
+  const missing = [...referencedKeys].filter(key => !en.includes(key));
+  const unreferenced = en.filter(key => !referencedKeys.has(key));
+  assert.deepEqual(missing, [], 'the page names a message that is not in the catalogue');
+  assert.deepEqual(unreferenced, [], 'the catalogue carries a message nothing asks for');
+});
+
+test('no message id is computed — the source literals are the whole set', () => {
+  // The one call that takes its key from data rather than from a literal is the static fill, and
+  // its data is an attribute set in a file we ship. Everything else names a literal, which is what
+  // makes "referenced" above an enumeration instead of a guess. (The app does this with a
+  // `StaticString` parameter; JavaScript has no such type, so the property is asserted here.)
+  const dynamic = [...optionsJs.matchAll(/\bt(?:HTML)?\(([^'\s)][^,)]*)/g)].map(m => m[1].trim());
+  assert.deepEqual(dynamic, ['key', 'key', 'key'],
+    'a message id is being computed somewhere other than the two declarations and the static fill');
+  assert.ok(/node\.innerHTML = tHTML\(key, \.\.\.args\)/.test(optionsJs), 'the static fill moved');
+});
+
+test('placeholders match across locales, key by key', () => {
+  // A translation that drops `%1$s` loses the label it was quoting; one that invents `%3$d` prints
+  // the placeholder back at the user. Neither shows up as an error anywhere else.
+  for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
+    assert.deepEqual(placeholdersOf(globalThis.TC_I18N.ko[key]), placeholdersOf(value), `ko/${key}`);
+  }
+});
+
+test('text and markup are separate halves, and nothing is on both', () => {
+  // The rule the `t` / `tHTML` split exists for: a value that will be parsed as HTML must never be
+  // reachable by the path that also carries what a user typed. A repository name goes into
+  // `ext.validate.override.duplicate`, which is set with textContent — so it can only ever be text.
+  //
+  // The two sets are allowed to overlap and do: `ext.button.save` is a button's own label *and* the
+  // label six sentences quote. What may not happen is the one direction that breaks something — a
+  // value carrying markup being asked for as text, where the tags would be drawn as characters.
+  for (const key of textKeys) {
+    for (const tag of ['en', 'ko']) {
+      assert.deepEqual(tagsOf(globalThis.TC_I18N[tag][key]), [], `${tag}/${key} carries markup into textContent`);
+    }
+  }
+  // and the converse, stated as the set it is: everything with a tag in it is markup-only
+  for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
+    if (!tagsOf(value).length) continue;
+    assert.ok(!textKeys.has(key), `${key} has markup and is asked for as text`);
+    assert.ok(markupKeys.has(key), `${key} has markup and nothing asks for it as markup`);
+  }
+  assert.ok(textKeys.size > 30 && markupKeys.size > 30, 'the halves stopped being populated');
+});
+
+test('markup in a value is balanced, and the same in every locale', () => {
+  // Markup rides in a value only when it decorates translated text — `<b>` on an emphasised word,
+  // `<span class="faint">` on a gloss. The alternative is handing JavaScript the pieces of a
+  // sentence to put back together, which is the defect the app unlearned across 25 fragments.
+  const allowed = new Set(['<b>', '</b>', '<span>', '</span>', '<code>', '</code>']);
+  for (const key of markupKeys) {
+    const tags = tagsOf(globalThis.TC_I18N.en[key]);
+    for (const tag of tags) assert.ok(allowed.has(tag), `${key} uses ${tag}`);
+    assert.equal(tags.filter(t => t === '<b>').length, tags.filter(t => t === '</b>').length, `${key} <b>`);
+    assert.equal(tags.filter(t => t === '<span>').length, tags.filter(t => t === '</span>').length, `${key} <span>`);
+    assert.equal(tags.filter(t => t === '<code>').length, tags.filter(t => t === '</code>').length, `${key} <code>`);
+    assert.deepEqual(tagsOf(globalThis.TC_I18N.ko[key]), tags, `ko/${key} has a different tag set`);
+  }
+});
+
+test('what a <code> span holds is a literal, so it is identical in every locale', () => {
+  // This is the half of the markup policy that matters: a tag around translated text may be
+  // translated with it, but `<code>{branch_underbar}</code>` is a variable name, and a translation
+  // that helpfully localises it produces a command the app rejects as an unknown variable.
+  let compared = 0;
+  for (const key of markupKeys) {
+    const spans = codeSpansOf(globalThis.TC_I18N.en[key]);
+    if (!spans.length) continue;
+    assert.deepEqual(codeSpansOf(globalThis.TC_I18N.ko[key]), spans, `ko/${key} rewrote a literal`);
+    compared += spans.length;
+  }
+  assert.ok(compared >= 20, `only ${compared} literals were compared`);
+});
+
+test('prose that names a control receives the label, it does not spell it out again', () => {
+  // D28. The app found this class already broken — body text saying `[권한 요청]` next to a button
+  // reading `iTerm2 권한 요청` — and the same drift was here: one paragraph called the field
+  // `Face` and another called it `face`. A quotation is a relation between two messages now, so a
+  // translator cannot make them disagree.
+  const quoting = {
+    'ext.section.pr.help1': ['ext.field.face', 'ext.field.tooltip'],
+    'ext.section.pr.help2': ['ext.card.duplicate'],
+    'ext.section.repo.help': ['ext.field.face'],
+    'ext.section.backup.help2': ['ext.button.save'],
+    'ext.status.reset': ['ext.button.save'],
+    'ext.migration.intro.nothingToDo': ['ext.migration.gotIt'],
+    'ext.migration.hint.reviewOnly': ['ext.button.save'],
+    'ext.migration.hint.selected': ['ext.button.save'],
+    'ext.migration.applied': ['ext.button.save'],
+    'ext.migration.appliedWithDeclined': ['ext.button.save'],
+    'ext.migration.markedReviewed': ['ext.button.save'],
+    'ext.status.imported': ['ext.button.save'],
+    'ext.status.importedWithNotes': ['ext.button.save'],
+  };
+  for (const [key, labels] of Object.entries(quoting)) {
+    for (const tag of ['en', 'ko']) {
+      const value = globalThis.TC_I18N[tag][key];
+      assert.ok(placeholdersOf(value).length >= labels.length, `${tag}/${key}: fewer placeholders than labels`);
+    }
+    // The relation itself, read off the source: wherever this message is asked for, the label
+    // messages it quotes are asked for in the same breath. This is what a translator cannot break —
+    // the value never contains the label, only a place for it.
+    const windows = [...optionsJs.matchAll(new RegExp(`'${key.replace(/\./g, '\\.')}'`, 'g'))]
+      .map(m => optionsJs.slice(m.index, m.index + 260));
+    assert.ok(windows.length > 0, `${key} is not asked for anywhere`);
+    for (const label of labels) {
+      assert.ok(referencedKeys.has(label), `${key} quotes a missing ${label}`);
+      assert.ok(windows.some(w => w.includes(`'${label}'`)), `${key} does not receive ${label}`);
+    }
+    // English also has to be free of the spelled-out label. Only English: a Korean label is a short
+    // word that turns up inside ordinary ones (`저장` lives inside `저장된`), so the same check
+    // there reports a hit that is not one — the relation above is what covers both languages.
+    const english = globalThis.TC_I18N.en[key];
+    for (const label of labels) {
+      const literal = globalThis.TC_I18N.en[label];
+      const spelledOut = new RegExp(`(^|[^\\w>])${literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w<]|$)`);
+      assert.ok(!spelledOut.test(english), `en/${key} spells "${literal}" out instead of quoting it`);
+    }
+  }
+});
+
+test('a count sits behind a noun, and the two outcomes are two messages', () => {
+  // D31a. The English needed `command`/`commands` and `was`/`were` to agree with two counts, and a
+  // translation cannot be assembled out of the pieces that made them agree — so the count moved
+  // behind a noun and a colon, where nothing inflects, and each outcome became its own message.
+  for (const tag of ['en', 'ko']) {
+    for (const key of ['ext.migration.applied', 'ext.migration.appliedWithDeclined']) {
+      const value = globalThis.TC_I18N[tag][key];
+      assert.ok(!/\(s\)/.test(value), `${tag}/${key} still carries an English plural marker`);
+    }
+  }
+  assert.match(globalThis.TC_I18N.en['ext.migration.applied'], /^Commands updated in the form: %1\$d\./);
+  // and the branch that produced the plural is gone from the source
+  assert.ok(!/command\$\{applied === 1/.test(optionsJs), 'the plural branch is still in options.js');
+  assert.ok(!/\? 'was' : 'were'/.test(optionsJs), 'the was/were branch is still in options.js');
+});
+
+test('the markup ships no prose, so there is nothing to paint in the wrong language', () => {
+  // The first paint is the whole question on this page: unlike a GitHub page, which the user is
+  // already reading when a button appears, the options page is text from edge to edge the moment it
+  // opens. English left in the markup would be painted first and translated afterwards for every
+  // user whose language is not English — so the markup holds ids and the fill happens while the
+  // parser is still blocked on options.js, from `chrome.i18n.getUILanguage()`, which answers
+  // without waiting. The cache the app fills corrects it a storage round trip later.
+  for (const match of optionsHtml.matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
+    assert.equal(match[1].trim(), '', `a localized node still ships prose: ${match[0].slice(0, 70)}`);
+  }
+  // The synchronous first answer, and the asynchronous correction, in that order
+  const first = optionsJs.indexOf('uiLocale = localeToRenderIn(null, browserLanguage());');
+  const fill = optionsJs.indexOf('applyStaticText();\n\n// And the app');
+  const adopt = optionsJs.indexOf('adoptLocaleFromCache();\n');
+  assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
+  assert.ok(adopt > fill, 'the cache is read before the synchronous fill, which reinstates the gap');
+});
+
+test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
+  const { formatMessage } = vm.runInThisContext('({ formatMessage })');
+  assert.equal(formatMessage('Press %1$s to apply.', ['Save']), 'Press Save to apply.');
+  // Reordered by the translation, which is the whole reason the digits are there
+  assert.equal(formatMessage('%2$d개 중 %1$d개 선택됨', [3, 7]), '7개 중 3개 선택됨');
+  assert.equal(formatMessage('no placeholders', ['x']), 'no placeholders');
+  assert.equal(formatMessage('%1$s', []), '%1$s', 'a missing argument printed undefined');
+  assert.equal(formatMessage('%1$s', [0]), '0', 'a falsy argument was treated as missing');
+  // A value is data, not a format language: nothing else is touched, including what an argument says
+  assert.equal(formatMessage('100% sure %1$s', ['— %2$s']), '100% sure — %2$s');
 });

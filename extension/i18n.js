@@ -50,6 +50,30 @@ function i18nText(key, locale, dictionaries = globalThis.TC_I18N) {
 // member (`constructor`, `toString`), and the same rule already applies to every settings-derived
 // lookup in `defaults.js`.
 
+// The placeholders a message may carry, and the only thing in a value that is interpreted at all.
+//
+// **Positional** (`%1$s`, `%2$d`) rather than bare `%s`, because a translation reorders its
+// arguments and a bare marker cannot say which one it wanted — Korean puts the count before the
+// noun where English puts it after. The digit is the argument, wherever the sentence needs it.
+//
+// A `%d` is spelled differently from a `%s` for the reader's sake only; nothing here formats a
+// number, because a locale-aware number format is a decision this project has not made and a silent
+// one is worse than none.
+//
+// An argument that was not supplied leaves its placeholder standing rather than printing
+// `undefined`: `%2$s` on screen is a hole somebody reports, and `undefined` is one they screenshot
+// without knowing what it means.
+//
+// It lives here rather than beside its first caller so that there is one of it. A second formatter
+// written for the next caller is the same defect class as the second normalization the button
+// fingerprint used to carry — two implementations of one rule, agreeing until they do not.
+function formatMessage(template, args = []) {
+  return String(template).replace(/%(\d+)\$[sd]/g, (whole, position) => {
+    const value = args[Number(position) - 1];
+    return value === undefined ? whole : String(value);
+  });
+}
+
 // The document's own language attribute — the one string here that is not a translation but the
 // resolved tag itself, which is why it is applied rather than looked up. Screen readers and
 // hyphenation read it, and a page that says `lang="en"` while rendering Korean is telling assistive
