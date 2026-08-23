@@ -18,38 +18,63 @@
 // snapshot of the preset's fields (`toStoredButton`), and putting a persistent id into the stored
 // schema would be a SETTINGS_VERSION bump, which is a different piece of work entirely.
 //
+// A preset. Its `id` and `command` are fixed; its display text is resolved **when it is read**
+// rather than when this file loads.
+//
+// `name` and `face` are accessors over the dictionaries, and that is the whole mechanism. It exists
+// because the alternative kept going wrong: a value read at load time is the language the context
+// started in, and every consumer that copies it afterwards copies that language — the options page's
+// preset dropdown had exactly this shape, and so did the app's settings window.
+//
+// **Measured, and it cost a green test to find: object spread evaluates accessors.** The first
+// version of this built the pair separately and spread it into each preset literal, and `{ ...it }`
+// read both getters and wrote their values, so every name froze at load exactly as before — the
+// mechanism defeating itself in one character. A preset is therefore *built* here and never spread.
+//
+// The face is a key only when it is **text on the page**. The PR and issue presets show an emoji,
+// which no language rewrites, so those keep a literal — and a literal is also what keeps `isTextFace`
+// answering the same way in every language for them.
+function definePreset({ id, nameKey, faceKey, face, command, claudeInputs }) {
+  const preset = { id, command };
+  if (claudeInputs) preset.claudeInputs = claudeInputs;
+  Object.defineProperty(preset, 'name', { get: () => tr(nameKey), enumerable: true });
+  if (faceKey) Object.defineProperty(preset, 'face', { get: () => tr(faceKey), enumerable: true });
+  else preset.face = face;
+  return preset;
+}
+
 // PR pages: buttons next to the branch name. The { } is grouping, not a subshell — cd has to stick
 // in the current shell, so ( ) must not be used
 const PR_PRESETS = [
-  {
-    id: 'pr.checkout', name: 'Checkout Branch', face: '⏏️',
-    // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
+  // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
+  definePreset({
+    id: 'pr.checkout', nameKey: 'ext.preset.pr.checkout', face: '⏏️',
     command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
-  },
-  {
-    id: 'pr.checkoutClaude', name: 'Checkout + Claude', face: '🤖',
+  }),
+  definePreset({
+    id: 'pr.checkoutClaude', nameKey: 'ext.preset.pr.checkoutClaude', face: '🤖',
     command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude',
-  },
-  {
-    id: 'pr.worktreeClaude', name: 'Worktree + Claude', face: '🌳',
+  }),
+  definePreset({
+    id: 'pr.worktreeClaude', nameKey: 'ext.preset.pr.worktreeClaude', face: '🌳',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude',
-  },
-  {
-    id: 'pr.worktree', name: 'Worktree', face: '🪵',
+  }),
+  definePreset({
+    id: 'pr.worktree', nameKey: 'ext.preset.pr.worktree', face: '🪵',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}',
-  },
-  {
-    id: 'pr.review', name: 'Review PR (claude)', face: '🔍',
+  }),
+  // A leading `!` is typed into claude's shell mode, so the command really runs in that session
+  definePreset({
+    id: 'pr.review', nameKey: 'ext.preset.pr.review', face: '🔍',
     command: '{cd} && claude',
-    // A leading `!` is typed into claude's shell mode, so the command really runs in that session
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
-  },
+  }),
 ];
 
 // Issue pages: buttons on the status badge row. There is no head branch, so the {branch} family and {base} are unavailable
 const ISSUE_PRESETS = [
-  {
-    id: 'issue.read', name: 'Read Issue (claude)', face: '📋',
+  definePreset({
+    id: 'issue.read', nameKey: 'ext.preset.issue.read', face: '📋',
     command: '{cd} && claude',
     claudeInputs: [
       '!gh issue view {number}',
@@ -57,35 +82,35 @@ const ISSUE_PRESETS = [
       // Numbers of the issues and PRs that mention this issue. The --json fields only surface the "closing PR", so use the timeline
       '!gh api repos/{owner}/{repo}/issues/{number}/timeline --jq \'[.[]|select(.event=="cross-referenced")|.source.issue.number]\'',
     ],
-  },
-  {
-    id: 'issue.startWork', name: 'Start Work on Issue', face: '🌳',
+  }),
+  definePreset({
+    id: 'issue.startWork', nameKey: 'ext.preset.issue.startWork', face: '🌳',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
     claudeInputs: ['!gh issue view {number} --comments'],
-  },
-  {
-    id: 'issue.open', name: 'Open Issue', face: '📂',
+  }),
+  definePreset({
+    id: 'issue.open', nameKey: 'ext.preset.issue.open', face: '📂',
     command: '{cd}',
     claudeInputs: [],
-  },
+  }),
 ];
 
 // Repository pages: buttons next to the repository name in the header. Unlike PR and issue buttons
 // these look like GitHub's green action button, so a name reads more naturally than a short emoji
 // as the face
 const REPO_PRESETS = [
-  {
-    id: 'repo.open', name: 'Open in Terminal', face: 'Open in Terminal',
+  definePreset({
+    id: 'repo.open', nameKey: 'ext.preset.repo.open', faceKey: 'ext.preset.repo.open',
     command: '{cd}',
-  },
-  {
-    id: 'repo.openClaude', name: 'Open + Claude', face: 'Open + Claude',
+  }),
+  definePreset({
+    id: 'repo.openClaude', nameKey: 'ext.preset.repo.openClaude', faceKey: 'ext.preset.repo.openClaude',
     command: '{cd} && claude',
-  },
-  {
-    id: 'repo.updateMain', name: 'Update main', face: 'main ⤓',
+  }),
+  definePreset({
+    id: 'repo.updateMain', nameKey: 'ext.preset.repo.updateMain', faceKey: 'ext.preset.repo.updateMain.face',
     command: '{cd} && git checkout {main} && git pull --ff-only',
-  },
+  }),
 ];
 
 // The preset an id names, or null. A list search rather than a keyed object: an id arrives from a
@@ -112,8 +137,10 @@ function defaultFromPreset(presets, id) {
   if (!preset) throw new Error(`No preset with id ${id}`);
   return {
     presetId: preset.id,
-    face: preset.face,
-    label: preset.name,
+    // Read through to the preset, so the button drawn when nothing is stored is in the language
+    // being drawn right now rather than the one this file was loaded in
+    get face() { return preset.face; },
+    get label() { return preset.name; },
     command: preset.command,
     claudeInputs: [...(preset.claudeInputs || [])],
   };
@@ -504,8 +531,20 @@ function clickMatchesWhatWasShown(button, shown) {
   return shown === undefined || buttonFingerprint(button) === shown;
 }
 
-// What a mismatch reports. It reaches the user on the button itself, through the {success:false}
-// response the content script already inspects, so it has to say what to do next.
+// What a mismatch reports — **and where it actually goes, which is not where this used to claim**.
+//
+// The old wording here said it "reaches the user on the button itself". Traced: the content script
+// does inspect the `{success:false}` response and does throw, but both click handlers catch that
+// throw, put a phase marker on the button (`Error!` / `❌`) and send the message to `console.error`.
+// **No error text is drawn on a GitHub page at all** — the only strings a button ever shows are its
+// face, its tooltip and those phase markers.
+//
+// So this string is a diagnostic today, and it stays English (D13/D27) — but it is not an ordinary
+// one, because it is written as an instruction to a user and it will become locale-dependent the
+// moment anything displays it. What that would take is not a translation: the message is composed in
+// the **service worker**, which draws nothing and has no render locale, so displaying it properly
+// means sending a message *id* to the content script and letting the side that knows the language
+// render it. That is a protocol change, and it is the trigger to revisit this.
 const BUTTON_CHANGED_ERROR =
   'This button no longer matches your saved settings — reload the page and try again.';
 
@@ -603,7 +642,11 @@ function appendButton(buttons, { presets, defaults }) {
   if (buttons.length >= MAX_BUTTONS) return buttons;
   const used = new Set(buttons.map(button => button.face));
   const face = presets.map(preset => preset.face).find(f => !used.has(f)) || defaults[0].face;
-  return [...buttons, adoptButton({ face, label: 'New Button', command: '' })];
+  // The label is resolved now and **stored as text**, so it is a snapshot of the language the
+  // button was created in — the same class as a saved command being a snapshot of the preset it came
+  // from. Making it follow the language later would mean a persistent id in the stored schema, and
+  // that is a SETTINGS_VERSION bump this work deliberately does not make.
+  return [...buttons, adoptButton({ face, label: tr('ext.button.newButton'), command: '' })];
 }
 
 // A new array with button `from` moved "before" card `insertBefore`, indexed against the original.

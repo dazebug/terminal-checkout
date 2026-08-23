@@ -9,6 +9,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
+// The options page's order, dictionaries first: both files resolve their sentences when they are
+// read, so both need `tr` — running them without it was testing a load order that never happens.
+vm.runInThisContext(read('i18n.js'));
+for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
+  vm.runInThisContext(read(`_i18n/${tag}.js`));
+}
 vm.runInThisContext(read('defaults.js'));
 vm.runInThisContext(read('migrations.js'));
 
@@ -604,11 +610,11 @@ test('a save onto a settings object that moved is refused, not merged', () => {
   const outcome = planSave({ capturedSnapshot: loadedByA, liveSnapshot: savedByB, payload: payloadFromA });
   assert.equal(outcome.refused, true);
   assert.equal(outcome.write, undefined, 'nothing may be written');
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
   // The way out has to be in the message: what happened, how to see it, how not to lose your edits
-  assert.match(SAVE_CONFLICT_MESSAGE, /another device/i);
-  assert.match(SAVE_CONFLICT_MESSAGE, /reload/i);
-  assert.match(SAVE_CONFLICT_MESSAGE, /export/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /another device/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /reload/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /export/i);
   // B's settings stay exactly as B left them
   assert.deepEqual(savedByB, { buttons: [{ command: '{cd} && claude' }], version: 1 });
 });
@@ -774,8 +780,8 @@ test('a failed load leaves the page shut, and says how to reopen it', () => {
   // The gate must stay shut — opening it would bring back writing an empty settings object — so the
   // way out is a retry, and the message has to offer one.
   assert.equal(shouldAcceptUserAction(false), false);
-  assert.match(LOAD_FAILED_MESSAGE, /could not|failed/i);
-  assert.match(LOAD_FAILED_MESSAGE, /retry/i);
+  assert.match(LOAD_FAILED_MESSAGE(), /could not|failed/i);
+  assert.match(LOAD_FAILED_MESSAGE(), /retry/i);
 });
 
 // --- An async task settles against the world it started in (class (a)) ---
@@ -801,7 +807,7 @@ test('a save writes against the world it started in, not the one adoption left b
   });
   assert.equal(outcome.refused, true, 'S0 must not be written over S1');
   assert.equal(outcome.write, undefined);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
 });
 
 test('a change that arrived during the save refuses it even if the live read raced', () => {
@@ -815,7 +821,7 @@ test('a change that arrived during the save refuses it even if the live read rac
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
 });
 
 test('a save whose page reloaded under it is refused rather than written', () => {
@@ -829,8 +835,8 @@ test('a save whose page reloaded under it is refused rather than written', () =>
     appliedGenerationAtStart: 1, appliedGenerationNow: 2,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
-  assert.match(SAVE_RELOADED_MESSAGE, /save again/i);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE());
+  assert.match(SAVE_RELOADED_MESSAGE(), /save again/i);
 });
 
 test('only one save is in flight at a time', () => {
@@ -858,8 +864,8 @@ test('an import that finished reading after the form moved is refused, not appli
   });
   assert.equal(refused.refused, true);
   assert.equal(refused.apply, undefined);
-  assert.equal(refused.message, IMPORT_STALE_MESSAGE);
-  assert.match(IMPORT_STALE_MESSAGE, /import again/i);
+  assert.equal(refused.message, IMPORT_STALE_MESSAGE());
+  assert.match(IMPORT_STALE_MESSAGE(), /import again/i);
 
   const reloaded = planImport({
     revisionAtStart: 4, revisionNow: 4, generationAtStart: 1, generationNow: 2, settings: {},
@@ -952,8 +958,11 @@ test('a bad entry inside a good key is counted per key, not silently dropped', (
   });
   assert.equal(adopted.settings.buttons.length, 1);
   assert.deepEqual(adopted.skippedByKey, { buttons: 1 });
-  assert.deepEqual(describeSkipped({ buttons: 1 }), ['1 entry in buttons could not be used and was skipped']);
-  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['2 entries in issueButtons could not be used and were skipped']);
+  // One shape for both counts. The English used to inflect `entry`/`entries` and `was`/`were`
+  // against the number, and a translation cannot be assembled out of the pieces that made those
+  // agree — so the count moved behind a noun and a colon, where no language here inflects anything.
+  assert.deepEqual(describeSkipped({ buttons: 1 }), ['Unusable entries skipped in buttons: 1']);
+  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['Unusable entries skipped in issueButtons: 2']);
   assert.deepEqual(describeSkipped({}), []);
 });
 
@@ -975,7 +984,7 @@ test('a save refuses while this page has not caught up with a change it already 
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
   assert.equal(outcome.stale, true, 'and the banner has to stay up');
 });
 
@@ -988,14 +997,14 @@ test('a load that applied under a save refuses it — the form is not what the p
     appliedGenerationAtStart: 1, appliedGenerationNow: 2,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE());
   assert.equal(outcome.stale, false, 'the page just caught up — it is not behind the store');
 });
 
 test('a save does not start while a load is in flight', () => {
   assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: false }), true);
   assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: true }), false);
-  assert.match(SAVE_LOADING_MESSAGE, /again/i);
+  assert.match(SAVE_LOADING_MESSAGE(), /again/i);
 });
 
 test("Codex's P1-A combination cannot happen: a load applies, or the save is allowed, never both", () => {
@@ -1053,10 +1062,10 @@ test('settings written by a newer generation may be read but never written over'
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION + 1,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, STORED_FROM_FUTURE_MESSAGE);
+  assert.equal(outcome.message, STORED_FROM_FUTURE_MESSAGE());
   assert.equal(outcome.write, undefined);
-  assert.match(STORED_FROM_FUTURE_MESSAGE, /newer version of the extension/i);
-  assert.match(STORED_FROM_FUTURE_MESSAGE, /chrome:\/\/extensions/);
+  assert.match(STORED_FROM_FUTURE_MESSAGE(), /newer version of the extension/i);
+  assert.match(STORED_FROM_FUTURE_MESSAGE(), /chrome:\/\/extensions/);
   // The current generation is not the future, and neither is one we have already caught up to
   assert.equal(planSave({
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION,
@@ -1106,8 +1115,8 @@ test('claude inputs beyond the limit make the whole entry unusable rather than b
 test('the report says what Save is going to do about what it skipped', () => {
   // Skipping is only honest if the consequence is stated: the entries are not in the edit state, so
   // the next Save writes them out of existence.
-  assert.match(SKIP_CONSEQUENCE, /saving will remove/i);
-  assert.match(SKIP_CONSEQUENCE, /export/i);
+  assert.match(SKIP_CONSEQUENCE(), /saving will remove/i);
+  assert.match(SKIP_CONSEQUENCE(), /export/i);
 });
 
 // --- One page-changing task at a time, and one definition of "unsaved" (R8) ---
@@ -1122,8 +1131,8 @@ test('a second import while one is still being read is refused, and says why', (
   assert.equal(shouldStartPageTask({ loaded: true, importing: false }), true);
   assert.equal(shouldStartPageTask({ loaded: true, importing: true }), false);
   assert.equal(shouldStartPageTask({ loaded: false, importing: false }), false);
-  assert.match(IMPORT_BUSY_MESSAGE, /already being read|in progress/i);
-  assert.match(IMPORT_BUSY_MESSAGE, /again/i, 'a refusal has to say what to do next');
+  assert.match(IMPORT_BUSY_MESSAGE(), /already being read|in progress/i);
+  assert.match(IMPORT_BUSY_MESSAGE(), /again/i, 'a refusal has to say what to do next');
 });
 
 test('leaving with a decided-but-unsaved review is leaving unsaved work', () => {
@@ -1203,9 +1212,50 @@ test('a payload too large for one sync item is refused, and says which key', () 
   assert.equal(outcome.write, undefined, 'nothing may be written');
   assert.match(outcome.message, /too large/i);
   assert.match(outcome.message, /buttons/, 'the key that is over has to be named');
-  assert.match(SETTINGS_TOO_LARGE_MESSAGE, /shorten/i, 'and what to do about it');
+  assert.match(SETTINGS_TOO_LARGE_MESSAGE(), /shorten/i, 'and what to do about it');
 
   const fits = { buttons: [{ face: 'x', label: 'b', command: '{cd} && claude', claudeInputs: [] }] };
   assert.equal(planSave({ capturedSnapshot: {}, liveSnapshot: {}, payload: fits }).refused, false);
   assert.ok(MAX_STORED_ITEM_BYTES >= 4096, 'and it must not refuse a plausible set of buttons');
+});
+
+// --- The refusals are messages now, and still say the way out (item 22) ---
+// These sentences are translated, so what a test may assert about them is what the *message* says,
+// not what a constant holds. The wording checks are pinned against English explicitly: reading them
+// out of whatever language the fixture happens to be in would let a translation quietly drop the
+// instruction while the test went on passing.
+
+test('every refusal the options page can show is a message, resolved when it is read', () => {
+  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('en');
+    const english = SAVE_CONFLICT_MESSAGE();
+    setCurrentLocale('ko');
+    const korean = SAVE_CONFLICT_MESSAGE();
+    assert.notEqual(english, korean, 'the refusal did not follow the language');
+    assert.ok(korean.length > 0);
+  } finally {
+    setCurrentLocale(before);
+  }
+});
+
+test('the save-conflict refusal is not the stale banner reworded', () => {
+  // Item 21 found these two one symbol and one word apart. Item 20's ownership gate only refuses
+  // *exact* duplicates, so a pair like that passes the gate while reading to a user as a slip —
+  // they are said at different moments and now say different things.
+  const { setCurrentLocale, currentLocale, i18nText } =
+    vm.runInThisContext('({ setCurrentLocale, currentLocale, i18nText })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('en');
+    const banner = i18nText('ext.banner.stale', 'en');
+    const refusal = SAVE_CONFLICT_MESSAGE();
+    assert.notEqual(banner, refusal);
+    // and not merely different by a character — the refusal has to report that nothing was saved
+    assert.match(refusal, /not saved/i, 'the refusal no longer says the save did not happen');
+    assert.doesNotMatch(banner, /not saved/i, 'the banner started reporting a refusal it does not know about');
+  } finally {
+    setCurrentLocale(before);
+  }
 });

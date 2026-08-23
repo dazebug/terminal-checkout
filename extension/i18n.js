@@ -74,6 +74,38 @@ function formatMessage(template, args = []) {
   });
 }
 
+// The language **this context** draws in, and the one translator every file in it shares.
+//
+// A context is a page or a worker, and each has exactly one: the options page has the locale it
+// resolved, a content script has the locale it drew its buttons in, and the service worker has
+// none that matters because it draws nothing. Holding it here rather than in whichever file
+// happened to need it first is what lets `defaults.js`, `migrations.js` and `content.js` ask for a
+// message without each inventing a way to find the locale — and inventing one each is how three
+// files come to disagree about what language the page is in.
+//
+// It is a `let` and not a parameter because the alternative is threading a locale through every
+// function that might one day contain a sentence. The cost is that a caller cannot ask for a
+// message in a language other than the current one; nothing needs to, and a test can set it.
+let TC_CURRENT_LOCALE = TC_I18N_FALLBACK;
+
+// Set once the context knows, and again whenever the app moves it. Unshipped tags fold to English
+// here rather than at every call site, so `currentLocale()` always names a dictionary we have.
+function setCurrentLocale(tag) {
+  TC_CURRENT_LOCALE = TC_I18N_LOCALES.includes(tag) ? tag : TC_I18N_FALLBACK;
+  return TC_CURRENT_LOCALE;
+}
+
+function currentLocale() {
+  return TC_CURRENT_LOCALE;
+}
+
+// A message in the current language. **Resolved when called, never when a file loads** — a value
+// captured at load time is the language that context started in, which is the defect the options
+// page's preset dropdown had and the app's settings window had before it.
+function tr(key, ...args) {
+  return formatMessage(i18nText(key, TC_CURRENT_LOCALE), args);
+}
+
 // The document's own language attribute — the one string here that is not a translation but the
 // resolved tag itself, which is why it is applied rather than looked up. Screen readers and
 // hyphenation read it, and a page that says `lang="en"` while rendering Korean is telling assistive

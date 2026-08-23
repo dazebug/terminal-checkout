@@ -70,18 +70,11 @@ const MIGRATIONS = [
     // worse" cannot be claimed over a command we did not write, so the user opts in per item.
     prefixEffect: 'behavior-change',
     rewrites: V0_TO_V1,
-    describe:
-      'The command opens with {cd} instead of z {repo}. With no repository base folder set in the '
-        + 'Terminal Checkout app this runs exactly what it runs today; if you have set one, z failing '
-        + 'now falls back to that folder and clones the repository when it is not there.',
-    prefixDescribe:
-      'Your command continues after the jump. With a base folder set, a failed z now lands in '
-        + '<base folder>/<repo> or a fresh clone — make sure the rest of this command is safe to run '
-        + 'there before accepting it.',
-    customNote:
-      'This command was edited, so it is left exactly as it is — `z {repo}` is not its first clause, '
-        + 'and rewriting it safely would mean parsing the shell. Replace the leading jump with {cd} '
-        + 'yourself if you want the same fallbacks.',
+    // Getters, not values: this object is built when the file loads, and a sentence read then
+    // is the language the page started in. Every one of these is drawn by the options page.
+    get describe() { return tr('ext.migration.v1.describe'); },
+    get prefixDescribe() { return tr('ext.migration.v1.prefixDescribe'); },
+    get customNote() { return tr('ext.migration.v1.customNote'); },
     // Rewrites a customized command whose **first clause** is exactly the old jump, leaving every
     // other byte alone. Anything looser (a `z {repo}` in the middle, `z {repo};`, `z {repo}&&x`,
     // different spacing) is refused and listed instead: matching those needs shell parsing, and
@@ -125,10 +118,9 @@ function storedSchemaVersion(stored) {
 // A generation newer than this extension understands can arrive two ways, and neither may be
 // papered over: from a backup file, and from the account's own storage (another machine running a
 // newer extension). Both messages have to carry the way out, or the user is simply stuck.
-const BACKUP_FROM_FUTURE_MESSAGE =
-  'This backup was exported by a newer version of the extension. '
-    + 'Update the extension (`git pull` + refresh at chrome://extensions), '
-    + 'or use Reset to Defaults to start from the current presets.';
+// A getter for the same reason the step's sentences are, and it quotes the [Reset to Defaults]
+// button through a placeholder rather than spelling the label out again (D28).
+const BACKUP_FROM_FUTURE_MESSAGE = () => tr('ext.error.backupFromFuture', tr('ext.button.reset'));
 
 // Read yes, write no. This page can show settings from a newer generation and export them; anything
 // it writes would be its own older shape recorded on top of theirs. One message serves both the
@@ -136,16 +128,14 @@ const BACKUP_FROM_FUTURE_MESSAGE =
 //
 // Under decision 9 this should be unreachable — a version that raises SETTINGS_VERSION writes its
 // own namespace and never touches this one. It is the insurance against that contract being broken.
-const STORED_FROM_FUTURE_MESSAGE =
-  'Your stored settings were written by a newer version of the extension, so this page can show '
-    + 'them but must not write over them. Update the extension (`git pull` + refresh at '
-    + 'chrome://extensions).';
+const STORED_FROM_FUTURE_MESSAGE = () => tr('ext.error.storedFromFuture');
 
 // Every report of something skipped carries this. Skipping is only honest if the consequence is
 // stated: the entries are not in the edit state, so the next Save writes them out of existence, and
 // the copy the user can still take is an export of what is stored right now.
-const SKIP_CONSEQUENCE =
-  'Saving will remove them — use Export (JSON) first if you want a copy of what is stored.';
+// Quotes the [Export (JSON)] button by key, so a translation cannot make the sentence name a
+// control by a different word than the control itself uses (D28).
+const SKIP_CONSEQUENCE = () => tr('ext.error.skipConsequence', tr('ext.button.export'));
 
 // What a section of the edit state starts from.
 //
@@ -173,10 +163,10 @@ function seedFromStorage(read, defaults, skippedForKey) {
 // The precondition is checked here rather than at the call site, because it is what makes the
 // arithmetic mean anything.
 function mergedSourceVersion(current, incoming) {
-  if (current > SETTINGS_VERSION) throw new Error(STORED_FROM_FUTURE_MESSAGE);
+  if (current > SETTINGS_VERSION) throw new Error(STORED_FROM_FUTURE_MESSAGE());
   // Import already refuses a newer file outright (importedSchemaVersion); this is the second lock
   // on the same door, so the assumption cannot be quietly broken by a future caller.
-  if (incoming > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE);
+  if (incoming > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE());
   return Math.min(current, incoming);
 }
 
@@ -332,7 +322,7 @@ function migrationSummary(plan, selectedIds) {
 function importedSchemaVersion(data) {
   const raw = normalizeVersion(data?.[VERSION_KEY]);
   if (raw === null) return 0;
-  if (raw > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE);
+  if (raw > SETTINGS_VERSION) throw new Error(BACKUP_FROM_FUTURE_MESSAGE());
   return raw;
 }
 
@@ -375,9 +365,13 @@ function isOwnEcho(changes, loadedSnapshot) {
 // content the page happened to hold — which stamped a v1 marker onto v0 commands and erased another
 // device's migration without a word. The version states which generation **the content being
 // written** belongs to; it cannot be defended separately from the content it describes.
-const SAVE_CONFLICT_MESSAGE =
-  'Settings changed on another device since this page loaded. Reload to see them — export first if '
-    + 'you want to keep your unsaved edits.';
+// **Deliberately not the same sentence as the stale banner**, which item 21 found sitting one
+// symbol and one word away from it. Two near-identical strings are the worst of both: item 20's
+// ownership gate only refuses *exact* duplicates, so a pair like that slips through while reading to
+// a user as a copy-paste slip. They are said at two different moments and now say two different
+// things — the banner warns that the store moved, this one reports that a save was refused because
+// of it.
+const SAVE_CONFLICT_MESSAGE = () => tr('ext.error.saveConflict');
 
 function sameStoredValue(a, b) {
   if (a === b) return true;
@@ -404,20 +398,17 @@ function saveConflict(loadedSnapshot, liveSnapshot) {
 
 // A load landed while the save was in flight, so the form on screen is no longer the one the
 // payload was built from. Writing it would store settings the user is not looking at.
-const SAVE_RELOADED_MESSAGE =
-  'This page reloaded its settings while the save was in flight, so the form no longer holds what '
-    + 'was about to be written. Check it and press Save again.';
+const SAVE_RELOADED_MESSAGE = () => tr('ext.error.saveReloaded', tr('ext.button.save'));
 
 // A load is out and its answer may replace the form at any moment. Starting a save into that window
 // means building a payload from a form that is about to be someone else's.
-const SAVE_LOADING_MESSAGE = 'Settings are being re-read — press Save again in a moment.';
+const SAVE_LOADING_MESSAGE = () => tr('ext.error.saveLoading', tr('ext.button.save'));
 
 // Nothing capped the length of a command, so one long enough pushed a key past what storage.sync
 // will hold and the save died on the quota error itself. Checked per key, because that is the unit
 // the limit applies to — and checking it here covers commands, scheduled inputs and the override map
 // in one place rather than growing a length rule per field.
-const SETTINGS_TOO_LARGE_MESSAGE =
-  'These settings are too large for Chrome to sync. Shorten the longest command and try again';
+const SETTINGS_TOO_LARGE_MESSAGE = () => tr('ext.error.settingsTooLarge');
 
 function oversizedSettingsKey(payload) {
   for (const [key, value] of Object.entries(payload || {})) {
@@ -449,13 +440,13 @@ function shouldStartPageTask({ loaded, saving, importing, loading }) {
 // Which task is in the way, so the refusal says something the user can act on rather than a generic
 // "busy". Null when nothing is.
 function pageBusyMessage({ saving, importing, loading }) {
-  if (saving) return SAVE_BUSY_MESSAGE;
-  if (importing) return IMPORT_BUSY_MESSAGE;
-  if (loading) return SAVE_LOADING_MESSAGE;
+  if (saving) return SAVE_BUSY_MESSAGE();
+  if (importing) return IMPORT_BUSY_MESSAGE();
+  if (loading) return SAVE_LOADING_MESSAGE();
   return null;
 }
 
-const SAVE_BUSY_MESSAGE = 'Already saving — one moment.';
+const SAVE_BUSY_MESSAGE = () => tr('ext.error.saveBusy');
 
 // The save as a decision, kept apart from the act of writing so it can be reasoned about on its own.
 // A refusal carries the message and writes nothing; there is no repair attempted behind the user's
@@ -488,7 +479,7 @@ function planSave({
   // First, because no retry and no reload changes it: settings from a generation this extension does
   // not understand may be read, shown and exported, but never written over.
   if (loadedVersion > SETTINGS_VERSION) {
-    return { refused: true, message: STORED_FROM_FUTURE_MESSAGE, stale: false };
+    return { refused: true, message: STORED_FROM_FUTURE_MESSAGE(), stale: false };
   }
   // Second, and for the same reason — a payload storage will not accept is not a payload. Refusing
   // here names the key and the limit; letting `set` fail produced a raw quota error and no guidance.
@@ -497,16 +488,17 @@ function planSave({
     return {
       refused: true,
       stale: false,
-      message: `${SETTINGS_TOO_LARGE_MESSAGE} (${oversized} is over the `
-        + `${MAX_STORED_ITEM_BYTES}-byte limit for one synced item).`,
+      // The frame is a message; what follows it is a diagnostic payload — a storage key and a
+      // byte count, neither of which is a sentence (D59)
+      message: `${SETTINGS_TOO_LARGE_MESSAGE()} (${oversized} > ${MAX_STORED_ITEM_BYTES} bytes)`,
     };
   }
-  if (storeMovedSinceLoad) return { refused: true, message: SAVE_CONFLICT_MESSAGE, stale: true };
+  if (storeMovedSinceLoad) return { refused: true, message: SAVE_CONFLICT_MESSAGE(), stale: true };
   if (appliedGenerationAtStart !== appliedGenerationNow) {
-    return { refused: true, message: SAVE_RELOADED_MESSAGE, stale: false };
+    return { refused: true, message: SAVE_RELOADED_MESSAGE(), stale: false };
   }
   if (saveConflict(capturedSnapshot, liveSnapshot)) {
-    return { refused: true, message: SAVE_CONFLICT_MESSAGE, stale: true };
+    return { refused: true, message: SAVE_CONFLICT_MESSAGE(), stale: true };
   }
   return { refused: false, write: payload };
 }
@@ -540,14 +532,13 @@ function classifyStorageChange({ changes, loaded, taskInFlight, busy, isOwnWrite
 // Reading a file is asynchronous, and the form stays live while it happens. A file applied over
 // what was typed in that window is the same defect as a stale load answer landing on top of typing,
 // so it asks the same question — did anything happen since I started? — and refuses the same way.
-const IMPORT_STALE_MESSAGE =
-  'Edits were made while the file was being read — nothing was imported. Import again.';
+const IMPORT_STALE_MESSAGE = () => tr('ext.error.importStale');
 
 function planImport({
   revisionAtStart, revisionNow, generationAtStart, generationNow, settings,
 }) {
   if (!nothingHappenedSince(revisionAtStart, revisionNow) || generationAtStart !== generationNow) {
-    return { refused: true, message: IMPORT_STALE_MESSAGE };
+    return { refused: true, message: IMPORT_STALE_MESSAGE() };
   }
   return { refused: false, apply: settings };
 }
@@ -561,7 +552,7 @@ function planImport({
 // import's own application moves the revision, so the newer one would need to be told which bumps to
 // ignore. That is a second concurrency model living beside the save's. Refusing the second pick
 // keeps one rule on this page, and unlike the old behaviour it says out loud what happened.
-const IMPORT_BUSY_MESSAGE = 'A settings file is already being read — try again in a moment.';
+const IMPORT_BUSY_MESSAGE = () => tr('ext.error.importBusy');
 
 // Everything that has not reached storage yet, in one definition.
 //
@@ -653,10 +644,12 @@ function adoptStoredSettings(raw) {
 // One sentence per key that lost something, so the report names what went and where. "Could not be
 // used" rather than "unreadable" because there are now two ways to earn it — a shape we cannot read,
 // and more entries than this page can hold — and both end the same way.
+// The count sits behind a noun and a colon, so no language here has to make anything agree with
+// it — the English needed `1 entry … was` against `N entries … were`, and a translation cannot be
+// assembled out of the pieces that made those agree (D31a).
 function describeSkipped(skippedByKey) {
-  return Object.entries(skippedByKey).map(([key, count]) => (count === 1
-    ? `1 entry in ${key} could not be used and was skipped`
-    : `${count} entries in ${key} could not be used and were skipped`));
+  return Object.entries(skippedByKey)
+    .map(([key, count]) => tr('ext.error.skipped', key, count));
 }
 
 // --- One signal for "the user said something" ---
@@ -697,4 +690,4 @@ function userAction(accept, change) {
 // with nothing on screen and no way back. The gate stays shut (opening it would bring back writing
 // an empty settings object over real ones), so the way out has to be a retry, and the message has to
 // offer one.
-const LOAD_FAILED_MESSAGE = 'Could not read your settings. Retry, or reopen this page.';
+const LOAD_FAILED_MESSAGE = () => tr('ext.error.loadFailed');

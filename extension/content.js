@@ -20,8 +20,10 @@ const REPO_BUTTON_STYLE = `
 // the button sharply and make the header jump.
 function createRepoButton(buttonConfig, index) {
   const face = buttonFace(buttonConfig);
+  // Read now, for this drawing of the button. A language change removes and re-inserts the
+  // buttons (the renderer's redraw), so these are never older than the face beside them.
   const phases = isTextFace(face)
-    ? { busy: 'Opening...', done: 'Done!', error: 'Error!' }
+    ? { busy: tr('ext.button.phase.busy'), done: tr('ext.button.phase.done'), error: tr('ext.button.phase.error') }
     : { busy: '⏳', done: '✅', error: '❌' };
 
   const button = document.createElement('button');
@@ -412,7 +414,9 @@ async function refreshLocaleToDrawIn() {
     console.log('Locale cache unreadable, drawing in the browser language:', error);
   }
   const uiLanguage = chrome.i18n?.getUILanguage ? chrome.i18n.getUILanguage() : '';
-  localeToDrawIn = localeToRenderIn(cached, uiLanguage);
+  // One holder for the whole context (`i18n.js`), so `defaults.js` and this file cannot end up
+  // drawing the same page in two languages
+  localeToDrawIn = setCurrentLocale(localeToRenderIn(cached, uiLanguage));
   return localeToDrawIn;
 }
 

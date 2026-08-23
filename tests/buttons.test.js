@@ -9,7 +9,16 @@ const vm = require('node:vm');
 // the names to pull them out (a script's top-level const doesn't land on globalThis, hence the
 // second evaluation). It runs in this context rather than a separate one — objects created inside a
 // vm context have a different prototype, so deepStrictEqual fails even on structurally equal values.
-vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8'));
+//
+// **In the manifest's order**, dictionaries first: a preset's `name` and `face` are looked up when
+// they are read, so defaults.js needs `tr` — exactly as it does in the three places that load it for
+// real. Running it alone was testing a load order the extension never uses.
+const readExtension = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
+vm.runInThisContext(readExtension('i18n.js'));
+for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
+  vm.runInThisContext(readExtension(`_i18n/${tag}.js`));
+}
+vm.runInThisContext(readExtension('defaults.js'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
 const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
   vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf, APP_VARIABLES })');
@@ -503,9 +512,38 @@ test('the wire message is built from the payload the fingerprint is taken of', (
   assert.deepEqual(body.match(/\.trim\(\)|\.filter\(/g) ?? [], [], 'runButton normalizes on its own');
 });
 
-test('the refusal a mismatch produces tells the user how to fix it', () => {
+test('the refusal a mismatch produces is a diagnostic, and says what a user would need', () => {
+  // Item 21 handed this over as a test that would break the day the string moved into the
+  // dictionaries. Tracing where the string actually goes answered it instead: **nowhere the user
+  // can see**. The content script inspects the `{success:false}` response and throws; both click
+  // handlers catch that throw, put `Error!` or `❌` on the button and send the message to
+  // `console.error`. The only strings a button ever draws are its face, its tooltip and those
+  // markers.
+  //
+  // So it stays English (D13/D27) and this assertion is safe — but it is asserting about a
+  // **diagnostic**, and the wording check is kept because the sentence is still what a developer
+  // reads in the console when a click is refused.
   const { BUTTON_CHANGED_ERROR } = vm.runInThisContext('({ BUTTON_CHANGED_ERROR })');
   assert.match(BUTTON_CHANGED_ERROR, /reload/i);
+  assert.ok(!/^ext\./.test(BUTTON_CHANGED_ERROR), 'it became a key without a render site to match');
+});
+
+test('nothing a button draws comes from an error message', () => {
+  // The trace above, pinned. If a display path is ever added, this fails — and it should, because
+  // the message is composed in the service worker, which has no render locale: showing it properly
+  // means sending an **id** to the content script, not a sentence. That is the trigger recorded
+  // next to both messages.
+  const source = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
+  const drawn = [...source.matchAll(/button\.(?:textContent|title) = ([^;]+);/g)].map(m => m[1].trim());
+  assert.ok(drawn.length >= 8, `only ${drawn.length} draw sites found — the scan missed some`);
+  for (const expression of drawn) {
+    // `phases.error` is a phase marker and is drawn on purpose — what must never appear is the
+    // caught `error` itself, whose message is composed where no render locale exists.
+    assert.ok(
+      !/(^|[^.\w])error\b/.test(expression),
+      `a button draws ${expression}, so an error message is now user-visible and has to be localized`,
+    );
+  }
 });
 
 test('adoptStoredButtons: a hole hidden behind an extra property is still a hole', () => {

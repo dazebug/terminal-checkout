@@ -31,7 +31,8 @@ const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '�
 // What this removes is the **asynchronous** gap, the one that lasts a storage round trip. Whether
 // Chrome paints a half-parsed document before a parser-blocking script at the end of `<body>` runs
 // is not something this repository can measure, and it is not claimed here.
-let uiLocale = TC_I18N_FALLBACK;
+// The holder lives in `i18n.js` so that `defaults.js` and `migrations.js` — which also draw on
+// this page — resolve against the same one. This file decides it; they read it.
 
 function browserLanguage() {
   return chrome.i18n?.getUILanguage?.() || '';
@@ -46,14 +47,14 @@ function browserLanguage() {
 // is set with `textContent`, so it can only ever be text. A test pins the halves apart — a key whose
 // value contains a tag is used only through `tHTML`, and never the other way around.
 function t(key, ...args) {
-  return formatMessage(i18nText(key, uiLocale), args);
+  return tr(key, ...args);
 }
 
 // A message as **markup**, for the two places that build HTML: the static prose in `options.html`
 // and the button card template. Its arguments are ours — a constant, a preset name, another
 // message — and never anything a user typed.
 function tHTML(key, ...args) {
-  return formatMessage(i18nText(key, uiLocale), args);
+  return tr(key, ...args);
 }
 
 // The arguments the static prose takes, in one table, so that "what can reach innerHTML on this
@@ -101,7 +102,7 @@ function redrawInCurrentLocale() {
 }
 
 // The first answer, taken synchronously so that the first paint is already in a language.
-uiLocale = localeToRenderIn(null, browserLanguage());
+let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));
 applyDocumentLanguage(uiLocale);
 applyStaticText();
 
@@ -119,7 +120,7 @@ async function adoptLocaleFromCache() {
   }
   const next = localeToRenderIn(cached, browserLanguage());
   if (next === uiLocale) return false;
-  uiLocale = next;
+  uiLocale = setCurrentLocale(next);
   redrawInCurrentLocale();
   return true;
 }
@@ -257,7 +258,7 @@ function updateLoadedGate() {
 // over real ones — so what is offered instead is another attempt.
 function showLoadFailure(error) {
   document.getElementById('load-error').hidden = false;
-  showStatus('error', `${LOAD_FAILED_MESSAGE} (${error?.message || error})`);
+  showStatus('error', `${LOAD_FAILED_MESSAGE()} (${error?.message || error})`);
 }
 
 function hideLoadFailure() {
@@ -727,7 +728,7 @@ async function loadSettings() {
     // Said out loud, named per key, and with the consequence attached. The section above is now
     // empty rather than quietly full of presets, so the user can see that something is missing —
     // and this says what pressing Save would do to it, and how to keep a copy first.
-    showStatus('error', `${dropped.join('; ')}. ${SKIP_CONSEQUENCE}`);
+    showStatus('error', `${dropped.join('; ')}. ${SKIP_CONSEQUENCE()}`);
   }
 
   SECTIONS.forEach(({ kind }) => renderButtons(kind));

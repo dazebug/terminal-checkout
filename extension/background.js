@@ -169,6 +169,11 @@ async function loadButtons(kind) {
 // DOM, so a message can cause a refusal but cannot name its own repository. The extension-icon path
 // sends no *fingerprint* — nothing was drawn for it to disagree with — but it does send a target,
 // read from the tab when the icon was pressed, so it takes this same gate.
+//
+// Like `BUTTON_CHANGED_ERROR`, this is **not drawn anywhere**: the content script throws it and its
+// click handler turns it into `❌` plus a `console.error`. English, therefore (D13/D27) — and on the
+// same trigger, since displaying it would mean sending an id from this worker, which has no render
+// locale, rather than a sentence.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
 
 // Internal coherence: the values a single read produced describe one page. This is what the final

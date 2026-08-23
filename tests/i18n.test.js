@@ -17,6 +17,8 @@ vm.runInThisContext(read('i18n.js'));
 for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
   vm.runInThisContext(read(`_i18n/${tag}.js`));
 }
+// and defaults.js, whose presets resolve their display text through the dictionaries above
+vm.runInThisContext(read('defaults.js'));
 const { i18nText, applyDocumentLanguage, TC_I18N_LOCALES, TC_I18N_FALLBACK } =
   vm.runInThisContext('({ i18nText, applyDocumentLanguage, TC_I18N_LOCALES, TC_I18N_FALLBACK })');
 
@@ -398,17 +400,28 @@ test('the generation is taken off a response before a failure is raised (lint)',
 const optionsJs = read('options.js');
 const optionsHtml = read('options.html');
 
-// Every message id the page can name. `options.js` can only name one with a literal (checked
-// below), and `options.html` names them in an attribute — so between them this is the whole set.
-const keysInJs = new Set([...optionsJs.matchAll(/'(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
+// **Every file that can name a message**, not only the options page: item 22 moved the presets, the
+// button phase markers and the update notice's prose into the dictionaries too, and a gate that
+// scanned one file would have called all of those unreferenced.
+const SPEAKING_FILES = ['options.js', 'defaults.js', 'content.js', 'background.js', 'migrations.js'];
+const speakingSource = SPEAKING_FILES.map(read).join('\n');
+
+// A message id can only be named by a literal (checked below), and `options.html` names them in an
+// attribute — so between them this is the whole set.
+const keysInJs = new Set([...speakingSource.matchAll(/'(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
 const keysInHtml = new Set([...optionsHtml.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1]));
 const referencedKeys = new Set([...keysInJs, ...keysInHtml]);
 
-// Which half of the text/markup split a key is on. A key reached through `t(` becomes textContent,
-// a title or a `confirm()`; a key reached through `tHTML(` or `data-i18n` becomes innerHTML.
-const textKeys = new Set([...optionsJs.matchAll(/\bt\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
+// Which half of the text/markup split a key is on. A key reached through `t(`/`tr(` becomes
+// textContent, a title or a `confirm()`; a key reached through `tHTML(` or `data-i18n` becomes
+// innerHTML.
+const textKeys = new Set(
+  [...speakingSource.matchAll(/\bt r?\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
+);
+for (const match of speakingSource.matchAll(/\btr\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
+for (const match of speakingSource.matchAll(/\bt\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
 const markupKeys = new Set([
-  ...[...optionsJs.matchAll(/\btHTML\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
+  ...[...speakingSource.matchAll(/\btHTML\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
   ...keysInHtml,
 ]);
 
@@ -585,7 +598,7 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
     assert.equal(match[1].trim(), '', `a localized node still ships prose: ${match[0].slice(0, 70)}`);
   }
   // The synchronous first answer, and the asynchronous correction, in that order
-  const first = optionsJs.indexOf('uiLocale = localeToRenderIn(null, browserLanguage());');
+  const first = optionsJs.indexOf('let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));');
   const fill = optionsJs.indexOf('applyStaticText();\n\n// And the app');
   const adopt = optionsJs.indexOf('adoptLocaleFromCache();\n');
   assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
@@ -823,4 +836,100 @@ test('every path that draws waits on the gate, not just the first (lint)', () =>
   const body = source.slice(source.indexOf('async function tryInsertButton()'));
   assert.match(body.slice(0, 400), /await localeReady\(\);/, 'the draw no longer waits for the cache');
   assert.match(source, /const localeReady = createFirstRenderGate\(refreshLocaleToDrawIn\)/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The rest of the extension's strings (item 22).
+//
+// The judgement this item turns on is **which strings a user actually sees**, and it has three
+// answers rather than two. Visible: drawn on a page or the options form. Diagnostic: `console.*`,
+// English by policy (D13/D27). And **latent** — written for a user, reaching only the console
+// today, and locale-dependent the moment anything displays it. The refusal messages are that third
+// kind, and pretending they were either of the other two is what a trace prevented.
+// ---------------------------------------------------------------------------------------------
+
+test('a preset says its name in the language being drawn, not the one it loaded in', () => {
+  // The class item 21 found in the options page's dropdown, closed at the source this time: the
+  // preset itself resolves when read, so no consumer has to remember to re-read it.
+  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+  const { PR_PRESETS, REPO_PRESETS } = vm.runInThisContext('({ PR_PRESETS, REPO_PRESETS })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('en');
+    const english = PR_PRESETS[0].name;
+    setCurrentLocale('ko');
+    assert.notEqual(PR_PRESETS[0].name, english, 'the preset name froze at load');
+    // and a repository preset's face is text on the page, so it follows too
+    setCurrentLocale('en');
+    const englishFace = REPO_PRESETS[0].face;
+    setCurrentLocale('ko');
+    assert.notEqual(REPO_PRESETS[0].face, englishFace, 'the repository face froze at load');
+  } finally {
+    setCurrentLocale(before);
+  }
+});
+
+test('the button drawn when nothing is stored follows the language too', () => {
+  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+  const { BUTTON_KINDS } = vm.runInThisContext('({ BUTTON_KINDS })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('en');
+    const english = BUTTON_KINDS.repo.defaults[0].face;
+    setCurrentLocale('ko');
+    assert.notEqual(BUTTON_KINDS.repo.defaults[0].face, english);
+    // ...and what it runs does not, which is the half that must not move
+    assert.equal(BUTTON_KINDS.repo.defaults[0].command, '{cd}');
+  } finally {
+    setCurrentLocale(before);
+  }
+});
+
+test('a saved button keeps the words it was saved with', () => {
+  // The residual, pinned so it stays a decision rather than a surprise: `toStoredButton` writes
+  // text, so a button created in one language keeps that language after a switch. Following the
+  // language would mean a persistent id in the stored schema — a SETTINGS_VERSION bump, which this
+  // plan does not make.
+  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+  const { appendButton, toStoredButton, BUTTON_KINDS } =
+    vm.runInThisContext('({ appendButton, toStoredButton, BUTTON_KINDS })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('ko');
+    const [added] = appendButton([], BUTTON_KINDS.pr);
+    const stored = toStoredButton(added);
+    setCurrentLocale('en');
+    assert.equal(toStoredButton(stored).label, stored.label, 'a stored label moved with the language');
+    assert.ok(stored.label.length > 0);
+  } finally {
+    setCurrentLocale(before);
+  }
+});
+
+test('the messages that only reach a console are not in the dictionaries', () => {
+  // The boundary, stated as a set. `console.*` is an English diagnostic surface by policy, and a
+  // key for one of those would be a translation nobody reads — so the gate is that none of the
+  // catalogue's values is one of these sentences.
+  const values = new Set(Object.values(globalThis.TC_I18N.en));
+  const diagnostics = [
+    'This button no longer matches your saved settings — reload the page and try again.',
+    'The page changed while this was running — reload and try again.',
+    'Not a GitHub PR page',
+    'Not a GitHub issue page',
+    'Not a GitHub repo page',
+    'Could not extract branch name',
+  ];
+  for (const sentence of diagnostics) {
+    assert.ok(!values.has(sentence), `${sentence} was translated, but nothing displays it`);
+  }
+});
+
+test('every file that draws sets the locale it draws in', () => {
+  // One holder per context (`i18n.js`), and the two files that draw have to fill it — otherwise
+  // `defaults.js` and `migrations.js`, which have no locale of their own, resolve against the
+  // fallback while the page around them is in another language.
+  assert.match(read('content.js'), /setCurrentLocale\(localeToRenderIn\(/, 'the content script draws in no particular language');
+  assert.match(read('options.js'), /setCurrentLocale\(localeToRenderIn\(/, 'the options page draws in no particular language');
+  // and the worker deliberately does not: it draws nothing, so it has no locale to set
+  assert.ok(!/setCurrentLocale\(/.test(read('background.js')), 'the service worker set a render locale it cannot use');
 });
