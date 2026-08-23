@@ -1,4 +1,10 @@
 <!DOCTYPE html>
+<!-- `lang` is the resolved tag itself rather than a translated string, so it is written by the
+     application path (`applyDocumentLanguage` in i18n.js) and not looked up in a dictionary. It
+     stays `en` in the markup because that is the truth until something can supply a locale: the app
+     publishes one and the cache that receives it is item 16's. Assistive technology and hyphenation
+     read this attribute, so a page claiming `en` while rendering Korean is telling them something
+     false — which is why the call site lands with the locale rather than before it. -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -439,6 +445,12 @@
   </div>
   <div id="status" class="status"></div>
 
+  <script src="i18n.js"></script>
+  <script src="_i18n/en.js"></script>
+  <script src="_i18n/ko.js"></script>
+  <script src="_i18n/ja.js"></script>
+  <script src="_i18n/zh-Hans.js"></script>
+  <script src="_i18n/zh-Hant.js"></script>
   <script src="defaults.js"></script>
   <script src="migrations.js"></script>
   <script src="options.js"></script>

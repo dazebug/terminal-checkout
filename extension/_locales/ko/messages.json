@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Terminal Checkout",
+    "description": "제품명이라 번역하지 않는다."
+  },
+  "extDescription": {
+    "message": "GitHub PR·이슈·저장소 페이지에서 터미널(iTerm2/WezTerm/Warp) 명령을 실행합니다",
+    "description": "Chrome이 이름 옆에 보여 주는 한 줄 설명."
+  }
+}

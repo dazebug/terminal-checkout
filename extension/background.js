@@ -1,4 +1,10 @@
-importScripts('defaults.js'); // defaults.js is the single source of truth for button defaults and presets
+// The dictionaries first, then defaults. Order is not load-bearing — every lookup happens when
+// it is called, never at load (D6) — but keeping it the same as the manifest's content-script
+// list means one story rather than two.
+importScripts(
+  'i18n.js', '_i18n/en.js', '_i18n/ko.js', '_i18n/ja.js', '_i18n/zh-Hans.js', '_i18n/zh-Hant.js',
+  'defaults.js' // the single source of truth for button defaults and presets
+);
 
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 

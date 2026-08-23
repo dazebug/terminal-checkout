@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Terminal Checkout",
+    "description": "The extension's name, as Chrome shows it. Not translated: it is the product name."
+  },
+  "extDescription": {
+    "message": "Run commands in your terminal (iTerm2/WezTerm/Warp) from GitHub PR, issue, and repository pages",
+    "description": "The one-line description Chrome shows next to the name."
+  }
+}
