@@ -234,7 +234,7 @@ final class LocaleRestartTests: XCTestCase {
 
         let directory = "/tmp/tc-restart-\(UUID().uuidString.prefix(8))"
         let server = HostServer(socketPath: directory + "/s.sock")
-        _ = try server.start()
+        try server.start(announcing: .nothing)
         defer {
             server.stop()
             try? FileManager.default.removeItem(atPath: directory)

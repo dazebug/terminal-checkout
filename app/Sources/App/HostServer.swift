@@ -156,6 +156,31 @@ final class LocalePublicationRight {
     }
 }
 
+/// **What this process will say about the language, settled before it answers anything.**
+///
+/// It is a required argument of `start(announcing:)`, and that is the whole of the mechanism: there
+/// is no bind without an announcement, no API surface between committing it and arming the accept
+/// loop, and therefore no order for a caller to get wrong. What used to stand there was two
+/// statements in `AppDelegate` — bind, then publish — with the accept loop already running between
+/// them, so the first thing the extension asked was answered out of whatever this machine published
+/// the last time it ran (round 17 review). The relay is *waiting on that listen*, so the window was
+/// not a rare interleaving; it was the ordinary startup path.
+///
+/// Both binaries reach it and neither can skip it, which is the other half of the constraint. The
+/// headless server publishes nothing, and `.nothing` is how it says so **at the call site** — it
+/// used to say it by discarding a return value, which is a sentence only to a reader who knows what
+/// was discarded.
+enum LocaleAnnouncement {
+    /// The GUI that owns the socket: publish this launch's locale under the right the bind produced.
+    /// `auto` is a promise about the *system's* language and the system's language can change while
+    /// the app is not running, which is why a launch publishes at all (D48).
+    case publish(SupportedLocale)
+    /// `--headless-server`: it draws nothing and has no picker, so inventing a revision there is
+    /// what D49 rules out. It answers with whatever the GUI last published and adds nothing of its
+    /// own.
+    case nothing
+}
+
 /// The unix socket server that takes the relay's requests and runs them in the terminal.
 final class HostServer {
     /// A diagnostic surface and not a message to the user: the only reader is `AppDelegate`, which
@@ -180,19 +205,43 @@ final class HostServer {
     /// the socket the relay is now talking to (round 16 review).
     private var boundIdentity: (dev: dev_t, ino: ino_t)?
     private var right: LocalePublicationRight?
+    /// Where the published locale is committed at launch and read again for every answer. A
+    /// parameter for the same reason `LocaleState.publish` and `Settings.setLanguage` take one: the
+    /// subject is a `UserDefaults` write, and a case that drove it against `.standard` would be
+    /// rewriting the language state of whatever app owns this process's domain.
+    private let defaults: UserDefaults
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
 
-    init(socketPath: String) {
+    init(socketPath: String, defaults: UserDefaults = .standard) {
         self.socketPath = socketPath
+        self.defaults = defaults
     }
 
     /// The right to publish a locale comes back from here, and from nowhere else, because binding
     /// this path is what makes a process **the** Terminal Checkout on this machine — the one the
-    /// relay reaches and the extension is therefore talking to. It is not `@discardableResult`: a
-    /// caller that has no use for it says so (`main.swift`'s headless server, which draws nothing and
-    /// must not invent a revision anyway, D49).
-    func start() throws -> LocalePublicationRight {
+    /// relay reaches and the extension is therefore talking to.
+    ///
+    /// **Binding, announcing and answering are one call, in that order.** Splitting them is what the
+    /// round 17 review found: the accept loop was armed on the way out and the caller published
+    /// afterwards, so between `listen()` and that line the server was answering with the previous
+    /// launch's snapshot — and for an `auto` user whose system language changed while the app was
+    /// down, that is the feature failing in the one scenario it exists for. The value returned below
+    /// arms nothing and there is no second method to call, so the two orders are not two orders: the
+    /// announcement is committed by the statement above the one that arms accepting, with nothing
+    /// between them that a caller can reach.
+    ///
+    /// `listen()` stays where it was, next to `bind`, rather than moving below the announcement.
+    /// What has to be true is that nothing is *answered* before the announcement is committed, and
+    /// that is what arming decides; moving `listen` down would instead widen the window in which
+    /// this socket looks dead to another instance's stale-path probe, which is a live race of its
+    /// own. A connection that arrives during the announcement waits in the kernel's backlog and is
+    /// answered, with the committed publication, when the loop starts.
+    ///
+    /// It is `@discardableResult` because the announcement is now what a caller says, and the value
+    /// is a fact about the bind that only the tests and the process-wide `current` still read.
+    @discardableResult
+    func start(announcing announcement: LocaleAnnouncement) throws -> LocalePublicationRight {
         let dir = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true,
@@ -228,9 +277,17 @@ final class HostServer {
         chmod(socketPath, 0o600)
         serverFD = fd
         boundIdentity = Self.identity(ofPathAt: socketPath)
-        acceptQueue.async { [weak self] in self?.acceptLoop(serverFD: fd) }
         let right = LocalePublicationRight.mint()
         self.right = right
+        switch announcement {
+        case .publish(let resolved):
+            Settings.publishLocaleAtLaunch(resolved: resolved, right: right, defaults: defaults)
+        case .nothing:
+            break
+        }
+        // The door opens last. Everything above has already happened by the time the first request
+        // can be answered, and this is the only line in the program that starts answering
+        acceptQueue.async { [weak self] in self?.acceptLoop(serverFD: fd) }
         return right
     }
 
@@ -302,7 +359,8 @@ final class HostServer {
             // picker for the same epoch, which is the P0 round 10 named; the one writer is the GUI,
             // at launch and at the picker (`Settings.publishLocaleAtLaunch`, `Settings.language`).
             let publication = LocaleState.publish(
-                resolved: AppLocalization.resolvedLocale(), role: .headless
+                resolved: AppLocalization.resolvedLocale(defaults: defaults),
+                defaults: defaults, role: .headless
             )
             let response = execQueue.sync {
                 // Like the terminal choice, the base directory has the app's settings as its

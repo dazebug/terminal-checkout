@@ -32,7 +32,7 @@ final class LocalePublicationTests: XCTestCase {
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         socketDirectory = "/tmp/tc-pub-\(UUID().uuidString.prefix(8))"
         server = HostServer(socketPath: socketDirectory + "/s.sock")
-        right = try server.start()
+        right = try server.start(announcing: .nothing)
     }
 
     override func tearDown() {
@@ -480,30 +480,39 @@ final class LocalePublicationTests: XCTestCase {
     /// the extension's rule ("same install, strictly greater epoch") cannot order that pair.
     ///
     /// **What is left here after the right became a value.** That a publication follows a bind is
-    /// the compiler's now — there is no right to pass before `start()` has returned one. What no type
+    /// the compiler's now — there is no right to pass before `start` has produced one. What no type
     /// can say is that `main.swift` resolves the launch language *and does not publish it*: those are
     /// two separate calls, and moving the second one back to where the first is would be a second
     /// instance publishing before the bind decides. That half is read from the source.
+    ///
+    /// **And the launch publication has exactly one call site.** Round 17 made the announcement an
+    /// argument of the bind, which orders the publication and the accept loop by construction — but
+    /// only for the publication that goes through the bind. A second `publishLocaleAtLaunch` written
+    /// anywhere else in the target would be a launch publication with no such ordering, and the
+    /// signature cannot refuse it: `LocalePublicationRight.current` is readable, deliberately, by the
+    /// picker and the window it lives in. So the count is asserted the way the single `osascript`
+    /// call site is, and the one site is named.
     func testOnlyTheInstanceThatOwnsTheSocketPublishes() throws {
         let main = try String(contentsOfFile: Self.appSource("main.swift"), encoding: .utf8)
-        XCTAssertFalse(
-            main.contains("Settings.publishLocaleAtLaunch("),
-            "main.swift publishes again — a second instance reaches that line before the bind decides"
-        )
         XCTAssertTrue(
             main.contains("let launchLocale = AppLocalization.resolvedLocale()"),
             "main.swift no longer resolves the launch language next to the AppleLanguages write"
         )
 
-        let delegate = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(delegate.range(of: "let right = try server.start()")).upperBound
-        let publish = try XCTUnwrap(
-            delegate.range(of: "Settings.publishLocaleAtLaunch(resolved: launchLocale, right: right)"),
-            "the delegate no longer publishes the launch locale with the right the bind returned"
-        ).lowerBound
-        XCTAssertLessThan(start, publish, "the locale is published before the socket is bound")
-        let catchStart = try XCTUnwrap(delegate.range(of: "} catch {", range: start..<delegate.endIndex)).lowerBound
-        XCTAssertLessThan(publish, catchStart, "the publication is outside the branch that owns the socket")
+        let sources = try FileManager.default
+            .contentsOfDirectory(atPath: Self.appSource("")).filter { $0.hasSuffix(".swift") }.sorted()
+        XCTAssertTrue(sources.contains("HostServer.swift"), "the App sources were not found at all")
+        var callers: [String] = []
+        for name in sources {
+            let text = try String(contentsOfFile: Self.appSource(name), encoding: .utf8)
+            // The declaration in `Settings.swift` spells the label list, a call spells an argument
+            let calls = text.components(separatedBy: "Settings.publishLocaleAtLaunch(").count - 1
+            callers.append(contentsOf: Array(repeating: name, count: calls))
+        }
+        XCTAssertEqual(
+            callers, ["HostServer.swift"],
+            "the launch locale is published somewhere other than inside the bind"
+        )
     }
 
     /// **A window that does not own the socket must not publish** (round 15 review, P0).
@@ -551,7 +560,10 @@ final class LocalePublicationTests: XCTestCase {
     /// refused, exactly as a second GUI instance is, and it comes away with nothing to pass.
     func testLaunchWriterRequiresPublicationRight() throws {
         let second = HostServer(socketPath: socketDirectory + "/s.sock")
-        XCTAssertThrowsError(try second.start(), "a second instance bound the socket the first holds") { error in
+        XCTAssertThrowsError(
+            try second.start(announcing: .nothing),
+            "a second instance bound the socket the first holds"
+        ) { error in
             guard case HostServer.ServerError.alreadyRunning = error else {
                 return XCTFail("the second instance failed for another reason: \(error)")
             }

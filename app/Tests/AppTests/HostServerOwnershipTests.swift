@@ -64,7 +64,7 @@ final class HostServerOwnershipTests: XCTestCase {
     /// keeps believing it owns the machine, and every button press fails to connect.
     func testStopRemovesOnlyTheSocketItBound() throws {
         let server = HostServer(socketPath: path)
-        _ = try server.start()
+        try server.start(announcing: .nothing)
         let ours = try XCTUnwrap(identity(path))
 
         let replacement = try bindAnotherSocket(at: path)
@@ -89,11 +89,11 @@ final class HostServerOwnershipTests: XCTestCase {
     /// it — and its teardown used to remove the running instance's socket by name.
     func testAnInstanceThatLostTheBindRemovesNothing() throws {
         let owner = HostServer(socketPath: path)
-        _ = try owner.start()
+        try owner.start(announcing: .nothing)
         let ours = try XCTUnwrap(identity(path))
 
         let second = HostServer(socketPath: path)
-        XCTAssertThrowsError(try second.start()) { error in
+        XCTAssertThrowsError(try second.start(announcing: .nothing)) { error in
             guard case HostServer.ServerError.alreadyRunning = error else {
                 return XCTFail("the second instance failed for another reason: \(error)")
             }
@@ -112,7 +112,7 @@ final class HostServerOwnershipTests: XCTestCase {
     /// generation the extension orders by.
     func testThePublicationRightIsGivenUpWithTheSocket() throws {
         let server = HostServer(socketPath: path)
-        let right = try server.start()
+        let right = try server.start(announcing: .nothing)
         XCTAssertTrue(right.isHeld)
         XCTAssertTrue(LocalePublicationRight.current === right, "the bind did not record what it produced")
 
@@ -131,10 +131,10 @@ final class HostServerOwnershipTests: XCTestCase {
     /// same right.
     func testAlaterBindSupersedesTheEarlierRight() throws {
         let first = HostServer(socketPath: path)
-        let firstRight = try first.start()
+        let firstRight = try first.start(announcing: .nothing)
         let otherPath = directory + "/t.sock"
         let second = HostServer(socketPath: otherPath)
-        let secondRight = try second.start()
+        let secondRight = try second.start(announcing: .nothing)
 
         XCTAssertFalse(firstRight.isHeld, "two rights were live at once")
         XCTAssertTrue(LocalePublicationRight.current === secondRight)

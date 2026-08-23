@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// **This is where publication eligibility is decided**, and the only place it is.
     ///
-    /// `start()` throws `alreadyRunning` when another instance answers on the path, and that is the
+    /// `start` throws `alreadyRunning` when another instance answers on the path, and that is the
     /// only singleton test this app has — `NSLock` is process-local and cannot see a second process
     /// at all (round 14 review). Two GUI instances are not hypothetical: the language restart
     /// relaunches with `open -n`, which is exactly how you get one. Publishing from a process that
@@ -87,15 +87,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// type to ask and left the launch writer publishing whatever it was handed, so **this ordering
     /// was still the only thing enforcing it** (round 16 review).
     ///
-    /// Now the bind hands back the right and publishing takes one, so the line below could not be
-    /// moved above `start()` even by accident: there would be nothing to pass. What is left here is
-    /// no longer a rule — it is the plumbing of a value.
+    /// Round 17 took the last of it away from this file: publishing was still a *second statement*
+    /// here, and the accept loop had already been armed by the first, so the extension's opening
+    /// question could be answered before this launch had said anything (round 17 review). The
+    /// language is now an argument of the bind, which is why there is one statement below and no
+    /// order left to write down wrongly.
     private func startServer() {
         let server = HostServer(socketPath: defaultSocketPath())
         do {
-            let right = try server.start()
+            try server.start(announcing: .publish(launchLocale))
             self.server = server
-            Settings.publishLocaleAtLaunch(resolved: launchLocale, right: right)
         } catch {
             checkoutLog(
                 "socket server failed to start, so this instance publishes no locale — \(errorMessage(error))"
