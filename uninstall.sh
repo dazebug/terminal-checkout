@@ -32,7 +32,13 @@ fi
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
 # Two suffixes, because a helper has two names: the staging one it binds and the advertised one it
 # takes with `link` once it is listening. A helper killed in between leaves the first, and a sweep
-# that only knew the second would leave it here for good
+# that only knew the second would leave it here for good.
+# `-S` is also what keeps this sweep away from a **withdrawal**: when the app goes away while a
+# helper is still on its way up, it takes that helper's advertised name by creating a directory
+# there, and a helper born afterwards is stopped by finding the name occupied. Removing it here
+# would hand the name back — `pkill` above reaches only helpers that already exist, so an uninstall
+# cannot otherwise stop one that is still coming. A directory is not `-S`, so it stays; what it
+# costs is an empty directory left in the temporary directory, which is the cheaper of the two
 for sock in "${TMPDIR:-/tmp}"/tcw-* /tmp/tcw-*; do
     if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.(sock|pre)$ ]]; then
         rm -f "$sock"

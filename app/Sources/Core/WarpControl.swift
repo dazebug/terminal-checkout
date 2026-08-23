@@ -224,14 +224,31 @@ public func warpHelperSocketPath(token: String) -> String? {
 // window opens at `record`, not at `open`.
 //
 // It is closed by making the two sides race for **one name**, one operation each, with both
-// outcomes safe. Measured (`<scratchpad>/r18_claim_probe.swift`, `r18_link_probe2.swift`):
+// outcomes safe. Measured (`<scratchpad>/r18_claim_probe.swift`, `r18_link_probe2.swift`,
+// `r20_mkdir_probe.swift`):
 //  - `link` onto a name that already exists is refused with `EEXIST`, and a *listening* socket
 //    reached through a hard link accepts connections normally — so the helper can bind privately,
 //    listen, and only then put itself where the app is looking;
-//  - `bind` on a name a socket already holds is refused with `EADDRINUSE`, so the app finds out
-//    that the helper got there first and that a farewell will reach it.
+//  - `mkdir` on that name is refused with `EEXIST` once the helper's `link` has landed, and takes
+//    the name outright when it has not.
 // `rename` was measured and rejected: it **overwrites** the destination, so a helper would take an
 // address the app had already withdrawn and the fix would be no fix at all.
+//
+// **The app occupies the name with `mkdir`, not with `bind`** (round 19 review), and the two
+// reasons are the two gaps `bind` left:
+//  - `bind` needs a descriptor, so it fails where `socket()` fails, and every such failure used to
+//    read as "the helper won" — a farewell to nobody while the delayed helper's `link` still
+//    succeeded. `mkdir` needs no descriptor at all, which removes that whole family of failures
+//    rather than classifying it;
+//  - what `bind` leaves is a socket file that refuses connections, which is *exactly* the shape
+//    `reclaimDeadWarpHelperSockets` removes. A later run's sweep deleting the tombstone while the
+//    delayed helper is still alive on its staging name puts the address back within reach. A
+//    directory is not a socket, so both that sweep and `uninstall.sh` (`[ -S ]`) already pass it
+//    by: the hole closes by **removing** a property rather than by teaching two sweeps a rule.
+// What is lost is `EADDRINUSE`'s specificity, and it turns out not to be needed: `EEXIST` says the
+// name is taken, the only thing this design puts there is the helper's listening socket, and a
+// farewell to anything else costs one refused connection (measured: connecting to a directory is
+// `ENOTSOCK`, not a hang).
 
 /// The name a helper binds before it is entitled to answer on the advertised one.
 public func warpHelperStagingPath(advertised: String) -> String {
@@ -257,29 +274,60 @@ public func claimWarpHelperAddress(from staging: String, as advertised: String) 
     return claimed
 }
 
-/// **The app's half**, taken as it goes away: bind the address the helper has not taken yet, so
+/// **What became of an address the app tried to take back on its way out.**
+///
+/// Three, and the third is the point (round 19 review, P0). The answer used to be a `Bool` whose
+/// false covered both "a helper already has it" and "this process could not take it", and every
+/// false became an address to say goodbye to. The comment defending that argued the cost of a
+/// farewell to nobody is a refused connection — true when the outcomes are two. They are three: if
+/// nothing was withdrawn *and* nobody holds the name, the farewell reaches nobody, the delayed
+/// helper's `link` succeeds, and it outlives the app. The branch meant to be conservative arrived
+/// at the P0 this work opened the item for.
+public enum WarpHelperAddressWithdrawal: Equatable {
+    /// Taken. No helper can ever answer there, and there is nothing to dismiss.
+    case withdrawn
+    /// Something already holds the name. In this design that is the helper's listening socket, and
+    /// it is what the farewell goes to.
+    case alreadyTaken
+    /// Neither, and **this is not an address to say goodbye to**. What it is instead is a fact to
+    /// report: this process could not act, and saying goodbye would record a dismissal that did not
+    /// happen.
+    case failed(String)
+}
+
+/// Why a claim was refused, in words that are true for **that** errno.
+///
+/// It lives here rather than at the one `fail(...)` in the helper because a diagnostic nobody can
+/// exercise is a diagnostic that goes wrong quietly: the previous one named the withdrawal for
+/// every errno, so a vanished temporary directory was reported as a decision the app had made
+/// (round 19 review) — the class this work has swept since round 1, committed by the round that
+/// swept it. Here it is a pure function of the code, and a case can ask it.
+public func warpHelperClaimFailure(_ code: Int32) -> String {
+    let reason = String(cString: strerror(code))
+    return code == EEXIST
+        ? "the app withdrew this helper's address on its way out (\(reason))"
+        : "the advertised address could not be taken (\(reason))"
+}
+
+/// **The app's half**, taken as it goes away: occupy the address the helper has not taken yet, so
 /// that it never can.
 ///
-/// True means this process got there first — no helper will ever answer there, and there is
-/// nothing to dismiss. False means one is already listening, so the farewell will connect.
+/// `mkdir` and not `bind`, for the two reasons in the section preamble — no descriptor is needed,
+/// and what it leaves behind is not the shape the reclaim removes.
 ///
-/// Every other failure answers false as well, and that is the direction to be wrong in: the cost of
-/// a farewell to nobody is a refused connection, and the cost of skipping one is a helper the app
-/// left behind.
-///
-/// What it leaves at the path is a socket file that refuses connections — the exact shape
-/// `reclaimDeadWarpHelperSockets` already removes, which matters because the process doing this is
-/// terminating and has no later moment of its own to clean up in.
-public func withdrawWarpHelperAddress(_ advertised: String) -> Bool {
-    guard var address = makeUnixSockaddr(advertised) else { return false }
-    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fd >= 0 else { return false }
-    defer { close(fd) }
-    return withUnsafePointer(to: &address) {
-        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-        }
-    } == 0
+/// **How narrow `.failed` is, measured rather than argued** (`<scratchpad>/r20_mkdir_probe.swift`):
+/// `mkdir` and the helper's `link` create a directory entry in the *same* parent, so the path-level
+/// failures are shared — a missing parent answers `ENOENT` to both, a read-only one `EACCES` to
+/// both. Whenever this fails for such a reason the helper cannot claim either. It is folded into
+/// `.failed` all the same rather than reported as a withdrawal, because "we could not act" and "the
+/// name is ours" are different facts and only one of them is this process's doing. What is left
+/// over is the sliver where the two differ: `mkdir` also needs an inode, `link` reuses the socket's,
+/// so an inode shortage could stop one and not the other.
+public func withdrawWarpHelperAddress(_ advertised: String) -> WarpHelperAddressWithdrawal {
+    guard mkdir(advertised, 0o700) != 0 else { return .withdrawn }
+    let reason = errno
+    guard reason != EEXIST else { return .alreadyTaken }
+    return .failed(String(cString: strerror(reason)))
 }
 
 // MARK: - Install detection and the process tree

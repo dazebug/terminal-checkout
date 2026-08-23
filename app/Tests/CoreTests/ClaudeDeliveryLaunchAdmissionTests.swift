@@ -164,20 +164,96 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertTrue(helper.claim(), "the helper of an ongoing delivery could not take its address")
     }
 
-    /// **What the withdrawal leaves behind is what the reclaim already removes.** The process doing
-    /// it is terminating, so it has no later moment of its own to clean up in — the shape of the
-    /// leftover is the whole of the cleanup story.
-    func testTheWithdrawalLeavesADeadSocketTheReclaimTakes() throws {
+    /// **The withdrawal must survive the sweep that used to be its virtue** (round 19 review).
+    ///
+    /// `d4f76a1` presented the leftover as a merit: a dead socket file is exactly what
+    /// `reclaimDeadWarpHelperSockets` removes, and the terminating process has no later moment of
+    /// its own to clean up in. That is the hole. A later run's sweep deleting it while the delayed
+    /// helper is still alive on its staging name puts the address back within reach and the `link`
+    /// succeeds — the P0 again, by way of the tidying. The withdrawal is a directory now, which no
+    /// sweep here touches, so nothing had to be taught a rule about pairs.
+    ///
+    /// The invariant, in the reviewer's words: *an aged advertised tombstone must remain while its
+    /// matching staging socket is listening; otherwise the delayed helper must still be unable to
+    /// claim.*
+    func testAWithdrawalSurvivesTheSweepAndTheDelayedHelperStillCannotClaim() throws {
         let path = advertised("aaaaaaa5")
-        XCTAssertTrue(withdrawWarpHelperAddress(path), "the address could not be withdrawn")
+        XCTAssertEqual(withdrawWarpHelperAddress(path), .withdrawn)
         XCTAssertNil(connectToUnixSocket(path: path), "the withdrawal left something that answers")
+        // The name is still one the sweep considers ours — what saves it is the shape, not the name
         XCTAssertTrue(warpHelperSocketFileIsOurs(name: (path as NSString).lastPathComponent))
 
+        // The delayed helper is alive on its staging name, which is the case the sweep could not see
+        let helper = try helperComingUp(at: path)
+        defer { close(helper.fd) }
         reclaimDeadWarpHelperSockets(in: [directory], youngerThan: -1)
-        XCTAssertFalse(
+
+        XCTAssertTrue(
             FileManager.default.fileExists(atPath: path),
-            "the reclaim does not remove what the withdrawal leaves"
+            "the sweep removed the only cancellation state while its helper was still coming up"
         )
+        XCTAssertFalse(helper.claim(), "the delayed helper claimed the address after the sweep ran")
+        XCTAssertNil(connectToUnixSocket(path: path), "the address answers, so that helper is serving")
+    }
+
+    /// **A withdrawal that did not happen is not a farewell address** (round 19 review, P0).
+    ///
+    /// It used to answer `false` for `socket()` failing, for an unconstructible address and for
+    /// every `bind` failure, and every false became something to say goodbye to. The comment
+    /// defending that direction was right about two outcomes and there are three: nothing withdrawn,
+    /// nobody holding the name, and a farewell that reaches nobody while the delayed helper's `link`
+    /// still succeeds.
+    ///
+    /// The invariant, in the reviewer's words: *a forced non-`EADDRINUSE` withdrawal failure with no
+    /// advertised file must not allow a delayed helper to claim the address* — the half this process
+    /// can keep is that it does not **claim** to have dismissed one.
+    func testAFailedWithdrawalIsNotAnAddressToSayGoodbyeTo() throws {
+        let locked = directory + "/locked"
+        try FileManager.default.createDirectory(atPath: locked, withIntermediateDirectories: true)
+        let path = locked + "/tcw-aaaaaaa7.sock"
+        chmod(locked, 0o500)
+        defer { chmod(locked, 0o700) }
+
+        guard case .failed = withdrawWarpHelperAddress(path) else {
+            return XCTFail("the fixture did not make the withdrawal fail")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path), "something was withdrawn after all")
+
+        let admission = try XCTUnwrap(ClaudeDelivery.admit())
+        defer { admission.end() }
+        try admission.record(.warp(helperSocket: path))
+
+        var farewells: [String] = []
+        ClaudeDelivery.endEveryHelper(ClaudeDelivery.depart(), farewell: { farewells.append($0) })
+        XCTAssertEqual(
+            farewells, [],
+            "an address the app could not take back was reported as a helper it had dismissed"
+        )
+    }
+
+    /// The three answers, told apart. `.withdrawn` is this process's own act, `.alreadyTaken` is
+    /// somebody else's, and `.failed` is neither — the distinction the `Bool` could not carry.
+    func testTheWithdrawalHasThreeAnswers() throws {
+        let path = advertised("aaaaaaa8")
+        XCTAssertEqual(withdrawWarpHelperAddress(path), .withdrawn)
+        XCTAssertEqual(withdrawWarpHelperAddress(path), .alreadyTaken, "the name it took reads as free")
+
+        let taken = advertised("aaaaaaa9")
+        let helper = try helperComingUp(at: taken)
+        defer { close(helper.fd) }
+        XCTAssertTrue(helper.claim())
+        XCTAssertEqual(
+            withdrawWarpHelperAddress(taken), .alreadyTaken,
+            "a listening helper's address read as free"
+        )
+
+        let locked = directory + "/locked2"
+        try FileManager.default.createDirectory(atPath: locked, withIntermediateDirectories: true)
+        chmod(locked, 0o500)
+        defer { chmod(locked, 0o700) }
+        guard case .failed = withdrawWarpHelperAddress(locked + "/tcw-aaaaaab0.sock") else {
+            return XCTFail("a withdrawal that could not act reported that it had")
+        }
     }
 
     /// And the staging name is reclaimed too — a helper killed between `listen` and the claim leaves
@@ -191,6 +267,29 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
 
         reclaimDeadWarpHelperSockets(in: [directory], youngerThan: -1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: staging), "a staging socket was left behind")
+    }
+
+    /// **A refused claim says why it was refused, and only `EEXIST` is the withdrawal.**
+    ///
+    /// The helper printed the withdrawal's name for every errno, so `ENOENT` reported a decision the
+    /// app never made. That is a diagnostic contradicted by the code around it — the class this work
+    /// has swept since round 1, introduced by the round that swept it. The message is a function of
+    /// the code now, which is the only reason a case can hold it at all.
+    func testARefusedClaimNamesTheReasonItWasRefusedFor() {
+        // "withdr" and not one spelling of it: the sentence being kept out is the *attribution*,
+        // and the previous one reached it through "withdrawing"
+        XCTAssertTrue(warpHelperClaimFailure(EEXIST).contains("withdr"))
+        XCTAssertTrue(warpHelperClaimFailure(EEXIST).contains("File exists"))
+        for code in [ENOENT, EACCES, ENOSPC, EPERM] {
+            let message = warpHelperClaimFailure(code)
+            XCTAssertFalse(
+                message.contains("withdr"),
+                "\(String(cString: strerror(code))) was reported as a decision the app made"
+            )
+            XCTAssertTrue(
+                message.contains(String(cString: strerror(code))), "the reason is not in the message"
+            )
+        }
     }
 
     /// The staging name is shorter than the advertised one, so the length check on the advertised

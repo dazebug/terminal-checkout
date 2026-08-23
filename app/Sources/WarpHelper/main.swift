@@ -32,10 +32,12 @@ private let foregroundRecheckStride = 16
 // **The boundary is the uid.** Processes running as the same uid are treated as inside the boundary; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
 //
 // What is possible inside this boundary (and is not prevented):
-//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends: a helper whose app went away between admitting the request and this pane coming up never takes the advertised address at all, so it never listens (`claimWarpHelperAddress`); one that did take it dies immediately on `bye` when delivery ends; and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap.
+//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends **against accident, not against this boundary**: a helper whose app went away between admitting the request and this pane coming up does not take the advertised address (`claimWarpHelperAddress`), one that did take it dies immediately on `bye`, and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap. The first of those is a same-uid process away from being undone — see residual 5 — so the sentence is about what happens when nobody is trying, which is what the caps are for.
 //  2. The TOCTOU in path-based `unlink` — socket reclaim, Tab Config reclaim, the scheduled deletion, and `uninstall.sh`. `lstat`/`fstat` plus an inode re-check narrowed the window to microseconds, but macOS has no `funlinkat`, so the last step is by path. Slipping into it requires knowing our random name in advance.
 //  3. Swapping the contents after the header has been checked — the verdict is reached through an fd but the deletion is by path (the same window as 2).
 //  4. Placing a file at either of the helper's two paths in advance — the staging name it binds, or the advertised name it takes with `link` — so that the helper cannot come up (a DoS that only defeats delivery). The app does the second of these itself, deliberately, as it goes away: withdrawing an address is exactly this move, which is why the helper treats a refused claim as a decision rather than an error.
+//  5. **Removing the app's withdrawal**, which is the same move in reverse and is not covered by 4: the withdrawal occupies the advertised name, and a same-uid process that deletes it between the withdrawal and a delayed helper's `link` turns a refused claim into a successful one — a helper that outlives the app. This is inside the declared boundary and is not prevented; what changes is that residual 1's "narrowed at both ends" is a statement about accidents, not about this (round 19 review).
+//  6. Taking the staging name first. The helper unlinks a socket sitting at the deterministic `.pre` name before binding, which on a token collision — random 8 hex, or a deliberate one from the same uid — removes another live claimant's socket. It is the same path-ownership residual as 2, stated here rather than left to be inferred from the two syscalls.
 //
 // The residuals that have **nothing to do with** the boundary (the ones that remain even with no malice) are kept separate — the two are never mixed:
 //  - the window in which the pane proof is valid only up to the moment the body is typed (see the `proveOurPane` comment)
@@ -281,7 +283,7 @@ let arguments = CommandLine.arguments
 if arguments.count == 2 && arguments[1] != serveFlag {
     // Parent mode: launch the child and get out immediately — the shell's next command (claude) has to follow right away, so this must not stay in the foreground. `setsid` is **not** called: leaving the session means that tty is no longer the controlling terminal, which loses the TIOCSTI permission
     guard let ttyName = resolvePaneTTYName() else {
-        fail("the pane tty name is unknown — stdio is not a terminal")
+        fail("no stdio descriptor names a usable pane tty")
     }
     let child = Process()
     child.executableURL = URL(fileURLWithPath: Bundle.main.executablePath ?? arguments[0])
@@ -334,8 +336,10 @@ guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoNa
 chmod(stagingPath, 0o600)
 // **This is where this helper finds out whether it is still wanted**, and it is one operation rather than a look at something the app could change a moment later: the app withdraws an address by binding it as it leaves, and `link` onto a name that exists is refused. So `File exists` here means the app decided to go away between admitting this request and this pane coming up — and exiting now is exiting before the advertised name has ever referred to this socket, which is the difference between a helper that was dismissed and one that never was anything
 guard claimWarpHelperAddress(from: stagingPath, as: socketPath) else {
+    // **The reason is read, not assumed.** This used to print "`File exists` is the app withdrawing it" for every errno, so a vanished temporary directory was reported as a decision the app had made — the class this work has swept since round 1, introduced by the round that swept it (round 19 review). `EEXIST` is the withdrawal; anything else is not, and the two say so separately
+    let reason = errno
     close(server)
-    fail("the advertised address could not be taken (\(lastErrnoName())) — `File exists` is the app withdrawing it on the way out")
+    fail(warpHelperClaimFailure(reason))
 }
 installSocketCleanupOnSignals(path: socketPath)
 

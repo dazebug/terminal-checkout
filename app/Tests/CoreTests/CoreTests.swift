@@ -4369,6 +4369,14 @@ final class UninstallScriptSyncTests: XCTestCase {
             "^" + warpHelperSocketPrefix + "[0-9a-f]{8}\\.("
                 + [warpHelperAdvertisedSuffix, warpHelperStagingSuffix]
                     .map { $0.dropFirst() }.joined(separator: "|") + ")$",
+            // Round 19: the guard that keeps this sweep away from a **withdrawal**. The app takes a
+            // late helper's advertised name by creating a directory there, and an uninstall that
+            // removed it would hand the name back to a helper that has not been born yet — `pkill`
+            // reaches only the ones that exist. A directory is not `-S`, and this is the line that
+            // says so. It is a lint and not a run: the socket sweep walks hardcoded `/tmp` paths
+            // that no variable redirects, so executing it from a test would delete the files of
+            // whoever is using the app on this machine, mid-delivery
+            "[ -S \"$sock\" ]",
         ]
         for needle in expected {
             XCTAssertTrue(

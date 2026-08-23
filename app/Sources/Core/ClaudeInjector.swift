@@ -654,6 +654,10 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// first is listening by definition, so the farewell connects. See `withdrawWarpHelperAddress` and
 /// `claimWarpHelperAddress` for the measurements.
 ///
+/// **The withdrawal has three answers, not two** (round 19 review). It can also fail, and then the
+/// name is still free — a state that must not be filed under either of the others, because a
+/// farewell sent to it reaches nobody while the delayed helper's `link` still succeeds.
+///
 /// **The ordering inside the delivery's `defer` is still the invariant.** The helper is told to go
 /// *before* the entry is removed, so anyone who reads "nothing is being delivered" can conclude "no
 /// helper of ours is still alive on that account".
@@ -759,19 +763,35 @@ public enum ClaudeDelivery {
     /// Refusing a `record` covers a request that has not reached the launch; it does nothing about
     /// one that already has, because between `record` and the helper's birth there is a directory
     /// creation, a file write and an `open` with a fifteen-second timeout. Those helpers used to be
-    /// born after their own farewell. Withdrawing takes the advertised address by binding it, which
-    /// answers both halves in one syscall: taken here means no helper can ever answer there, and
-    /// refused here means one already does. Nil is the refused restart; a list is the closed gate,
-    /// and it holds exactly the helpers a farewell can still reach.
-    private static func closeAdmission(requiringIdle: Bool) -> [String]? {
+    /// born after their own farewell. Withdrawing occupies the advertised address, which answers
+    /// both halves at once: taken here means no helper can ever answer there, refused with `EEXIST`
+    /// means one already does.
+    ///
+    /// **And there is a third answer** (round 19 review, P0): the withdrawal itself can fail, and
+    /// then the name is still free. Folding that into the farewell list — which is what a `Bool`
+    /// did — sends a goodbye to nobody and leaves the delayed helper free to claim, which is the
+    /// defect this gate exists to stop. Nil is the refused restart; otherwise the two lists are
+    /// returned apart, because only one of them is a set of things that can be dismissed.
+    private static func closeAdmission(
+        requiringIdle: Bool
+    ) -> (listening: [String], unreachable: [String])? {
         lock.lock()
         defer { lock.unlock() }
         if requiringIdle, !live.isEmpty { return nil }
         admissionClosed = true
-        return live.values.compactMap { handle -> String? in
-            guard case .warp(let socket) = handle else { return nil }
-            return withdrawWarpHelperAddress(socket) ? nil : socket
-        }.sorted()
+        var listening: [String] = []
+        var unreachable: [String] = []
+        for handle in live.values {
+            guard case .warp(let socket) = handle else { continue }
+            switch withdrawWarpHelperAddress(socket) {
+            case .withdrawn: break
+            case .alreadyTaken: listening.append(socket)
+            case .failed(let reason):
+                unreachable.append(socket)
+                checkoutLog("could not withdraw a Warp helper address (\(reason)): \(socket)")
+            }
+        }
+        return (listening.sorted(), unreachable.sorted())
     }
 
     /// **Evidence that the gate was shut**, and the only way to come by one is to shut it.
@@ -792,17 +812,27 @@ public enum ClaudeDelivery {
     /// the lock. Reading the register again afterwards would ask a question whose answer had already
     /// been decided — and would ask it of a value that no longer distinguishes the two cases.
     public struct Departure {
-        /// The helpers that had already taken their address when the gate shut. The rest were
-        /// withdrawn and will exit at birth, so they are not here: there is nothing to dismiss.
+        /// The helpers that had already taken their address when the gate shut. Withdrawn ones are
+        /// not here and need nothing: they will exit at birth.
         fileprivate let listening: [String]
-        fileprivate init(listening: [String]) { self.listening = listening }
+        /// The addresses this process could neither take back nor reach — the withdrawal failed and
+        /// nobody holds the name. **They are deliberately not farewell addresses**: sending one
+        /// would record a dismissal that did not happen, and the helper that is still coming can
+        /// still claim. Carried so that the state exists and is reported rather than being counted
+        /// as one of the other two (round 19 review).
+        fileprivate let unreachable: [String]
+        fileprivate init(listening: [String], unreachable: [String]) {
+            self.listening = listening
+            self.unreachable = unreachable
+        }
     }
 
     /// Termination's half of the decision: it **cannot be refused** — the user quit or macOS is
     /// shutting us down, and saying no would not stop it — so this shuts the gate whatever is in
     /// flight and hands back what `endEveryHelper` needs.
     public static func depart() -> Departure {
-        Departure(listening: closeAdmission(requiringIdle: false) ?? [])
+        let closed = closeAdmission(requiringIdle: false)
+        return Departure(listening: closed?.listening ?? [], unreachable: closed?.unreachable ?? [])
     }
 
     /// The restart's half: refuse unless nothing is registered, because cutting a delivery in half
@@ -857,6 +887,12 @@ public enum ClaudeDelivery {
     public static func endEveryHelper(_ departure: Departure, farewell: ((String) -> Void)? = nil) {
         let send = farewell ?? { _ = warpHelperRequest(.bye, socket: $0) }
         for socket in departure.listening { send(socket) }
+        // Not a farewell, because there is nobody to send one to. What this process knows is that a
+        // helper may still be born at these addresses and that nothing here can stop it — saying so
+        // is the whole of what is left to do
+        for socket in departure.unreachable {
+            checkoutLog("a Warp helper address could not be withdrawn, so a late helper there is not dismissed: \(socket)")
+        }
     }
 }
 
