@@ -85,7 +85,14 @@ test('the key spaces are separate, whatever is in them', () => {
     }
   }
   // `chrome.i18n`'s namespace holds exactly the two keys a manifest cannot fill any other way (D9)
-  for (const tag of ['en', 'ko']) {
+  //
+  // **Five directories now, and that reverses item 17's decision to ship two.** Its reason was that
+  // an *empty* `messages.json` is a shape nobody had measured, so creating three of them would have
+  // added three unverified files to hold nothing. That reason expires the moment there are values to
+  // put in them: a filled `messages.json` is the shape Chrome documents and the other two already
+  // demonstrate. Leaving them out now would mean the extension's own name and description stay
+  // English in three of the five languages it otherwise speaks.
+  for (const tag of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
     const messages = JSON.parse(read(`_locales/${tag}/messages.json`));
     assert.deepEqual(Object.keys(messages).sort(), ['extDescription', 'extName']);
     for (const key of Object.keys(messages)) {
@@ -507,20 +514,20 @@ const placeholdersOf = value => (value.match(/%\d+\$[sd]/g) ?? []).sort();
 const tagsOf = value => (value.match(/<\/?[a-z][^>]*>/g) ?? []).map(tag => tag.replace(/\s+class="[^"]*"/, '')).sort();
 const codeSpansOf = value => (value.match(/<code>[^<]*<\/code>/g) ?? []).sort();
 
-test('en and ko carry the same keys, and every value says something', () => {
+test('every locale carries the same keys, and every value says something', () => {
+  // **This used to exempt ja and zh, and the exemption was the hole.** It asserted they were
+  // *empty*, which was true and useless: a catalogue filled with three keys would have passed it
+  // just as a complete one would have failed it. Now every shipped locale answers the same
+  // question, and the day a translation is missing one key it is that locale that goes red.
   const en = globalThis.TC_I18N.en;
-  const ko = globalThis.TC_I18N.ko;
-  assert.deepEqual(Object.keys(ko).sort(), Object.keys(en).sort());
   assert.ok(Object.keys(en).length >= 89, `the catalogue shrank to ${Object.keys(en).length}`);
-  for (const [tag, table] of [['en', en], ['ko', ko]]) {
+  for (const tag of TC_I18N_LOCALES) {
+    const table = globalThis.TC_I18N[tag];
+    assert.deepEqual(Object.keys(table).sort(), Object.keys(en).sort(), `${tag} does not match en`);
     for (const [key, value] of Object.entries(table)) {
       assert.equal(typeof value, 'string', `${tag}/${key}`);
       assert.ok(value.trim().length > 0, `${tag}/${key} is empty`);
     }
-  }
-  // ja and zh are item 24's; leaving them empty here is the state, not an oversight
-  for (const tag of ['ja', 'zh-Hans', 'zh-Hant']) {
-    assert.deepEqual(Object.keys(globalThis.TC_I18N[tag]), [], `${tag} was filled early`);
   }
 });
 
@@ -546,8 +553,18 @@ test('no message id is computed — the source literals are the whole set', () =
 test('placeholders match across locales, key by key', () => {
   // A translation that drops `%1$s` loses the label it was quoting; one that invents `%3$d` prints
   // the placeholder back at the user. Neither shows up as an error anywhere else.
-  for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
-    assert.deepEqual(placeholdersOf(globalThis.TC_I18N.ko[key]), placeholdersOf(value), `ko/${key}`);
+  //
+  // **Every locale, and it used to check only `ko`** — written when there were two catalogues, so
+  // the three that arrived afterwards were never asked. Found by a toggle rather than by the run:
+  // adding `%1$s` to a Chinese value passed. That is the same two-locale shape the layout test and
+  // the refusal-wording tables carried, in a gate rather than in a fixture.
+  for (const tag of TC_I18N_LOCALES) {
+    if (tag === 'en') continue;
+    for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
+      assert.deepEqual(
+        placeholdersOf(globalThis.TC_I18N[tag][key]), placeholdersOf(value), `${tag}/${key}`,
+      );
+    }
   }
 });
 
@@ -1196,5 +1213,117 @@ test('a dictionary file is one JSON object, so the ownership gate can read it', 
     assert.doesNotThrow(() => { parsed = JSON.parse(body); }, `${tag}.js is not readable as JSON`);
     // and it agrees with what running the file produced, which is the real dictionary
     assert.deepEqual(parsed, globalThis.TC_I18N[tag], `${tag}.js reads differently as text and as code`);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// What only becomes checkable once five locales exist (items 23/24).
+// ---------------------------------------------------------------------------------------------
+
+// A command literal: something the user is meant to type or that names a variable the app
+// substitutes. Translating one does not read oddly — it produces a command that does not work.
+//
+// The `<code>` gate above cannot see these: `describe`, `prefixDescribe` and `customNote` are plain
+// sentences with `{cd}` and `z {repo}` inside them, no markup at all. So the rule here is about the
+// *shape of the token*, not about the markup around it.
+//
+// **Word boundaries, and the first version of this gate needed them.** Written as plain substrings
+// it counted `gh` inside the English word "ri`gh`t" and reported a Korean translation as having lost
+// a command — a false positive on its very first run. A gate that cries wolf is a gate somebody
+// switches off (the standard item 7 set), so the bare-word literals are matched as words.
+const COMMAND_LITERALS = [
+  /\{cd\}/g, /\{repo\}/g, /\{owner\}/g, /\{number\}/g, /\{branch\}/g, /\{base\}/g,
+  /\{main\}/g, /\{branch_underbar\}/g, /z \{repo\}/g,
+  /\bstorage\.sync\b/g, /chrome:\/\/extensions/g, /\bgit pull\b/g,
+  /\bgh\b/g, /\bclaude\b/g, /\bzoxide\b/g, /\bbrew install\b/g,
+];
+
+test('a command literal reads the same in every language', () => {
+  // The most dangerous thing a translator can do to this catalogue is translate `z {repo}`. It is
+  // not a phrase; it is what the user's button will run. These sit in plain sentences with no
+  // markup around them, so the `<code>` gate above cannot see them.
+  let compared = 0;
+  for (const [key, english] of Object.entries(globalThis.TC_I18N.en)) {
+    for (const literal of COMMAND_LITERALS) {
+      const expected = (english.match(literal) ?? []).length;
+      if (expected === 0) continue;
+      for (const tag of TC_I18N_LOCALES) {
+        const value = globalThis.TC_I18N[tag][key];
+        if (value === undefined) continue; // the key gate above owns that failure
+        const found = (value.match(literal) ?? []).length;
+        assert.equal(
+          found, expected,
+          `${tag}/${key}: ${literal} appears ${found} times, en has ${expected}`,
+        );
+      }
+      compared += 1;
+    }
+  }
+  assert.ok(compared >= 20, `only ${compared} literal occurrences were compared`);
+});
+
+// Characters that are written differently in simplified and traditional Chinese. Each pair is one
+// character, and each is chosen because the two scripts genuinely disagree about it — a character
+// both scripts share would make this check assert nothing at all.
+const SCRIPT_PAIRS = [
+  ['设', '設'], // set / settings
+  ['开', '開'], // open
+  ['关', '關'], // close
+  ['应', '應'], // should, apply
+  ['键', '鍵'], // key
+  ['变', '變'], // change
+  ['储', '儲'], // store
+  ['执', '執'], // execute
+];
+
+test('the two Chinese catalogues are not one script converted into the other', () => {
+  // Keys and placeholders cannot tell these apart, and neither can a length check: a `zh-Hant` that
+  // is a copy of `zh-Hans`, or of English, satisfies every other gate in this file. What separates
+  // them is the writing system, so that is what is asked about.
+  const hans = globalThis.TC_I18N['zh-Hans'];
+  const hant = globalThis.TC_I18N['zh-Hant'];
+  const en = globalThis.TC_I18N.en;
+  const joined = table => Object.values(table).join('\n');
+
+  const hansText = joined(hans);
+  const hantText = joined(hant);
+  assert.notEqual(hansText, hantText, 'zh-Hant is a copy of zh-Hans');
+  assert.notEqual(hantText, joined(en), 'zh-Hant is a copy of English');
+  assert.notEqual(hansText, joined(en), 'zh-Hans is a copy of English');
+
+  let checked = 0;
+  for (const [simplified, traditional] of SCRIPT_PAIRS) {
+    const inHans = hansText.includes(simplified);
+    const inHant = hantText.includes(traditional);
+    if (!inHans && !inHant) continue;
+    checked += 1;
+    assert.ok(
+      !hantText.includes(simplified),
+      `zh-Hant contains the simplified form "${simplified}"`,
+    );
+    assert.ok(
+      !hansText.includes(traditional),
+      `zh-Hans contains the traditional form "${traditional}"`,
+    );
+  }
+  assert.ok(checked >= 4, `only ${checked} script-sensitive characters were found to compare`);
+});
+
+test('a translation that is still English is caught where English is not the answer', () => {
+  // A value byte-identical to English is the fingerprint of a key that was skipped. It is also
+  // legitimate for a product name, a command, or a bare number — so this counts rather than
+  // forbids, and the threshold is what makes it a gate instead of a nuisance. **A gate people turn
+  // off is worse than no gate** (the standard item 7 set), and a per-key rule here would fire on
+  // `main branch` and `Terminal Checkout` forever.
+  const en = globalThis.TC_I18N.en;
+  const total = Object.keys(en).length;
+  for (const tag of TC_I18N_LOCALES) {
+    if (tag === 'en') continue;
+    const identical = Object.entries(en).filter(([key, value]) => globalThis.TC_I18N[tag][key] === value);
+    assert.ok(
+      identical.length < total * 0.2,
+      `${tag}: ${identical.length}/${total} values are byte-identical to English — `
+        + `${identical.slice(0, 5).map(([k]) => k).join(', ')}`,
+    );
   }
 });

@@ -1,6 +1,5 @@
-/* Info.plist keys that face the user. Deliberately empty: the only such key is
-   NSAppleEventsUsageDescription, whose en and ko values item 11 wrote and whose translation into
-   this language is item 24's; a placeholder in the wrong language would be a claim this file has
-   no business making. macOS falls back to the value in `app/Info.plist` while this is empty. The
-   file exists so the five catalogs have the same shape and item 7 has something to compare byte
-   for byte. */
+/* Info.plist keys that face the user. The only one is NSAppleEventsUsageDescription, and it is
+   drawn by tccd rather than by us. Whether that prompt follows the language chosen in the app is
+   **unmeasured** — measuring it would mean resetting the user's live Automation grant
+   (docs/context/localization.md). */
+"NSAppleEventsUsageDescription" = "需要自动化权限，才能在新的 iTerm2 标签页中运行从 GitHub 请求的 checkout 命令。";

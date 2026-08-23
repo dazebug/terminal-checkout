@@ -15,7 +15,11 @@ final class AppMessageTests: XCTestCase {
 
     /// The catalogues that have bodies today, kept in step with `SetupWindowLayoutTests`. `ja` and
     /// the two Chinese ones are item 24's, and asserting against them now would measure raw keys.
-    private let populatedLocales = ["en", "ko"]
+    /// **All five now** — item 24 filled the three that were missing, which is what emptying this
+    /// list means. While it held two, every check below asked its question of two languages and let
+    /// the other three past; the assertions that count distinct answers were the ones that mattered,
+    /// because "the label changed with the language" is only evidence when every language is in it.
+    private let populatedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
 
     private static var sourceResources: String {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/AppMessageTests.swift

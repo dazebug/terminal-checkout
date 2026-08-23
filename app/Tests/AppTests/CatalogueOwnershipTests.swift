@@ -154,6 +154,13 @@ final class CatalogueOwnershipTests: XCTestCase {
         // Merging them would tie a heading's wording to a table column's.
         ["ext.section.main.title", "ext.table.mainBranch"]:
             "a section heading and a table column that happen to name the same thing",
+        // **Found by this gate when Japanese landed, and kept rather than worked around.** English
+        // distinguishes removing a row ("Remove") from deleting a button ("Delete"); Japanese uses
+        // 削除 for both, and Korean and both Chinese catalogues keep them apart. Inventing a second
+        // Japanese word to satisfy a check would make that screen read worse than it does now — the
+        // gate's job here was to make the collapse visible, and it is.
+        ["ext.button.remove", "ext.card.delete"]:
+            "Japanese uses one word where English has two, and a second one would be worse UI",
     ]
 
     func testDuplicateValuesWithinAStoreAreDeclared() throws {
@@ -227,13 +234,21 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// The reader itself, because a gate that reads nothing passes everything. This is the failure
     /// mode item 7 named for the bundle check, in a different file.
     func testTheStoresAreActuallyBeingRead() throws {
-        XCTAssertEqual(try filledLocales(), ["en", "ko"], "the set of filled catalogues moved — item 24?")
+        XCTAssertEqual(
+            try filledLocales(), ["en", "ko", "ja", "zh-Hans", "zh-Hant"],
+            "a catalogue emptied out — every check in this file silently skips a locale it cannot read"
+        )
         XCTAssertGreaterThan(try appCatalogue("en").count, 90)
         XCTAssertGreaterThan(try extensionDictionary("en").count, 110)
-        XCTAssertEqual(try extensionDictionary("ja").count, 0, "item 24 filled a catalogue early")
-        XCTAssertEqual(
-            try appCatalogue("en").count, try appCatalogue("ko").count,
-            "the two filled app catalogues disagree on size"
-        )
+        for tag in try filledLocales() {
+            XCTAssertEqual(
+                try appCatalogue(tag).count, try appCatalogue("en").count,
+                "the app catalogues disagree on size at \(tag)"
+            )
+            XCTAssertEqual(
+                try extensionDictionary(tag).count, try extensionDictionary("en").count,
+                "the extension dictionaries disagree on size at \(tag)"
+            )
+        }
     }
 }

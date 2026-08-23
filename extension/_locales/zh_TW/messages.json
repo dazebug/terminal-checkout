@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Terminal Checkout",
+    "description": "這是產品名稱，不翻譯。"
+  },
+  "extDescription": {
+    "message": "從 GitHub 的 PR、issue 與儲存庫頁面在你的終端機（iTerm2/WezTerm/Warp）中執行指令",
+    "description": "Chrome 顯示在名稱旁邊的一行說明。"
+  }
+}

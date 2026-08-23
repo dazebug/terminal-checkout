@@ -21,7 +21,12 @@ final class LocalizationCatalogTests: XCTestCase {
     /// The list cannot quietly outlive its reason: a locale on it has to be **genuinely
     /// incomplete**, so the day item 24 fills one, this file turns red until the entry is removed.
     /// That is the completion condition item 24 carries.
-    private let incompleteLocales: Set<String> = ["ja", "zh-Hans", "zh-Hant"]
+    /// **Empty, and emptying it was item 24's completion condition.** While it named the three
+    /// locales nobody had filled, this file's key check *licensed* them: a catalogue with one key
+    /// out of ninety-seven satisfied "a subset of English". The exemption was honest while the
+    /// translations did not exist and it is a hole the moment they do, so it goes before they land
+    /// rather than after — a gate written after the thing it guards cannot have caught it arriving.
+    private let incompleteLocales: Set<String> = []
 
     private static var appSources: URL {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/LocalizationCatalogTests.swift

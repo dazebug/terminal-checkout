@@ -36,10 +36,12 @@ final class SetupWindowLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/App/Resources").path
     }
 
-    /// The catalogues that have bodies today. `ja` and the two Chinese ones carry a single key
-    /// until item 24, so putting them in this list would measure a window of raw keys and call it
-    /// a pass — the list grows when the catalogues do.
-    static let populatedLocales = ["en", "ko"]
+    /// The catalogues that have bodies. **All five, now that item 24 filled the last three** — the
+    /// list existed because a window drawn from an empty catalogue is a window of raw keys, and a
+    /// key is shorter than every sentence it stands for, so measuring one would have been a pass
+    /// that meant nothing. A layout that fits English and Korean is likewise not evidence about
+    /// Japanese or either Chinese, whose glyphs and line lengths differ.
+    static let populatedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
@@ -86,10 +88,16 @@ final class SetupWindowLayoutTests: XCTestCase {
             XCTAssertEqual(
                 controller.rootStack.frame.height, needed, accuracy: 0.5, "\(tag) squeezed the stack"
             )
-            // And the sentences really are that locale's, not keys or another locale's
+            // And the sentences really are that locale's, not keys or another locale's.
+            //
+            // Compared against **that locale's own catalogue** rather than a literal. The literal
+            // form was `tag == "en" ? … : "저장소 기본 폴더"`, which is a two-locale shape: it says
+            // "English or Korean" in its structure, and adding a third language made it assert that
+            // Japanese equals Korean. Reading the catalogue asks the question that was meant — did
+            // the window draw this locale's sentence — in a way that does not need editing again.
             let title = localized("app.card.baseDir.title")
             XCTAssertFalse(title.hasPrefix("app."), "\(tag) drew a raw key")
-            XCTAssertEqual(title, tag == "en" ? "Repository base folder" : "저장소 기본 폴더")
+            XCTAssertEqual(title, try loadCatalogue(tag)["app.card.baseDir.title"], "\(tag) drew another locale")
         }
     }
 
@@ -291,7 +299,12 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
     }
 
     func testTheCardSaysTheRequestIsRefusedRatherThanPartlyRun() throws {
-        let refusal = ["en": "refused", "ko": "거절"]
+        // One word per language, and it has to be the word that locale actually uses — the point of
+        // the check is that the card says the request is *refused*, not that it is partly carried
+        // out, and only the sentence in front of the user can answer that.
+        let refusal = [
+            "en": "refused", "ko": "거절", "ja": "拒否", "zh-Hans": "拒绝", "zh-Hant": "拒絕",
+        ]
         for tag in SetupWindowLayoutTests.populatedLocales {
             let help = try XCTUnwrap(catalogue(tag)["app.section.accessibility.help"], tag)
             XCTAssertTrue(help.contains(try XCTUnwrap(refusal[tag])), "\(tag): \(help)")
@@ -303,9 +316,16 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
     /// still runs without the permission; scanning every value is what keeps the next translation
     /// from reintroducing it in one locale only.
     func testNoWindowTextStillPromisesTheCommandRunsWithoutThePermission() throws {
+        // The sentence that must appear in **no** catalogue, in each language's natural forms. A
+        // negative check is only as wide as the phrasings it knows, which is why each locale lists
+        // several rather than one — and why this list grows with the catalogues rather than being
+        // written once for English.
         let promises = [
             "en": ["the command still runs", "command still runs", "only the claude input"],
             "ko": ["명령은 실행되지만", "명령은 실행되고", "그대로 실행되지만"],
+            "ja": ["コマンドは実行され", "コマンドだけは実行", "コマンドは動きます"],
+            "zh-Hans": ["命令仍会运行", "命令仍然运行", "命令还是会运行"],
+            "zh-Hant": ["指令仍會執行", "指令仍然執行", "指令還是會執行"],
         ]
         for tag in SetupWindowLayoutTests.populatedLocales {
             let values = try catalogue(tag)
