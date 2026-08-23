@@ -3669,9 +3669,13 @@ final class AppleScriptCarrierTests: XCTestCase {
     /// confined to one door, and a rule that punished the explanation would be deleted the first
     /// time someone documented this properly. Code is where the process gets launched.
     func testNoSourceOutsideTheDoorEvenNamesTheInterpreter() throws {
+        // **The door is one file, named by where it sits.** `hasSuffix` exempted anything whose path
+        // *ended* that way, so an `App/Core/AppleScriptSupport.swift` — a different module, so the
+        // build permits it — would have been excused from the rule this gate exists for. Same class
+        // as the basename identities round 20 found in the App gates, found by sweeping for it
         let door = "Core/AppleScriptSupport.swift"
         var offenders: [String] = []
-        for (path, text) in try appSourceFiles() where !path.hasSuffix(door) {
+        for (path, text) in try appSourceFiles() where path != door {
             for (number, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
                 let code = line.trimmingCharacters(in: .whitespaces)
                 guard !code.hasPrefix("//") else { continue }
@@ -3686,7 +3690,7 @@ final class AppleScriptCarrierTests: XCTestCase {
 
     /// The door must not grow an argv form again — `-e` is the spelling that decomposes.
     func testTheDoorDeliversTheScriptOnStdin() throws {
-        let text = try appSourceFiles().first { $0.path.hasSuffix("Core/AppleScriptSupport.swift") }?.text
+        let text = try appSourceFiles().first { $0.path == "Core/AppleScriptSupport.swift" }?.text
         XCTAssertNotNil(text)
         XCTAssertTrue(text?.contains(#"["-"], input: script"#) == true)
         XCTAssertFalse(text?.contains(#""-e""#) == true, "the door is back on the argv form")

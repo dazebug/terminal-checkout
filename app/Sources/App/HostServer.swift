@@ -92,23 +92,26 @@ func hostResponse(
     }
 }
 
-/// Whether that descriptor really is a unix socket bound to that exact name.
+/// **What a successful bind produced: the descriptor to accept on, and the right it is the reason
+/// for.**
 ///
-/// A free function rather than a private member so that what it discriminates can be exercised
-/// against real descriptors — a regular file, a socket that never bound, one bound somewhere else —
-/// instead of being taken on faith at the one call site that matters. It decides nothing on its own:
-/// the only caller is `LocalePublicationRight.mint`.
-func unixSocketIsBound(_ fd: Int32, to path: String) -> Bool {
-    var storage = sockaddr_un()
-    var size = socklen_t(MemoryLayout<sockaddr_un>.size)
-    let named = withUnsafeMutablePointer(to: &storage) {
-        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &size) }
+/// One value because they are one fact. They used to be two stored properties assigned six lines
+/// apart, and a `stop()` landing between them relinquished nothing and closed the socket, after
+/// which `start` went on to publish as the owner and arm an accept loop on a closed descriptor —
+/// the process claiming the machine while nothing could reach it, which is the state the whole
+/// ownership design exists to prevent (round 20 review).
+struct BoundSocket {
+    let fd: Int32
+    let right: LocalePublicationRight
+    /// Which file the bind created. Remembered because the path is a name that can come to mean
+    /// something else, and a teardown that goes by the name alone deletes the socket the relay is
+    /// now talking to (round 16 review).
+    var identity: (dev: dev_t, ino: ino_t)?
+
+    fileprivate init(fd: Int32, right: LocalePublicationRight) {
+        self.fd = fd
+        self.right = right
     }
-    guard named == 0, storage.sun_family == sa_family_t(AF_UNIX) else { return false }
-    let bound = withUnsafeBytes(of: &storage.sun_path) { raw in
-        String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
-    }
-    return !bound.isEmpty && bound == path
 }
 
 /// **The right to publish a locale, as a thing you have rather than a question you ask.**
@@ -117,9 +120,21 @@ func unixSocketIsBound(_ fd: Int32, to path: String) -> Bool {
 /// ask one type, and the answer was a process-global boolean. A boolean is a *convention*: it says
 /// what somebody recorded, not what anybody holds, and the launch writer went on publishing without
 /// consulting it while a comment at the call site declared the rule for both (round 16 review). So
-/// the answer is a value now. Its initialiser is file-private and the only line in this file that
-/// makes one is the successful `bind`, so **no call site anywhere can publish without having been
-/// handed one by the bind** — a third writer cannot be written wrong, only unwritable.
+/// the answer is a value now.
+///
+/// **And the bind happens here** (round 20 review). Round 19 checked the descriptor a caller handed
+/// in, which stops a mistake and not a producer: `mint` was `fileprivate`, so a second declaration
+/// in this file could bind a socket of its own, pass perfectly valid arguments and come away with a
+/// right, while the sentence here claimed no call site anywhere could. The operation moved to where
+/// the invariant lives instead — `mint` is `private`, and the only way to reach it is
+/// `bindingSocket(at:)`, which performs the `bind` and the `listen` itself. **A right that did not
+/// come from a bind is no longer a rule anybody keeps; it is a value nobody can make.**
+///
+/// What the sentence does *not* say, because it would not be true: which path was bound. A same-file
+/// caller can bind a path of its own and get a right for it. What it cannot do is get one without
+/// binding something and still holding it — and on the path this server names, `bind` is exclusive,
+/// so while the real server owns it nobody else can. Which path a server is asked to serve is its
+/// constructor's argument, and both production call sites pass `defaultSocketPath()`.
 ///
 /// **Ownership lasts exactly as long as the socket does.** The path can be taken over: this process
 /// stops listening, another binds the same path, and from then on the relay is talking to that one.
@@ -146,37 +161,48 @@ final class LocalePublicationRight {
 
     private init() {}
 
-    /// **Minted from the bound socket itself, and there is nothing else to mint from.**
+    /// **The bind, and the right it is the reason for.**
     ///
-    /// A `private` initialiser stops every other file and stopped nothing in this one: a second
-    /// declaration here could call a no-argument `mint()` and publish without ever having bound
-    /// (round 17 review). That was provenance kept by habit. The mint is handed the socket now and
-    /// checks it, and what it checks is what the right *means* — this process holds the name the
-    /// relay reaches. `bind` on a unix path is exclusive, so an fd carrying that name **is**
-    /// ownership of it, and a right that never bound stops being a rule anybody keeps and becomes a
-    /// value nobody can make.
+    /// The only producer. `mint` below is `private`, so nothing outside this type — not even another
+    /// declaration in this file — can make a right without going through the two syscalls that make
+    /// the claim true.
     ///
-    /// **The two obvious checks are unavailable on this platform, and that is measured rather than
-    /// assumed** (`<scratchpad>/r19_sockname_probe.swift`, `r19_ino_probe.swift`):
-    /// `getsockopt(SO_ACCEPTCONN)` answers `ENOPROTOOPT` for *every* socket here, listening or not,
-    /// and a bound unix socket's `fstat` inode is a synthetic one with `st_dev == -1` that has
-    /// nothing to do with the filesystem inode of its path. So neither "is it listening" nor "is
-    /// this fd that file" can be asked. `getsockname` answers enough and answers it exactly:
-    /// `ENOTSOCK` for anything that is not a socket, the family, and the **path that was passed to
-    /// `bind`** — empty for a socket that never bound and for a connected client. Listening is not
-    /// a property worth carrying here anyway: since round 17 the accept loop is armed by the same
-    /// call, after this.
+    /// It is `fileprivate` because `HostServer` is a different type in the same file; `private`
+    /// would put it out of reach of the one caller it has.
+    fileprivate static func bindingSocket(at path: String) throws -> BoundSocket {
+        guard var address = makeUnixSockaddr(path) else {
+            throw HostServer.ServerError.socketFailed("the path is too long: \(path)")
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw HostServer.ServerError.socketFailed(String(cString: strerror(errno)))
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0, listen(fd, 8) == 0 else {
+            let reason = String(cString: strerror(errno))
+            close(fd)
+            throw HostServer.ServerError.socketFailed(reason)
+        }
+        return BoundSocket(fd: fd, right: mint())
+    }
+
+    /// **The previous right stops being one before the new one is visible.**
     ///
-    /// Any right this process was holding is given up first: two live rights would mean two answers
-    /// to a question with one true answer.
-    fileprivate static func mint(boundTo path: String, on fd: Int32) -> LocalePublicationRight? {
-        guard unixSocketIsBound(fd, to: path) else { return nil }
+    /// It used to be `holder = right; unlock; previous?.relinquish()`, and the comment above it said
+    /// the previous right was given up *first*. It never was: between the unlock and the relinquish
+    /// **both rights report held**, and the old one could enter `whileHeld` and write. Not a doc
+    /// gone stale — a doc that described an order the code had never had, in the function the round
+    /// before this one rewrote (round 20 review).
+    private static func mint() -> LocalePublicationRight {
         lock.lock()
-        let previous = holder
+        defer { lock.unlock() }
+        holder?.giveUp()
         let right = LocalePublicationRight()
         holder = right
-        lock.unlock()
-        previous?.relinquish()
         return right
     }
 
@@ -187,6 +213,19 @@ final class LocalePublicationRight {
         Self.lock.lock()
         defer { Self.lock.unlock() }
         return held
+    }
+
+    /// Whether this right has been superseded **and still reports held** — the state this type says
+    /// cannot exist.
+    ///
+    /// One acquisition of the class lock, and that is the whole reason it exists: asking "who is the
+    /// holder" and "is this one still held" as two questions takes the lock twice, and a legitimate
+    /// handover landing between them looks exactly like the violation. No production caller; what it
+    /// makes observable is the type's central claim.
+    static func supersededButStillHeld(_ right: LocalePublicationRight) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return right.held && holder !== right && holder != nil
     }
 
     /// **Runs `body` under the lock that decides whether this right is still held, and only while it
@@ -216,11 +255,19 @@ final class LocalePublicationRight {
         return body()
     }
 
-    /// Given up with the socket. Idempotent, and it clears the process-wide holder only if that is
-    /// still this one — a right superseded by a later bind must not take the newer one down with it.
+    /// Given up with the socket. Idempotent, for the reason `giveUp` gives.
     fileprivate func relinquish() {
         Self.lock.lock()
         defer { Self.lock.unlock() }
+        giveUp()
+    }
+
+    /// The same thing **with the class lock already held**, which is the only reason it exists
+    /// separately: `NSLock` is not recursive, and a reader's first instinct inside `mint` is to call
+    /// `relinquish` — which deadlocks. Idempotent, and it clears the process-wide holder only if
+    /// that is still this one, so a right superseded by a later bind does not take the newer one
+    /// down with it.
+    private func giveUp() {
         held = false
         if Self.holder === self { Self.holder = nil }
     }
@@ -274,13 +321,19 @@ final class HostServer {
     }
 
     private let socketPath: String
-    private var serverFD: Int32 = -1
-    /// Which file at that path is **ours** — the device and inode the bind created. Remembered
-    /// because the path is a name that can come to mean something else: another instance can take
-    /// the path over while this one is stopping, and a teardown that goes by the name alone deletes
-    /// the socket the relay is now talking to (round 16 review).
-    private var boundIdentity: (dev: dev_t, ino: ino_t)?
-    private var right: LocalePublicationRight?
+    /// Everything this instance owns, or nothing. Three separate properties is what let a teardown
+    /// see half of a startup (round 20 review).
+    private var bound: BoundSocket?
+    /// **Starting and stopping are one transition each, and they do not interleave.** The window was
+    /// not between two lines that could be swapped: it ran from the moment the socket existed to the
+    /// moment the server was answering, and a `stop()` could land anywhere in it. So both take this,
+    /// and `start`'s own failure paths call the half that assumes it is already held — `NSLock` is
+    /// not recursive, and calling `stop()` there would deadlock.
+    ///
+    /// Lock order, which is why there is no inversion to have: this one is taken **first** and
+    /// `LocalePublicationRight`'s is always last (`start` → `commit` → `whileHeld`; `tearDown` →
+    /// `relinquish`). Nothing takes them the other way round.
+    private let lifecycle = NSLock()
     /// Where the published locale is committed at launch and read again for every answer. A
     /// parameter for the same reason `LocaleState.publish` and `Settings.setLanguage` take one: the
     /// subject is a `UserDefaults` write, and a case that drove it against `.standard` would be
@@ -334,6 +387,9 @@ final class HostServer {
         publish: (SupportedLocale, LocalePublicationRight, UserDefaults) -> LocalePublication?
             = Settings.publishLocaleAtLaunch
     ) throws -> LocalePublicationRight {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
+
         let dir = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true,
@@ -350,30 +406,13 @@ final class HostServer {
             unlink(socketPath)
         }
 
-        guard var addr = makeUnixSockaddr(socketPath) else {
-            throw ServerError.socketFailed("the path is too long: \(socketPath)")
-        }
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw ServerError.socketFailed(String(cString: strerror(errno))) }
-
-        let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard bound == 0, listen(fd, 8) == 0 else {
-            let reason = String(cString: strerror(errno))
-            close(fd)
-            throw ServerError.socketFailed(reason)
-        }
+        // The bind and the right come back together, from the type whose invariant they are
+        var bound = try LocalePublicationRight.bindingSocket(at: socketPath)
         chmod(socketPath, 0o600)
-        serverFD = fd
-        boundIdentity = Self.identity(ofPathAt: socketPath)
-        guard let right = LocalePublicationRight.mint(boundTo: socketPath, on: fd) else {
-            stop()
-            throw ServerError.socketFailed("the socket just bound does not carry the path it was bound to")
-        }
-        self.right = right
+        bound.identity = Self.identity(ofPathAt: socketPath)
+        self.bound = bound
+        let fd = bound.fd
+        let right = bound.right
         switch announcement {
         case .publish(let resolved):
             // **What was attempted is not what was claimed.** `publishLocaleAtLaunch` used to answer
@@ -384,7 +423,7 @@ final class HostServer {
             // then the answer to give is the one a failed bind already gets: this instance owns
             // nothing and says nothing, and it does not answer either
             guard publish(resolved, right, defaults) != nil else {
-                stop()
+                tearDown()
                 throw ServerError.publicationRefused
             }
         case .nothing:
@@ -410,16 +449,25 @@ final class HostServer {
     /// Between the comparison and the `unlink` the file can still be replaced — macOS has no
     /// `funlinkat`, so the last step is by path. That is the same residual the Warp helper's preamble
     /// records for socket and Tab Config reclaim, narrowed the same way and not closed.
+    /// It takes the lifecycle lock and `tearDown` does the work, so that a teardown arriving during
+    /// a startup **waits for it** instead of taking half of it apart.
     func stop() {
-        right?.relinquish()
-        right = nil
-        guard serverFD >= 0 else { return }
-        if let boundIdentity, let now = Self.identity(ofPathAt: socketPath), now == boundIdentity {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
+        tearDown()
+    }
+
+    /// The same thing **with the lifecycle lock already held** — the only reason it exists
+    /// separately, and the same reason `LocalePublicationRight.giveUp` does: `NSLock` is not
+    /// recursive, so `start`'s own failure paths cannot call `stop()`.
+    private func tearDown() {
+        guard let bound else { return }
+        bound.right.relinquish()
+        if let identity = bound.identity, let now = Self.identity(ofPathAt: socketPath), now == identity {
             unlink(socketPath)
         }
-        boundIdentity = nil
-        close(serverFD)
-        serverFD = -1
+        close(bound.fd)
+        self.bound = nil
     }
 
     /// Which file the name points at right now, or nil if it points at nothing.

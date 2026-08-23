@@ -20,6 +20,18 @@ import XCTest
 /// on reporting about a set it had never seen. Round 18 found a gate written one round earlier that
 /// used `contentsOfDirectory` — the defect this comment warns about, committed beside the comment —
 /// which is why the helper stopped being a member of one class.
+/// **What a file is called inside that tree.** A basename is not an identity once the walk descends:
+/// the round that made the walk recursive left three gates comparing `lastPathComponent`, so a
+/// nested `Feature/HostServer.swift` answered to the name of the canonical one and a nested
+/// `Feature/Localization.swift` inherited its exemption (round 20 review) — the same class one level
+/// up, created by the fix for it.
+func pathInTree(_ file: URL, under root: URL) -> String {
+    let rootPath = root.standardizedFileURL.path
+    let filePath = file.standardizedFileURL.path
+    guard filePath.hasPrefix(rootPath + "/") else { return filePath }
+    return String(filePath.dropFirst(rootPath.count + 1))
+}
+
 func swiftFiles(under root: URL) throws -> [URL] {
     let enumerator = try XCTUnwrap(
         FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil),
@@ -201,11 +213,13 @@ final class LocalizationCatalogTests: XCTestCase {
         // `Sources/App` passed unseen. Two walks is how one of them gets strengthened alone, so
         // there is one.
         for file in try swiftFiles(under: Self.appSources)
-        where file.lastPathComponent != "Localization.swift" {
+        // The canonical file by its place in the tree, not by its name: excluding every file called
+        // `Localization.swift` exempts one somebody adds in a subdirectory
+        where pathInTree(file, under: Self.appSources) != "Localization.swift" {
             let text = try String(contentsOf: file, encoding: .utf8)
             XCTAssertFalse(
                 text.contains("AppLocalization.string("),
-                "\(file.lastPathComponent) calls the lookup directly, which takes a String and skips the type"
+                "\(pathInTree(file, under: Self.appSources)) calls the lookup directly, which takes a String and skips the type"
             )
         }
     }

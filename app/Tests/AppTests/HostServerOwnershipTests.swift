@@ -162,11 +162,17 @@ final class HostServerOwnershipTests: XCTestCase {
         }
         XCTAssertEqual(writing.wait(timeout: .now() + 10), .success, "the publication never reached its write")
 
+        let atStop = DispatchSemaphore(value: 0)
         let stopped = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
+            atStop.signal()
             server.stop()
             stopped.signal()
         }
+        // **The teardown thread is shown to have reached the call before its silence is read as the
+        // lock** (round 20 review): without this, a scheduler that had not run the thread yet looks
+        // exactly like an implementation that blocked, and the case would pass on an old one.
+        XCTAssertEqual(atStop.wait(timeout: .now() + 10), .success, "the teardown thread never started")
         // Long enough for a teardown that *could* get through to have got through. **This, and not
         // `isHeld`, is the observation available here**: asking would take the same lock the write is
         // holding, so the question deadlocks — which is itself the property under test, seen from the
@@ -185,35 +191,88 @@ final class HostServerOwnershipTests: XCTestCase {
         )
     }
 
-    /// **What a right can be minted from** — the discriminator, against real descriptors.
+    /// **A superseded right never still reports held** (round 20 review).
     ///
-    /// `mint` is unreachable from here by design, so what is exercised is the check it consists of.
-    /// Two other checks were measured and are not available on this platform: `SO_ACCEPTCONN` is
-    /// `ENOPROTOOPT` for every socket, and a bound socket's `fstat` inode is synthetic
-    /// (`<scratchpad>/r19_sockname_probe.swift`, `r19_ino_probe.swift`).
-    func testOnlyASocketBoundToThatNameIdentifiesAsIt() throws {
+    /// `mint` used to assign the new right, unlock, and only then give the previous one up — with a
+    /// comment directly above saying the previous one was given up *first*. It never was, and in
+    /// that interval the old right could enter `whileHeld` and write.
+    ///
+    /// **What this case is and is not.** The interval is a few instructions inside a function
+    /// nothing outside can step into, so a spinner does not reliably land in it: run against the old
+    /// ordering unchanged it stays green (measured). Widen that window and it goes red, which is how
+    /// the case is shown to detect the state at all rather than to be watching nothing. So it is a
+    /// **regression guard**, and the proof of the fix is that the handover happens inside one
+    /// acquisition — the plan file records both, because a toggle that catches nothing has to say so.
+    ///
+    /// The question is asked in one acquisition of the type's lock. Asking "who holds it" and "is
+    /// this one still held" separately takes it twice, and a legitimate handover between them looks
+    /// exactly like the violation.
+    func testASupersededRightNeverStillReportsHeld() throws {
+        let first = HostServer(socketPath: path)
+        let firstRight = try first.start(announcing: .nothing)
+        defer { first.stop() }
+
+        let violations = ViolationFlag()
+        let stop = ViolationFlag()
+        Thread.detachNewThread {
+            while !stop.isSet {
+                if LocalePublicationRight.supersededButStillHeld(firstRight) { violations.set() }
+            }
+        }
+        defer { stop.set() }
+
+        for index in 0..<200 {
+            let server = HostServer(socketPath: directory + "/r\(index).sock")
+            _ = try server.start(announcing: .nothing)
+            server.stop()
+        }
+        XCTAssertFalse(
+            violations.isSet,
+            "a superseded right and its successor both reported held — the old right can still write"
+        )
+    }
+
+    /// **A teardown arriving during a startup waits for it** (round 20 review).
+    ///
+    /// `serverFD` and the right were assigned six lines apart, so a `stop()` in between relinquished
+    /// nothing and closed the socket — and `start` went on to publish as the owner and arm an accept
+    /// loop on a closed descriptor. The two are one transition now, and the observation available is
+    /// the same one the publication seam has: the teardown cannot complete while the startup is in
+    /// it.
+    func testATeardownDuringAStartupWaitsForIt() throws {
         let server = HostServer(socketPath: path)
-        try server.start(announcing: .nothing)
-        defer { server.stop() }
+        let inPublication = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let started = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = try? server.start(announcing: .publish(.fallback), publish: { _, right, _ in
+                inPublication.signal()
+                release.wait()
+                return LocaleState.commit(resolved: .fallback, defaults: .standard, right: right)
+            })
+            started.signal()
+        }
+        XCTAssertEqual(inPublication.wait(timeout: .now() + 10), .success, "the startup never got that far")
 
-        let elsewhere = directory + "/t.sock"
-        let other = try bindAnotherSocket(at: elsewhere)
-        defer { close(other) }
-        XCTAssertTrue(unixSocketIsBound(other, to: elsewhere))
-        XCTAssertFalse(unixSocketIsBound(other, to: path), "a socket bound elsewhere passed for ours")
+        let atStop = DispatchSemaphore(value: 0)
+        let stopped = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            atStop.signal()
+            server.stop()
+            stopped.signal()
+        }
+        // The teardown thread is at the call, so a timeout below is the lock and not the scheduler
+        XCTAssertEqual(atStop.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(
+            stopped.wait(timeout: .now() + 0.5), .timedOut,
+            "the socket was torn down while the startup was still deciding whether it owned it"
+        )
 
-        let fresh = socket(AF_UNIX, SOCK_STREAM, 0)
-        defer { close(fresh) }
-        XCTAssertFalse(unixSocketIsBound(fresh, to: path), "a socket that never bound passed")
-
-        let client = try XCTUnwrap(connectToUnixSocket(path: path), "the owner is not reachable")
-        defer { close(client) }
-        XCTAssertFalse(unixSocketIsBound(client, to: path), "a connected client passed for the listener")
-
-        let plain = open(directory + "/plain", O_CREAT | O_WRONLY, 0o600)
-        defer { close(plain) }
-        XCTAssertFalse(unixSocketIsBound(plain, to: path), "a regular file passed for a socket")
-        XCTAssertFalse(unixSocketIsBound(-1, to: path), "a closed descriptor passed")
+        release.signal()
+        XCTAssertEqual(started.wait(timeout: .now() + 10), .success)
+        XCTAssertEqual(stopped.wait(timeout: .now() + 10), .success)
+        XCTAssertNil(LocalePublicationRight.current, "the torn-down instance kept the right")
+        XCTAssertNil(identity(path), "the torn-down instance kept its socket")
     }
 
     /// Two binds in one process is not a shape production has, but `mint` has to answer for it
@@ -237,6 +296,24 @@ final class HostServerOwnershipTests: XCTestCase {
         )
         second.stop()
         XCTAssertNil(LocalePublicationRight.current)
+    }
+}
+
+/// A flag two threads share. `NSLock` rather than an atomic because the subject is not the flag.
+private final class ViolationFlag {
+    private let lock = NSLock()
+    private var value = false
+
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func set() {
+        lock.lock()
+        value = true
+        lock.unlock()
     }
 }
 

@@ -492,6 +492,11 @@ final class LocalePublicationTests: XCTestCase {
     /// signature cannot refuse it: `LocalePublicationRight.current` is readable, deliberately, by the
     /// picker and the window it lives in. So the count is asserted the way the single `osascript`
     /// call site is, and the one site is named.
+    ///
+    /// **It is a lint and not a proof of the call graph.** Counting a textual symbol does not see an
+    /// alias, a stored function value, or another route to the same write — what it holds is that
+    /// nobody spelled a second one. Recorded here rather than closed: the thing that would close it
+    /// is the type work in item 50, and this is what remains beside it (round 20 review).
     func testOnlyTheInstanceThatOwnsTheSocketPublishes() throws {
         let main = try String(contentsOfFile: Self.appSource("main.swift"), encoding: .utf8)
         XCTAssertTrue(
@@ -504,8 +509,9 @@ final class LocalePublicationTests: XCTestCase {
         // `Sources/App` — the defect a comment beside `swiftFiles(under:)` already warned about, in
         // the same words (round 18 review)
         let sources = try swiftFiles(under: URL(fileURLWithPath: Self.appSource("")))
+        let appSources = URL(fileURLWithPath: Self.appSource(""))
         XCTAssertTrue(
-            sources.contains { $0.lastPathComponent == "HostServer.swift" },
+            sources.contains { pathInTree($0, under: appSources) == "HostServer.swift" },
             "the App sources were not found at all"
         )
         var callers: [String] = []
@@ -520,7 +526,9 @@ final class LocalePublicationTests: XCTestCase {
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                 .joined(separator: "\n")
             let uses = code.components(separatedBy: "Settings.publishLocaleAtLaunch").count - 1
-            callers.append(contentsOf: Array(repeating: file.lastPathComponent, count: uses))
+            // Named by where it sits, not by what it is called: a nested `Feature/HostServer.swift`
+            // adding a real publisher used to answer to the expectation below (round 20 review)
+            callers.append(contentsOf: Array(repeating: pathInTree(file, under: appSources), count: uses))
         }
         XCTAssertEqual(
             callers, ["HostServer.swift"],
