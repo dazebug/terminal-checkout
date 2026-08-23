@@ -37,6 +37,15 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
 
     private func advertised(_ name: String) -> String { directory + "/tcw-\(name).sock" }
 
+    /// The helper's source, by the path this test file sits at.
+    private static func helperSource() -> String {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WarpHelper/main.swift")
+            .path
+    }
+
     /// A Core source file, by the path this test file sits at.
     private static func coreSource(_ name: String) -> String {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/CoreTests/<this file>
@@ -371,6 +380,114 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
             createWarpHelperPin(forAdvertised: locked + "/tcw-aaaaaab8.sock"),
             "the pin was made in a directory that cannot be written"
         )
+    }
+
+    /// **A finished delivery does not spend the pin** (round 23 review, P0).
+    ///
+    /// One object had two lifetime rules: departure kept it — correctly, that is what takes the
+    /// address back — and ordinary completion removed it. The difference was the defect. A helper
+    /// listening only on its staging name, suspended before its `link`, while the delivery times
+    /// out: the farewell reaches a path nothing is on, `end()` removed the pin, the helper resumes
+    /// and claims, and nothing is left to dismiss it.
+    ///
+    /// A pin is spent when **no helper can still claim**, which is time's business and the sweep's.
+    func testAFinishedDeliveryLeavesThePinForTheSweep() throws {
+        let path = pinned("aaaaaab9")
+        let admission = try XCTUnwrap(ClaudeDelivery.admit())
+        try admission.record(.warp(helperSocket: path))
+        admission.end()
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: warpHelperPinPath(advertised: path)),
+            "finishing the delivery spent the pin, so a suspended helper could still claim"
+        )
+        // And the address can still be taken back afterwards, which is the whole point of keeping it
+        XCTAssertEqual(withdrawWarpHelperAddress(path), .withdrawn)
+        let helper = try helperComingUp(at: path)
+        defer { close(helper.fd) }
+        XCTAssertFalse(helper.claim(), "the helper claimed after the delivery had ended")
+    }
+
+    /// **A registration that threw takes its pin with it.** The pin is made before `record` on
+    /// purpose — a registered address whose pin does not exist yet is an address that cannot be taken
+    /// back — so the failing path is the one that has to clean up.
+    func testAPinIsNotLeftBehindByARegistrationThatThrew() throws {
+        let path = advertised("aaaaaaba")
+        let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
+        let create = try XCTUnwrap(source.range(of: "guard createWarpHelperPin(forAdvertised: socketPath) else {"))
+        let record = try XCTUnwrap(source.range(of: "try claudeInput.record(.warp(helperSocket: socketPath))"))
+        XCTAssertLessThan(create.lowerBound, record.lowerBound, "the pin is made after the address is registered")
+        XCTAssertTrue(
+            source.contains("removeWarpHelperPin(forAdvertised: socketPath)"),
+            "a registration that throws leaves its pin behind"
+        )
+
+        // And the removal it uses is the verified one, not a raw unlink
+        XCTAssertTrue(createWarpHelperPin(forAdvertised: path))
+        removeWarpHelperPin(forAdvertised: path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: warpHelperPinPath(advertised: path)))
+    }
+
+    /// **The claim is bounded from birth, by a deadline in the line the app writes.**
+    ///
+    /// The bound used to be derived from the Tab Config lifetime, `open`'s timeout and how long a
+    /// pane takes to appear — and none of that bounds anything, because "the instruction after
+    /// `listen`" is not a time and a suspended process can be anywhere (round 23 review). The
+    /// helper's own caps start once it is serving, which is after the claim.
+    func testTheLaunchLineCarriesTheDeadlineTheSweepIsDerivedFrom() throws {
+        let line = warpHelperCommand(
+            executable: "/x/helper", socketPath: "/tmp/tcw-ab12cd34.sock",
+            deadline: Date(timeIntervalSince1970: 1_700_000_042)
+        )
+        XCTAssertTrue(line.hasSuffix(" 1700000042"), "the launch line carries no deadline")
+
+        // The sweep's threshold is the number the helper enforces, not a derivation of its own
+        XCTAssertGreaterThan(warpHelperOccupationLifetime, warpHelperClaimWindow)
+
+        // And the helper reads it: the serve path takes five words and treats an unreadable deadline
+        // as already past, because an unbounded claim is the thing being removed
+        let helper = try String(contentsOfFile: Self.helperSource(), encoding: .utf8)
+        XCTAssertTrue(helper.contains("arguments.count == 5, arguments[1] == serveFlag"))
+        XCTAssertTrue(helper.contains("Double(arguments[4]) ?? 0"), "an unreadable deadline is not fail-closed")
+        let deadlineCheck = try XCTUnwrap(helper.range(of: "Date().timeIntervalSince1970 <= claimDeadline"))
+        let claim = try XCTUnwrap(helper.range(of: "guard claimWarpHelperAddress(from: stagingPath"))
+        XCTAssertLessThan(deadlineCheck.lowerBound, claim.lowerBound, "the deadline is checked after the claim")
+    }
+
+    /// **The sweep takes our file and only our file.** The check was a prefix read, so a user file
+    /// that merely *starts* with the marker was deleted (round 23 review). The fixture list is the
+    /// specification.
+    func testTheSweepTakesTheExactMarkerAndNothingElse() throws {
+        let ours = directory + "/tcw-aaaaabb1.pin"
+        XCTAssertTrue(createWarpHelperPin(forAdvertised: directory + "/tcw-aaaaabb1.sock"))
+
+        let extra = directory + "/tcw-aaaaabb2.pin"
+        try (warpHelperPinMarker + "and the user's own notes").write(
+            toFile: extra, atomically: true, encoding: .utf8
+        )
+        let link = directory + "/tcw-aaaaabb3.pin"
+        XCTAssertEqual(symlink("/etc/hosts", link), 0)
+
+        reclaimStaleWarpHelperOccupations(in: directory, olderThan: -1)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ours), "our own pin survived the sweep")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: extra),
+            "a file that only begins with our marker was deleted"
+        )
+        var info = stat()
+        XCTAssertEqual(lstat(link, &info), 0, "a symlink with our name was deleted")
+    }
+
+    /// A pin whose marker could not be written is removed rather than left for a sweep that only
+    /// takes whole ones — nothing would ever have collected it.
+    func testAPinThatCouldNotBeWrittenIsNotLeftBehind() throws {
+        let readOnly = directory + "/ro"
+        try FileManager.default.createDirectory(atPath: readOnly, withIntermediateDirectories: true)
+        chmod(readOnly, 0o500)
+        defer { chmod(readOnly, 0o700) }
+        XCTAssertFalse(createWarpHelperPin(forAdvertised: readOnly + "/tcw-aaaaabb4.sock"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: readOnly + "/tcw-aaaaabb4.pin"))
     }
 
     /// **What taking an address back leaves is bounded** (round 21 review).

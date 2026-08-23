@@ -304,7 +304,16 @@ public func runInWarp(
         guard createWarpHelperPin(forAdvertised: socketPath) else {
             throw claudeInputRejection(.warpHelperUnavailable)
         }
-        try claudeInput.record(.warp(helperSocket: socketPath))
+        // **Before `record`, and cleaned up if `record` throws.** The order is not swappable: a
+        // registered address whose pin does not exist yet is an address a departure cannot take back,
+        // which is this item's defect in a new window. So the pin goes first and the failing path is
+        // the one that tidies — nothing has been launched at that point and nothing can claim
+        do {
+            try claudeInput.record(.warp(helperSocket: socketPath))
+        } catch {
+            removeWarpHelperPin(forAdvertised: socketPath)
+            throw error
+        }
     }
 
     let stem = warpTabConfigStem(token: token)

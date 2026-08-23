@@ -3398,9 +3398,10 @@ final class WarpHelperLaunchTests: XCTestCase {
         XCTAssertEqual(
             warpHelperCommand(
                 executable: "/Users/me/Applications/Terminal Checkout.app/Contents/MacOS/tc-warp-helper",
-                socketPath: "/tmp/tcw-ab12.sock"
+                socketPath: "/tmp/tcw-ab12.sock",
+                deadline: Date(timeIntervalSince1970: 1_700_000_000)
             ),
-            "'/Users/me/Applications/Terminal Checkout.app/Contents/MacOS/tc-warp-helper' '/tmp/tcw-ab12.sock'"
+            "'/Users/me/Applications/Terminal Checkout.app/Contents/MacOS/tc-warp-helper' '/tmp/tcw-ab12.sock' 1700000000"
         )
     }
 

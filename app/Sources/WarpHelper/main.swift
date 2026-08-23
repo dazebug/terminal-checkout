@@ -32,7 +32,7 @@ private let foregroundRecheckStride = 16
 // **The boundary is the uid.** Processes running as the same uid are treated as inside the boundary; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
 //
 // What is possible inside this boundary (and is not prevented):
-//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends **against accident, not against this boundary**: a helper whose app went away between admitting the request and this pane coming up does not take the advertised address (`claimWarpHelperAddress`), one that did take it dies immediately on `bye`, and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap. The first of those is a same-uid process away from being undone — see residual 5 — so the sentence is about what happens when nobody is trying, which is what the caps are for.
+//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends **against accident, not against this boundary**: a helper whose app went away between admitting the request and this pane coming up does not take the advertised address (`claimWarpHelperAddress`), one that did take it dies immediately on `bye`, and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap. **Those two caps start once this helper is serving**, so they bound nothing before the claim — what bounds that interval is the deadline the app writes into the launch line, which this process is holding before it creates anything (round 23 review). The first of those is a same-uid process away from being undone — see residual 5 — so the sentence is about what happens when nobody is trying, which is what the caps are for.
 //  2. The TOCTOU in path-based `unlink` — socket reclaim, Tab Config reclaim, the scheduled deletion, and `uninstall.sh`. `lstat`/`fstat` plus an inode re-check narrowed the window to microseconds, but macOS has no `funlinkat`, so the last step is by path. Slipping into it requires knowing our random name in advance.
 //  3. Swapping the contents after the header has been checked — the verdict is reached through an fd but the deletion is by path (the same window as 2).
 //  4. Placing a file at either of the helper's two paths in advance — the staging name it binds, or the advertised name it takes with `link` — so that the helper cannot come up (a DoS that only defeats delivery). The app does the second of these itself, deliberately, as it goes away: taking an address back is exactly this move, which is why the helper treats a refused claim as a decision it cannot see behind rather than as an error.
@@ -280,14 +280,15 @@ private func resolvePaneTTYName() -> String? {
 
 let arguments = CommandLine.arguments
 
-if arguments.count == 2 && arguments[1] != serveFlag {
+if arguments.count == 3 && arguments[1] != serveFlag {
     // Parent mode: launch the child and get out immediately — the shell's next command (claude) has to follow right away, so this must not stay in the foreground. `setsid` is **not** called: leaving the session means that tty is no longer the controlling terminal, which loses the TIOCSTI permission
     guard let ttyName = resolvePaneTTYName() else {
         fail("no stdio descriptor names a usable pane tty")
     }
     let child = Process()
     child.executableURL = URL(fileURLWithPath: Bundle.main.executablePath ?? arguments[0])
-    child.arguments = [serveFlag, arguments[1], ttyName]
+    // The deadline is carried through untouched: it is the one thing this helper is told at birth that nothing later can take away, and the process that enforces it is the child
+    child.arguments = [serveFlag, arguments[1], ttyName, arguments[2]]
     // stdio is severed so the pane tty cannot be touched even by accident. The controlling terminal belongs to the session rather than to an fd, so severing it this way leaves the child's TIOCSTI permission intact (measured)
     child.standardInput = FileHandle.nullDevice
     child.standardOutput = FileHandle.nullDevice
@@ -300,12 +301,14 @@ if arguments.count == 2 && arguments[1] != serveFlag {
     exit(0)
 }
 
-guard arguments.count == 4, arguments[1] == serveFlag else {
-    FileHandle.standardError.write(Data("usage: \(arguments.first ?? "helper") <socket-path>\n".utf8))
+guard arguments.count == 5, arguments[1] == serveFlag else {
+    FileHandle.standardError.write(Data("usage: \(arguments.first ?? "helper") <socket-path> <claim-deadline>\n".utf8))
     exit(2)
 }
 let socketPath = arguments[2]
 let ttyPath = arguments[3]
+// Seconds since the epoch, written into the launch line by the app. A word we cannot read is a helper that must not claim: the deadline is the only bound on the interval before the claim, so an unreadable one is treated as already past rather than as absent
+let claimDeadline = Double(arguments[4]) ?? 0
 
 // We are in a background process group (the foreground is claude). Without ignoring SIGTTOU, TIOCSTI is blocked entirely — measured: in a process group orphaned by the parent leaving it is EIO, and when not orphaned a SIGTTOU arrives and it is EINTR. Ignoring it makes both cases succeed.
 signal(SIGTTOU, SIG_IGN)
@@ -335,6 +338,12 @@ let bound = withUnsafePointer(to: &address) {
 guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoName())") }
 chmod(stagingPath, 0o600)
 // **This is where this helper finds out whether it is still wanted**, and it is one operation rather than a look at something the app could change a moment later: `link` onto a name that already exists is refused, and the app takes an address back by linking its own file there as it leaves. So `File exists` here means the name is **occupied** — by the app on its way out, which is the case this exists for, or by a leftover, or by anything else with this uid; the errno does not say which (round 21 review). Either way this helper must not serve, and exiting now is exiting before the advertised name has ever referred to this socket, which is the difference between a helper that was dismissed and one that never was anything
+// **The claim is bounded from birth.** Nothing before this line bounds it: the app's caps below start once this helper is *serving*, which is after the claim, so a process suspended here had no cap at all — and "the instruction after `listen`" is not a time (round 23 review). The check is immediately before the claim rather than at startup because the suspension this bounds can happen between any two instructions
+guard Date().timeIntervalSince1970 <= claimDeadline else {
+    stagingPath.withCString { unlinkIfSocket($0) }
+    close(server)
+    fail("the claim deadline passed before this helper could take its address")
+}
 guard claimWarpHelperAddress(from: stagingPath, as: socketPath) else {
     // **The reason is read, not assumed.** This used to print "`File exists` is the app withdrawing it" for every errno, so a vanished temporary directory was reported as a decision the app had made — the class this work has swept since round 1, introduced by the round that swept it (round 19 review). `EEXIST` is occupancy and anything else is not, and the two say so separately
     let reason = errno

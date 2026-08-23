@@ -33,12 +33,14 @@ fi
 # Two suffixes, because a helper has two names: the staging one it binds and the advertised one it
 # takes with `link` once it is listening. A helper killed in between leaves the first, and a sweep
 # that only knew the second would leave it here for good.
-# `-S` is also what keeps this sweep away from a **withdrawal**: when the app goes away while a
-# helper is still on its way up, it takes that helper's advertised name by creating a directory
-# there, and a helper born afterwards is stopped by finding the name occupied. Removing it here
-# would hand the name back — `pkill` above reaches only helpers that already exist, so an uninstall
-# cannot otherwise stop one that is still coming. A directory is not `-S`, so it stays; what it
-# costs is an empty directory left in the temporary directory, which is the cheaper of the two
+# `-S` is also what keeps this sweep away from an address the app has **taken back**: when it goes
+# away while a helper is still on its way up, it links its own file onto that helper's advertised
+# name, and a helper born afterwards is stopped by finding the name occupied. Removing it here would
+# hand the name back — `pkill` above reaches only helpers that already exist, so an uninstall cannot
+# otherwise stop one that is still coming. What it leaves is a regular file (and the `.pin` it was
+# linked from), neither of which is `-S`, so both stay; the running app collects them once no helper
+# can still claim (`warpHelperOccupationLifetime`), which is the bound an uninstall does not need to
+# reproduce
 for sock in "${TMPDIR:-/tmp}"/tcw-* /tmp/tcw-*; do
     if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.(sock|pre)$ ]]; then
         rm -f "$sock"

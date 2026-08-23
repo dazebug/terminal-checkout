@@ -725,15 +725,21 @@ public enum ClaudeDelivery {
 
     /// Records that one has finished. Idempotent, for the reason `Admission.end` gives.
     ///
-    /// The pin goes with it. It exists so that taking the address back is a `link` rather than an
-    /// allocation, and once nothing can be taken back there is nothing for it to do — the advertised
-    /// name, if the app did take it, keeps the inode either way.
+    /// **It does not touch the pin, and that is the fix rather than an omission** (round 23 review,
+    /// P0). It used to remove it, which gave one object two lifetime rules: departure kept the pin —
+    /// correctly, since that is what takes the address back — and ordinary completion removed it. The
+    /// difference was the defect. A helper listening only on its staging name, suspended before its
+    /// `link`, while the delivery times out: the farewell goes to a path nothing is on, this line
+    /// removed the pin, the helper resumed and claimed, and nothing was left to dismiss it.
+    ///
+    /// A pin is not spent when *this delivery* ends. It stops mattering when **no helper can still
+    /// claim**, which is a fact about time and not about our bookkeeping, and the sweep is what owns
+    /// facts about time (`warpHelperOccupationLifetime`). The cost is one small file per Warp claude
+    /// request until the next sweep passes it — the sweep runs at the head of every `runInWarp`.
     private static func end(_ token: Int) {
         lock.lock()
-        let handle = live[token]
+        defer { lock.unlock() }
         live[token] = nil
-        lock.unlock()
-        if case .warp(let socket) = handle { removeWarpHelperPin(forAdvertised: socket) }
     }
 
     /// Whether anything is registered. A **query**, kept separate from `admitRestart` on purpose:

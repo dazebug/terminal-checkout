@@ -139,10 +139,17 @@ public func shellSingleQuoted(_ text: String) -> String {
     "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
 }
 
-/// Both arguments are absolute paths, single-quoted — nothing in the user's shell (PATH,
-/// functions, aliases) can change what this line runs.
-public func warpHelperCommand(executable: String, socketPath: String) -> String {
-    "\(shellSingleQuoted(executable)) \(shellSingleQuoted(socketPath))"
+/// The paths are absolute and single-quoted — nothing in the user's shell (PATH, functions, aliases)
+/// can change what this line runs.
+///
+/// The third word is the **deadline**: seconds since the epoch, past which the helper does not take
+/// its address. We write this line, so what the helper is told at birth is ours to choose, and this
+/// is the one thing it needs that nothing later can take away from it (round 23 review).
+public func warpHelperCommand(
+    executable: String, socketPath: String, deadline: Date = Date().addingTimeInterval(warpHelperClaimWindow)
+) -> String {
+    let seconds = String(Int(deadline.timeIntervalSince1970))
+    return "\(shellSingleQuoted(executable)) \(shellSingleQuoted(socketPath)) \(seconds)"
 }
 
 /// Can the injection helper be launched — is the executable in the bundle, and does the socket
@@ -248,7 +255,14 @@ public func warpHelperSocketPath(token: String) -> String? {
 //    "Shares some failure modes" had been allowed to stand for "shares all of them".
 // Linking from a file the app already holds removes the argument instead of narrowing it: both sides
 // create a directory entry in the **same parent** and neither allocates an inode, so *the app could
-// not occupy* implies *the helper cannot claim* **by construction**. The file to link from is made
+// not occupy* implies *the helper cannot claim* — **while the source entry and the filesystem
+// conditions are unchanged between the two calls**. That qualifier is not decoration (round 23
+// review): the same two syscalls at different moments are not the same outcome, and this file
+// documents the counterexample a few paragraphs down — a same-uid process deleting the pin makes the
+// app's `link` answer `ENOENT` while the helper's later one succeeds. Neither side retries a
+// transient either. What the construction removes is the *class* of divergence that came from the
+// two operations being different operations; what remains is named as residual 5 in the helper's
+// preamble. The file to link from is made
 // when the helper is registered rather than when the app is leaving, which is what keeps
 // termination-time pressure out of the path (`warpHelperPinPath`).
 //
@@ -293,21 +307,39 @@ public func warpHelperPinPath(advertised: String) -> String {
 public let warpHelperPinMarker = "terminal-checkout/warp-helper-pin v1\n"
 
 /// Makes that file. Called once per Warp request that schedules claude input, next to the register
-/// entry it belongs to. False when it could not be made — the caller runs anyway, because a request
-/// that cannot be taken back is still a request the user asked for, and the failure shows up as
-/// `.failed` at the moment it matters rather than as a refusal now.
+/// entry it belongs to.
+///
+/// False means the request is refused — `runInWarp` throws on it, because a helper whose address
+/// cannot be taken back is the defect this whole mechanism exists for. **The comment here used to
+/// say the caller runs anyway, and it was born false in the commit that made the caller refuse**
+/// (round 23 review): both lines were written together, so no re-reading of what the change
+/// *falsified* could have caught it.
+///
+/// **A partial pin is worse than none**, so a failed write takes the file with it: the sweep removes
+/// only files carrying the whole marker, so a half-written one would be collected by nothing, ever.
+/// What survives that is a process that dies between the `write` and the `unlink` — the file is then
+/// a leak this design does not collect, and that is the residual rather than a race.
 @discardableResult
 public func createWarpHelperPin(forAdvertised advertised: String) -> Bool {
-    let fd = open(warpHelperPinPath(advertised: advertised), O_CREAT | O_EXCL | O_WRONLY, 0o600)
+    let path = warpHelperPinPath(advertised: advertised)
+    let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
     guard fd >= 0 else { return false }
     defer { close(fd) }
-    return writeAll(fd: fd, data: Data(warpHelperPinMarker.utf8))
+    guard writeAll(fd: fd, data: Data(warpHelperPinMarker.utf8)) else {
+        unlink(path)
+        return false
+    }
+    return true
 }
 
-/// Removes it when the delivery is over. The advertised name, if the app took it, keeps the inode —
-/// they are two names for one file, and dropping this one does not give the address back.
+/// Removes one we have just made and are giving up on — the registration threw, so nothing was
+/// launched and nothing can claim.
+///
+/// It goes through the same verifier the sweep uses rather than a raw `unlink`: between making the
+/// file and this line a same-uid process can put something else at that name, and "we made it a
+/// moment ago" is not the same fact as "this is it".
 public func removeWarpHelperPin(forAdvertised advertised: String) {
-    unlink(warpHelperPinPath(advertised: advertised))
+    removeWarpHelperFileIfOurs(path: warpHelperPinPath(advertised: advertised))
 }
 
 /// **The helper's half**, taken after it is already listening — which is why the advertised name
@@ -577,21 +609,28 @@ func reclaimDeadWarpHelperSockets(
     }
 }
 
-/// **How long an occupied address can still be protecting something.**
+/// **How long after the launch line is written a helper may still take its address.**
 ///
-/// A helper claims its address in the instruction after `listen`, so the only interval in which a
-/// taken-back name matters is between the launch and that claim. The numbers bounding it are already
-/// measured and already constants: `open` is given `warpTabConfigLifetime`-order time (its own
-/// timeout is 15s), Warp brings the pane up 0.5∼0.7s after `open` returns, and no helper can be born
-/// at all once the Tab Config is gone — which the app schedules for `warpTabConfigLifetime` (20s)
-/// and the next run's `reclaimStaleWarpTabConfigs` finishes. That puts any possible time-to-claim
-/// under a minute.
+/// The previous number was derived from Tab Config lifetime + `open` timeout + how long the pane
+/// takes to appear, and **that is not a bound** (round 23 review): "the instruction after `listen`"
+/// is not a time, and a suspended process can be anywhere. The helper's own caps do not close it
+/// either — the 180-second idle cap and the 900-second lifetime cap both start once it is *serving*,
+/// which is after the claim, so a helper suspended before the claim had no cap at all.
 ///
-/// This is fifteen, which is deliberately far above it and matches the order of the helper's own
-/// lifetime cap. Round 19 chose not to sweep these at all, and that was right for the reason it gave
-/// — deleting one reopens the late-helper race — but "not swept" is not a bound, and this repository
-/// does not treat the OS emptying its temporary directory as a lifecycle (round 21 review).
-let warpHelperOccupationLifetime: TimeInterval = 15 * 60
+/// So the helper is handed this at birth and refuses to claim past it. That is not a check on app
+/// state — the shape round 17 ruled out — but the helper bounding itself against a constant it was
+/// given, which needs nothing to be reachable and nothing to still be true.
+///
+/// Two minutes: `open` alone is allowed fifteen seconds, the pane follows 0.5∼0.7s after it returns
+/// (measured), and the rest is slack for a machine under load. A helper that has not claimed in two
+/// minutes has lost its pane or its scheduler, and delivery has failed either way.
+public let warpHelperClaimWindow: TimeInterval = 120
+
+/// When the sweep may take what a take-back left, and the pin it linked from.
+///
+/// It is **the number the helper enforces**, plus slack — not an optimistic derivation of its own.
+/// Once the window has passed no helper will claim, so nothing is being protected any more.
+let warpHelperOccupationLifetime: TimeInterval = warpHelperClaimWindow + 60
 
 /// Removes what taking an address back leaves: the occupied name and the pin it was linked from.
 ///
@@ -606,7 +645,7 @@ func reclaimStaleWarpHelperOccupations(
         guard let modified = fileModificationDate(path),
               Date().timeIntervalSince(modified) > lifetime
         else { continue }
-        removeWarpHelperPinIfOurs(path: path)
+        removeWarpHelperFileIfOurs(path: path)
     }
 }
 
@@ -618,19 +657,24 @@ func reclaimStaleWarpHelperOccupations(
 /// outset and the `fstat` and the read are on that same descriptor, so "what was checked" and "what
 /// was read" are one file — and then one more `lstat` before the `unlink` narrows the window that
 /// remains, exactly as `removeWarpTabConfigIfOurs` does for a Tab Config.
-private func removeWarpHelperPinIfOurs(path: String) {
+func removeWarpHelperFileIfOurs(path: String) {
     let fd = open(path, O_RDONLY | O_NOFOLLOW)
     guard fd >= 0 else { return }
     defer { close(fd) }
 
+    // **The whole file, not a prefix of it.** Reading the marker's length and comparing says the file
+    // *begins* our way, which a user file that starts with the same line also does — and this deletes
+    // what it matches (round 23 review). The size is the other half of "this is our file".
+    let expected = Array(warpHelperPinMarker.utf8)
     var opened = stat()
-    guard fstat(fd, &opened) == 0, (opened.st_mode & S_IFMT) == S_IFREG else { return }
-
-    var head = [UInt8](repeating: 0, count: warpHelperPinMarker.utf8.count)
-    let count = read(fd, &head, head.count)
-    guard count == head.count,
-          String(decoding: head[0..<count], as: UTF8.self) == warpHelperPinMarker
+    guard fstat(fd, &opened) == 0,
+          (opened.st_mode & S_IFMT) == S_IFREG,
+          opened.st_size == off_t(expected.count)
     else { return }
+
+    var head = [UInt8](repeating: 0, count: expected.count)
+    let count = read(fd, &head, head.count)
+    guard count == expected.count, head == expected else { return }
 
     var current = stat()
     guard lstat(path, &current) == 0,
