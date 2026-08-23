@@ -94,15 +94,21 @@ enum Settings {
     /// given up before the write could happen; either way nothing was written and this instance is
     /// no longer the one the relay can reach.
     ///
-    /// **The read of `right` is load-bearing for the compiler too**, which is not a reason for it but
-    /// is a reason not to reduce this to a forward: measured on Swift 6.3.3, a function that takes
-    /// this class and only *forwards* it into an inlined callee without reading it crashes the
-    /// release build in `CopyPropagation` ("Found a leaked owned value that was never consumed").
-    /// Debug builds and `swift test` are unaffected, so `build.sh` is the only place it shows.
+    /// **And it no longer asks, which it was still doing when that was written** (round 22 review):
+    /// a `right.isHeld` stood here after `mayWrite` had been deleted on the reasoning that the write
+    /// path does not ask. Removing it changes no outcome — `commit` refuses the same cases — and it
+    /// makes the sentence above true rather than nearly true.
+    ///
+    /// **D112 was re-measured before removing it.** That guard was also documented as load-bearing
+    /// for the release compiler: on Swift 6.3.3 a function taking this class and only *forwarding* it
+    /// into an inlined callee crashed `CopyPropagation`. `build.sh` is green without it in this
+    /// shape, so the note is a fact about that shape and not about this line. If the crash comes
+    /// back, the fix is the one that worked before — give the forwarding function something to read —
+    /// and the reason to write it down is that a debug build and `swift test` will both be green.
     private static func publishInteractively(
         _ resolved: SupportedLocale, as right: LocalePublicationRight?, to defaults: UserDefaults
     ) -> LocalePublication? {
-        guard let right, right.isHeld,
+        guard let right,
               let committed = LocaleState.commit(resolved: resolved, defaults: defaults, right: right)
         else {
             checkoutLog("this instance does not own the socket, so no locale was published")

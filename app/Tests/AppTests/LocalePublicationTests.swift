@@ -495,8 +495,16 @@ final class LocalePublicationTests: XCTestCase {
     ///
     /// **It is a lint and not a proof of the call graph.** Counting a textual symbol does not see an
     /// alias, a stored function value, or another route to the same write — what it holds is that
-    /// nobody spelled a second one. Recorded here rather than closed: the thing that would close it
-    /// is the type work in item 50, and this is what remains beside it (round 20 review).
+    /// nobody spelled a second one.
+    ///
+    /// **And it does not hold the property its name suggests.** Round 22: it was counting a
+    /// *default-argument reference*, and `AppDelegate` names the publisher nowhere — so changing
+    /// `.publish(launchLocale)` to `.nothing`, the GUI publishing nothing at all, left this green.
+    /// The default is written as a call now so that what is counted is a call; the property that
+    /// mutation breaks is **which announcement the GUI passes**, and no count can hold it. That is
+    /// item 54 — a role the caller *is* rather than an argument it picks — and the mutation is the
+    /// red proof when it lands. This gate is not rewritten a fourth time; it is left saying the one
+    /// thing it can say.
     func testOnlyTheInstanceThatOwnsTheSocketPublishes() throws {
         let main = try String(contentsOfFile: Self.appSource("main.swift"), encoding: .utf8)
         XCTAssertTrue(
@@ -525,7 +533,8 @@ final class LocalePublicationTests: XCTestCase {
             let code = text.split(separator: "\n", omittingEmptySubsequences: false)
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                 .joined(separator: "\n")
-            let uses = code.components(separatedBy: "Settings.publishLocaleAtLaunch").count - 1
+            // The call, not the name: the default argument is spelled as a call for this reason
+            let uses = code.components(separatedBy: "Settings.publishLocaleAtLaunch(").count - 1
             // Named by where it sits, not by what it is called: a nested `Feature/HostServer.swift`
             // adding a real publisher used to answer to the expectation below (round 20 review)
             callers.append(contentsOf: Array(repeating: pathInTree(file, under: appSources), count: uses))

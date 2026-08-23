@@ -226,6 +226,16 @@ final class HostServerOwnershipTests: XCTestCase {
             _ = try server.start(announcing: .nothing)
             server.stop()
         }
+        // The loop ends with nothing holding the position, and the invariant is the same there: a
+        // superseded right that is still live would write through `whileHeld` whether or not anybody
+        // replaced it. The predicate asks only that, since round 22 — it also required a successor,
+        // which is a narrower question than the one being posed. **No toggle reddens this line**: the
+        // state it newly covers cannot be built from outside the type, so what changed is what the
+        // predicate means rather than what it currently catches
+        XCTAssertFalse(
+            LocalePublicationRight.supersededButStillHeld(firstRight),
+            "a superseded right is still live after the last holder went"
+        )
         XCTAssertFalse(
             violations.isSet,
             "a superseded right and its successor both reported held — the old right can still write"
@@ -240,6 +250,13 @@ final class HostServerOwnershipTests: XCTestCase {
     /// the same one the publication seam has: the teardown cannot complete while the startup is in
     /// it.
     func testATeardownDuringAStartupWaitsForIt() throws {
+        // **The publication goes to this case's own store.** It went to `.standard` — the runner's
+        // own settings, reachable by every case after it — in the round after the injection was
+        // added to stop exactly that (round 22 review). The argument existed; this went around it
+        let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
+        let store = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
         let server = HostServer(socketPath: path)
         let inPublication = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
@@ -248,7 +265,7 @@ final class HostServerOwnershipTests: XCTestCase {
             _ = try? server.start(announcing: .publish(.fallback), publish: { _, right, _ in
                 inPublication.signal()
                 release.wait()
-                return LocaleState.commit(resolved: .fallback, defaults: .standard, right: right)
+                return LocaleState.commit(resolved: .fallback, defaults: store, right: right)
             })
             started.signal()
         }
@@ -273,6 +290,14 @@ final class HostServerOwnershipTests: XCTestCase {
         XCTAssertEqual(stopped.wait(timeout: .now() + 10), .success)
         XCTAssertNil(LocalePublicationRight.current, "the torn-down instance kept the right")
         XCTAssertNil(identity(path), "the torn-down instance kept its socket")
+        XCTAssertNotNil(
+            store.dictionary(forKey: LocaleState.publicationKey),
+            "the publication went somewhere other than this case's store"
+        )
+        XCTAssertNil(
+            UserDefaults.standard.dictionary(forKey: LocaleState.publicationKey),
+            "the runner's own settings were written"
+        )
     }
 
     /// Two binds in one process is not a shape production has, but `mint` has to answer for it
