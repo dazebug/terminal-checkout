@@ -623,12 +623,30 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 /// about. That was the wrong interval: `HostServer` dispatches that function **asynchronously**, and
 /// the helper is launched before it by `runInTerminal`, so the helper's lifetime *starts earlier
 /// than the delivery's*. A slot is reserved by `admit()` before anything can be launched, and the
-/// handle is attached once the terminal has produced one — so the window in which a helper exists
-/// unregistered does not exist.
+/// address is written into it by the code that is about to create the helper — so the window in
+/// which a helper exists unregistered does not exist.
 ///
-/// A reservation whose handle has not arrived yet carries `.none`, which contributes no socket to
-/// `liveWarpSockets`. That is not a hole: `admitRestart` refuses while *any* entry is present, so
-/// nothing can terminate during the interval where we hold a slot but not yet an address.
+/// **The address is written *before* the launch, and the write is the gate** (round 16 review, P0).
+/// Round 14 reserved the slot early and recorded the address afterwards, from whatever the terminal
+/// returned, and `attach` asked only whether the slot was still there. That leaves this order
+/// standing: reserve, termination closes the gate, `endEveryHelper` sees a reservation with no
+/// address and dismisses nobody, the helper starts, the address arrives — and the app goes away with
+/// a live injection socket in the user's pane. So there is no attach-after-launch at all any more.
+/// `record` is taken **under the same lock that closes the gate**, immediately before the Tab Config
+/// is written, and a closed gate refuses it; `runInWarp` turns that refusal into a throw, so the
+/// file is never written and no helper is ever launched. The two possible interleavings both end
+/// well: record first and the farewell finds the address, gate first and nothing is created.
+///
+/// A reservation whose address has not been written yet carries `.none`, which contributes no socket
+/// to `liveWarpSockets`. That is not a hole: `admitRestart` refuses while *any* entry is present, so
+/// nothing can restart during the interval where we hold a slot but not yet an address, and a
+/// termination through that interval cannot be followed by a launch.
+///
+/// **What remains is a launch already issued** — `open` has returned, Warp has yet to read the file
+/// and start the helper. The address is in the register, so the farewell is sent, but it reaches a
+/// socket nobody is listening on yet. Nothing in this process can reach a process that does not
+/// exist, so that helper's bound is its own: the idle cap and the lifetime cap it applies to itself
+/// (`Sources/WarpHelper/main.swift`).
 ///
 /// **The ordering inside the delivery's `defer` is still the invariant.** The helper is told to go
 /// *before* the entry is removed, so anyone who reads "nothing is being delivered" can conclude "no
@@ -637,44 +655,65 @@ public enum ClaudeDelivery {
     private static let lock = NSLock()
     private static var live: [Int: TerminalSessionHandle] = [:]
     private static var nextToken = 0
-    private static var restartAdmitted = false
+    /// Set by either way of leaving (`closeAdmission`), so it is not named after the restart alone.
+    private static var admissionClosed = false
 
-    /// Reserve a slot **before** anything that can launch a helper. nil means a restart has been
-    /// admitted and this request must not start one — the caller turns that into a refusal rather
-    /// than running the command and dropping the input, which would be a `{success:true}` with the
-    /// typing silently gone.
-    public static func admit() -> Int? {
+    /// A reserved slot. **It is the permission to launch a helper**, not a receipt for one: nothing
+    /// outside this file can make one, so a code path that brings a claude-input session into being
+    /// has to have been handed one by `admit()` — `runInTerminal` takes this in place of the boolean
+    /// that used to say "this run injects", which is how the two can no longer disagree.
+    public struct Admission {
+        fileprivate let id: Int
+
+        /// Write the address of the helper this slot is about to create. **It throws when the gate
+        /// has closed** (the app is going away) or the slot has already been given back, and then
+        /// the caller must not go on to create anything.
+        ///
+        /// Throwing rather than answering `false`, because the answer to this one may not be
+        /// dropped: an unused `Bool` is a warning, while getting past this line without handling it
+        /// takes a `try?` somebody has to write and a reader can see.
+        public func record(_ handle: TerminalSessionHandle) throws {
+            guard ClaudeDelivery.record(handle, in: id) else { throw TerminalError.goingAway }
+        }
+
+        /// Give the slot back. Idempotent: ending twice is not an error, because the caller is a
+        /// `defer` and a `defer` should never have to reason about whether it already ran.
+        public func end() { ClaudeDelivery.end(id) }
+    }
+
+    /// Reserve a slot **before** anything that can launch a helper. nil means the app is leaving —
+    /// restarting for a language change, or terminating — and this request must not start one. The
+    /// caller turns that into a refusal rather than running the command and dropping the input,
+    /// which would be a `{success:true}` with the typing silently gone.
+    public static func admit() -> Admission? {
         lock.lock()
         defer { lock.unlock() }
-        guard !restartAdmitted else { return nil }
+        guard !admissionClosed else { return nil }
         nextToken += 1
         // **`TerminalSessionHandle.none`, spelled in full.** Written `.none` against a dictionary of
         // optionals Swift reads it as `Optional.none` and *removes* the key, so the reservation
         // vanished the moment it was made and the barrier stayed down (caught here by
         // `testAReservedSlotWithNoHandleStillRefusesARestart`)
         live[nextToken] = TerminalSessionHandle.none
-        return nextToken
+        return Admission(id: nextToken)
     }
 
-    /// Attach the session handle once the terminal has produced one. A token already ended (the run
-    /// failed and its `defer` fired first) is not resurrected.
-    public static func attach(_ handle: TerminalSessionHandle, to token: Int) {
+    /// Both questions in one turn of the lock: may a helper still be created, and if so this is
+    /// where it will answer. Asking them separately is the race — the gate can close between an
+    /// answer and a write, which is precisely what round 16 found.
+    private static func record(_ handle: TerminalSessionHandle, in token: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard live[token] != nil else { return }
+        // A slot already ended (the run failed and its `defer` fired first) is not resurrected, and
+        // a closed gate is refused: after it, the farewells have either gone out or are about to,
+        // and an address written now would be one nobody reads
+        guard !admissionClosed, live[token] != nil else { return false }
         live[token] = handle
+        return true
     }
 
-    /// Reserve **and** attach in one step, for a delivery that was not pre-admitted by its caller.
-    public static func begin(_ handle: TerminalSessionHandle) -> Int? {
-        guard let token = admit() else { return nil }
-        attach(handle, to: token)
-        return token
-    }
-
-    /// Records that one has finished. Idempotent: ending a token twice is not an error, because the
-    /// caller is a `defer` and a `defer` should never have to reason about whether it already ran.
-    public static func end(_ token: Int) {
+    /// Records that one has finished. Idempotent, for the reason `Admission.end` gives.
+    private static func end(_ token: Int) {
         lock.lock()
         defer { lock.unlock() }
         live[token] = nil
@@ -701,16 +740,44 @@ public enum ClaudeDelivery {
     /// Round 14 closed this for the restart path alone and left termination calling cleanup with the
     /// gate still open, so a request already accepted could launch a helper *after* the farewells had
     /// gone out (round 15 review). One function now, so a third way of leaving has to find it.
+    ///
+    /// Closing it also refuses every `record` from a slot reserved earlier, which is what makes the
+    /// close total rather than merely forward-looking (round 16 review).
     @discardableResult
-    public static func closeAdmission(requiringIdle: Bool) -> Bool {
+    private static func closeAdmission(requiringIdle: Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         if requiringIdle, !live.isEmpty { return false }
-        restartAdmitted = true
+        admissionClosed = true
         return true
     }
 
-    /// The restart's half of that decision: refuse unless nothing is registered.
+    /// **Evidence that the gate was shut**, and the only way to come by one is to shut it.
+    ///
+    /// The order [close, then say goodbye] is an invariant — a request admitted between the two
+    /// would launch a helper the farewells have already walked past — and it used to live as two
+    /// adjacent lines in one function, read back out of the source by a test. Two lines are a habit;
+    /// this is the same order expressed as something you have to be holding.
+    ///
+    /// It says the gate was shut **when this was made**, which is a smaller claim than "is shut":
+    /// `withdrawRestartAdmission` reopens it, for the restart whose relaunch failed to spawn. The
+    /// path that terminates never withdraws, so the two cannot meet today — but the token cannot
+    /// promise that, and a comment that said it could would be the class this work keeps sweeping.
+    public struct Departure {
+        fileprivate init() {}
+    }
+
+    /// Termination's half of the decision: it **cannot be refused** — the user quit or macOS is
+    /// shutting us down, and saying no would not stop it — so this shuts the gate whatever is in
+    /// flight and hands back what `endEveryHelper` needs.
+    public static func depart() -> Departure {
+        closeAdmission(requiringIdle: false)
+        return Departure()
+    }
+
+    /// The restart's half: refuse unless nothing is registered, because cutting a delivery in half
+    /// is worse than not restarting. It is the same function with one argument different, and that
+    /// argument is the difference between asking and being told.
     public static func admitRestart() -> Bool { closeAdmission(requiringIdle: true) }
 
     /// Give the admission back when the restart did not happen — the relaunch failed to spawn, or a
@@ -719,7 +786,7 @@ public enum ClaudeDelivery {
     public static func withdrawRestartAdmission() {
         lock.lock()
         defer { lock.unlock() }
-        restartAdmitted = false
+        admissionClosed = false
     }
 
     /// The Warp helper sockets currently kept alive by a delivery. Exposed so that termination can
@@ -746,7 +813,11 @@ public enum ClaudeDelivery {
     /// any — which also means **the real send is the one path no test here takes**, since taking it
     /// would need a helper process on the other end. The registry half is what is proved; the socket
     /// half is the same `warpHelperRequest(.bye,…)` the delivery's own `defer` uses.
-    public static func endEveryHelper(farewell: ((String) -> Void)? = nil) {
+    ///
+    /// `departure` is not decoration: it cannot exist unless the gate has been shut, so the walk
+    /// below cannot be the thing that runs first.
+    public static func endEveryHelper(_ departure: Departure, farewell: ((String) -> Void)? = nil) {
+        _ = departure
         let send = farewell ?? { _ = warpHelperRequest(.bye, socket: $0) }
         for socket in liveWarpSockets { send(socket) }
     }
@@ -757,33 +828,25 @@ public enum ClaudeDelivery {
 /// If claude is not ready within the timeout, nothing is sent and it gives up (logging only).
 /// The startup wait (2 minutes by default) and the per-input retries are all blocking, so the whole thing can take minutes — it has to be called on a background queue rather than the request-handling one.
 /// `admission` is the slot the caller reserved **before** the terminal was asked to do anything
-/// (`ClaudeDelivery.admit`). It is a parameter rather than something taken here because the helper
-/// is launched by `runInTerminal`, which has already run by the time this function starts — taking
-/// it here would leave the helper unregistered for exactly the interval a restart must not use. A
-/// caller with no slot gets one now, and is refused if a restart has been admitted meanwhile.
+/// (`ClaudeDelivery.admit`). It is a parameter, and a required one, because the helper is launched by
+/// `runInTerminal`, which has already run by the time this function starts — a registration taken
+/// here would leave the helper unregistered for exactly the interval a restart must not use, and an
+/// optional one would let a caller that took no slot arrive with the same gap (round 14, P0). There
+/// is nothing to check on the way in: this slot is the one the launch itself passed through.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15,
     timeline: DeliveryTimeline? = nil,
-    admission: Int? = nil
+    admission: ClaudeDelivery.Admission
 ) {
-    guard !inputs.isEmpty else { return }
-    // From here to the end of this function a delivery is in flight, and a language restart must not
-    // run through it. The slot is normally the caller's, reserved before the tab was opened — the
-    // helper's lifetime starts before this function does, so a registration taken here would be
-    // late by exactly the window round 14 found (P0).
-    guard let deliveryToken = admission ?? ClaudeDelivery.begin(handle) else {
-        checkoutLog("a restart has been admitted, so \(inputs.count) claude input(s) were not delivered")
-        return
-    }
-    ClaudeDelivery.attach(handle, to: deliveryToken)
     // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends.
     // The farewell goes out **before** the register is cleared, so that "nothing in flight" implies "no helper of ours still alive".
     defer {
         if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }
-        ClaudeDelivery.end(deliveryToken)
+        admission.end()
     }
+    guard !inputs.isEmpty else { return }
 
     let ttyPath: String?
     switch handle {

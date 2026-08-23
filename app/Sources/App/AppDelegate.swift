@@ -62,11 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// without it: a request already accepted on the socket queue could reach `runInTerminal` and
     /// launch a Warp helper *after* `endEveryHelper` had said goodbye to everyone it could see, and
     /// that helper would outlive the app with nobody to dismiss it (round 15 review). Termination is
-    /// not refusable, so it takes the same decision function with `requiringIdle: false` — the gate
-    /// shuts either way and whatever is still registered is then dismissed.
+    /// not refusable, so `depart()` shuts the gate whatever is in flight — and hands back the proof
+    /// the farewell asks for, which is why the two lines below cannot be written the other way round.
     func applicationWillTerminate(_ notification: Notification) {
-        ClaudeDelivery.closeAdmission(requiringIdle: false)
-        ClaudeDelivery.endEveryHelper()
+        let departure = ClaudeDelivery.depart()
+        ClaudeDelivery.endEveryHelper(departure)
         server?.stop()
     }
 
@@ -83,15 +83,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// *resolution*, so the answer published is still the one this launch decided on before AppKit
     /// was touched. **What round 14 got wrong was the scope of the claim**: this bound the launch
     /// writer and the sentence here said "only the instance that owns the socket publishes", while
-    /// the picker went on publishing from anywhere (round 15 review). Both writers now ask
-    /// `LocalePublicationRight`, which is what this records into.
+    /// the picker went on publishing from anywhere (round 15 review). Round 15 gave both writers one
+    /// type to ask and left the launch writer publishing whatever it was handed, so **this ordering
+    /// was still the only thing enforcing it** (round 16 review).
+    ///
+    /// Now the bind hands back the right and publishing takes one, so the line below could not be
+    /// moved above `start()` even by accident: there would be nothing to pass. What is left here is
+    /// no longer a rule — it is the plumbing of a value.
     private func startServer() {
         let server = HostServer(socketPath: defaultSocketPath())
         do {
-            try server.start()
+            let right = try server.start()
             self.server = server
-            LocalePublicationRight.recordSocketOwnership()
-            Settings.publishLocaleAtLaunch(resolved: launchLocale)
+            Settings.publishLocaleAtLaunch(resolved: launchLocale, right: right)
         } catch {
             checkoutLog(
                 "socket server failed to start, so this instance publishes no locale — \(errorMessage(error))"

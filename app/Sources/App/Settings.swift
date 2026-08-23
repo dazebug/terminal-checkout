@@ -49,9 +49,9 @@ enum Settings {
     /// **Only if this process owns the socket.** The comment here used to read "the picker lives in
     /// the setup window, so only the GUI reaches here", which is true and answers a different
     /// question — a *second* GUI instance has a setup window too, and it reached this line and
-    /// published (round 15 review). The window that cannot publish is disabled and says so, so this
-    /// guard is the enforcement rather than the notice; it exists because a guard on the control is
-    /// a guard on one caller, and this is the state.
+    /// published (round 15 review). The window that cannot publish is disabled and says so, but the
+    /// enforcement is that publishing takes a right only the bind can produce: a guard on a control
+    /// is a guard on one caller, and a guard on a boolean is a guard the next caller forgets.
     ///
     /// The preference itself is still written: it is an ordinary user setting in a shared domain,
     /// last writer wins, and the owner reads it on its next launch. What must not happen without
@@ -61,26 +61,50 @@ enum Settings {
         set { _ = setLanguage(newValue) }
     }
 
-    /// The setter's body, with its store and its eligibility as arguments — so the rule can be
-    /// exercised against the real code rather than a stand-in, and without writing into the domain
-    /// the installed app is using. Returns whether it published.
+    /// The setter's body, with its store and its right as arguments — so the rule can be exercised
+    /// against the real code rather than a stand-in, and without writing into the domain the
+    /// installed app is using. Returns whether it published.
+    ///
+    /// `right` defaults to whatever this process holds, and that default is not a way around the
+    /// rule: nothing outside `HostServer.swift` can produce one, so a caller can pass the right this
+    /// process was given or nothing at all.
     @discardableResult
     static func setLanguage(
         _ newValue: String,
         defaults: UserDefaults = .standard,
-        mayPublish: Bool = LocalePublicationRight.isOurs(),
+        right: LocalePublicationRight? = LocalePublicationRight.current,
         systemPreferred: [String] = Locale.preferredLanguages
     ) -> Bool {
         defaults.set(newValue, forKey: languagePreferenceKey)
         defer { NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil) }
-        guard mayPublish else {
-            checkoutLog("this instance does not own the socket, so the language change was not published")
+        return publishInteractively(
+            AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
+            as: right, to: defaults
+        )
+    }
+
+    /// **The one door an interactive publication goes through**, so that "may this process move the
+    /// generation the extension orders by" is asked in one place by both writers rather than beside
+    /// each of them. `LocaleState.publish` asks the same question of the same value at the moment it
+    /// writes; this is where the answer becomes a log and a return value.
+    ///
+    /// A right that has been given up (its socket is gone) is refused here as firmly as no right at
+    /// all: the process is no longer the one the relay can reach.
+    ///
+    /// **The guard is load-bearing for the compiler too**, which is not a reason for it but is a
+    /// reason not to remove it as redundant: measured on Swift 6.3.3, a function that takes this
+    /// class and only *forwards* it into an inlined callee without reading it crashes the release
+    /// build in `CopyPropagation` ("Found a leaked owned value that was never consumed"). Debug
+    /// builds and `swift test` are unaffected, so `build.sh` is the only place it shows.
+    @discardableResult
+    private static func publishInteractively(
+        _ resolved: SupportedLocale, as right: LocalePublicationRight?, to defaults: UserDefaults
+    ) -> Bool {
+        guard let right, right.isHeld else {
+            checkoutLog("this instance does not own the socket, so no locale was published")
             return false
         }
-        LocaleState.publish(
-            resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
-            defaults: defaults, role: .interactive
-        )
+        _ = LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive(right))
         return true
     }
 
@@ -103,11 +127,19 @@ enum Settings {
     /// immediately after pointing AppKit at the same answer; this runs after the socket has been
     /// bound. Resolving again at that point would ask a second time — and `Locale.preferredLanguages`
     /// can differ between the two — which is the divergence the original placement was avoiding.
+    ///
+    /// **`right` is what makes "after the bind" a fact of this signature rather than of where the
+    /// call happens.** Round 14 moved this call behind `HostServer.start()` and round 15 wrote that
+    /// both writers ask one type — but this one still published whatever it was handed, and only the
+    /// order of two lines in `AppDelegate` said otherwise (round 16 review). Item 39 of this work's
+    /// own plan says it: a rule kept by convention at each call site is broken by the next call site.
+    /// A caller that does not own the socket now has nothing to pass.
     static func publishLocaleAtLaunch(
         resolved: SupportedLocale,
+        right: LocalePublicationRight,
         defaults: UserDefaults = .standard
     ) {
-        LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive)
+        publishInteractively(resolved, as: right, to: defaults)
     }
 
     /// What a stored preference reads as.
@@ -237,40 +269,28 @@ enum LocaleRestartGate {
 /// same key can publish **different locales under the same epoch** — after which the extension,
 /// whose rule is "same install, accept only a strictly greater epoch", drops the newer of the two.
 /// Making the second writer impossible removes the case rather than locking around it.
-/// **May this process publish a locale at all?**
 ///
-/// Round 14 bound the *launch* publisher to owning the socket and left the *picker* unbound, and the
-/// comment on `startServer` then declared the whole rule from half of it — "only the instance that
-/// owns the socket publishes a locale" was true of one of the two writers (round 15 review). The
-/// answer lives here so that both writers ask the same question, and so that adding a third writer
-/// means finding this type rather than remembering a sentence.
-///
-/// Ownership is decided exactly once, by the bind in `AppDelegate.startServer`: `HostServer.start()`
-/// throws `alreadyRunning` when another instance answers on the path, and that is the only singleton
-/// test this app has. It is settable rather than computed because the socket is not something a
-/// getter can re-ask cheaply or safely, and injectable because the alternative is standing up two
-/// GUI processes in a test.
-enum LocalePublicationRight {
-    private static var owned = false
-
-    /// Recorded by the process that bound the socket, and by nothing else.
-    static func recordSocketOwnership() { owned = true }
-
-    /// Injectable for tests; in production it answers what the bind decided.
-    static var isOurs: () -> Bool = { owned }
-
-    /// Restores the production answer — for a test that overrode it.
-    static func reset() {
-        owned = false
-        isOurs = { owned }
-    }
-}
-
+/// **Which process may is not a question this asks — it is a value this carries.** Ownership is
+/// decided exactly once, by the bind: `HostServer.start()` throws `alreadyRunning` when
+/// another instance answers on the path, and that is the only singleton test this app has — an
+/// `NSLock` is process-local and cannot see a second process at all. The interactive case therefore
+/// **carries** the right that bind produced, so every publication in the program has to have come
+/// from one; see `LocalePublicationRight`.
 enum LocaleWriterRole {
-    /// The GUI: has a picker, may mint an identity and advance the revision.
-    case interactive
+    /// The GUI holding the socket: has a picker, may mint an identity and advance the revision.
+    case interactive(LocalePublicationRight)
     /// The headless server: publishes what the GUI last wrote, and writes nothing.
     case headless
+
+    /// **The one question the write path asks**, so that "may this call write" is answered in a
+    /// single place from the value itself. A right given up with its socket answers no — a process
+    /// that has stopped listening is a reader, exactly like the headless one.
+    var mayWrite: Bool {
+        switch self {
+        case .interactive(let right): return right.isHeld
+        case .headless: return false
+        }
+    }
 }
 
 /// What goes out to the extension: which locale, and how the extension is to order it.
@@ -362,36 +382,46 @@ enum LocaleState {
     ///
     /// **It orders callers inside one process and cannot see another** — `UserDefaults` is shared by
     /// every instance, and a second GUI one is `open -n` away (which is how the language restart
-    /// relaunches). What carries that half is not this lock but *who publishes at all*: only the
-    /// instance that bound the socket does (`AppDelegate.startServer`), because that is the instance
-    /// the extension is talking to. Round 14's review found this half missing.
+    /// relaunches). What carries that half is not this lock but *who publishes at all*: only a caller
+    /// holding the right `HostServer.start()` hands back does, because that is the instance the
+    /// extension is talking to. Round 14's review found this half missing; round 16's found that it
+    /// was still a rule about where the call sat rather than about what the caller had.
     private static let writeLock = NSLock()
 
     @discardableResult
     static func publish(
         resolved: SupportedLocale, defaults: UserDefaults = .standard, role: LocaleWriterRole
     ) -> LocalePublication? {
-        guard role == .interactive else { return published(resolved: resolved, defaults: defaults, role: role) }
+        guard role.mayWrite else { return published(resolved: resolved, mayWrite: false, defaults: defaults) }
         writeLock.lock()
         defer { writeLock.unlock() }
-        return published(resolved: resolved, defaults: defaults, role: role)
+        // Asked again **inside** the lock, because the right can be given up between the two lines
+        // above: `HostServer.stop()` runs on whichever thread is terminating. This narrows the
+        // window rather than closing it — the right's own lock and this one are different locks, and
+        // making them one would mean teardown taking the publication lock. What is left is a
+        // publication written microseconds after the socket went, by the process that held it until
+        // then; the next owner's publication supersedes it
+        return published(resolved: resolved, mayWrite: role.mayWrite, defaults: defaults)
     }
 
+    /// `mayWrite` and not the role, because the role is a question that has already been answered by
+    /// the time this runs — carrying it further would mean asking it again in five branches, each of
+    /// which could ask it differently.
     private static func published(
-        resolved: SupportedLocale, defaults: UserDefaults, role: LocaleWriterRole
+        resolved: SupportedLocale, mayWrite: Bool, defaults: UserDefaults
     ) -> LocalePublication? {
         // The one writer is also the one cleaner. Removing the earlier schema's keys used to happen
         // inside `write`, which never runs when a valid envelope is already there — so an envelope
         // beside stale keys kept them for good (round 10 review). Doing it on the way in covers that
         // state and keeps the ordering rule below: the deletion still precedes any envelope write.
-        if role == .interactive { forgetLegacySchema(defaults) }
+        if mayWrite { forgetLegacySchema(defaults) }
 
         guard let stored = stored(defaults) else {
-            guard role == .interactive else { return nil }
+            guard mayWrite else { return nil }
             return mint(resolved, to: defaults)
         }
         guard stored.snapshot.tag != resolved.tag else { return stored }
-        guard role == .interactive else { return stored }
+        guard mayWrite else { return stored }
         guard !localeIdentityIsExhausted(stored.snapshot) else {
             // One more revision would be `Int.max`, which storage refuses to read back — so the
             // identity is rotated *before* that value exists rather than after it has been written
@@ -431,7 +461,8 @@ enum LocaleState {
     /// It runs from `publish` rather than from `write`, and that is the fix for the state where a
     /// valid envelope and stale keys sat side by side: nothing writes in that state, so a cleanup
     /// living in `write` never ran and the old keys stayed for good. Deleting is a write and so it
-    /// is still reachable only from the interactive role — the single writer stays single (D49).
+    /// is still reachable only from a caller holding the publication right — the single writer stays
+    /// single (D49).
     private static func forgetLegacySchema(_ defaults: UserDefaults) {
         for key in legacyKeys { defaults.removeObject(forKey: key) }
     }

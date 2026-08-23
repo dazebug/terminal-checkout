@@ -6,7 +6,10 @@ import Foundation
 if CommandLine.arguments.contains("--headless-server") {
     let server = HostServer(socketPath: defaultSocketPath())
     do {
-        try server.start()
+        // The bind hands back the right to publish a locale; this process wants none. It draws
+        // nothing and has no picker, so inventing a revision here is what D49 rules out — the
+        // discard is the sentence, and `start()` is not `@discardableResult` so it has to be written
+        _ = try server.start()
     } catch {
         FileHandle.standardError.write(Data("server start failed: \(errorMessage(error))\n".utf8))
         exit(1)

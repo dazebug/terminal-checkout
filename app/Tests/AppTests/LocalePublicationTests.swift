@@ -16,14 +16,28 @@ import XCTest
 final class LocalePublicationTests: XCTestCase {
     private var suiteName = ""
     private var defaults: UserDefaults!
+    private var socketDirectory = ""
+    private var server: HostServer!
+    private var right: LocalePublicationRight!
+
+    /// **Every case that publishes binds a socket to be allowed to**, because that is the only thing
+    /// in the program that produces the right — and a suite that could publish without one would be
+    /// proving something the app cannot do. The path is short by hand: `sockaddr_un` takes 104 bytes
+    /// and a `NSTemporaryDirectory()` under the test runner spends most of them.
+    private var interactive: LocaleWriterRole { .interactive(right) }
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        socketDirectory = "/tmp/tc-pub-\(UUID().uuidString.prefix(8))"
+        server = HostServer(socketPath: socketDirectory + "/s.sock")
+        right = try server.start()
     }
 
     override func tearDown() {
+        server.stop()
+        try? FileManager.default.removeItem(atPath: socketDirectory)
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         super.tearDown()
     }
@@ -62,13 +76,13 @@ final class LocalePublicationTests: XCTestCase {
     /// under it loses to whatever epoch the extension has cached, and the language never moves
     /// again. The identity has to change with it.
     func testANilLastPublishedIsOnlyValidForATrulyNewInstall() throws {
-        let fresh = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive))
+        let fresh = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: interactive))
         XCTAssertEqual(fresh.snapshot, LocaleSnapshot(tag: "ko", epoch: 0))
         XCTAssertFalse(fresh.installId.isEmpty)
 
         // The same starting point, except that an identity survived
         seed(installId: fresh.installId, epoch: nil, tag: nil)
-        let after = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive))
+        let after = try XCTUnwrap(LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: interactive))
         XCTAssertEqual(after.snapshot.epoch, 0)
         XCTAssertNotEqual(
             after.installId, fresh.installId,
@@ -90,7 +104,7 @@ final class LocalePublicationTests: XCTestCase {
             UserDefaults.standard.removePersistentDomain(forName: suiteName)
             seed(installId: "old-identity", epoch: epoch, tag: "ko")
             let published = try XCTUnwrap(
-                LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive), label
+                LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive), label
             )
             XCTAssertNotEqual(published.installId, "old-identity", label)
             XCTAssertEqual(published.snapshot, LocaleSnapshot(tag: "ja", epoch: 0), label)
@@ -100,7 +114,7 @@ final class LocalePublicationTests: XCTestCase {
         // A tag we do not ship is malformed too — it cannot be what we last published
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         seed(installId: "old-identity", epoch: 4, tag: "fr")
-        let published = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
+        let published = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive))
         XCTAssertNotEqual(published.installId, "old-identity")
         XCTAssertEqual(published.snapshot.epoch, 0)
     }
@@ -119,7 +133,7 @@ final class LocalePublicationTests: XCTestCase {
         XCTAssertEqual(storedTriple().1 as? Int, before.1 as? Int)
         XCTAssertEqual(storedTriple().2, before.2, "the headless server wrote")
 
-        let gui = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
+        let gui = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive))
         XCTAssertEqual(gui.snapshot, LocaleSnapshot(tag: "ja", epoch: 4))
         XCTAssertEqual(gui.installId, "install-a")
         // The pair the extension orders by: no epoch ever carries two different tags
@@ -138,7 +152,7 @@ final class LocalePublicationTests: XCTestCase {
     /// ordering promise — for one identity the epoch never goes down, whatever was in the plist.
     func testACorruptedEpochCannotTrapOrPublishNonMonotonically() throws {
         seed(installId: "install-a", epoch: Int.max, tag: "ko")
-        let recovered = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
+        let recovered = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive))
         XCTAssertEqual(recovered.snapshot.epoch, 0)
         XCTAssertNotEqual(recovered.installId, "install-a", "a revision that cannot advance kept its identity")
 
@@ -149,7 +163,7 @@ final class LocalePublicationTests: XCTestCase {
         var epochs: [Int] = []
         for resolved in ["ko", "ja", "ko", "zh-Hant"] {
             let published = try XCTUnwrap(
-                LocaleState.publish(resolved: try locale(resolved), defaults: defaults, role: .interactive)
+                LocaleState.publish(resolved: try locale(resolved), defaults: defaults, role: interactive)
             )
             XCTAssertEqual(published.installId, "install-b")
             epochs.append(published.snapshot.epoch)
@@ -162,7 +176,7 @@ final class LocalePublicationTests: XCTestCase {
     /// number that moved each time would make every launch look like a language change.
     func testRepublishingTheSameLocaleStandsStill() throws {
         seed(installId: "install-a", epoch: 2, tag: "ja")
-        let again = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive))
+        let again = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive))
         XCTAssertEqual(again, LocalePublication(installId: "install-a", snapshot: LocaleSnapshot(tag: "ja", epoch: 2)))
     }
 
@@ -180,7 +194,7 @@ final class LocalePublicationTests: XCTestCase {
     func testNoReaderObservesMixedSnapshot() throws {
         let watched = try XCTUnwrap(WriteObservingDefaults(suiteName: suiteName))
         let minted = try XCTUnwrap(
-            LocaleState.publish(resolved: try locale("ko"), defaults: watched, role: .interactive)
+            LocaleState.publish(resolved: try locale("ko"), defaults: watched, role: interactive)
         )
 
         var observed: [LocalePublication?] = []
@@ -189,7 +203,7 @@ final class LocalePublicationTests: XCTestCase {
             observed.append(LocaleState.publish(resolved: japanese, defaults: watched, role: .headless))
         }
         let advanced = try XCTUnwrap(
-            LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: .interactive)
+            LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: interactive)
         )
         watched.afterWrite = nil
 
@@ -239,7 +253,7 @@ final class LocalePublicationTests: XCTestCase {
                 stale: LocaleState.legacyKeys.contains { watched.object(forKey: $0) != nil }
             ))
         }
-        let minted = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: .interactive))
+        let minted = try XCTUnwrap(LocaleState.publish(resolved: try locale("ja"), defaults: watched, role: interactive))
         watched.afterWrite = nil
 
         XCTAssertNotEqual(minted.installId, "old-identity")
@@ -280,7 +294,7 @@ final class LocalePublicationTests: XCTestCase {
         XCTAssertTrue(supportedLocales.contains(resolved.tag), "the resolver produced \(resolved.tag)")
 
         let published = try XCTUnwrap(
-            LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive)
+            LocaleState.publish(resolved: resolved, defaults: defaults, role: interactive)
         )
         XCTAssertTrue(supportedLocales.contains(published.snapshot.tag))
         XCTAssertEqual(storedTriple().2, published.snapshot.tag, "what was stored is not what was returned")
@@ -295,7 +309,7 @@ final class LocalePublicationTests: XCTestCase {
     func testEpochAtMaxMinusOneCannotPublishIntMax() throws {
         seed(installId: "install-a", epoch: Int.max - 1, tag: "ko")
         let rotated = try XCTUnwrap(
-            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive)
+            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive)
         )
         XCTAssertNotEqual(rotated.installId, "install-a", "the exhausted identity was kept")
         XCTAssertEqual(rotated.snapshot, LocaleSnapshot(tag: "ja", epoch: 0))
@@ -306,7 +320,7 @@ final class LocalePublicationTests: XCTestCase {
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         seed(installId: "install-b", epoch: Int.max - 2, tag: "ko")
         let advanced = try XCTUnwrap(
-            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: .interactive)
+            LocaleState.publish(resolved: try locale("ja"), defaults: defaults, role: interactive)
         )
         XCTAssertEqual(advanced.installId, "install-b")
         XCTAssertEqual(advanced.snapshot.epoch, Int.max - 1)
@@ -325,7 +339,7 @@ final class LocalePublicationTests: XCTestCase {
         }
 
         let republished = try XCTUnwrap(
-            LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: .interactive)
+            LocaleState.publish(resolved: try locale("ko"), defaults: defaults, role: interactive)
         )
         XCTAssertEqual(republished.snapshot, LocaleSnapshot(tag: "ko", epoch: 3), "the envelope moved")
         for key in LocaleState.legacyKeys {
@@ -400,7 +414,7 @@ final class LocalePublicationTests: XCTestCase {
 
         DispatchQueue.concurrentPerform(iterations: tags.count) { index in
             if let result = LocaleState.publish(
-                resolved: tags[index], defaults: coordinating, role: .interactive
+                resolved: tags[index], defaults: coordinating, role: interactive
             ) {
                 box.lock()
                 published.append(result)
@@ -437,7 +451,7 @@ final class LocalePublicationTests: XCTestCase {
         func launch(_ system: [String]) {
             Settings.publishLocaleAtLaunch(
                 resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: system),
-                defaults: defaults
+                right: right, defaults: defaults
             )
         }
         defaults.set(42, forKey: languagePreferenceKey)
@@ -465,9 +479,11 @@ final class LocalePublicationTests: XCTestCase {
     /// `open -n`. Both would publish under the same install id and epoch with different tags, and
     /// the extension's rule ("same install, strictly greater epoch") cannot order that pair.
     ///
-    /// Read from the source because the alternative is standing up two GUI processes: what is pinned
-    /// is that the publication sits inside the `do` that follows a successful `start()`, and that
-    /// `main.swift` resolves without publishing.
+    /// **What is left here after the right became a value.** That a publication follows a bind is
+    /// the compiler's now — there is no right to pass before `start()` has returned one. What no type
+    /// can say is that `main.swift` resolves the launch language *and does not publish it*: those are
+    /// two separate calls, and moving the second one back to where the first is would be a second
+    /// instance publishing before the bind decides. That half is read from the source.
     func testOnlyTheInstanceThatOwnsTheSocketPublishes() throws {
         let main = try String(contentsOfFile: Self.appSource("main.swift"), encoding: .utf8)
         XCTAssertFalse(
@@ -480,10 +496,10 @@ final class LocalePublicationTests: XCTestCase {
         )
 
         let delegate = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(delegate.range(of: "try server.start()")).upperBound
+        let start = try XCTUnwrap(delegate.range(of: "let right = try server.start()")).upperBound
         let publish = try XCTUnwrap(
-            delegate.range(of: "Settings.publishLocaleAtLaunch(resolved: launchLocale)"),
-            "the delegate no longer publishes the launch locale"
+            delegate.range(of: "Settings.publishLocaleAtLaunch(resolved: launchLocale, right: right)"),
+            "the delegate no longer publishes the launch locale with the right the bind returned"
         ).lowerBound
         XCTAssertLessThan(start, publish, "the locale is published before the socket is bound")
         let catchStart = try XCTUnwrap(delegate.range(of: "} catch {", range: start..<delegate.endIndex)).lowerBound
@@ -503,14 +519,16 @@ final class LocalePublicationTests: XCTestCase {
     func testOnlyTheSocketOwnerPublishesALanguageChange() throws {
         defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
         XCTAssertTrue(
-            Settings.setLanguage("ja", defaults: defaults, mayPublish: true, systemPreferred: ["ko-KR"]),
+            Settings.setLanguage("ja", defaults: defaults, right: right, systemPreferred: ["ko-KR"]),
             "the owner did not publish"
         )
         let owned = storedTriple()
         XCTAssertEqual(owned.2, "ja")
 
+        // A second instance holds nothing, because the only thing that produces a right is a bind
+        // it lost — there is no other value it could pass here
         XCTAssertFalse(
-            Settings.setLanguage("ko", defaults: defaults, mayPublish: false, systemPreferred: ["ko-KR"]),
+            Settings.setLanguage("ko", defaults: defaults, right: nil, systemPreferred: ["ko-KR"]),
             "a non-owner published a language change"
         )
         XCTAssertEqual(storedTriple().2, owned.2, "a non-owner moved the published locale")
@@ -521,20 +539,46 @@ final class LocalePublicationTests: XCTestCase {
         )
     }
 
+    /// **The launch writer consumes a right, and the right comes from the bind** (round 16 review).
+    ///
+    /// Round 14 moved this call behind `HostServer.start()` and round 15 said both writers ask one
+    /// type; this one asked nothing and published whatever it was handed, so what stood between a
+    /// second instance and the shared generation was the order of two lines in `AppDelegate`. A
+    /// caller with no right cannot reach this function at all now — that half is the compiler's, and
+    /// the case here is the other half: **a right stops working when its socket does.**
+    ///
+    /// The non-owner is real rather than simulated: a second `HostServer` on the same path is
+    /// refused, exactly as a second GUI instance is, and it comes away with nothing to pass.
+    func testLaunchWriterRequiresPublicationRight() throws {
+        let second = HostServer(socketPath: socketDirectory + "/s.sock")
+        XCTAssertThrowsError(try second.start(), "a second instance bound the socket the first holds") { error in
+            guard case HostServer.ServerError.alreadyRunning = error else {
+                return XCTFail("the second instance failed for another reason: \(error)")
+            }
+        }
+
+        Settings.publishLocaleAtLaunch(resolved: try locale("ja"), right: right, defaults: defaults)
+        XCTAssertEqual(storedTriple().2, "ja", "the owner did not publish at launch")
+
+        // The socket goes; so does the standing to move a generation the extension orders by. The
+        // process is still running and still holds the value — what it no longer holds is the socket
+        server.stop()
+        XCTAssertFalse(right.isHeld, "the right outlived the socket it came from")
+        XCTAssertNil(LocalePublicationRight.current, "a process with no socket still holds the right")
+        Settings.publishLocaleAtLaunch(resolved: try locale("ko"), right: right, defaults: defaults)
+        XCTAssertEqual(
+            storedTriple().2, "ja",
+            "a process that gave up the socket published anyway — the relay reaches somebody else now"
+        )
+    }
+
     /// Both writers ask the same question, and the window that cannot publish says so rather than
     /// offering a control that does nothing. Read from the source: the picker's branch ends in
     /// `NSApp.terminate` and a second instance needs a second process.
     func testBothWritersAskTheSameQuestionAndTheWindowSaysSo() throws {
-        let settings = try String(contentsOfFile: Self.appSource("Settings.swift"), encoding: .utf8)
-        XCTAssertTrue(
-            settings.contains("guard mayPublish else {"),
-            "the picker's writer no longer asks whether it may publish"
-        )
-        let delegate = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
-        XCTAssertTrue(
-            delegate.contains("LocalePublicationRight.recordSocketOwnership()"),
-            "nothing records who owns the socket"
-        )
+        // What used to be read out of the source here — that each writer asks before it publishes —
+        // belongs to the type now: neither can be called without a right, and the two cases above
+        // drive both writers. What no type can say is what the window shows for it
         let window = try String(contentsOfFile: Self.appSource("SetupWindowController.swift"), encoding: .utf8)
         XCTAssertTrue(
             window.contains("languagePopUp.isEnabled = mayPublish"),

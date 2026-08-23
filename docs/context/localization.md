@@ -41,7 +41,7 @@ The requirement is one language across the app and the extension, chosen by the 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured with a windowless probe bundle)
-**Source:** ledger D14, D22 and D79 in `docs/plans/i18n-five-locales.md`; `app/Sources/App/main.swift:19-24`, `app/Sources/App/Localization.swift:95-128`
+**Source:** ledger D14, D22 and D79 in `docs/plans/i18n-five-locales.md`; `applyStoredLanguageToAppKit` and `launchLocale` in `app/Sources/App/main.swift`, `AppLocalization` in `app/Sources/App/Localization.swift`
 **Revisit when:** AppKit starts honouring a language change mid-process, or the app gains a second entry point that draws UI
 
 Measured with an `LSUIElement` probe bundle that writes only its own domain: written **after** AppKit has come up, the same process keeps its old language — `preferredLocalizations` does not move and an `NSAlert` button stays `확인`, while only the readback changes; left in place, the next launch picks it up; written **before** AppKit is touched, the same process picks it up immediately (`zh-Hant`, with `好` and `打開`). So the write lives in `main.swift` ahead of `NSApplication.shared`, and a language change during a session needs a restart for AppKit's own chrome. Our own strings do not go through this key at all — they are read with `Bundle(path:)` — which is why they redraw immediately and the chrome does not.
@@ -145,7 +145,7 @@ The transitional Korean glosses these scripts and `README.md` carried while the 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** ledger D92 in `docs/plans/i18n-five-locales.md`; `LocaleRestartGate` in `app/Sources/App/Settings.swift:189-194`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
+**Source:** ledger D92 in `docs/plans/i18n-five-locales.md`; `LocaleRestartGate` in `app/Sources/App/Settings.swift`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** claude input delivery gains a bounded worst case, or the restart stops being user-initiated
 
 A language change moves AppKit's own chrome only on the next launch, so the card offers a restart. Restarting through an in-flight claude input delivery would cut it off and orphan a Warp injection helper whose only defence is its lifetime, so the gate answers "not now".

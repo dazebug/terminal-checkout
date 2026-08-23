@@ -6,10 +6,15 @@ public enum TerminalError: Error, CustomStringConvertible {
     case warpNotFound
     case warpTabConfigFailed(String)
     case timeout(String)
-    /// A restart has been admitted, so no new delivery may be started. Transient by nature — the
-    /// app is going away and coming back — which is why it is not a `ClaudeInputBlocker`: those name
-    /// a state the user has to go and fix.
-    case restarting
+    /// The app is leaving, so no new delivery may be started. Transient by nature — which is why it
+    /// is not a `ClaudeInputBlocker`: those name a state the user has to go and fix.
+    ///
+    /// **Both ways of leaving arrive here**, and the name and the sentence say so. It was
+    /// `restarting`, worded "restarting to change language", from the round where a language restart
+    /// was the only thing that closed the gate; termination began closing the same gate one round
+    /// later and the message went on naming the restart, telling a user who had just pressed Quit
+    /// that their language was changing.
+    case goingAway
     /// An undeliverable input we already know about **before** creating a tab. Identified by
     /// type, not by string — it reaches the extension as an `error` string, but inside the app
     /// this value is what tells the reasons apart
@@ -22,8 +27,8 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
         case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
-        case .restarting:
-            return "Terminal Checkout is restarting to change language — press the button again in a moment."
+        case .goingAway:
+            return "Terminal Checkout is quitting or restarting — press the button again in a moment."
         case .claudeInputNotDeliverable(let blocker): return blocker.message
         }
     }
@@ -215,11 +220,14 @@ public func runProcess(
     )
 }
 
-/// `injectsClaudeInput` says whether this run has claude input scheduled. Only Warp looks at it — injecting requires launching the injection helper inside the pane as well, and doing that for buttons with no input adds one more command block the user can see and leaves a useless process behind.
+/// `claudeInput` is the slot this run reserved for its delivery, and its presence is what says input is scheduled. Only Warp goes further with it — injecting requires launching the injection helper inside the pane as well, and doing that for buttons with no input adds one more command block the user can see and leaves a useless process behind.
+///
+/// It replaced a `Bool` (round 16 review): the boolean and the reservation were two values saying the same thing, kept in step by the one call site that set both, and only a reservation can be checked against the gate that says whether a helper may still be created. Nothing outside `ClaudeInjector.swift` can make one, so "this run injects" is now the same fact as "this run has been admitted".
 @discardableResult
 public func runInTerminal(
-    command: String, terminal: Terminal, injectsClaudeInput: Bool = false
+    command: String, terminal: Terminal, claudeInput: ClaudeDelivery.Admission? = nil
 ) throws -> TerminalSessionHandle {
+    let injectsClaudeInput = claudeInput != nil
     // An undeliverable input known **before** any side effect rejects the whole request. Opening
     // the tab and dropping the tail answers `{success:true}`, so the button shows ✅ and the user
     // is left with a claude session that has no context
@@ -233,7 +241,7 @@ public func runInTerminal(
     switch terminal {
     case .iterm: return try runInITerm(command)
     case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
-    case .warp: return try runInWarp(command, injectsClaudeInput: injectsClaudeInput)
+    case .warp: return try runInWarp(command, claudeInput: claudeInput)
     }
 }
 
@@ -259,8 +267,12 @@ public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
 /// When claude input is scheduled, one more line runs ahead of the command to start the injection helper. The helper reports its own tty, so there is no hunting for the pane here — this function runs inside the execQueue that holds up the Chrome response, whereas waiting for the helper to come up can happen on the background delivery thread (`deliverClaudeInputs`).
 ///
 /// The Tab Config file name carries a per-request token (`warpTabConfigStem`) — a fixed name overwrites the user's own file, and since Warp reads the file only after `open` has returned, consecutive requests swap each other's commands. In exchange, our file is deleted after giving the tab time to open.
+///
+/// **The helper's address is written into the register before the file is** (round 16 review, P0). This is the only place a Warp injection helper is brought into existence, and the address it will answer on is known one line earlier — so recording it here, through the same lock that closes the admission gate, is what makes "a helper exists outside the register" unreachable rather than merely unlikely. A refusal means the app is going away and nothing is created: no Tab Config, no `open`, no tab.
 @discardableResult
-public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throws -> TerminalSessionHandle {
+public func runInWarp(
+    _ command: String, claudeInput: ClaudeDelivery.Admission? = nil
+) throws -> TerminalSessionHandle {
     guard findWarpAppBundle() != nil else { throw TerminalError.warpNotFound }
 
     // Reclaim leftovers from an earlier run the app died during (live ones are left alone)
@@ -269,9 +281,20 @@ public func runInWarp(_ command: String, injectsClaudeInput: Bool = false) throw
 
     let token = warpHelperToken()
     // The precondition is checked once more **immediately before** the side effect — between `runInTerminal`'s verdict and this point the permission can be revoked or a reinstall can swap the bundle, and the old code then merely logged, ran the command and answered `{success:true}` (with the input silently evaporating). Throwing here means no tab is opened either — nothing has been created yet
-    let injection = try warpInjectionSetup(token: token, injectsClaudeInput: injectsClaudeInput)
+    let injection = try warpInjectionSetup(token: token, injectsClaudeInput: claudeInput != nil)
     let socketPath = injection?.socket
     let commands = [injection?.line, command].compactMap { $0 }
+    // What follows is what creates: the Tab Config, and then the tab that runs the helper. So the
+    // register learns where that helper will answer **before** either exists — and if the gate has
+    // closed since this request was admitted, this is where the run stops instead
+    if let claudeInput {
+        // `warpInjectionSetup` throws rather than answering nil for a run that injects, so the
+        // address is in hand here. The impossible pairing lands on the rejection that names it
+        // instead of skipping the record, which is how "no address" would become "launched
+        // unregistered"
+        guard let socketPath else { throw claudeInputRejection(.warpHelperUnavailable) }
+        try claudeInput.record(.warp(helperSocket: socketPath))
+    }
 
     let stem = warpTabConfigStem(token: token)
     let path = warpTabConfigPath(stem: stem)

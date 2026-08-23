@@ -498,12 +498,16 @@ const optionsHtml = read('options.html');
 // a promise about one level — the same defect the Swift source scan was fixed for in round 43,
 // left standing here by the same sweep (round 14 review, measured with a nested probe). A directory
 // listing is not a source tree on either side of this repository.
-const walkScripts = (dir, prefix = '') => fs.readdirSync(dir, { withFileTypes: true })
+const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileTypes: true })
   .flatMap(entry => (entry.isDirectory()
-    ? walkScripts(path.join(dir, entry.name), `${prefix}${entry.name}/`)
-    : (entry.name.endsWith('.js') ? [`${prefix}${entry.name}`] : [])))
+    ? walkFiles(path.join(dir, entry.name), keep, `${prefix}${entry.name}/`)
+    : (keep(entry.name) ? [`${prefix}${entry.name}`] : [])))
   .sort();
-const SPEAKING_FILES = walkScripts(extension);
+const SPEAKING_FILES = walkFiles(extension, name => name.endsWith('.js'));
+// Markup is written in both kinds of file — a page's own HTML and the scripts that build rows into
+// it — so a check about markup takes the union rather than the file that happened to hold the
+// example when it was written (round 16 review).
+const MARKUP_FILES = walkFiles(extension, name => name.endsWith('.js') || name.endsWith('.html'));
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 const speakingSource = SPEAKING_FILES.map(read).join('\n');
 
@@ -516,9 +520,10 @@ const referencedKeys = new Set([...keysInJs, ...keysInHtml]);
 // Which half of the text/markup split a key is on. A key reached through `t(`/`tr(` becomes
 // textContent, a title or a `confirm()`; a key reached through `tHTML(` or `data-i18n` becomes
 // innerHTML.
-const textKeys = new Set(
-  [...speakingSource.matchAll(/\bt r?\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
-);
+// Two patterns and not one alternation: this set was seeded with `/\bt r?\(/`, which has a space
+// in it and therefore matches nothing at all — the two loops under it were doing the whole job while
+// the line above them read like the one that did. Found while widening the attribute scan (round 16).
+const textKeys = new Set();
 for (const match of speakingSource.matchAll(/\btr\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
 for (const match of speakingSource.matchAll(/\bt\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
 const markupKeys = new Set([
@@ -629,35 +634,72 @@ test('markup in a value is balanced, and the same in every locale', () => {
 
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
   // **The scan looked at values and at interpolations, never at the static markup** (round 15
-  // review). `options.html` can carry a `placeholder`, `title`, `aria-label` or `alt` written
-  // straight into the tag, and such a string is invisible to every check here: it is not a
-  // catalogue value, so the parity gates never see it, and it is not built by `t(...)`, so the
-  // attribute-escaping gate never sees it either. A sentence put there would ship untranslated in
-  // five languages with nothing red.
+  // review). A `placeholder`, `title`, `aria-label` or `alt` written straight into a tag is
+  // invisible to every other check here: it is not a catalogue value, so the parity gates never see
+  // it, and it is not built by `t(...)`, so the attribute-escaping gate never sees it either. A
+  // sentence put there would ship untranslated in five languages with nothing red.
   //
-  // Each one is therefore either **a message** — filled in from a dictionary at runtime — or a
-  // **declared literal**, named here with the reason it is not prose. `main` is the default branch
-  // name: it is what the user's command will contain, so translating it would produce a branch that
-  // does not exist, which is the same rule the command literals above are held to.
+  // **It read one file, and the file it read was not the one with the instances** (round 16
+  // review): `options.js` builds rows into the page and had three static ones sitting in it the
+  // whole time, one of them the same branch-name class as the single declaration this list started
+  // with. So the subject is every file that can carry markup, taken from the directory.
+  //
+  // Each value is therefore either **a message** — filled in from a dictionary at runtime — or a
+  // **declared literal**, named here with the reason it is not prose. What they have in common: each
+  // is a name or a command fragment that goes into a shell, so a translation of it would be a repo,
+  // a branch or a command that does not exist. That is the rule the command literals above are held
+  // to as well.
   const DECLARED_LITERALS = {
     main: 'the default branch name — it goes into a command, so it is not prose',
+    master: 'a branch name, shown as the example that field takes — the same class as `main`',
+    'remy-worker': 'a repository name, shown as the example that field takes',
+    '{cd} && claude': 'a command template — its literals are what the command gate holds fixed',
   };
-  const html = read('options.html');
-  const found = [...html.matchAll(/(?:placeholder|title|aria-label|alt)="([^"]*)"/g)].map(m => m[1]);
+  // The names are the ones whose value is **read to the user**. `value`, `href`, `id` and their
+  // like are deliberately out: they carry machine data as often as not, and a gate that fires on
+  // correct code is one somebody switches off (the reason the command-literal gate came down from
+  // ordered to multiset).
+  const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeholder|alt';
+  const found = [];
+  for (const file of MARKUP_FILES) {
+    const source = read(file);
+    // **The syntax this reads is checked rather than assumed.** It matches double-quoted values, so
+    // an attribute quoted the other way — or, since HTML permits it, not quoted at all — would pass
+    // by unread. Neither is an evasion anybody has to intend.
+    for (const [quoting, pattern] of [["'", "='"], ['no quotes', '=[^"\'\\s>]']]) {
+      assert.equal(
+        source.match(new RegExp(`(?:${TEXT_BEARING})${pattern}`, 'g')), null,
+        `${file} writes a text-bearing attribute with ${quoting} — this scan reads "…" only`,
+      );
+    }
+    for (const match of source.matchAll(new RegExp(`(?:${TEXT_BEARING})="([^"]*)"`, 'g'))) {
+      found.push([file, match[1]]);
+    }
+  }
   assert.ok(found.length > 0, 'the attribute scan found nothing — check the pattern');
-  for (const value of found) {
-    // An interpolated attribute is a message by construction and is covered by the escaping gate
-    if (value.includes('${')) continue;
+  for (const [file, value] of found) {
+    // An interpolated attribute has to interpolate a **message**, and then the escaping gate covers
+    // it. Anything else in there — a variable holding prose, a string built somewhere else — is
+    // outside every check in this file, which is the hole the static ones were in
+    if (value.includes('${')) {
+      assert.ok(
+        /^\$\{tr?\(/.test(value),
+        `${file} builds a text-bearing attribute from ${JSON.stringify(value)} — `
+          + 'interpolate a message so the escaping and parity gates can see it',
+      );
+      continue;
+    }
     assert.ok(
       Object.hasOwn(DECLARED_LITERALS, value),
-      `options.html carries the untranslated attribute text ${JSON.stringify(value)} — `
+      `${file} carries the untranslated attribute text ${JSON.stringify(value)} — `
         + 'make it a message, or declare it here with the reason it is a literal',
     );
   }
   // ...and a declaration that stopped being true has to go, or the list becomes a place where old
   // judgements accumulate unread — the same rule the duplicate-value tables are held to.
+  const literals = found.map(([, value]) => value);
   for (const literal of Object.keys(DECLARED_LITERALS)) {
-    assert.ok(found.includes(literal), `${literal} is declared but no longer in the markup`);
+    assert.ok(literals.includes(literal), `${literal} is declared but no longer in the markup`);
   }
 });
 

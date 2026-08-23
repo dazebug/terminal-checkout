@@ -92,6 +92,70 @@ func hostResponse(
     }
 }
 
+/// **The right to publish a locale, as a thing you have rather than a question you ask.**
+///
+/// Round 14 bound the launch publisher to the socket and left the picker unbound; round 15 made both
+/// ask one type, and the answer was a process-global boolean. A boolean is a *convention*: it says
+/// what somebody recorded, not what anybody holds, and the launch writer went on publishing without
+/// consulting it while a comment at the call site declared the rule for both (round 16 review). So
+/// the answer is a value now. Its initialiser is file-private and the only line in this file that
+/// makes one is the successful `bind`, so **no call site anywhere can publish without having been
+/// handed one by the bind** — a third writer cannot be written wrong, only unwritable.
+///
+/// **Ownership lasts exactly as long as the socket does.** The path can be taken over: this process
+/// stops listening, another binds the same path, and from then on the relay is talking to that one.
+/// A right that outlived its socket would let this process go on moving a generation the extension
+/// orders by while nothing can reach it. So `stop()` gives the right up, and a right that has been
+/// given up writes nothing (`LocaleWriterRole.mayWrite`) — the same behaviour as the headless reader,
+/// which is what a process that no longer owns the machine's socket is.
+final class LocalePublicationRight {
+    private static let lock = NSLock()
+    private static var holder: LocalePublicationRight?
+
+    /// What this process holds. Nil in an instance that lost the bind (`alreadyRunning`), in a
+    /// process that never started a server, and after the socket has been given up. It is read
+    /// rather than passed in the two places that cannot be handed a value — the picker and the
+    /// window that draws it — and reading it is not a way around anything: **what it answers is
+    /// whether we hold one, and holding one is the fact.**
+    static var current: LocalePublicationRight? {
+        lock.lock()
+        defer { lock.unlock() }
+        return holder
+    }
+
+    private var held = true
+
+    private init() {}
+
+    /// Minted by a successful bind. Any right this process was holding is given up first: two live
+    /// rights would mean two answers to a question with one true answer.
+    fileprivate static func mint() -> LocalePublicationRight {
+        lock.lock()
+        let previous = holder
+        let right = LocalePublicationRight()
+        holder = right
+        lock.unlock()
+        previous?.relinquish()
+        return right
+    }
+
+    /// Still ours? False once the socket it came from has been let go.
+    var isHeld: Bool {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
+        return held
+    }
+
+    /// Given up with the socket. Idempotent, and it clears the process-wide holder only if that is
+    /// still this one — a right superseded by a later bind must not take the newer one down with it.
+    fileprivate func relinquish() {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
+        held = false
+        if Self.holder === self { Self.holder = nil }
+    }
+}
+
 /// The unix socket server that takes the relay's requests and runs them in the terminal.
 final class HostServer {
     /// A diagnostic surface and not a message to the user: the only reader is `AppDelegate`, which
@@ -110,6 +174,12 @@ final class HostServer {
 
     private let socketPath: String
     private var serverFD: Int32 = -1
+    /// Which file at that path is **ours** — the device and inode the bind created. Remembered
+    /// because the path is a name that can come to mean something else: another instance can take
+    /// the path over while this one is stopping, and a teardown that goes by the name alone deletes
+    /// the socket the relay is now talking to (round 16 review).
+    private var boundIdentity: (dev: dev_t, ino: ino_t)?
+    private var right: LocalePublicationRight?
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
 
@@ -117,7 +187,12 @@ final class HostServer {
         self.socketPath = socketPath
     }
 
-    func start() throws {
+    /// The right to publish a locale comes back from here, and from nowhere else, because binding
+    /// this path is what makes a process **the** Terminal Checkout on this machine — the one the
+    /// relay reaches and the extension is therefore talking to. It is not `@discardableResult`: a
+    /// caller that has no use for it says so (`main.swift`'s headless server, which draws nothing and
+    /// must not invent a revision anyway, D49).
+    func start() throws -> LocalePublicationRight {
         let dir = (socketPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true,
@@ -152,15 +227,44 @@ final class HostServer {
         }
         chmod(socketPath, 0o600)
         serverFD = fd
+        boundIdentity = Self.identity(ofPathAt: socketPath)
         acceptQueue.async { [weak self] in self?.acceptLoop(serverFD: fd) }
+        let right = LocalePublicationRight.mint()
+        self.right = right
+        return right
     }
 
+    /// **Only what this instance owns is taken down.**
+    ///
+    /// The publication right goes first: from here on this process must not move a generation the
+    /// extension orders by, because it is no longer the process the relay can reach.
+    ///
+    /// Then the path — but only while it still names the file the bind created. It used to be
+    /// unlinked unconditionally, which is a deletion by name: an instance that closed its listener
+    /// while another was binding the same path would remove **the new owner's** socket, leaving a
+    /// process that believes it owns the machine and a relay that cannot connect to it (round 16
+    /// review). Nothing is deleted when this server never bound, for the same reason.
+    ///
+    /// Between the comparison and the `unlink` the file can still be replaced — macOS has no
+    /// `funlinkat`, so the last step is by path. That is the same residual the Warp helper's preamble
+    /// records for socket and Tab Config reclaim, narrowed the same way and not closed.
     func stop() {
-        if serverFD >= 0 {
-            close(serverFD)
-            serverFD = -1
+        right?.relinquish()
+        right = nil
+        guard serverFD >= 0 else { return }
+        if let boundIdentity, let now = Self.identity(ofPathAt: socketPath), now == boundIdentity {
+            unlink(socketPath)
         }
-        unlink(socketPath)
+        boundIdentity = nil
+        close(serverFD)
+        serverFD = -1
+    }
+
+    /// Which file the name points at right now, or nil if it points at nothing.
+    private static func identity(ofPathAt path: String) -> (dev: dev_t, ino: ino_t)? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return (info.st_dev, info.st_ino)
     }
 
     private func acceptLoop(serverFD: Int32) {
@@ -224,24 +328,27 @@ final class HostServer {
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
                     // below runs asynchronously, so a registration taken there is late by that whole
                     // interval — the window a restart used to be admitted through (round 14, P0).
-                    // Refused means a restart is already admitted, and the request fails rather than
-                    // opening a tab whose input would be dropped.
-                    var admission: Int?
+                    // Refused means the app is already leaving, and the request fails rather than
+                    // opening a tab whose input would be dropped. The slot is then handed to the
+                    // launch, which writes the helper's address into it before creating anything —
+                    // this side no longer records after the fact, because there is no moment at
+                    // which it could that the launch has not already passed (round 16, P0)
+                    var admission: ClaudeDelivery.Admission?
                     if !prepared.claudeInputs.isEmpty {
-                        guard let token = ClaudeDelivery.admit() else { throw TerminalError.restarting }
+                        guard let token = ClaudeDelivery.admit() else { throw TerminalError.goingAway }
                         admission = token
                     }
                     // Every path out of here that is not a started delivery has to give the slot
                     // back, including the throwing ones
                     var deliveryStarted = false
-                    defer { if let admission, !deliveryStarted { ClaudeDelivery.end(admission) } }
+                    defer { if let admission, !deliveryStarted { admission.end() } }
                     let handle = try runInTerminal(
-                        command: prepared.command, terminal: terminal,
-                        injectsClaudeInput: !prepared.claudeInputs.isEmpty
+                        command: prepared.command, terminal: terminal, claudeInput: admission
                     )
-                    if let admission { ClaudeDelivery.attach(handle, to: admission) }
                     timeline.step("\(terminal.rawValue) tab created")
-                    if !prepared.claudeInputs.isEmpty {
+                    // The reservation **is** "this request has input to deliver" — the same value the
+                    // launch was given, so the launch and the watch cannot disagree about it
+                    if let admission {
                         // Watching the delivery can take minutes — waiting for claude to come up
                         // and the per-input retries both block — so the response goes back as soon
                         // as the tab is spawned and the watch runs outside the serial execQueue,

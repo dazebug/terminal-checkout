@@ -938,8 +938,12 @@ final class ClaudeInputPreconditionTests: XCTestCase {
             accessibilityIsTrusted(),
             "the Accessibility permission is granted here — this path really would open a Warp tab"
         )
+        // The reservation is what says this run injects, so the case has to hold one — and it gives
+        // it back, because a slot left in the register refuses every restart after this case
+        let admission = try XCTUnwrap(ClaudeDelivery.admit())
+        defer { admission.end() }
         XCTAssertThrowsError(
-            try runInTerminal(command: "claude", terminal: .warp, injectsClaudeInput: true)
+            try runInTerminal(command: "claude", terminal: .warp, claudeInput: admission)
         ) { error in
             guard case TerminalError.claudeInputNotDeliverable(let blocker) = error else {
                 return XCTFail("the dedicated rejection has to come before any tab is opened: \(error)")
