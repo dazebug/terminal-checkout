@@ -23,13 +23,20 @@ if CommandLine.arguments.contains("--headless-server") {
 // no window has no business rewriting the user's language defaults.
 AppLocalization.applyStoredLanguageToAppKit()
 
-// The launch publisher, in the one file the headless server provably never reaches (it exits
-// above). It runs here rather than in `AppDelegate` for that reason and for one more: this is
-// already the place that decides what language this launch is in, and publishing what was just
-// resolved keeps the two answers from being computed at different moments.
-Settings.publishLocaleAtLaunch()
+// **The launch language is decided here; publishing it happens once the socket is ours.**
+//
+// Resolving stays here, next to the write above, so the two answers cannot be computed at different
+// moments — that was always the reason this line came before AppKit. What moved is the *publication*
+// (round 14 review): `NSLock` is process-local and cannot stop a second GUI instance, and this file
+// runs before `HostServer.start()` decides which instance owns the socket. Publishing here let a
+// second instance — one `open -n` away, which is how our own restart relaunches — write a different
+// locale under the same install id and epoch, a pair the extension then cannot order.
+//
+// The instance that owns the socket is the one the extension talks to, so it is the only one with
+// standing to say what language it is in. The delegate publishes this value after binding.
+let launchLocale = AppLocalization.resolvedLocale()
 
 let app = NSApplication.shared
-let delegate = AppDelegate()
+let delegate = AppDelegate(launchLocale: launchLocale)
 app.delegate = delegate
 app.run()

@@ -81,7 +81,11 @@ fi
 # very binary that would have to perform it.
 #
 # What it does buy besides the shorter window: a failure between the two renames leaves the previous
-# bundle sitting at `.<name>.previous`, so there is something to put back. The old form left nothing.
+# bundle sitting at `.<name>.previous`, and the second rename **puts it back**. That sentence used to
+# stop at "so there is something to put back" while nothing put it back — the comment described work
+# the code did not do, and `set -e` meant the script simply left with no app at the install path
+# (round 14 review). Restoring is best effort by necessity: if it fails too, both copies are still on
+# disk under names the message names, which is the most a shell can promise here.
 STAGING="$INSTALL_DIR/.$APP_NAME.staging"
 PREVIOUS="$INSTALL_DIR/.$APP_NAME.previous"
 rm -rf "$STAGING" "$PREVIOUS"
@@ -89,7 +93,16 @@ ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$STAGING"
 if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
     mv "$INSTALL_DIR/$APP_NAME" "$PREVIOUS"
 fi
-mv "$STAGING" "$INSTALL_DIR/$APP_NAME"
+if ! mv "$STAGING" "$INSTALL_DIR/$APP_NAME"; then
+    if [ -d "$PREVIOUS" ] && mv "$PREVIOUS" "$INSTALL_DIR/$APP_NAME"; then
+        rm -rf "$STAGING"
+        echo "Install failed while swapping the new app in; the previous one is back in place." >&2
+    else
+        echo "Install failed while swapping the new app in, and the previous app could not be" >&2
+        echo "restored. The new build is at $STAGING and the old one at $PREVIOUS." >&2
+    fi
+    exit 1
+fi
 rm -rf "$PREVIOUS"
 "$LSREGISTER" -f "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
 echo "[3/3] Installed: $INSTALL_DIR/$APP_NAME"

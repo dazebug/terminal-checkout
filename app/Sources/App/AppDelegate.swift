@@ -2,9 +2,17 @@ import AppKit
 import Core
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The language this launch resolved to, decided in `main.swift` before AppKit was touched and
+    /// carried here so that publishing it does not mean resolving it a second time.
+    private let launchLocale: SupportedLocale
     private var server: HostServer?
     private var setupWindow: SetupWindowController?
     private var languageObserver: NSObjectProtocol?
+
+    init(launchLocale: SupportedLocale) {
+        self.launchLocale = launchLocale
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Takes the user somewhere that explains a rejection. The extension shows a failure as a
@@ -53,13 +61,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server?.stop()
     }
 
+    /// **Only the instance that owns the socket publishes a locale.**
+    ///
+    /// `start()` throws `alreadyRunning` when another instance answers on the path, and that is the
+    /// only singleton test this app has — `NSLock` is process-local and cannot see a second process
+    /// at all (round 14 review). Two GUI instances are not hypothetical: the language restart
+    /// relaunches with `open -n`, which is exactly how you get one. Publishing from a process that
+    /// does not own the socket produces two different locales under the same install id and epoch,
+    /// which the extension's ordering rule cannot separate — it keeps whichever it saw first.
+    ///
+    /// The publication is therefore here, after the bind, and not in `main.swift` where it used to
+    /// be. What stayed there is the *resolution*, so the answer published is still the one this
+    /// launch decided on before AppKit was touched.
     private func startServer() {
         let server = HostServer(socketPath: defaultSocketPath())
         do {
             try server.start()
             self.server = server
+            Settings.publishLocaleAtLaunch(resolved: launchLocale)
         } catch {
-            checkoutLog("socket server failed to start — \(errorMessage(error))")
+            checkoutLog(
+                "socket server failed to start, so this instance publishes no locale — \(errorMessage(error))"
+            )
         }
     }
 

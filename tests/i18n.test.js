@@ -493,7 +493,17 @@ const optionsHtml = read('options.html');
 // scripts it omitted name no messages — but "every file" was then a promise about a directory that
 // can grow, and a new script naming a key nobody put in the catalogue would have gone unseen in
 // exactly the direction that shows a user a raw key (measured with a planted file).
-const SPEAKING_FILES = fs.readdirSync(extension).filter(name => name.endsWith('.js')).sort();
+//
+// **And it descends.** `readdirSync` on its own reads immediate children, so "every file" was still
+// a promise about one level — the same defect the Swift source scan was fixed for in round 43,
+// left standing here by the same sweep (round 14 review, measured with a nested probe). A directory
+// listing is not a source tree on either side of this repository.
+const walkScripts = (dir, prefix = '') => fs.readdirSync(dir, { withFileTypes: true })
+  .flatMap(entry => (entry.isDirectory()
+    ? walkScripts(path.join(dir, entry.name), `${prefix}${entry.name}/`)
+    : (entry.name.endsWith('.js') ? [`${prefix}${entry.name}`] : [])))
+  .sort();
+const SPEAKING_FILES = walkScripts(extension);
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 const speakingSource = SPEAKING_FILES.map(read).join('\n');
 
@@ -607,7 +617,13 @@ test('markup in a value is balanced, and the same in every locale', () => {
     assert.equal(tags.filter(t => t === '<b>').length, tags.filter(t => t === '</b>').length, `${key} <b>`);
     assert.equal(tags.filter(t => t === '<span>').length, tags.filter(t => t === '</span>').length, `${key} <span>`);
     assert.equal(tags.filter(t => t === '<code>').length, tags.filter(t => t === '</code>').length, `${key} <code>`);
-    assert.deepEqual(tagsOf(globalThis.TC_I18N.ko[key]), tags, `ko/${key} has a different tag set`);
+    // **Every locale, not `ko`.** Round 43 widened four loops in this file and left this one and
+    // the `<code>` check below on the original pair — so a malformed tag in `ja` or either Chinese
+    // catalogue passed (round 14 review, measured with `<b>⠿</b>` planted in `ja`). Those three are
+    // the machine-translated pass, which is where a stray tag is most likely to be.
+    for (const tag of TC_I18N_LOCALES) {
+      assert.deepEqual(tagsOf(globalThis.TC_I18N[tag][key]), tags, `${tag}/${key} has a different tag set`);
+    }
   }
 });
 
@@ -619,7 +635,9 @@ test('what a <code> span holds is a literal, so it is identical in every locale'
   for (const key of markupKeys) {
     const spans = codeSpansOf(globalThis.TC_I18N.en[key]);
     if (!spans.length) continue;
-    assert.deepEqual(codeSpansOf(globalThis.TC_I18N.ko[key]), spans, `ko/${key} rewrote a literal`);
+    for (const tag of TC_I18N_LOCALES) {
+      assert.deepEqual(codeSpansOf(globalThis.TC_I18N[tag][key]), spans, `${tag}/${key} rewrote a literal`);
+    }
     compared += spans.length;
   }
   assert.ok(compared >= 20, `only ${compared} literals were compared`);
@@ -1264,6 +1282,18 @@ test('a command literal reads the same in every language', () => {
   // The remaining hole is deliberate and small: a literal deleted from all five at once leaves them
   // agreeing, and nothing here can tell that from a token that was never there. That is one act
   // across five files, not the slip this catches.
+  // **What this compares is the multiset, and calling it "pinned identical" was an overstatement**
+  // (round 14 review, which was right to name it). Every locale must carry each literal the same
+  // number of times; where in the sentence they sit is not compared.
+  //
+  // **Order is not asserted because translations do not preserve it — measured, not assumed.**
+  // Strengthening this to a sequence comparison was tried and it failed on shipped, *correct*
+  // Korean: `ext.migration.v1.describe` reads `{cd}, z {repo}, {repo}` in English and
+  // `z {repo}, {repo}, {cd}` in Korean, because the clause naming the old form comes first there.
+  // A gate that fires on a good translation is one somebody switches off (the standard item 7 set),
+  // so the claim comes down rather than the gate going up. What is left uncovered is a translation
+  // that keeps every token and reorders them into a different meaning; nothing here can tell that
+  // from ordinary word order, and no rule over these strings can.
   let compared = 0;
   for (const key of Object.keys(globalThis.TC_I18N.en)) {
     for (const literal of COMMAND_LITERALS) {

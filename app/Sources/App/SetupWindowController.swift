@@ -475,7 +475,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// trigger. Queueing the restart would need the queue to outlive a delivery that may never end,
     /// which is the same self-lifetime problem this gate exists to avoid.
     @objc private func restartForLanguage() {
-        guard LocaleRestartGate.isSafeNow() else {
+        guard LocaleRestartGate.admitRestart() else {
             languageNoteLabel.stringValue = languageNote(restartBlocked: true)
             return
         }
@@ -485,7 +485,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", app]
-        try? task.run()
+        do {
+            try task.run()
+        } catch {
+            // Nothing will come back to lift the admission, and an app that refuses every claude
+            // input for the rest of its life is a worse outcome than the restart not happening
+            LocaleRestartGate.withdrawAdmission()
+            checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
+            languageNoteLabel.stringValue = languageNote(restartBlocked: true)
+            return
+        }
         NSApp.terminate(nil)
     }
 

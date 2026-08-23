@@ -181,6 +181,71 @@ final class ExtensionCopyTests: XCTestCase {
     /// Braces inside string literals and comments would fool this; there are none in the function it
     /// is used on. An unbalanced count **fails** — not skips, which is a pass wearing another name,
     /// and not "return the rest of the file", which is the truncated-window failure being removed.
+    /// **The rollback, run rather than read.**
+    ///
+    /// The lint above asks whether `install.sh` still says the right words. It cannot answer what
+    /// happens when the swap fails, and the answer used to be "nothing": the previous bundle was
+    /// moved aside, the second `mv` failed, `set -e` left, and the install path had no app at all
+    /// while a comment three lines up said there was something to put back (round 14 review).
+    ///
+    /// The shipped block is lifted verbatim so the bytes under test are the bytes that run, and the
+    /// failure is injected the only way a shell allows without breaking the filesystem: `mv` is
+    /// shadowed by a function that fails on the swap and delegates everything else to the real one.
+    /// `ditto` is shadowed too, so no app bundle has to exist to run this.
+    func testAFailedSwapPutsThePreviousAppBack() throws {
+        let script = try String(contentsOfFile: Self.repositoryFile("install.sh"), encoding: .utf8)
+        let start = try XCTUnwrap(
+            script.range(of: #"STAGING="$INSTALL_DIR/.$APP_NAME.staging""#),
+            "the replacement block is no longer where this test reads it from"
+        ).lowerBound
+        let end = try XCTUnwrap(
+            script.range(of: #"rm -rf "$PREVIOUS""#, range: start..<script.endIndex)
+        ).upperBound
+        let block = String(script[start..<end])
+        XCTAssertTrue(block.contains("mv \"$PREVIOUS\""), "the block has no restore step to exercise")
+
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("tc-install-\(UUID().uuidString)")
+        let install = root.appendingPathComponent("Applications")
+        try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
+        let installed = install.appendingPathComponent("Terminal Checkout.app")
+        try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
+        try "old".write(to: installed.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // `mv` fails exactly once, on the swap: the first call moves the installed app aside, so the
+        // second is the one this case is about. Everything else is the real `mv`.
+        let harness = """
+        set -euo pipefail
+        INSTALL_DIR='\(install.path)'
+        APP_NAME='Terminal Checkout.app'
+        SCRIPT_DIR='/nonexistent'
+        MOVES=0
+        mv() {
+            MOVES=$((MOVES + 1))
+            if [ "$MOVES" -eq 2 ]; then return 1; fi
+            command mv "$@"
+        }
+        ditto() { mkdir -p "$2"; printf new > "$2/marker"; }
+        \(block)
+        """
+        let path = root.appendingPathComponent("block.sh")
+        try harness.write(to: path, atomically: true, encoding: .utf8)
+        let result = try runProcess("/bin/bash", [path.path], timeout: 30)
+
+        XCTAssertNotEqual(result.status, 0, "a failed swap reported success")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: installed.path),
+            "the install path is empty after a failed swap — the previous app was not put back"
+        )
+        let marker = try String(contentsOf: installed.appendingPathComponent("marker"), encoding: .utf8)
+        XCTAssertEqual(marker, "old", "what came back is not the previous bundle")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: install.appendingPathComponent(".Terminal Checkout.app.previous").path),
+            "the aside copy was left stranded"
+        )
+    }
+
     private func balancedBody(of text: String, after start: String.Index) throws -> String {
         var depth = 1
         var index = start

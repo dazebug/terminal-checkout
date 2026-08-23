@@ -607,33 +607,69 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 }
 
 /// Waits until the claude in the spawned session can accept input, then delivers the inputs.
-/// **Which claude deliveries are in flight, and the helpers alive because of them.**
+/// **Which claude deliveries and helpers are alive, and whether a new one may start at all.**
 ///
-/// The restart barrier needs one fact — "is a delivery running right now" — and the temptation was a
-/// flag set by whoever starts one. This repository has already paid for that shape: a flag and the
-/// thing it describes are two states, and they come apart. So the answer lives **where the delivery's
-/// end is already known**: `deliverClaudeInputs` has a `defer` that runs on every exit path, which is
-/// the same reason `submitClaudeInputs` keeps its cleanup in one place rather than at each branch
-/// that can fail. Registering there costs one line at each end of a function that already brackets
-/// exactly the interval being asked about.
+/// **Three states, not two** (round 14 review, P0). The register used to answer one question — "is a
+/// delivery running right now" — and the picker asked it just before terminating. That is a check,
+/// not an admission: it says what was true at the moment it was asked and closes nothing behind
+/// itself. Between the answer and the app going away, a request already in flight could reach
+/// `runInWarp`, write its Tab Config and **launch a helper**, leaving a same-uid injection socket
+/// alive in the user's pane while the app believed nothing was being delivered — the exact boundary
+/// `CLAUDE.md` says the helper's only defence is. So the states are **idle / in flight / restart
+/// admitted**, and admission is one-way: once granted, nothing new is.
 ///
-/// **The ordering inside that `defer` is the invariant.** The helper is told to go *before* the entry
-/// is removed, so anyone who reads "nothing is being delivered" can conclude "no helper of ours is
-/// still alive on that account". The reverse order would let a reader see an idle registry while a
-/// helper was still running, which is precisely the window the Warp trust boundary cannot afford —
-/// its only defence is its lifetime.
+/// **Registration happens before the side effect, not around the delivery.** Item 13 put it inside
+/// `deliverClaudeInputs`, reasoning that a `defer` there brackets exactly the interval being asked
+/// about. That was the wrong interval: `HostServer` dispatches that function **asynchronously**, and
+/// the helper is launched before it by `runInTerminal`, so the helper's lifetime *starts earlier
+/// than the delivery's*. A slot is reserved by `admit()` before anything can be launched, and the
+/// handle is attached once the terminal has produced one — so the window in which a helper exists
+/// unregistered does not exist.
+///
+/// A reservation whose handle has not arrived yet carries `.none`, which contributes no socket to
+/// `liveWarpSockets`. That is not a hole: `admitRestart` refuses while *any* entry is present, so
+/// nothing can terminate during the interval where we hold a slot but not yet an address.
+///
+/// **The ordering inside the delivery's `defer` is still the invariant.** The helper is told to go
+/// *before* the entry is removed, so anyone who reads "nothing is being delivered" can conclude "no
+/// helper of ours is still alive on that account".
 public enum ClaudeDelivery {
     private static let lock = NSLock()
     private static var live: [Int: TerminalSessionHandle] = [:]
     private static var nextToken = 0
+    private static var restartAdmitted = false
 
-    /// Records a delivery about to start and returns the token that ends it.
-    public static func begin(_ handle: TerminalSessionHandle) -> Int {
+    /// Reserve a slot **before** anything that can launch a helper. nil means a restart has been
+    /// admitted and this request must not start one — the caller turns that into a refusal rather
+    /// than running the command and dropping the input, which would be a `{success:true}` with the
+    /// typing silently gone.
+    public static func admit() -> Int? {
         lock.lock()
         defer { lock.unlock() }
+        guard !restartAdmitted else { return nil }
         nextToken += 1
-        live[nextToken] = handle
+        // **`TerminalSessionHandle.none`, spelled in full.** Written `.none` against a dictionary of
+        // optionals Swift reads it as `Optional.none` and *removes* the key, so the reservation
+        // vanished the moment it was made and the barrier stayed down (caught here by
+        // `testAReservedSlotWithNoHandleStillRefusesARestart`)
+        live[nextToken] = TerminalSessionHandle.none
         return nextToken
+    }
+
+    /// Attach the session handle once the terminal has produced one. A token already ended (the run
+    /// failed and its `defer` fired first) is not resurrected.
+    public static func attach(_ handle: TerminalSessionHandle, to token: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard live[token] != nil else { return }
+        live[token] = handle
+    }
+
+    /// Reserve **and** attach in one step, for a delivery that was not pre-admitted by its caller.
+    public static func begin(_ handle: TerminalSessionHandle) -> Int? {
+        guard let token = admit() else { return nil }
+        attach(handle, to: token)
+        return token
     }
 
     /// Records that one has finished. Idempotent: ending a token twice is not an error, because the
@@ -644,11 +680,32 @@ public enum ClaudeDelivery {
         live[token] = nil
     }
 
-    /// Whether restarting right now would cut something off.
+    /// Whether anything is registered. A **query**, kept separate from `admitRestart` on purpose:
+    /// asking must not latch, and the latching operation must not be mistaken for a question.
     public static var isInFlight: Bool {
         lock.lock()
         defer { lock.unlock() }
         return !live.isEmpty
+    }
+
+    /// Grant a restart, atomically, or refuse. On success **admission closes** — every later
+    /// `admit()` returns nil — so the interval between "the picker decided" and "the process is
+    /// gone" cannot acquire a new helper. Refusing leaves the state untouched.
+    public static func admitRestart() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard live.isEmpty else { return false }
+        restartAdmitted = true
+        return true
+    }
+
+    /// Give the admission back when the restart did not happen — the relaunch failed to spawn, or a
+    /// test finished. Without this an admission that led nowhere would refuse every delivery for the
+    /// rest of the process's life, which is a worse failure than the one being prevented.
+    public static func withdrawRestartAdmission() {
+        lock.lock()
+        defer { lock.unlock() }
+        restartAdmitted = false
     }
 
     /// The Warp helper sockets currently kept alive by a delivery. Exposed so that termination can
@@ -685,18 +742,28 @@ public enum ClaudeDelivery {
 /// The PID of the claude originally prepared is pinned, so later inputs can only go to that same session.
 /// If claude is not ready within the timeout, nothing is sent and it gives up (logging only).
 /// The startup wait (2 minutes by default) and the per-input retries are all blocking, so the whole thing can take minutes — it has to be called on a background queue rather than the request-handling one.
+/// `admission` is the slot the caller reserved **before** the terminal was asked to do anything
+/// (`ClaudeDelivery.admit`). It is a parameter rather than something taken here because the helper
+/// is launched by `runInTerminal`, which has already run by the time this function starts — taking
+/// it here would leave the helper unregistered for exactly the interval a restart must not use. A
+/// caller with no slot gets one now, and is refused if a restart has been admitted meanwhile.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
     pollInterval: TimeInterval = 1.0, timeout: TimeInterval = 120,
     betweenInputTimeout: TimeInterval = 15,
-    timeline: DeliveryTimeline? = nil
+    timeline: DeliveryTimeline? = nil,
+    admission: Int? = nil
 ) {
     guard !inputs.isEmpty else { return }
     // From here to the end of this function a delivery is in flight, and a language restart must not
-    // run through it (item 13). The register is updated here rather than by the caller because this
-    // is the scope that *is* the delivery — a flag set outside it is a second state that can drift
-    // from the first.
-    let deliveryToken = ClaudeDelivery.begin(handle)
+    // run through it. The slot is normally the caller's, reserved before the tab was opened — the
+    // helper's lifetime starts before this function does, so a registration taken here would be
+    // late by exactly the window round 14 found (P0).
+    guard let deliveryToken = admission ?? ClaudeDelivery.begin(handle) else {
+        checkoutLog("a restart has been admitted, so \(inputs.count) claude input(s) were not delivered")
+        return
+    }
+    ClaudeDelivery.attach(handle, to: deliveryToken)
     // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends.
     // The farewell goes out **before** the register is cleared, so that "nothing in flight" implies "no helper of ours still alive".
     defer {

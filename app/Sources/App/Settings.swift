@@ -71,14 +71,16 @@ enum Settings {
     ///
     /// The headless server never calls this. It has no picker, draws nothing, and inventing a
     /// revision there is what D49 rules out.
+    /// `resolved` is passed in rather than computed here, and that is what lets the publication
+    /// move later without moving the moment the language is decided. `main.swift` resolves once,
+    /// immediately after pointing AppKit at the same answer; this runs after the socket has been
+    /// bound. Resolving again at that point would ask a second time — and `Locale.preferredLanguages`
+    /// can differ between the two — which is the divergence the original placement was avoiding.
     static func publishLocaleAtLaunch(
-        defaults: UserDefaults = .standard,
-        systemPreferred: [String] = Locale.preferredLanguages
+        resolved: SupportedLocale,
+        defaults: UserDefaults = .standard
     ) {
-        LocaleState.publish(
-            resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: systemPreferred),
-            defaults: defaults, role: .interactive
-        )
+        LocaleState.publish(resolved: resolved, defaults: defaults, role: .interactive)
     }
 
     /// What a stored preference reads as.
@@ -187,10 +189,17 @@ extension Notification.Name {
 /// user picks another language, something to decide what happens if a delivery never ends. That is
 /// the very class of defect this item exists to close, so the user keeps the trigger.
 enum LocaleRestartGate {
-    /// Injectable so a test can enumerate the consumer's branches without a delivery running; the
-    /// default is the real condition, so nothing has to remember to wire it up at launch. A gate
+    /// **Admission, not a question.** This used to be `isSafeNow`, a read of the register — which
+    /// answers for the instant it was asked and closes nothing behind itself, so a request already
+    /// on its way could still launch a helper before the process died (round 14, P0). Granting now
+    /// latches: every later `ClaudeDelivery.admit()` is refused until it is withdrawn.
+    ///
+    /// Injectable so a test can drive the consumer's branches without a delivery running; the
+    /// default is the real operation, so nothing has to remember to wire it up at launch. A gate
     /// that opens when nobody connects it is the shape this item was fixing.
-    static var isSafeNow: () -> Bool = { !ClaudeDelivery.isInFlight }
+    static var admitRestart: () -> Bool = { ClaudeDelivery.admitRestart() }
+    /// Given back when the restart it was granted for did not happen.
+    static var withdrawAdmission: () -> Void = { ClaudeDelivery.withdrawRestartAdmission() }
 }
 
 // MARK: - The published locale snapshot
@@ -294,6 +303,12 @@ enum LocaleState {
     /// where that stopped being hypothetical, because a launch publisher stands beside the picker.
     /// Both of them run on the main queue today, which is a second reason they cannot interleave;
     /// the lock is here because that is a fact about AppKit rather than about this contract.
+    ///
+    /// **It orders callers inside one process and cannot see another** — `UserDefaults` is shared by
+    /// every instance, and a second GUI one is `open -n` away (which is how the language restart
+    /// relaunches). What carries that half is not this lock but *who publishes at all*: only the
+    /// instance that bound the socket does (`AppDelegate.startServer`), because that is the instance
+    /// the extension is talking to. Round 14's review found this half missing.
     private static let writeLock = NSLock()
 
     @discardableResult

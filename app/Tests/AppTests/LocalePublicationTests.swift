@@ -429,9 +429,19 @@ final class LocalePublicationTests: XCTestCase {
     /// **The launch publisher publishes what the window draws, not what is stored.** The two answers
     /// differ on exactly one input — a preference that is not a string — and publishing the stored
     /// one would tell the extension a language nothing renders in (round 10 review).
+    ///
+    /// The resolution moved to the caller in round 14 so that publishing could wait for the socket
+    /// (see the lint below), so these cases resolve the way `main.swift` does and hand the answer
+    /// over. What is still being pinned is the pair: resolved, not stored.
     func testTheLaunchPublisherPublishesTheResolvedLocale() throws {
+        func launch(_ system: [String]) {
+            Settings.publishLocaleAtLaunch(
+                resolved: AppLocalization.resolvedLocale(defaults: defaults, systemPreferred: system),
+                defaults: defaults
+            )
+        }
         defaults.set(42, forKey: languagePreferenceKey)
-        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ko-KR"])
+        launch(["ko-KR"])
 
         XCTAssertEqual(storedTriple().2, fallbackLocale, "the launch publisher stored the preference itself")
         XCTAssertNotEqual(Settings.languagePreference(in: defaults), fallbackLocale, "the fixture proves nothing")
@@ -440,11 +450,52 @@ final class LocalePublicationTests: XCTestCase {
         // publisher is what makes that reach the extension at all (D48)
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
         defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
-        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ko-KR"])
+        launch(["ko-KR"])
         XCTAssertEqual(storedTriple().2, "ko")
-        Settings.publishLocaleAtLaunch(defaults: defaults, systemPreferred: ["ja-JP"])
+        launch(["ja-JP"])
         XCTAssertEqual(storedTriple().2, "ja")
         XCTAssertEqual(storedTriple().1 as? Int, 1, "the revision did not move with the system language")
+    }
+
+    /// **Only the instance that owns the socket publishes** (round 14 review, P1).
+    ///
+    /// The single-writer rule was enforced with an `NSLock`, which is process-local and cannot see a
+    /// second process at all — and `main.swift` published *before* `HostServer.start()` decided who
+    /// owns the path. Two GUI instances are not hypothetical: the language restart relaunches with
+    /// `open -n`. Both would publish under the same install id and epoch with different tags, and
+    /// the extension's rule ("same install, strictly greater epoch") cannot order that pair.
+    ///
+    /// Read from the source because the alternative is standing up two GUI processes: what is pinned
+    /// is that the publication sits inside the `do` that follows a successful `start()`, and that
+    /// `main.swift` resolves without publishing.
+    func testOnlyTheInstanceThatOwnsTheSocketPublishes() throws {
+        let main = try String(contentsOfFile: Self.appSource("main.swift"), encoding: .utf8)
+        XCTAssertFalse(
+            main.contains("Settings.publishLocaleAtLaunch("),
+            "main.swift publishes again — a second instance reaches that line before the bind decides"
+        )
+        XCTAssertTrue(
+            main.contains("let launchLocale = AppLocalization.resolvedLocale()"),
+            "main.swift no longer resolves the launch language next to the AppleLanguages write"
+        )
+
+        let delegate = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(delegate.range(of: "try server.start()")).upperBound
+        let publish = try XCTUnwrap(
+            delegate.range(of: "Settings.publishLocaleAtLaunch(resolved: launchLocale)"),
+            "the delegate no longer publishes the launch locale"
+        ).lowerBound
+        XCTAssertLessThan(start, publish, "the locale is published before the socket is bound")
+        let catchStart = try XCTUnwrap(delegate.range(of: "} catch {", range: start..<delegate.endIndex)).lowerBound
+        XCTAssertLessThan(publish, catchStart, "the publication is outside the branch that owns the socket")
+    }
+
+    private static func appSource(_ name: String) -> String {
+        URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/LocalePublicationTests.swift
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/\(name)")
+            .path
     }
 
     /// And what the picker does with that third state. All three rows are enumerated here rather

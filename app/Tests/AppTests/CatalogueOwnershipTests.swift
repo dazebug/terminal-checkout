@@ -91,11 +91,15 @@ final class CatalogueOwnershipTests: XCTestCase {
         }
     }
 
-    /// The `_locales/` directories, read rather than listed. Chrome's namespace uses its own
-    /// spelling (`zh_CN`, `zh_TW` for our `zh-Hans`, `zh-Hant`) and no code maps between the two —
-    /// `extension/i18n.js` says so deliberately — so the only honest way to name the set is to ask
-    /// the filesystem. A hardcoded pair is what let three of them go unchecked when D95 took this
-    /// from two locales to five.
+    /// Our tag to Chrome's directory name. Chrome's namespace is its own and `extension/i18n.js`
+    /// deliberately keeps no mapping table in shipping code, so the correspondence is policy and is
+    /// declared where the gate that needs it can be read beside it.
+    private let chromeLocaleDirectories: [String: String] = [
+        "en": "en", "ko": "ko", "ja": "ja", "zh-Hans": "zh_CN", "zh-Hant": "zh_TW",
+    ]
+
+    /// The `_locales/` directories, read rather than listed. A hardcoded pair is what let three of
+    /// them go unchecked when D95 took this from two locales to five.
     private func chromeLocaleTags() throws -> [String] {
         try FileManager.default
             .contentsOfDirectory(atPath: Self.repositoryRoot.appendingPathComponent("extension/_locales").path)
@@ -134,10 +138,17 @@ final class CatalogueOwnershipTests: XCTestCase {
         // because that is what existed when it was written; D95 took `_locales/` to five and the
         // loop did not follow, so a foreign key in `ja`, `zh_CN` or `zh_TW` passed unseen
         // (measured). Reading the directory means the next one is covered by existing.
+        // **The mapping, not the count** (round 14 review). Comparing sizes says five directories
+        // exist; it does not say they are the five that answer for the languages we ship, so
+        // renaming `zh_TW` to `zh_HK` — which Chrome would then not use for our Traditional
+        // Chinese — kept the arithmetic true and the extension's name untranslated.
         let chromeTags = try chromeLocaleTags()
+        let expected = try supportedLocales.map {
+            try XCTUnwrap(chromeLocaleDirectories[$0], "no _locales directory is declared for \($0)")
+        }
         XCTAssertEqual(
-            chromeTags.count, supportedLocales.count,
-            "_locales has \(chromeTags) but we ship \(supportedLocales.count) languages"
+            chromeTags.sorted(), expected.sorted(),
+            "_locales holds \(chromeTags), and the languages we ship map to \(expected.sorted())"
         )
         for tag in chromeTags {
             for key in try chromeMessages(tag).keys {

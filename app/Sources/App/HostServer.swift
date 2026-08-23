@@ -220,19 +220,37 @@ final class HostServer {
                     // The terminal choice has the app's settings as its single source — the
                     // request's `terminal` field is ignored
                     let terminal = Settings.terminal
+                    // **The slot is reserved before anything can launch a helper**, not when the
+                    // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
+                    // below runs asynchronously, so a registration taken there is late by that whole
+                    // interval — the window a restart used to be admitted through (round 14, P0).
+                    // Refused means a restart is already admitted, and the request fails rather than
+                    // opening a tab whose input would be dropped.
+                    var admission: Int?
+                    if !prepared.claudeInputs.isEmpty {
+                        guard let token = ClaudeDelivery.admit() else { throw TerminalError.restarting }
+                        admission = token
+                    }
+                    // Every path out of here that is not a started delivery has to give the slot
+                    // back, including the throwing ones
+                    var deliveryStarted = false
+                    defer { if let admission, !deliveryStarted { ClaudeDelivery.end(admission) } }
                     let handle = try runInTerminal(
                         command: prepared.command, terminal: terminal,
                         injectsClaudeInput: !prepared.claudeInputs.isEmpty
                     )
+                    if let admission { ClaudeDelivery.attach(handle, to: admission) }
                     timeline.step("\(terminal.rawValue) tab created")
                     if !prepared.claudeInputs.isEmpty {
                         // Watching the delivery can take minutes — waiting for claude to come up
                         // and the per-input retries both block — so the response goes back as soon
                         // as the tab is spawned and the watch runs outside the serial execQueue,
                         // which would otherwise hold up both that queue and Chrome's answer
+                        deliveryStarted = true
                         DispatchQueue.global(qos: .utility).async {
                             deliverClaudeInputs(
-                                prepared.claudeInputs, to: handle, timeline: timeline
+                                prepared.claudeInputs, to: handle, timeline: timeline,
+                                admission: admission
                             )
                         }
                     }

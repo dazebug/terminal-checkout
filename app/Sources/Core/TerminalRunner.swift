@@ -6,6 +6,10 @@ public enum TerminalError: Error, CustomStringConvertible {
     case warpNotFound
     case warpTabConfigFailed(String)
     case timeout(String)
+    /// A restart has been admitted, so no new delivery may be started. Transient by nature — the
+    /// app is going away and coming back — which is why it is not a `ClaudeInputBlocker`: those name
+    /// a state the user has to go and fix.
+    case restarting
     /// An undeliverable input we already know about **before** creating a tab. Identified by
     /// type, not by string — it reaches the extension as an `error` string, but inside the app
     /// this value is what tells the reasons apart
@@ -18,6 +22,8 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
         case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
+        case .restarting:
+            return "Terminal Checkout is restarting to change language — press the button again in a moment."
         case .claudeInputNotDeliverable(let blocker): return blocker.message
         }
     }
