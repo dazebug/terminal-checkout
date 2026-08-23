@@ -175,6 +175,13 @@ function isUsableLocaleCache(value) {
 // hole back that the fence exists to close.
 function localeGenerationOf(response, seq, scope) {
   if (!response || typeof response !== 'object') return null;
+  // **The envelope is part of "the app composed it".** Without this the rule was only checking the
+  // *shape of the metadata*, and a bare `{locale, locale_install_id, locale_epoch}` — a response
+  // `hostResponse` cannot produce, because everything it returns carries `success` — was accepted
+  // and cached. A test used to bless exactly that object. Both values are welcome: a refusal is a
+  // statement about the language too (D83). What is refused is something that never came from a
+  // response at all.
+  if (typeof response.success !== 'boolean') return null;
   const locale = response.locale;
   const installId = response.locale_install_id;
   const epoch = response.locale_epoch;
@@ -269,7 +276,7 @@ function localeCacheUpdate(cached, incoming) {
 //
 // `read`, `write` and `notify` are injected so a test can force the interleaving that the real
 // storage will not reliably produce.
-function createLocaleCacheWriter({ read, write, notify }) {
+function createLocaleCacheWriter({ read, write, notify, log = console.log }) {
   let queue = Promise.resolve();
   return function applyLocaleGeneration(incoming) {
     const result = queue.then(async () => {
@@ -279,10 +286,30 @@ function createLocaleCacheWriter({ read, write, notify }) {
       await write(cache);
       await notify(cache.locale);
       return cache;
+    }).catch((error) => {
+      // **This never rejects, and that is the fix to the worst defect this work has found.**
+      //
+      // It used to propagate a `storage.local` failure to its caller, and its caller was
+      // `sendToNativeHost`, which awaited it *before* deciding what to tell the page. So a storage
+      // error arriving after the app had already returned success turned an executed command into a
+      // reported failure: the terminal was open, the page said it had failed, and the obvious thing
+      // for a person to do next was press the button again. For a button with scheduled claude
+      // input, delivery was already under way — the second press is a duplicate submission, which
+      // is the exact outcome CLAUDE.md spends two separate rules preventing on the app side ("after
+      // a CR has gone out, that input is never typed again"). Bookkeeping had found a way around
+      // them. When the app returned a real failure it was worse in a quieter way: the storage error
+      // replaced the app's own diagnostic.
+      //
+      // So the failure is swallowed **here**, where there is exactly one thing it could mean and
+      // nothing that could be done about it, rather than at each call site — a rule kept by
+      // convention at every caller is a rule the next caller breaks. Losing a cache update costs a
+      // render in the wrong language until the next response; the alternative cost was running a
+      // command twice.
+      log('Locale cache update failed, continuing:', error?.message || error);
+      return null;
     });
-    // The chain must survive a failing step: one rejected write must not stop every later update.
-    // The caller still sees its own rejection through `result`.
-    queue = result.then(() => {}, () => {});
+    // The chain also has to survive a failing step, which the catch above already guarantees.
+    queue = result;
     return result;
   };
 }
@@ -330,6 +357,41 @@ function localeToRenderIn(cached, uiLanguage) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// What a native response means for the page that asked.
+// ---------------------------------------------------------------------------------------------
+
+// **It takes the response and nothing else, and that is the whole point.** The defect above was not
+// that the bookkeeping was wrong; it was that the bookkeeping was *reachable* from the decision. A
+// function that is never handed the cache, the storage, or the writer's result cannot let any of
+// them change what a click reports — the dependency is not guarded, it is unstateable.
+//
+// `success !== true` rather than `!success`: a response with no envelope is not a failure of the
+// command, it is not a response from this app at all, and it lands here as one anyway because there
+// is nothing better to tell the page.
+function nativeOutcome(response) {
+  if (!response || typeof response !== 'object' || response.success !== true) {
+    const error = (response && typeof response.error === 'string' && response.error)
+      || 'native host returned no result';
+    return { failed: true, error };
+  }
+  return { failed: false, response };
+}
+
+// Work whose result the caller may not see and whose failure may not reach them. It is a function so
+// that "detached on purpose" is written down rather than inferred from a missing `await`, and so
+// that a synchronous throw is contained too — `.catch()` alone would not have caught one.
+function startBookkeeping(work, describe, log = console.log) {
+  try {
+    const started = work();
+    if (started && typeof started.catch === 'function') {
+      started.catch(error => log(`${describe} failed, continuing:`, error?.message || error));
+    }
+  } catch (error) {
+    log(`${describe} failed, continuing:`, error?.message || error);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Redrawing when the language changes.
 // ---------------------------------------------------------------------------------------------
 
@@ -348,8 +410,15 @@ function localeToRenderIn(cached, uiLanguage) {
 //
 // `subscribe` and `redraw` are injected, so the page supplies the DOM half and this file supplies
 // the rule — and a test can count both without a browser.
-function createLocaleRenderer({ subscribe, redraw }) {
+function createLocaleRenderer({ subscribe, redraw, log = console.log }) {
   let subscribed = false;
+  // How many times `redraw` returned something unwaitable. **The queue below can only serialize
+  // work it can wait for**, so an adapter that starts an asynchronous redraw and returns nothing
+  // silently opts out of the serialization it looks like it has — which is what the options page
+  // did, one promotion after this queue was added for exactly that defect. It stayed invisible
+  // because the test's injected `redraw` returned a promise: the double was better behaved than the
+  // adapter. Counting it turns a silent opt-out into something a test can see.
+  let unwaitableRedraws = 0;
   // Redraws do not overlap. A redraw reads the cache and then assigns the language it drew in, with
   // an await in between, so two of them running at once can finish in the order they did not start
   // in and leave the **older** language on screen — the same shape as the unserialized cache write,
@@ -362,13 +431,23 @@ function createLocaleRenderer({ subscribe, redraw }) {
       if (subscribed) return false;
       subscribed = true;
       subscribe(() => {
-        queue = queue.then(() => redraw()).then(() => {}, () => {});
+        queue = queue.then(() => {
+          const started = redraw();
+          if (!started || typeof started.then !== 'function') {
+            unwaitableRedraws += 1;
+            log('A redraw returned nothing to wait for, so it cannot be serialized.');
+          }
+          return started;
+        }).then(() => {}, () => {});
         return queue;
       });
       return true;
     },
     get subscribed() {
       return subscribed;
+    },
+    get unwaitableRedraws() {
+      return unwaitableRedraws;
     },
   };
 }

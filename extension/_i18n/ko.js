@@ -14,6 +14,7 @@
 // are any keys to sort (D24/D37).
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['ko'] = {
+  "ext.header.options": "설정",
   "ext.header.subtitle": "PR·이슈·저장소 버튼, 명령, main 브랜치 — 터미널 선택과 권한, 저장소 기준 폴더는 Terminal Checkout 앱 설정 창에 있습니다",
   "ext.migration.badge": "● 저장된 버튼이 현재 프리셋보다 오래되었습니다 — 확인하기",
   "ext.banner.stale": "⚠ 이 페이지를 연 뒤 다른 기기에서 설정이 바뀌었습니다. 새로 고치면 보입니다 — 저장하지 않은 편집을 남기려면 먼저 내보내세요.",

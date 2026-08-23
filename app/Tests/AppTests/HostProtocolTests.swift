@@ -107,6 +107,49 @@ final class HostProtocolTests: XCTestCase {
         }
     }
 
+    /// **Bookkeeping on this side cannot change a command's answer, and it cannot by construction.**
+    ///
+    /// The extension had the opposite shape: its cache write was awaited before the response was
+    /// judged, so a storage failure turned an already-executed command into a reported failure and
+    /// invited a second press — a duplicate run, and for a scheduled claude input a duplicate
+    /// delivery, which is what CLAUDE.md spends two rules preventing. Sweeping this side for the
+    /// same class found **nothing**, and the reason is worth keeping rather than the count:
+    ///
+    ///   * `Settings.recordRequestEvidence()` runs before the request is even parsed, and it cannot
+    ///     fail — a `UserDefaults` setter does not throw and the notification it posts is `async` on
+    ///     another queue. Nothing it does is on the path that builds a response.
+    ///   * `LocaleState.publish(...)` returns an optional rather than throwing. `nil` means "nothing
+    ///     published yet", which produces a metadata-free response by design (D49), not a failure.
+    ///   * `Installer.autoSetup()` is not on this path at all — it runs once at launch.
+    ///
+    /// So the asymmetry is the API, not the care taken: the browser's storage is a promise that
+    /// rejects, and these are not. This test pins the part that is a choice — that a response is
+    /// built from the request and the publication, and that a publication of `nil` is an ordinary
+    /// answer rather than an error.
+    func testBookkeepingCannotFailACommand() throws {
+        let command: [String: Any] = ["command_template": "z {repo}", "variables": ["repo": "r"]]
+        var ran = 0
+        // Nothing published: the bookkeeping has nothing to say, and the command still succeeds
+        let withoutPublication = hostResponse(
+            json: command, publication: nil, baseDirectory: ""
+        ) { _ in ran += 1 }
+        XCTAssertEqual(withoutPublication["success"] as? Bool, true, "an unpublished locale failed a command")
+        XCTAssertEqual(ran, 1, "the command did not run")
+        XCTAssertFalse(carriesGeneration(withoutPublication))
+
+        // ...and the response is otherwise identical to the one with a publication, apart from the
+        // three metadata keys — the bookkeeping adds, it never subtracts
+        let withPublication = hostResponse(
+            json: command, publication: publication, baseDirectory: ""
+        ) { _ in ran += 1 }
+        let metadata = Set([localeResponseKey, localeInstallIdResponseKey, localeEpochResponseKey])
+        let bare = withPublication.filter { !metadata.contains($0.key) }
+        XCTAssertEqual(
+            bare.keys.sorted(), withoutPublication.keys.sorted(),
+            "publishing changed the response beyond its own three keys"
+        )
+    }
+
     /// **A query runs no command.** That is the whole reason it exists: the extension needs the
     /// language on a cold start, and the only other way to ask would open a terminal tab.
     func testALocaleQueryRunsNoCommand() {

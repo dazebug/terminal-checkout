@@ -94,6 +94,9 @@ function applyStaticText(root = document) {
 // when the app publishes a new one, so that is a rare cost for a correct screen.
 function redrawInCurrentLocale() {
   applyDocumentLanguage(uiLocale);
+  // The tab title has no element to hang a `data-i18n` on, so it is written here — the product name
+  // stays as it is and only the word after it is a message.
+  document.title = `Terminal Checkout — ${t('ext.header.options')}`;
   applyStaticText();
   presetTemplates = buildPresetTemplates();
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
@@ -104,6 +107,7 @@ function redrawInCurrentLocale() {
 // The first answer, taken synchronously so that the first paint is already in a language.
 let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));
 applyDocumentLanguage(uiLocale);
+document.title = `Terminal Checkout — ${t('ext.header.options')}`;
 applyStaticText();
 
 // And the app's own answer, which arrives a storage round trip later. `changed` is returned so a
@@ -129,16 +133,26 @@ async function adoptLocaleFromCache() {
 // pages — so this page watches the cache itself. `createLocaleRenderer` is what keeps the
 // subscription to one: registering it from inside the redraw path is the leak that makes one
 // language change cost five redraws.
+//
+// **The adapter returns its promise, and the first adoption goes through the queue.** Both were
+// missing, and the queue that serializes redraws was therefore doing nothing here: a redraw that
+// returns nothing cannot be waited for, and the initial read was not queued at all — so a slow
+// first read could finish after a newer notification and repaint the older language. That is the
+// defect the queue had just been added to prevent, still present on this page one promotion later,
+// and invisible because the renderer's test injected a `redraw` that *did* return a promise. The
+// double was better behaved than the adapter it stood for.
 const localeRenderer = createLocaleRenderer({
   subscribe(onLocaleChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'local' && changes[TC_LOCALE_CACHE_KEY]) onLocaleChanged();
     });
+    // The first read is a notification like any other, so it takes its turn in the same queue
+    // instead of racing it
+    onLocaleChanged();
   },
-  redraw() { adoptLocaleFromCache(); },
+  redraw() { return adoptLocaleFromCache(); },
 });
 localeRenderer.start();
-adoptLocaleFromCache();
 
 // Unlike the storage schema, overrides are kept as an array. Keying them by repo would mean
 // deleting and re-adding the key on every keystroke in the name, and redrawing the row each time

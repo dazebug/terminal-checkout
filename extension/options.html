@@ -8,7 +8,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Terminal Checkout — options</title>
+  <!-- The product name is permanent text; the word after it is a message, filled by options.js as
+       soon as it runs (a document title has no `data-i18n` node to carry it). -->
+  <title>Terminal Checkout</title>
   <style>
     /* Palette and typography use the same tokens as the app settings window (app/Sources/App/Theme.swift) — change one, change the other */
     :root {
@@ -342,7 +344,7 @@
        still has to be able to say so and offer a way back. -->
   <main id="app" inert>
   <header class="term-header">
-    <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · options<span class="cursor">▊</span></h1>
+    <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · <span data-i18n="ext.header.options"></span><span class="cursor">▊</span></h1>
     <p class="term-sub" data-i18n="ext.header.subtitle"></p>
     <button id="migration-badge" hidden data-i18n="ext.migration.badge"></button>
     <!-- Raised as soon as another device's change arrives, so the warning is on screen before Save is

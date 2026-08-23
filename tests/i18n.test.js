@@ -238,9 +238,23 @@ test('an unknown locale in a response is not a generation', () => {
       String(locale),
     );
   }
-  assert.deepEqual(localeGenerationOf({ locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER), {
-    locale: 'ko', installId: 'a', epoch: 1, seq: 1, seqScope: WORKER,
-  });
+  // **This assertion used to run the other way, and it was wrong.** A bare
+  // `{locale, locale_install_id, locale_epoch}` is not a response this app can compose — everything
+  // `hostResponse` returns carries `success` — so accepting it meant the "did the app compose it"
+  // rule was really only checking the shape of the metadata. The test blessed the hole it left.
+  assert.equal(
+    localeGenerationOf({ locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
+    null,
+    'a response with no envelope was taken for one the app composed',
+  );
+  // Origin, not outcome: both envelopes are accepted (D83)
+  for (const success of [true, false]) {
+    assert.deepEqual(
+      localeGenerationOf({ success, locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
+      { locale: 'ko', installId: 'a', epoch: 1, seq: 1, seqScope: WORKER },
+      `success: ${success}`,
+    );
+  }
 });
 
 test('a malformed generation field is not a generation', () => {
@@ -379,11 +393,17 @@ test('the generation is taken off a response before a failure is raised (lint)',
   // uncovered is only "does the send path extract at all, and before it throws", which is exactly
   // the line that used to lose the metadata.
   const source = read('background.js');
-  const extract = source.indexOf('await applyLocaleGeneration(localeGenerationOf(response, seq');
-  const raise = source.indexOf("if (!response?.success) throw new Error(");
+  const extract = source.indexOf('() => applyLocaleGeneration(localeGenerationOf(response, seq');
+  const raise = source.indexOf('if (outcome.failed) throw new Error(outcome.error);');
   assert.ok(extract > 0, 'the send path no longer reads the generation off a response');
   assert.ok(raise > 0, 'the failure is no longer raised on the button');
   assert.ok(extract < raise, 'the failure is raised before the generation is read, which loses it');
+  // ...and it is **started**, not awaited: awaiting it is what let a storage failure decide what a
+  // click reported (R12 A)
+  assert.ok(
+    source.includes('startBookkeeping(') && !source.includes('await applyLocaleGeneration('),
+    'the cache write is awaited again, so it can fail an executed command',
+  );
   // and every request takes a number of ours, which is what the fence orders by
   assert.ok(/const seq = \+\+nativeRequestSeq;/.test(source), 'requests are no longer numbered');
 });
@@ -599,10 +619,17 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   }
   // The synchronous first answer, and the asynchronous correction, in that order
   const first = optionsJs.indexOf('let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));');
-  const fill = optionsJs.indexOf('applyStaticText();\n\n// And the app');
-  const adopt = optionsJs.indexOf('adoptLocaleFromCache();\n');
+  const fill = optionsJs.indexOf('applyStaticText();\n\n//');
+  // The first cache read is no longer a bare call — it is the renderer's first notification, so it
+  // takes its turn in the same queue as every later one (R12 C). What still has to hold is that it
+  // happens *after* the synchronous fill.
+  const adopt = optionsJs.indexOf('localeRenderer.start();');
   assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
   assert.ok(adopt > fill, 'the cache is read before the synchronous fill, which reinstates the gap');
+  assert.ok(
+    !/^adoptLocaleFromCache\(\);$/m.test(optionsJs),
+    'the first adoption is outside the queue again',
+  );
 });
 
 test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
@@ -746,7 +773,12 @@ test('a serialized update that fails does not stop the ones behind it', async ()
     async notify() {},
   });
 
-  await assert.rejects(apply(generation({ epoch: 4, seq: 11 })), /storage full/);
+  // **It resolves rather than rejecting, and that assertion used to read `rejects`.** The rejection
+  // had exactly one production consumer — the send path — and that consumer awaited it before
+  // deciding what to tell the page, so a storage failure became a failed command. There is nothing a
+  // caller can usefully do with this failure, so it does not get the chance.
+  const failed = await apply(generation({ epoch: 4, seq: 11 }));
+  assert.equal(failed, null, 'a failed cache update reached its caller');
   await apply(generation({ locale: 'en', epoch: 5, seq: 12 }));
   assert.equal(stored.locale, 'en', 'the queue stopped after one failure');
 });
@@ -932,4 +964,154 @@ test('every file that draws sets the locale it draws in', () => {
   assert.match(read('options.js'), /setCurrentLocale\(localeToRenderIn\(/, 'the options page draws in no particular language');
   // and the worker deliberately does not: it draws nothing, so it has no locale to set
   assert.ok(!/setCurrentLocale\(/.test(read('background.js')), 'the service worker set a render locale it cannot use');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Bookkeeping may not decide what a click reports (R12).
+//
+// The worst defect this work has found was not a wrong cache value; it was that the cache write was
+// **reachable** from the answer a click gets. These pin the separation from both sides: the writer
+// cannot fail, and the thing that decides the answer is never handed the writer at all.
+// ---------------------------------------------------------------------------------------------
+
+test('a storage failure does not turn an executed command into a failed one', async () => {
+  // The repro, at the boundary the old test missed: storage refuses both reads and writes while the
+  // app answers normally. The terminal is already open by the time any of this runs.
+  const { nativeOutcome, startBookkeeping } = vm.runInThisContext('({ nativeOutcome, startBookkeeping })');
+  const logged = [];
+  const apply = createLocaleCacheWriter({
+    async read() { throw new Error('storage.local.get failed'); },
+    async write() { throw new Error('storage.local.set failed'); },
+    async notify() {},
+    log: (...parts) => logged.push(parts.join(' ')),
+  });
+
+  const success = { success: true, locale: 'ja', locale_install_id: 'b', locale_epoch: 1 };
+  startBookkeeping(() => apply(localeGenerationOf(success, 1, WORKER)), 'locale cache update', () => {});
+  const outcome = nativeOutcome(success);
+  assert.equal(outcome.failed, false, 'an executed command was reported as a failure');
+  assert.equal(outcome.response, success);
+
+  // ...and the app's own diagnostic survives when the command really did fail
+  const refused = { success: false, error: 'Unknown variable: {evil}', locale: 'ja', locale_install_id: 'b', locale_epoch: 1 };
+  startBookkeeping(() => apply(localeGenerationOf(refused, 2, WORKER)), 'locale cache update', () => {});
+  assert.deepEqual(nativeOutcome(refused), { failed: true, error: 'Unknown variable: {evil}' });
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(logged.length > 0, 'the storage failure vanished without a word');
+});
+
+test('a later locale response still updates the cache after storage recovers', async () => {
+  let stored;
+  let broken = true;
+  const apply = createLocaleCacheWriter({
+    async read() { if (broken) throw new Error('storage.local.get failed'); return stored; },
+    async write(next) { if (broken) throw new Error('storage.local.set failed'); stored = next; },
+    async notify() {},
+    log: () => {},
+  });
+  await apply(generation({ seq: 11 }));
+  assert.equal(stored, undefined);
+  broken = false;
+  await apply(generation({ locale: 'ja', epoch: 9, seq: 12 }));
+  assert.equal(stored?.locale, 'ja', 'the writer stayed broken after storage came back');
+});
+
+test('what a click reports is a function of the response alone', () => {
+  // Not "guarded against" the cache — **unable to see it**. The signature is the guarantee.
+  const { nativeOutcome } = vm.runInThisContext('({ nativeOutcome })');
+  assert.equal(nativeOutcome.length, 1, 'the outcome decision grew a second input');
+  assert.deepEqual(nativeOutcome({ success: true, x: 1 }), { failed: false, response: { success: true, x: 1 } });
+  assert.deepEqual(nativeOutcome({ success: false, error: 'nope' }), { failed: true, error: 'nope' });
+  assert.deepEqual(nativeOutcome(undefined), { failed: true, error: 'native host returned no result' });
+  assert.deepEqual(nativeOutcome({}), { failed: true, error: 'native host returned no result' });
+  // a non-string error is not an error message
+  assert.deepEqual(nativeOutcome({ success: false, error: 42 }), { failed: true, error: 'native host returned no result' });
+});
+
+test('startBookkeeping contains a rejection and a synchronous throw alike', async () => {
+  const { startBookkeeping } = vm.runInThisContext('({ startBookkeeping })');
+  const logged = [];
+  const log = (...parts) => logged.push(parts.join(' '));
+  assert.equal(startBookkeeping(() => Promise.reject(new Error('async')), 'x', log), undefined);
+  assert.equal(startBookkeeping(() => { throw new Error('sync'); }, 'y', log), undefined);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(logged.length, 2, `only ${logged.length} failures were reported`);
+});
+
+test('a redraw that returns nothing is noticed rather than silently unserialized', async () => {
+  // Class H, recurred in the promotion that named it: the options adapter started an asynchronous
+  // redraw and returned nothing, so the queue had nothing to wait for — and the renderer's test did
+  // not see it because the injected double *did* return a promise. A double politer than the
+  // adapter it stands for is not a test of the adapter.
+  let notify;
+  const renderer = createLocaleRenderer({
+    subscribe: (fn) => { notify = fn; },
+    redraw() {},
+    log: () => {},
+  });
+  renderer.start();
+  await notify();
+  assert.equal(renderer.unwaitableRedraws, 1, 'an unserializable redraw went unnoticed');
+
+  let ok;
+  const good = createLocaleRenderer({
+    subscribe: (fn) => { ok = fn; },
+    async redraw() {},
+    log: () => {},
+  });
+  good.start();
+  await ok();
+  assert.equal(good.unwaitableRedraws, 0, 'a proper adapter was reported as unserializable');
+});
+
+test('the options page hands the renderer something it can wait for (lint)', () => {
+  // The wiring needs `chrome` and a DOM to run; what is pinned is the shape the defect had.
+  const source = read('options.js');
+  assert.match(source, /redraw\(\) \{ return adoptLocaleFromCache\(\); \}/, 'the adapter drops its promise again');
+  assert.ok(
+    !/^adoptLocaleFromCache\(\);$/m.test(source),
+    'the first adoption runs outside the queue again',
+  );
+  assert.match(source, /onLocaleChanged\(\);\n\s*\},/, 'the first read no longer goes through the queue');
+});
+
+test('a translation cannot break out of an HTML attribute', () => {
+  // The card template interpolates messages into `title="…"` and `placeholder="…"`. The other gates
+  // check tags and placeholders and would not notice a quote, and one `"` in a translation ends the
+  // attribute and turns the rest of the sentence into markup.
+  const attributeKeys = new Set(
+    [...read('options.js').matchAll(/(?:title|placeholder|aria-label)="\$\{t\('(ext\.[A-Za-z0-9.]+)'/g)]
+      .map(m => m[1]),
+  );
+  assert.ok(attributeKeys.size >= 5, `only ${attributeKeys.size} attribute interpolations found`);
+  for (const key of attributeKeys) {
+    for (const tag of ['en', 'ko']) {
+      const value = globalThis.TC_I18N[tag][key];
+      assert.ok(!value.includes('"'), `${tag}/${key} would close the attribute it is written into`);
+      assert.ok(!value.includes('<'), `${tag}/${key} carries markup into an attribute`);
+    }
+  }
+});
+
+test('no text ships in the markup without a message behind it', () => {
+  // Item 12's F class, on this side: a string nobody localized is invisible to a gate that only
+  // inspects the elements already carrying `data-i18n`. This reads the other direction — every text
+  // node in the body — and refuses anything not on the whitelist below.
+  const html = read('options.html');
+  const body = html.slice(html.indexOf('<body>'));
+  // Whitelisted, with the reason each one is permanent:
+  //   `terminal-checkout` / `Terminal Checkout` — the product and command name (an explicit non-goal)
+  //   `❯` `▊` `⏎` `$` `⠿` `✕` `×` `●` `⚠` — symbols and cursors, which no language rewrites
+  //   `/` `·` `-` — punctuation between them
+  // A run of permanent pieces is permanent: the heading is `terminal-checkout ·` next to the
+  // localized word, and the parser hands that back as one text node.
+  const permanent = /^(terminal-checkout|Terminal Checkout|[❯▊⏎$⠿✕×●⚠·/\-—|\s])+$/;
+  const stray = [];
+  for (const match of body.matchAll(/>([^<>]+)</g)) {
+    const text = match[1].replace(/\s+/g, ' ').trim();
+    if (!text || permanent.test(text)) continue;
+    stray.push(text);
+  }
+  assert.deepEqual(stray, [], 'markup carries text that no message owns');
 });

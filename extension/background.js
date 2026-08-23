@@ -261,10 +261,15 @@ let nativeRequestSeq = 0;
 // failures as `{success:false, error}` rather than as an exception, so this throw is what surfaces
 // them on the button).
 //
-// Item 15 attaches the generation only to a successful response, so in practice the extraction is
-// idle on the failing path. It is written this way regardless because "the response carries it or it
-// does not" is the contract, and a reader here should not have to know which responses the app
-// chooses to decorate.
+// **The app attaches the generation to every response it composes, a refused command included** —
+// the boundary is origin, not outcome (D83). This comment used to say the opposite, that item 15
+// attached it to successes only, and it was left saying so for a whole promotion after the rule was
+// reversed: a stale claim about the file it sits in, which is the class this work keeps sweeping.
+//
+// **The bookkeeping is started, not awaited, and it cannot fail this call.** What it answers with is
+// decided by `nativeOutcome(response)` — a function that is never handed the cache or its writer, so
+// a storage failure has no route to a click's result. Awaiting it here is what once turned an
+// already-executed command into a reported failure.
 async function sendToNativeHost(message) {
   const seq = ++nativeRequestSeq;
   let response;
@@ -275,9 +280,13 @@ async function sendToNativeHost(message) {
     throw error; // a transport failure carries no metadata, and is no input to the cache
   }
   console.log('Native host response:', response);
-  await applyLocaleGeneration(localeGenerationOf(response, seq, workerSequenceScope));
-  if (!response?.success) throw new Error(response?.error || 'native host returned no result');
-  return response;
+  startBookkeeping(
+    () => applyLocaleGeneration(localeGenerationOf(response, seq, workerSequenceScope)),
+    'locale cache update',
+  );
+  const outcome = nativeOutcome(response);
+  if (outcome.failed) throw new Error(outcome.error);
+  return outcome.response;
 }
 
 // Put a response's generation through the reducer, and tell the pages only when something changed.
