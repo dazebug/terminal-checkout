@@ -36,7 +36,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// **The helpers go before the app does.**
+    ///
+    /// A Warp injection helper is a separate process living in the user's pane, and its only defence
+    /// is that it dies when the delivery ends (`CLAUDE.md`). If this app goes away mid-delivery the
+    /// `defer` that would have said goodbye never runs, and the helper is left listening on a socket
+    /// any process with the same uid can reach. So the farewell is sent from here too, first —
+    /// stopping our own socket server is ours to lose, the helper is the user's machine.
+    ///
+    /// **Whether it completes inside the termination budget is not something this repository can
+    /// establish**: macOS allows a few seconds, each farewell is one socket round trip, and there is
+    /// no way here to observe the case where that is not enough. The claim is that the attempt is
+    /// made and ordered first, not that it always finishes.
     func applicationWillTerminate(_ notification: Notification) {
+        ClaudeDelivery.endEveryHelper()
         server?.stop()
     }
 

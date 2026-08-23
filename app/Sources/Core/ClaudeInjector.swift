@@ -607,6 +607,80 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 }
 
 /// Waits until the claude in the spawned session can accept input, then delivers the inputs.
+/// **Which claude deliveries are in flight, and the helpers alive because of them.**
+///
+/// The restart barrier needs one fact — "is a delivery running right now" — and the temptation was a
+/// flag set by whoever starts one. This repository has already paid for that shape: a flag and the
+/// thing it describes are two states, and they come apart. So the answer lives **where the delivery's
+/// end is already known**: `deliverClaudeInputs` has a `defer` that runs on every exit path, which is
+/// the same reason `submitClaudeInputs` keeps its cleanup in one place rather than at each branch
+/// that can fail. Registering there costs one line at each end of a function that already brackets
+/// exactly the interval being asked about.
+///
+/// **The ordering inside that `defer` is the invariant.** The helper is told to go *before* the entry
+/// is removed, so anyone who reads "nothing is being delivered" can conclude "no helper of ours is
+/// still alive on that account". The reverse order would let a reader see an idle registry while a
+/// helper was still running, which is precisely the window the Warp trust boundary cannot afford —
+/// its only defence is its lifetime.
+public enum ClaudeDelivery {
+    private static let lock = NSLock()
+    private static var live: [Int: TerminalSessionHandle] = [:]
+    private static var nextToken = 0
+
+    /// Records a delivery about to start and returns the token that ends it.
+    public static func begin(_ handle: TerminalSessionHandle) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        nextToken += 1
+        live[nextToken] = handle
+        return nextToken
+    }
+
+    /// Records that one has finished. Idempotent: ending a token twice is not an error, because the
+    /// caller is a `defer` and a `defer` should never have to reason about whether it already ran.
+    public static func end(_ token: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        live[token] = nil
+    }
+
+    /// Whether restarting right now would cut something off.
+    public static var isInFlight: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !live.isEmpty
+    }
+
+    /// The Warp helper sockets currently kept alive by a delivery. Exposed so that termination can
+    /// reach them: a helper is a separate process, and nothing else knows where they are.
+    public static var liveWarpSockets: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return live.values.compactMap { handle in
+            if case .warp(let socket) = handle { return socket }
+            return nil
+        }.sorted()
+    }
+
+    /// Best effort, for the moment the app is going away: tell every helper still running to stop.
+    ///
+    /// **Whether this finishes inside the termination budget is not established here.** macOS gives
+    /// `applicationWillTerminate` a few seconds and each farewell is a socket round trip to another
+    /// process; with one delivery in flight that is one round trip, which is very likely to fit, and
+    /// this repository has no way to measure the case where it does not. What is claimed is only that
+    /// the attempt is made before the app tears down its own socket server — not that it always
+    /// completes.
+    ///
+    /// The farewell is a parameter so a test can watch which sockets it was handed without opening
+    /// any — which also means **the real send is the one path no test here takes**, since taking it
+    /// would need a helper process on the other end. The registry half is what is proved; the socket
+    /// half is the same `warpHelperRequest(.bye,…)` the delivery's own `defer` uses.
+    public static func endEveryHelper(farewell: ((String) -> Void)? = nil) {
+        let send = farewell ?? { _ = warpHelperRequest(.bye, socket: $0) }
+        for socket in liveWarpSockets { send(socket) }
+    }
+}
+
 /// The wait condition is [foreground process = claude] + [the tty is in raw mode] — going by the process alone passes through the canonical window right after the shell's exec and loses the first input (see `acceptingClaudePID`).
 /// The PID of the claude originally prepared is pinned, so later inputs can only go to that same session.
 /// If claude is not ready within the timeout, nothing is sent and it gives up (logging only).
@@ -618,9 +692,16 @@ public func deliverClaudeInputs(
     timeline: DeliveryTimeline? = nil
 ) {
     guard !inputs.isEmpty else { return }
-    // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends
+    // From here to the end of this function a delivery is in flight, and a language restart must not
+    // run through it (item 13). The register is updated here rather than by the caller because this
+    // is the scope that *is* the delivery — a flag set outside it is a second state that can drift
+    // from the first.
+    let deliveryToken = ClaudeDelivery.begin(handle)
+    // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends.
+    // The farewell goes out **before** the register is cleared, so that "nothing in flight" implies "no helper of ours still alive".
     defer {
         if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }
+        ClaudeDelivery.end(deliveryToken)
     }
 
     let ttyPath: String?

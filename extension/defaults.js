@@ -581,6 +581,11 @@ function adoptStoredMainBranch(raw) {
 
 // What the service worker reads through: same verdict, plus a line in the console where there is no
 // status line to put it in (the counterpart of readStoredButtons).
+// **Latent, like the button warning below it** (see `content.js` for where that boundary was drawn
+// wrongly first): both of these are addressed to a user — they name what was lost and where to go
+// and repair it — and they reach only the console today. English for that reason, not because
+// `console.*` is diagnostic by definition. Their English plural branches would have to be rewritten
+// along with them, which is part of the cost of ever displaying them.
 function readStoredMainBranch(raw) {
   const adopted = adoptStoredMainBranch(raw);
   if (adopted.skipped) {

@@ -983,6 +983,13 @@ function migrationItemRow(item, { checkbox }) {
   if (checkbox) {
     // 'verbatim' = this was one of our old presets; 'prefix' = you had edited it, and only the
     // leading jump is being replaced. Saying which is how the user knows we noticed their edit.
+    //
+    // **A visible machine identifier**, and filed as one rather than left in the gap between "shown"
+    // and "translated". It is drawn on screen, next to the `- old` / `+ new` diff, and it is *not*
+    // translated: it is a discriminator of the same kind as the command text beside it (D59), and
+    // rendering it in five languages would mean inventing UX copy this work has no basis for. The
+    // residual is stated rather than implied — a Korean screen shows an English discriminator — and
+    // what it is not is invisible.
     row.querySelector('.mig-source').textContent = item.source;
   }
 

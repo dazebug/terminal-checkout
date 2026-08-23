@@ -249,7 +249,6 @@ async function clickedButton(kind, index, shown) {
 // A fresh value per worker start, and it only ever has to differ from the previous worker's — it
 // names a lifetime, not a machine, and it never leaves this browser profile.
 const workerSequenceScope = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-let nativeRequestSeq = 0;
 
 // Hand a message to the app and take the locale generation out of the answer — **whatever the
 // answer is**.
@@ -270,23 +269,13 @@ let nativeRequestSeq = 0;
 // decided by `nativeOutcome(response)` — a function that is never handed the cache or its writer, so
 // a storage failure has no route to a click's result. Awaiting it here is what once turned an
 // already-executed command into a reported failure.
-async function sendToNativeHost(message) {
-  const seq = ++nativeRequestSeq;
-  let response;
-  try {
-    response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
-  } catch (error) {
-    console.error('Native host error:', error);
-    throw error; // a transport failure carries no metadata, and is no input to the cache
-  }
-  console.log('Native host response:', response);
-  startBookkeeping(
-    () => applyLocaleGeneration(localeGenerationOf(response, seq, workerSequenceScope)),
-    'locale cache update',
-  );
-  const outcome = nativeOutcome(response);
-  if (outcome.failed) throw new Error(outcome.error);
-  return outcome.response;
+const nativeRequester = createNativeRequester({
+  send: message => chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message),
+  record: (response, seq, scope) => applyLocaleGeneration(localeGenerationOf(response, seq, scope)),
+});
+
+function sendToNativeHost(message) {
+  return nativeRequester(message, workerSequenceScope);
 }
 
 // Put a response's generation through the reducer, and tell the pages only when something changed.

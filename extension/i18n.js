@@ -391,6 +391,44 @@ function startBookkeeping(work, describe, log = console.log) {
   }
 }
 
+// One request to the app, and the answer it produces.
+//
+// The send, the bookkeeping and the verdict are composed **here** rather than in the service worker,
+// because the ordering between them is the property that matters and a property nobody can run is a
+// property nobody has checked. `background.js` needs `chrome` at module scope, so the worker's own
+// copy of this composition could only ever be inspected by reading it — which is the harness shape
+// this work has already been caught by twice.
+//
+// What the ordering guarantees: the answer is computed from the response and returned without
+// waiting for the bookkeeping. A storage failure therefore cannot turn a command that already ran
+// into a reported failure, and a slow storage cannot delay the click.
+//
+// **Narrower than the earlier claim.** This used to be described as making the dependency
+// "unstateable". It is not: `nativeOutcome` is reachable from module scope like anything else in a
+// classic script, an argument count does not stop a future author consulting the cache inside it,
+// and `startBookkeeping` still calls its work synchronously — a future synchronous step in there
+// would delay this. What is true is narrower and worth stating exactly: **no such path exists
+// today**, the verdict is computed from the response alone, and a test drives this composition
+// rather than reading it.
+function createNativeRequester({ send, record, outcome = nativeOutcome, log = console.log }) {
+  let sequence = 0;
+  return async function request(message, scope) {
+    const seq = ++sequence;
+    let response;
+    try {
+      response = await send(message);
+    } catch (error) {
+      log('Native host error:', error);
+      throw error; // a transport failure carries no metadata, and is no input to the cache
+    }
+    log('Native host response:', response);
+    startBookkeeping(() => record(response, seq, scope), 'locale cache update', log);
+    const verdict = outcome(response);
+    if (verdict.failed) throw new Error(verdict.error);
+    return verdict.response;
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Redrawing when the language changes.
 // ---------------------------------------------------------------------------------------------

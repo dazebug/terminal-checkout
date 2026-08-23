@@ -387,25 +387,83 @@ test('a redraw does not invalidate a command already sent to the host', async ()
   assert.equal(sends, 2, 'the counter is not measuring anything');
 });
 
-test('the generation is taken off a response before a failure is raised (lint)', () => {
-  // A **lint**: it reads the source, not the behaviour. The wiring it pins needs a `chrome` global
-  // to exercise, and what the reducer does with the extracted value is covered above — what is left
-  // uncovered is only "does the send path extract at all, and before it throws", which is exactly
-  // the line that used to lose the metadata.
-  const source = read('background.js');
-  const extract = source.indexOf('() => applyLocaleGeneration(localeGenerationOf(response, seq');
-  const raise = source.indexOf('if (outcome.failed) throw new Error(outcome.error);');
-  assert.ok(extract > 0, 'the send path no longer reads the generation off a response');
-  assert.ok(raise > 0, 'the failure is no longer raised on the button');
-  assert.ok(extract < raise, 'the failure is raised before the generation is read, which loses it');
-  // ...and it is **started**, not awaited: awaiting it is what let a storage failure decide what a
-  // click reported (R12 A)
-  assert.ok(
-    source.includes('startBookkeeping(') && !source.includes('await applyLocaleGeneration('),
-    'the cache write is awaited again, so it can fail an executed command',
-  );
-  // and every request takes a number of ours, which is what the fence orders by
-  assert.ok(/const seq = \+\+nativeRequestSeq;/.test(source), 'requests are no longer numbered');
+test('sendToNativeHost does not wait for locale bookkeeping', async () => {
+  // **This used to be a source lint, and that was the gap.** The composition it described lived in
+  // `background.js`, which needs `chrome` at module scope, so nothing ran it — the separated pieces
+  // were tested and their arrangement was read. Two reviews in a row found defects in exactly that
+  // sort of unrun arrangement, so the arrangement moved into a function that a test can drive.
+  //
+  // The storage here never settles. If the answer waited on it, this test would time out.
+  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
+  let recordedSeq = null;
+  const request = createNativeRequester({
+    async send() { return { success: true, ok: 1 }; },
+    record(response, seq, scope) {
+      recordedSeq = { seq, scope };
+      return new Promise(() => {}); // a storage round trip that never comes back
+    },
+    log: () => {},
+  });
+
+  const answer = await request({ command_template: 'z {repo}' }, 'worker-1');
+  assert.deepEqual(answer, { success: true, ok: 1 }, 'the answer waited for the bookkeeping');
+  assert.deepEqual(recordedSeq, { seq: 1, scope: 'worker-1' }, 'the request was not recorded');
+});
+
+test('a rejected app command keeps its own error while bookkeeping is still pending', async () => {
+  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
+  const request = createNativeRequester({
+    async send() { return { success: false, error: 'Unknown variable: {evil}' }; },
+    record() { return new Promise(() => {}); },
+    log: () => {},
+  });
+  await assert.rejects(request({}, 'worker-1'), /Unknown variable/);
+});
+
+test('a bookkeeping failure never reaches the caller', async () => {
+  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
+  const failures = [];
+  const request = createNativeRequester({
+    async send() { return { success: true }; },
+    record() { throw new Error('storage.local.set failed'); },
+    log: (...parts) => failures.push(parts.join(' ')),
+  });
+  assert.deepEqual(await request({}, 'w'), { success: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(failures.some(line => line.includes('storage.local.set failed')), 'the failure vanished');
+});
+
+test('every request takes the next number, and the response is recorded against its own', async () => {
+  // The fence orders by what **we** sent, so the number has to belong to the request rather than to
+  // whatever happens to answer first.
+  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
+  const seen = [];
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const request = createNativeRequester({
+    async send(message) { if (message.slow) await held; return { success: true }; },
+    record(response, seq) { seen.push(seq); },
+    log: () => {},
+  });
+  const slow = request({ slow: true }, 'w');
+  const fast = request({}, 'w');
+  await fast;
+  release();
+  await slow;
+  assert.deepEqual(seen, [2, 1], 'a response was recorded against another request’s number');
+});
+
+test('the transport failure path carries no metadata and raises (lint)', () => {
+  // The one branch left unexercised above: `sendNativeMessage` itself rejecting. Driving it needs no
+  // chrome, but what it does — rethrow before anything is recorded — is one line, and the assertion
+  // that matters is that nothing was recorded, which the composition above already shows for the
+  // paths that do record.
+  const source = read('i18n.js');
+  const requester = source.slice(source.indexOf('function createNativeRequester('));
+  const body = requester.slice(0, requester.indexOf('\n}\n'));
+  const raise = body.indexOf('throw error;');
+  const record = body.indexOf('startBookkeeping(');
+  assert.ok(raise > 0 && record > raise, 'a transport failure is now recorded as a generation');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -846,7 +904,7 @@ test('the worker scope is minted per worker and rides on every request (lint)', 
   assert.match(source, /const workerSequenceScope = /, 'the worker scope is gone');
   assert.match(
     source,
-    /localeGenerationOf\(response, seq, workerSequenceScope\)/,
+    /nativeRequester\(message, workerSequenceScope\)/,
     'the request no longer carries the worker it was sent from',
   );
   assert.ok(
@@ -859,6 +917,8 @@ test('the worker scope is minted per worker and rides on every request (lint)', 
     !/const stored = await chrome\.storage\.local\.get\(\[TC_LOCALE_CACHE_KEY\]\);\n\s*const \{ cache/.test(source),
     'the unserialized read-reduce-write is back',
   );
+  // ...and the send path is the composition a test can drive, not a copy written out here again
+  assert.match(source, /createNativeRequester\(\{/, 'the worker writes its own send path again');
 });
 
 test('every path that draws waits on the gate, not just the first (lint)', () => {

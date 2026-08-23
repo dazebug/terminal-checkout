@@ -170,16 +170,27 @@ extension Notification.Name {
 
 /// Whether restarting right now would cut something off.
 ///
-/// **A seam, not an answer.** The condition itself is item 13's: a language restart must not run
-/// while claude input is still being delivered, because that delivery is asynchronous and the Warp
-/// injection helper's only defence is its lifetime — a restart that orphans it breaks the trust
-/// boundary `CLAUDE.md` sets out. Until that lands this says yes, which is today's behaviour
-/// unchanged; what the seam buys is that item 13 has exactly one place to fill and the picker
-/// already asks.
+/// A language restart must not run while claude input is still being delivered: that delivery is
+/// asynchronous, and the Warp injection helper's **only** defence is its lifetime — a restart that
+/// orphans it breaks the trust boundary `CLAUDE.md` sets out, and every residual that leans on the
+/// same-uid boundary is standing on that lifetime.
+///
+/// The answer comes from `ClaudeDelivery`, which is kept by the delivery itself rather than by
+/// whoever starts one: a flag maintained outside the interval it describes is a second state, and
+/// two states drift.
+///
+/// **Refused, not deferred, and the app already said so.** The note the picker shows reads "the app
+/// is not restarting right now. Press again once the delivery has finished." — a refusal with an
+/// instruction, written long before this gate had a condition behind it. Making the restart happen
+/// automatically later would contradict a sentence three more languages are about to be translated
+/// from, and it would need its own lifetime tie: something to fire it, something to cancel it if the
+/// user picks another language, something to decide what happens if a delivery never ends. That is
+/// the very class of defect this item exists to close, so the user keeps the trigger.
 enum LocaleRestartGate {
-    /// Replaced by item 13. Left as a stored closure rather than a computed condition so the
-    /// question and the answer stay separable — the picker calls it without knowing what it checks.
-    static var isSafeNow: () -> Bool = { true }
+    /// Injectable so a test can enumerate the consumer's branches without a delivery running; the
+    /// default is the real condition, so nothing has to remember to wire it up at launch. A gate
+    /// that opens when nobody connects it is the shape this item was fixing.
+    static var isSafeNow: () -> Bool = { !ClaudeDelivery.isInFlight }
 }
 
 // MARK: - The published locale snapshot
