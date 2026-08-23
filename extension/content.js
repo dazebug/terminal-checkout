@@ -67,10 +67,14 @@ function createRepoButton(buttonConfig, index) {
 // Run a single button. sendMessage does not reject when the background returns {success:false}, so
 // without inspecting the response a rejected command would still show up as success on the button.
 //
-// The index says which button; the fingerprint says which button it *was* when it was drawn; the
-// target says which page it was clicked on. The service worker reads storage again for the command
-// and the page again for the branch, and refuses if either disagrees — so what runs is what was on
-// screen, for the page it was on screen for.
+// The index says which button; the fingerprint says what that button was going to run when it was
+// drawn; the target says which page it was clicked on. The service worker reads storage again for
+// the command and the page again for the branch, and refuses if either disagrees — so what runs is
+// what was on screen, for the page it was on screen for.
+//
+// What the fingerprint deliberately leaves out is the face and the tooltip: they are display text
+// and will be translated, so a page and a service worker that resolved different languages would
+// otherwise refuse a command neither of them changed (defaults.js).
 //
 // Both are comparison keys, never sources. The command still comes from storage, and the repository,
 // number and branch still come from the tab and its DOM; these two only decide whether to refuse.

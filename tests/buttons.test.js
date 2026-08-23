@@ -16,6 +16,8 @@ const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
 const { adoptStoredButtons } = vm.runInThisContext('({ adoptStoredButtons })');
 const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
   vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
+const { presetById, presetOptions } = vm.runInThisContext('({ presetById, presetOptions })');
+const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
 
 const faces = list => list.map(b => b.face);
 const sample = () => [
@@ -108,6 +110,84 @@ test('the default repository button only moves to the repo', () => {
   // the entry clause itself — and with no base directory configured it renders exactly `z {repo}`.
   assert.equal(BUTTON_KINDS.repo.defaults.length, 1);
   assert.equal(BUTTON_KINDS.repo.defaults[0].command, '{cd}');
+});
+
+// --- A preset is named by its id, shown by its name ---
+// `name` and `face` are display text and will be translated (i18n items 21-22). Anything that has
+// to *find* a preset — the dropdown's value, the default buttons' origin — therefore cannot use
+// them: the same preset answers to a different string in every language, so a lookup written
+// against one of them stops finding it the moment the page is drawn in another.
+
+test('presets are named by an id that translation cannot change', () => {
+  const all = [...PR_PRESETS, ...ISSUE_PRESETS, ...REPO_PRESETS];
+  const ids = all.map(preset => preset.id);
+  for (const preset of all) {
+    // ASCII, so no locale can rewrite it and no `<option value>` needs escaping
+    assert.match(preset.id ?? '', /^[a-z][a-z0-9]*\.[a-z][A-Za-z0-9]*$/, JSON.stringify(preset.name));
+  }
+  // One id space across the three lists, so an id names exactly one preset even when the kind is
+  // not carried alongside it
+  assert.equal(new Set(ids).size, ids.length, 'two presets share an id');
+});
+
+test('the default buttons name their preset by id, not by its display name', () => {
+  // These are the buttons drawn when nothing is stored, and they are built in *both* contexts —
+  // the content script draws them and the service worker rebuilds them to check the click. Taking
+  // their fields from `PRESETS[0]` by position was fine while the fields were English constants;
+  // reaching for the preset by id is what keeps the reference readable once `name` is a translation.
+  const cases = [
+    ['pr', PR_PRESETS], ['issue', ISSUE_PRESETS], ['repo', REPO_PRESETS],
+  ];
+  for (const [kind, presets] of cases) {
+    const { defaults } = BUTTON_KINDS[kind];
+    assert.equal(defaults.length, 1);
+    const preset = presetById(presets, defaults[0].presetId);
+    assert.ok(preset, `${kind}: the default names no preset`);
+    assert.equal(defaults[0].command, preset.command);
+    assert.deepEqual(defaults[0].claudeInputs, [...(preset.claudeInputs || [])]);
+  }
+});
+
+test('presetById: an unknown id finds nothing rather than the wrong preset', () => {
+  assert.equal(presetById(PR_PRESETS, PR_PRESETS[0].id), PR_PRESETS[0]);
+  assert.equal(presetById(PR_PRESETS, 'pr.nothingLikeThis'), null);
+  // Ids come out of a `<select>` the page filled in, but the same rule applies as to anything read
+  // from settings: a lookup must not answer with something off Object.prototype
+  assert.equal(presetById(PR_PRESETS, 'constructor'), null);
+  assert.equal(presetById(PR_PRESETS, PR_PRESETS[0].name), null);
+});
+
+test('the preset dropdown carries the id as its value and the name as its text', () => {
+  // The options page has no runtime harness here, so the value/text pairing lives in defaults.js
+  // where it can be asserted, and options.js only hands the pairs to the DOM.
+  for (const presets of [PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS]) {
+    const options = presetOptions(presets);
+    assert.deepEqual(options.map(o => o.value), presets.map(p => p.id));
+    assert.deepEqual(options.map(o => o.text), presets.map(p => p.name));
+  }
+});
+
+test('the options page never finds a preset by its display name', () => {
+  // A source-level oracle for the same reason as the origin sweep below: what has to be shown is
+  // that the *class* is gone from that file, not that one call site was rewritten. The two things
+  // the dropdown does with a preset both live in defaults.js now, where they can be asserted —
+  // `presetOptions` decides what the value is, `presetById` reads it back. Writing either of them
+  // out again in options.js is how the two halves come to disagree, and nothing on the options page
+  // runs under `node --test` to catch it.
+  const source = fs.readFileSync(path.join(__dirname, '../extension/options.js'), 'utf8');
+  assert.deepEqual(source.match(/\.name\s*===/g) ?? [], []);
+  assert.ok(source.includes('presetOptions('), 'options.js fills the dropdown some other way');
+  assert.ok(source.includes('presetById('), 'options.js no longer looks a preset up at all');
+});
+
+test('a preset id is not part of a saved button', () => {
+  // The stored schema is four fields and nothing else — a persistent id in there would be a
+  // SETTINGS_VERSION bump (CLAUDE.md), which this work is not. So the id names a preset, never a
+  // button: a saved button is a snapshot of the preset's fields with no way back to it.
+  const { toStoredButton } = vm.runInThisContext('({ toStoredButton })');
+  const fromPreset = { ...BUTTON_KINDS.issue.defaults[0], uid: 'b7' };
+  assert.ok(fromPreset.presetId, 'the default carries the id in the edit state');
+  assert.deepEqual(Object.keys(toStoredButton(fromPreset)), ['face', 'label', 'command', 'claudeInputs']);
 });
 
 // Every preset has to enter the repository through the app-rendered clause. A preset that opens
@@ -329,8 +409,8 @@ test('adoptStoredButtons: claude inputs past the limit make the whole entry unus
 // The page draws a button and sends only its index; the service worker then reads storage again and
 // runs whatever sits at that index *now*. Between those two reads the settings can have changed —
 // or the page may have drawn defaults because its own read failed — and the command that runs is
-// then one the user never saw. The click carries a fingerprint of the button that was drawn so the
-// two reads can be compared.
+// then one the user never saw. The click carries a fingerprint of what the drawn button was going
+// to run, so the two reads can be compared.
 
 test('buttonFingerprint: the same stored button fingerprints the same on both sides', () => {
   const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
@@ -359,11 +439,68 @@ test('buttonFingerprint: a remote reorder is caught at the index that was clicke
   const drawn = adoptStoredButtons([A, B]).buttons;
   const reread = adoptStoredButtons([B, A]).buttons;
   assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(reread[0]));
-  // Every field the user could see or that decides what runs is part of it
+  // Every field that decides what runs is part of it
   const { buttons: [inputsChanged] } = adoptStoredButtons([{ ...A, claudeInputs: ['/extra'] }]);
   assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(inputsChanged));
+  // ...and renaming a button is not one of them. This assertion used to read `notEqual`, and that
+  // was the whole defect: a tooltip is display text, so the moment the two contexts can resolve it
+  // in different languages, a rename nobody made refuses a command that never changed (D18, P0).
+  // What a rename costs now is that the refusal no longer fires for it — which is correct, because
+  // the same command with the same inputs runs either way.
   const { buttons: [labelChanged] } = adoptStoredButtons([{ ...A, label: 'A renamed' }]);
-  assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(labelChanged));
+  assert.equal(buttonFingerprint(drawn[0]), buttonFingerprint(labelChanged));
+});
+
+// --- The fingerprint answers "is the same thing executed", not "is it the same button" (D33) ---
+// Which button was clicked is answered by its index in its section; what a click will run is
+// answered by the fingerprint, and identity is the pair `(kind, index, executionFingerprint)`.
+// This is execution identity. It is not a security or a UX identity: two buttons that run the same
+// command with the same inputs are indistinguishable to it, on purpose (residual below).
+
+test('a fingerprint check cannot fail because two contexts resolved different locales', () => {
+  // The repro: nothing is stored, so both sides build the default button from the preset — the
+  // content script in the language the page resolved, the service worker in the language its own
+  // locale cache answered with. Those two can differ for a whole request (the app publishes a new
+  // locale between the draw and the click; the cache write reaches the worker before the page
+  // redraws). Nothing about the command changed, and the click used to be refused all the same.
+  const { clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR } =
+    vm.runInThisContext('({ clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR })');
+  const english = BUTTON_KINDS.repo.defaults[0];
+  // The same default once item 22 has moved the preset name and face into the dictionaries
+  const korean = { ...english, face: '터미널에서 열기', label: '터미널에서 열기' };
+  assert.equal(english.command, korean.command, 'the repro is a display-only difference');
+
+  const [drawn] = adoptStoredButtons([korean]).buttons;
+  const [reread] = adoptStoredButtons([english]).buttons;
+  assert.ok(
+    clickMatchesWhatWasShown(reread, buttonFingerprint(drawn)),
+    `the click was refused with "${BUTTON_CHANGED_ERROR}" over the language alone`
+  );
+});
+
+test('two buttons whose native message is byte-identical fingerprint the same', () => {
+  // The normalization has to be the send's own: `runButton` trims each claude input and drops the
+  // empty ones before the message goes out, so a button carrying `['!a ', '']` and one carrying
+  // `['!a']` hand the app the same bytes. Fingerprinting the un-normalized fields made those two
+  // different buttons — a refusal with no difference behind it (D52).
+  const { executionPayload } = vm.runInThisContext('({ executionPayload })');
+  const loose = { face: 'x', label: 'A', command: '{cd} && claude', claudeInputs: ['!a ', '', ' !b'] };
+  const tight = { face: 'y', label: 'B', command: '{cd} && claude', claudeInputs: ['!a', '!b'] };
+  assert.deepEqual(executionPayload(loose), executionPayload(tight));
+  assert.equal(buttonFingerprint(loose), buttonFingerprint(tight));
+  // ...and the payload is exactly what the wire carries
+  assert.deepEqual(executionPayload(loose), { command: '{cd} && claude', claudeInputs: ['!a', '!b'] });
+});
+
+test('the wire message is built from the payload the fingerprint is taken of', () => {
+  // Two normalizations that agree by coincidence are two normalizations that drift. The behaviour
+  // above cannot be exercised from here — `runButton` needs the chrome APIs — so what is pinned is
+  // that the send has no normalization of its own to disagree with. A lint, not a proof.
+  const source = fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8');
+  const runButton = source.slice(source.indexOf('async function runButton('));
+  const body = runButton.slice(0, runButton.indexOf('\n}\n'));
+  assert.ok(body.includes('executionPayload('), 'runButton builds its message some other way');
+  assert.deepEqual(body.match(/\.trim\(\)|\.filter\(/g) ?? [], [], 'runButton normalizes on its own');
 });
 
 test('the refusal a mismatch produces tells the user how to fix it', () => {

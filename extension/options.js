@@ -83,7 +83,9 @@ const presetTemplates = Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
   const select = document.createElement('select');
   select.className = 'preset-select';
   select.add(new Option('Apply preset…', ''));
-  presets.forEach(p => select.add(new Option(p.name, p.name)));
+  // The value is the preset's id and the text is its name — a name is display text and will be
+  // translated, so it cannot be what the selection is read back as (defaults.js, presetOptions)
+  presetOptions(presets).forEach(({ value, text }) => select.add(new Option(text, value)));
   return [kind, select];
 }));
 
@@ -427,12 +429,12 @@ function clearDirty() {
 // picked.
 
 function applyPreset(select) {
-  const name = select.value;
+  const id = select.value;
   select.value = ''; // applied or cancelled, it always returns to the placeholder
-  if (!name) return;
+  if (!id) return;
 
   const { kind, index } = cardOf(select);
-  const preset = section(kind).presets.find(p => p.name === name);
+  const preset = presetById(section(kind).presets, id);
   if (!preset) return;
 
   const current = state.buttons[kind][index].command.trim();

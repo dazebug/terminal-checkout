@@ -216,19 +216,16 @@ async function assertRequestIsCoherent(tab, { clicked, source }) {
 // This is a *second* read: the page did its own when it drew the button, and the settings can have
 // moved in between — another device saved, someone reordered the list — or the page may be showing
 // something its own read never returned. Running whatever now sits at that index would run a command
-// the user never saw, so a click brings a fingerprint of what was drawn and it has to match.
+// the user never saw, so a click brings a fingerprint of what it was going to run and it has to
+// match. The index says which button, the fingerprint says what it runs, and the pair is the
+// identity this check is made of (defaults.js).
 //
 // The command still comes from here, from storage, never from the message: the fingerprint can only
 // cause a refusal, not introduce a command of its own.
-//
-// `shown` is absent only on the extension-icon path, which draws nothing — there is no rendered
-// button for it to disagree with, and "the first button for this page" is the whole of the request.
 async function clickedButton(kind, index, shown) {
   const button = (await loadButtons(kind))[index];
   if (!button) throw new Error(`Button index ${index} not found`);
-  if (shown !== undefined && buttonFingerprint(button) !== shown) {
-    throw new Error(BUTTON_CHANGED_ERROR);
-  }
+  if (!clickMatchesWhatWasShown(button, shown)) throw new Error(BUTTON_CHANGED_ERROR);
   return button;
 }
 
@@ -327,10 +324,13 @@ async function runButton(button, variables, page) {
   // same reason: closing it would need a compare-and-set the boundary does not offer. The app cannot
   // supply one either; it has no view of the browser's pages to re-check against.
   await assertRequestIsCoherent(page.tab, page);
-  const message = { command_template: button.command, variables };
+  // What this click executes, normalized once, in defaults.js — the same call the fingerprint is
+  // taken of. Trimming the claude inputs and dropping the empty ones used to happen here, so two
+  // buttons that produced the identical message could still fail the fingerprint check (D52).
+  const { command, claudeInputs } = executionPayload(button);
+  const message = { command_template: command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
-  const claudeInputs = (button.claudeInputs || []).map(s => String(s).trim()).filter(Boolean);
   if (claudeInputs.length) message.claude_inputs = claudeInputs;
   await sendToNativeHost(message);
 }
