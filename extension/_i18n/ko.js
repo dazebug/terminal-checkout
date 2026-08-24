@@ -1,5 +1,11 @@
 // 한국어 사전 — 옵션 페이지의 메시지(항목 21). 나머지는 항목 22가 옮긴다.
 //
+// **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
+// what this extension draws from; these files are pinned at the migration baseline so the previous
+// release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
+// `tools/check-locales.js` is what says the two have not come apart.
+//
+//
 // 확장의 원문이 영어이므로 이 파일의 값은 **이전이 아니라 번역**이다 — 앱 쪽 `ko.lproj`가 기존 한국어
 // 리터럴을 그대로 옮긴 것과 다른 점이고, 그래서 게이트가 보장하는 것은 키·플레이스홀더 정합뿐이며
 // 번역 품질은 잡지 못한다(항목 25의 고지 대상).

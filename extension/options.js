@@ -15,18 +15,22 @@ const SECTIONS = [
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
 // --- What this page says ---
-// Every sentence comes from the dictionaries in `_i18n/`, and `options.html` carries message ids
-// (`data-i18n`) rather than prose. One copy of each sentence, therefore, instead of one in the
-// markup and one in the catalog kept equal by hand — which is also what keeps item 20's ownership
-// gate answerable about this page.
+// Every sentence comes from a message id, and `options.html` carries those ids (`data-i18n`) rather
+// than prose. One copy of each sentence, therefore, instead of one in the markup and one in a
+// catalogue kept equal by hand — which is also what keeps the ownership gate answerable about this
+// page.
 //
-// **Which language, before anything has answered.** The cache the app fills lives in
-// `storage.local` and is read asynchronously, so it cannot decide the *first* paint; what can is
-// `chrome.i18n.getUILanguage()`, which answers without waiting, and `localeToRenderIn` already
-// treats the browser language as the stand-in for "no cache yet" (D15). So the page fills itself
-// while the parser is still blocked on this script and corrects itself when the cache answers.
-// Leaving the English in the markup would have meant the opposite order — English painted first and
-// translated afterwards — for every user whose language is not English.
+// **Which catalogue, and when.** Chrome decides, and it answers synchronously: `tr` asks
+// `chrome.i18n.getMessage` at the moment of the call, so the first paint is already in the right
+// language and there is nothing to correct afterwards. Leaving the English in the markup would have
+// meant the opposite order — English painted first and translated afterwards — for every user whose
+// language is not English.
+//
+// **What this paragraph said until review 39** was that the dictionaries in `_i18n/` supply every
+// sentence and that the app's cache decides the paint. Both stopped being true when the lookup moved,
+// and the sentence outlived the change by four promotions because the standing question was read
+// against the diff's own lines. The locale cache read below is **compatibility machinery**: it still
+// runs, it no longer decides anything on this page, and it leaves with the rest of the passengers.
 //
 // What this removes is the **asynchronous** gap, the one that lasts a storage round trip. Whether
 // Chrome paints a half-parsed document before a parser-blocking script at the end of `<body>` runs

@@ -1,4 +1,10 @@
 // 日本語辞書。モデルによる機械翻訳の第一版であり、ネイティブスピーカーのレビューは経ていない。
+//
+// **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
+// what this extension draws from; these files are pinned at the migration baseline so the previous
+// release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
+// `tools/check-locales.js` is what says the two have not come apart.
+//
 // マークアップ・プレースホルダ・機械リテラル(`{cd}`・`z {repo}` など)は翻訳しない。
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['ja'] = {

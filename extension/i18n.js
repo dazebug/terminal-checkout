@@ -1,18 +1,35 @@
-// The extension's own dictionary machinery. Loaded first, in the content script, the service worker
-// and the options page alike.
+// The extension's lookup, and the compatibility machinery that is on its way out. Loaded first, in
+// the content script, the service worker and the options page alike.
 //
-// **Why not `chrome.i18n` for these strings** (D4/D9): `chrome.i18n` resolves against Chrome's UI
-// language and has no runtime switch, so a user on Japanese macOS with English Chrome would read
-// the app in one language and the buttons in another, with nowhere to fix it. The app owns the
-// language and hands it down (D8), which means the lookup has to accept a locale rather than
-// discover one. `chrome.i18n` keeps exactly two keys — `extName` and `extDescription` in
-// `_locales/` — because a manifest's `name` and `description` cannot be filled any other way.
+// **`chrome.i18n` is where the strings come from now.** `tr` converts the logical id, stringifies
+// the substitutions and asks a backend whose default is `chrome.i18n.getMessage`, so the language is
+// whichever catalogue Chrome selected. The extension has no locale of its own to resolve.
+//
+// **The header this replaces said the opposite, and said it for four promotions after it stopped
+// being true** — that `chrome.i18n` was rejected for these strings, that the app owns the language
+// and hands it down, and that `chrome.i18n` holds exactly two keys when `_locales` now holds 125.
+// It survived because the standing question was read against the lines a diff touched, and this
+// header was not one of them (review 39, and the rule is now stated where it can be applied: when a
+// file's behaviour changes, its whole header is in scope).
+//
+// **What the old answer cost, kept because it is the reason not to rebuild it**: one language across
+// both surfaces was eventually consistent by construction, and the machinery for it was a locale
+// query on the native socket, a cache with a generation and an install identity, a per-worker
+// sequence fence, a serialized writer and a redraw queue. What replaced it is two platforms
+// answering separately, and the price is that they can disagree — Japanese macOS with English Chrome
+// shows a Japanese app and English buttons, with nowhere to change both.
+//
+// **Everything below the lookup is temporary.** The locale cache, its reducer, the fence, the
+// first-render gate and the renderer are **compatibility implementations**: nothing in this
+// generation calls them, the previous release does, and they leave when the compatibility passengers
+// do — a generation-consistent deployment, which is a follow-up issue. Read them as machinery being
+// carried, not as design.
 //
 // **Nothing here touches `chrome` at load time, and nothing looks anything up at load time.** Both
-// rules come from the same measurement (D6): the three test files run these scripts through
-// `vm.runInThisContext` with no `chrome` global at all, and a single `chrome.*` at module scope
-// takes all 158 of them down. Lookup happens when a caller asks, which is also what lets a language
-// change redraw without reloading anything.
+// rules come from the same measurement (D6): the test files run these scripts with no `chrome`
+// global at all, and a single `chrome.*` at module scope takes every one of them down. The lookup
+// names `chrome.i18n.getMessage` inside a function for exactly that reason, and a test loads this
+// file in a `chrome`-less realm rather than grepping for the string (D199).
 
 // The tags the extension ships a dictionary for. The same spelling the app uses, on purpose: the
 // locale arrives from the app as `zh-Hans`, and a second naming convention here would mean a
@@ -207,6 +224,11 @@ function applyDocumentLanguage(legacyLocale, documentRef = globalThis.document) 
 
 // ---------------------------------------------------------------------------------------------
 // The locale cache: what the app told us, and the rules for replacing it.
+//
+// **Compatibility machinery.** Nothing in this generation reads it — the lookup asks Chrome — and
+// it is here because the previous release's service worker and content script do. It leaves with
+// them, not before (A4 keeps the implementations, the follow-up issue on generation-consistent
+// deployment removes them).
 // ---------------------------------------------------------------------------------------------
 
 // Where the cache lives. `storage.local` and not `storage.sync`: the locale is a fact about the app

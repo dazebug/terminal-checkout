@@ -1,5 +1,11 @@
 // The English dictionary — the options page's messages (item 21). Item 22 moves the rest in.
 //
+// **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
+// what this extension draws from; these files are pinned at the migration baseline so the previous
+// release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
+// `tools/check-locales.js` is what says the two have not come apart.
+//
+//
 // A classic browser script, not a module: the content script, the service worker and the options
 // page all load it the same way, and `node --test` runs it through `vm.runInThisContext` with no
 // `chrome` global at all (D6). Registering into a global is what makes those three loaders and the

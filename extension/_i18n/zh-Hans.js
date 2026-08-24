@@ -1,4 +1,10 @@
 // 简体中文词典。这是模型机器翻译的第一版，未经母语者审校。
+//
+// **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
+// what this extension draws from; these files are pinned at the migration baseline so the previous
+// release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
+// `tools/check-locales.js` is what says the two have not come apart.
+//
 // 标记、占位符与机器字面量（`{cd}`、`z {repo}` 等）不翻译。
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['zh-Hans'] = {
