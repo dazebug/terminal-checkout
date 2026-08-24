@@ -68,6 +68,11 @@ const platformFor = (directory = 'ja') => {
 
 const drained = () => new Promise(resolve => setImmediate(resolve));
 
+// A document language is a dictionary tag; a catalogue lives in Chrome's directory spelling. The two
+// stores agree on the values themselves — that is what `tools/check-locales.js` holds — so either can
+// answer for "what does this catalogue say", and `_locales` is the one that is canonical now.
+const CHROME_DIRECTORY = { en: 'en', ko: 'ko', ja: 'ja', 'zh-Hans': 'zh_CN', 'zh-Hant': 'zh_TW' };
+
 test('every generation pairing loads, and the baseline it loads is the pinned artifact', () => {
   for (const { skeleton, consumers, what } of PAIRINGS) {
     for (const consumer of CONSUMERS) {
@@ -185,21 +190,38 @@ test('the deferred boundaries run: a locale notification and a storage notificat
   }
 });
 
-test('what the page draws and what the document says are the same catalogue', async () => {
-  // The failure condition that is about the pair rather than about either half: text from one
-  // catalogue with `lang` from another is the accessibility defect this migration exists to remove,
-  // and it is only visible when both are read from the same load.
-  for (const directory of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
-    const realm = generationRealm({ skeleton: 'current', consumers: 'current', platform: platformFor(directory) });
-    load(realm, 'options.js', 'current');
-    await drained();
-    const tag = realm.context.document.documentElement.lang;
-    const drawn = realm.run("tr('ext.header.options')");
-    const expected = catalogueBackend(directory);
-    assert.equal(drawn, expected('ext_header_options'), `${directory}: the page drew another catalogue's text`);
-    assert.equal(tag, expected('ext_meta_catalogueTag'), `${directory}: the document language names another catalogue`);
-    assert.ok(drawn.length > 0, `${directory}: a shipped key drew a blank`);
-    assert.ok(!drawn.startsWith('ext'), `${directory}: a raw key reached the page`);
+test('what the page drew and what the document says are the same catalogue, in every pairing', async () => {
+  // **The oracle used to run on one pairing while the load matrix ran on four** (review 39), and both
+  // mixed combinations were broken underneath it: the signature of `applyDocumentLanguage` and its
+  // call site had moved in opposite directions, so one wrote `en` over Japanese text and the other
+  // left the tag untouched. Four pairings loaded and one pairing asserted is the same disease this
+  // matrix exists for — a check whose scope is narrower than the set its name promises — arriving
+  // **inside the instrument**. So the assertion dimension is generalised to match the load dimension.
+  //
+  // **And it reads `document.title`, not a call of its own.** Asking `tr` here would prove that *this
+  // test* can look a message up; the title is what the page actually drew. It is the same distinction
+  // `CLAUDE.md` draws for claude input: seeing our text on screen is not evidence it is in the input
+  // box, and the only attribution obtainable from outside is what the thing under test left behind.
+  for (const { skeleton, consumers, what } of PAIRINGS) {
+    for (const directory of ['en', 'ja', 'zh_TW']) {
+      const realm = generationRealm({ skeleton, consumers, platform: platformFor(directory) });
+      load(realm, 'options.js', consumers);
+      await drained();
+      const tag = realm.context.document.documentElement.lang;
+      const title = realm.context.document.title;
+      assert.ok(tag, `${what} (${directory}): the page never set a document language`);
+      assert.ok(title, `${what} (${directory}): the page never set a title`);
+      // The title is `Terminal Checkout — <the header message>`, so the message the page drew is what
+      // follows the dash. The catalogue to compare against is the one the document names — that is
+      // the pair being checked, rather than an assumption about which store answered.
+      const drawn = title.slice(title.indexOf('—') + 1).trim();
+      const expected = catalogueBackend(CHROME_DIRECTORY[tag])('ext_header_options');
+      assert.equal(
+        drawn, expected,
+        `${what} (${directory}): the page drew ${JSON.stringify(drawn)} while calling itself ${tag}`,
+      );
+      assert.ok(!drawn.startsWith('ext'), `${what} (${directory}): a raw key reached the title`);
+    }
   }
 });
 

@@ -120,19 +120,21 @@ test('the document language names the catalogue that answered, not the language 
     const doc = { documentElement: { lang: 'en' } };
     // The options page's other half of the same question: an app cache saying `ko` no longer has any
     // say, because there is no extension-side locale left for it to move.
-    assert.equal(applyDocumentLanguage(doc), 'ja');
+    assert.equal(applyDocumentLanguage(null, doc), 'ja');
     assert.equal(doc.documentElement.lang, 'ja');
     assert.match(tr('ext.header.options'), /[ぁ-んァ-ン一-龥]/, 'the text drawn is not the catalogue that named itself');
     // Chrome set to a language we do not ship: the English catalogue answers and says so, so the
     // document says `en` — not `fr`, which is the accessibility defect in reverse.
     installMessageBackend(catalogueBackend('en'));
-    assert.equal(applyDocumentLanguage(doc), 'en');
+    assert.equal(applyDocumentLanguage(null, doc), 'en');
     assert.equal(doc.documentElement.lang, 'en');
   } finally {
     installMessageBackend(previous);
   }
   // No document, nothing to say
-  assert.equal(applyDocumentLanguage(undefined), null, 'it reached for a document that is not there');
+  assert.equal(applyDocumentLanguage(null, undefined), null, 'it reached for a document that is not there');
+  // The old consumer's shape: a locale in the first position, which no longer decides anything
+  assert.equal(applyDocumentLanguage('ko', { documentElement: {} }), 'en', 'the legacy argument chose the tag');
 });
 
 test('the key spaces are separate, whatever is in them', () => {

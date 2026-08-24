@@ -93,7 +93,7 @@ function applyStaticText(root = document) {
 // rebuild the cards, which costs the caret of anyone typing at that moment. The language only moves
 // when the app publishes a new one, so that is a rare cost for a correct screen.
 function redrawInCurrentLocale() {
-  applyDocumentLanguage();
+  applyDocumentLanguage(uiLocale);
   // The tab title has no element to hang a `data-i18n` on, so it is written here — the product name
   // stays as it is and only the word after it is a message.
   document.title = `Terminal Checkout — ${t('ext.header.options')}`;
@@ -106,7 +106,7 @@ function redrawInCurrentLocale() {
 
 // The first answer, taken synchronously so that the first paint is already in a language.
 let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));
-applyDocumentLanguage();
+applyDocumentLanguage(uiLocale);
 document.title = `Terminal Checkout — ${t('ext.header.options')}`;
 applyStaticText();
 

@@ -189,9 +189,15 @@ function tr(key, ...args) {
 // the shape this project has lost to before, so the answer comes from **a message every catalogue
 // carries whose value is its own tag**: whichever catalogue answered is the one that names itself.
 //
-// It takes no locale. The caller has nothing left to pass — there is no extension-side locale to
-// resolve — and a parameter would invite one back.
-function applyDocumentLanguage(documentRef = globalThis.document) {
+// **It still takes the old locale argument, and ignores it.** That is not a leftover: the previous
+// generation's `options.js` calls `applyDocumentLanguage(uiLocale)`, and a signature is as much a
+// part of the ABI an adjacent consumer invokes as a symbol name is (A4's rule, generalised — review
+// 39 found this by reading the two files side by side). Dropping the parameter broke the mixture in
+// both directions: the old function called with nothing treated the locale as absent and wrote `en`
+// over Japanese text, and the new function handed `"ja"` as its *document* returned null and left
+// `lang` as it was. So the parameter stays for the compatibility release's lifetime, current
+// consumers keep passing it, and it takes no part in choosing the tag — the catalogue does that.
+function applyDocumentLanguage(legacyLocale, documentRef = globalThis.document) {
   if (!documentRef || !documentRef.documentElement) return null;
   const tag = tr(TC_I18N_CATALOGUE_TAG_KEY);
   if (!tag) return null;
