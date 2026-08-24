@@ -347,6 +347,8 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | D151 | 메시지 호출로 보이면 메시지다(`/^tr?\(/`, D 없이 52′에서 채택) | **정정 — 키가 호출 안에 있어야 메시지다. 그리고 같은 구멍이 보간 갈래에도 있었다** | R27 검증자 ②. `t(dynamicKey)`·`tr(userSuppliedValue)`는 카탈로그 조회라는 증거가 없다 — 실행 시점에 무엇이 오는지 모르는 표현식이고, 그것이 이 게이트가 「선언되지 않은 표현식」이라 부르는 부류다. **드라이버가 일관성 논거로 채택하면서 이웃(보간 갈래)에 같은 구멍이 있는지 확인하지 않았고, 있었다.** 키 모양은 `keysInJs`와 한 상수(`MESSAGE_KEY`)를 공유한다 — 두 곳에 쓰면 한쪽이 넓어지는 날까지만 우연히 일치한다 | 값을 읽는 리더가 `(`·`,`·공백에서 멈추므로 실패 메시지의 표현식은 잘려 나올 수 있다(`"t(dynamicKey"`). 자리를 가리키는 데는 충분하고, 괄호를 세는 리더는 파서 쪽으로 한 걸음이라 두지 않았다 |
 | D152 | 언어의 소유자는 앱 하나이고 확장은 받아 그린다(D8·D17) | **뒤집는다 — 사용자 결정: 앱은 macOS를 따르고, 확장은 Chrome을 따른다. 확장은 `chrome.i18n`으로 간다** | 사용자 결정(2026-08-24). D8의 근거는 「설치 안내 창은 확장이 설치되기 전에 보이므로 확장이 정본이면 그 시점에 답이 없다」였는데, **확장이 자기 언어를 스스로 갖는 순간 그 논거는 앱의 언어에 대해 아무것도 요구하지 않는다** — 두 표면이 각자의 플랫폼을 따르면 서로에게 물을 것이 없다. 이 결정으로 주제를 잃는 것: D17(최종적 수렴) · D32(`installId`) · D50(순번 울타리) · D80∼D83(발행의 원자성과 세대) · D90(realm 잔여) · **항목 54**(발표 역할 — 강제할 발행이 없다). 측정 여섯 건과 항목 A1∼A8은 「전환 계획」 절에 있다 | 이 승격에는 **구현이 없다**. 검증자 설계 리뷰가 먼저다 — 8라운드가 들어간 계약을 지우는 방향이라 틀린 방향의 비용이 이 루프에서 가장 크다. 그리고 이 전환이 **가장 깨지기 쉽다고 스스로 적어 둔 성질(D90)을 고치지 않고 삭제한다** |
 | D153 | 삭제는 어디서 시작해도 된다 | **아니다 — 순서가 계약이다: 확장이 먼저 묻기를 그만두고, 그 다음에 앱이 답하기를 그만둔다** | 전환 계획의 롤백 경계. 반대로 하면(A3 없이 A5) 확장은 계속 묻고 앱은 답하지 않는데, **실패한 질의는 캐시하지 않는다**(D90의 이웃 규칙)는 성질 때문에 확장이 영어 폴백으로 굳는다 — 사용자에게는 「언어가 영어로 바뀌었다」로 보인다. 양 끝보다 나쁜 중간 상태는 이것 하나이고, 그래서 순서가 자유가 아니다 | A3는 사전 파일을 지우지 않는다(되돌리기를 「조회 몸통을 되돌린다」로 끝내기 위해). 그리고 A3의 조회·매니페스트·`_locales`는 한 커밋이어야 한다 — 확장 사본 교체가 두 세대를 섞어 읽을 수 있고(D99), `getMessage`가 없는 키에 빈 문자열을 주므로 섞임은 **빈 자리**로 보인다 |
+| D154 | 검증자가 낸 결함은 낸 라운드에 고친다 | **이번만 접는다 — R29의 셋은 마이그레이션이 술어를 다시 쓸 때 함께 닫는다. 단 「픽스처 없는 거절」은 접지 않고 불변 원칙으로 올린다** | 셋 중 둘이 **A3가 다시 쓰는 기계**에 대한 것이다(`t(…)` → `chrome.i18n.getMessage(…)`) — 지금 고치면 같은 술어를 두 번 쓴다. 셋째(표현식 수신자)는 마이그레이션과 무관하지만 같은 파일·같은 게이트라 접는 값이 0이고 쪼개는 값이 라운드 하나다. **접을 수 없는 것**: 계산된 대괄호 거절에 픽스처가 없고 코퍼스에도 그런 자리가 없어 **가드를 지워도 스위트가 초록**이다 — 아무것도 실패시킬 수 없는 가드는 죽은 가드이고, 이 작업이 그 부류에 두 번 물렸다(`\bt r?\(`의 공백, 아무도 고르지 않던 로케일 필터) | 「접는다」는 결정은 **접힌 것을 잊는 흔한 방법**이다. 그래서 셋이 A3의 완료 조건에 들어가 있고, 「거절마다 픽스처」와 「새 술어에 대고 liveness 소탕」이 불변 원칙에 있다 — 항목이 끝났다고 말하려면 이 둘을 근거로 내야 한다 |
+| D155 | 삭제되는 코드의 리뷰 기록은 삭제와 함께 정리한다 | **아니다 — 마지막 외부 판정은 원문 그대로 보존하고, 처분을 「삭제 / 후속 이슈 상속 / 앱에 남는다」 셋으로 갈라 적는다** | R29는 옛 아키텍처가 받은 **마지막 외부 판정**이고, 그 코드는 곧 사라진다. 셋을 뭉치면 남는 문장이 「대부분 사라졌다」가 되는데, 그것으로는 **무엇이 여전히 결함인지**를 나중에 알 수 없다 — 여섯 중 셋이 후속 이슈로 상속되고, 하나는 「삭제되지만 더 작은 사실이 남는다」(`Settings.language`는 여전히 앱 인스턴스 간 공유 선호다) | 「닫혔다」고 판정받은 다섯 중 넷은 **판정이 유효한 상태에서 코드가 사라진다** — 그 넷의 검증 기록은 여기서 끝나고, 되살릴 일이 생기면 그 판정이 아니라 이관 기록이 근거다 |
 
 ## 전수 소탕 표
 
@@ -891,6 +893,8 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 
 ## 전환 계획 — 확장은 `chrome.i18n`을 쓴다 (R30 · 설계, 구현 없음)
 
+- 상태: 계획 승격 · **드라이버 재실행: `git merge --ff-only 56e706b` → 승격 61건, `git status --porcelain` 비어 있음.** 이 절은 R29의 반박을 접어 한 번 개정됐고(아래 「R29 접기」·「이관 기록」), 그 다음이 설계 리뷰다.
+
 사용자 결정(2026-08-24): **앱은 macOS를 따르고, 확장은 Chrome을 따른다.** 이것은 **D8을 뒤집는다**(언어의 소유자는 앱 하나이고 확장은 받아 그린다) — 그리고 D8이 떠받치던 D17(최종적 수렴), D32(`installId`), D50(순번 울타리), D80∼D83(발행의 원자성과 세대), D90(realm 잔여)이 함께 주제를 잃는다. 이 절은 그 전환의 계획이고, **이 승격에는 구현이 없다** — 드라이버가 검증자와 설계 리뷰를 돈 뒤에 항목이 배정된다.
 
 ### 이 결정이 지우는 것과 남기는 것
@@ -936,6 +940,8 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 - **`node --test`는 `chrome` 없이 돈다**(D6). 조회는 주입 가능하거나 스텁된다 — 어느 쪽인지는 Q15에서 정한다.
 - **없는 키는 빈 문자열이다**(`getMessage`의 규약). 그래서 사본이 섞인 세대는 원시 키가 아니라 **빈 자리**로 보인다 — 롤백 경계가 이 사실 위에 선다.
 - **삭제 순서가 계약이다**: 확장이 먼저 묻기를 그만두고, 그 다음에 앱이 답하기를 그만둔다(D153).
+- **게이트가 주장하는 모든 거절에는, 그것 없이는 실패하는 픽스처가 있다**(D154). 오늘 **계산된 대괄호 거절에는 픽스처가 없고 코퍼스에도 그런 자리가 없어서, 가드를 지워도 스위트가 초록이다** — 아무것도 실패시킬 수 없는 가드는 죽은 가드이고, 이 작업은 그 부류에 두 번 물렸다(공백이 든 `\bt r?\(`, 아무도 고르지 않던 로케일 필터). 마이그레이션이 술어를 다시 쓸 때 거절마다 픽스처가 하나씩 붙는다.
+- **liveness 소탕을 새 술어에 대고 다시 돈다**(R25의 형태). 「이 게이트가 오늘 무언가에 매치되는가」는 술어가 바뀌면 다시 물어야 하는 질문이다.
 
 ### 항목
 
@@ -943,7 +949,7 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 |:--|:--|:--|:--|:--|
 | A1 | **키 개명(122).** `.`→`_`. **기계는 그대로 두고 이름만 바꾼다** — 사전 5벌 + 참조 157자리 + 게이트의 키 정규식 | `extension/_i18n/*.js`, `extension/{options,content,defaults,migrations}.js`, `extension/options.html`, `tests/i18n.test.js`, `app/Tests/AppTests/CatalogueOwnershipTests.swift` | — | 동작 무변경. 게이트 4종 그린, 키 집합 122 불변, 대소문자 무시 유일성 단언 추가 |
 | A2 | **`_locales` 5벌을 채운다(값·설명·`placeholders`).** 라이브 소스는 아직 JS 사전 — 새 카탈로그는 **검증만 받으며 함께 탄다** | `extension/_locales/*/messages.json`, `tests/i18n.test.js` | A1 | 두 저장소가 키 대 키·자리 대 자리로 일치한다는 게이트가 green. 런타임 무변경 |
-| A3 | **조회를 `chrome.i18n.getMessage`로.** `t`/`tr`/`tHTML`의 몸통 교체, `formatMessage`·`i18nText`·`TC_I18N` 사용처 제거. **사전 파일은 아직 지우지 않는다**(롤백 경계) | `extension/i18n.js`, `extension/{options,content,background}.js`, `extension/manifest.json` | A2 | 확장이 Chrome 언어로 그린다. `_locales`가 유일한 진실. 사전 파일은 트리에 남아 있으나 아무도 읽지 않는다 |
+| A3 | **조회를 `chrome.i18n.getMessage`로.** `t`/`tr`/`tHTML`의 몸통 교체, `formatMessage`·`i18nText`·`TC_I18N` 사용처 제거. **사전 파일은 아직 지우지 않는다**(롤백 경계). **그리고 속성 게이트의 술어를 여기서 한 번만 다시 쓴다** — R29의 셋(아래) | `extension/i18n.js`, `extension/{options,content,background}.js`, `extension/manifest.json`, `tests/i18n.test.js` | A2 | 확장이 Chrome 언어로 그린다. `_locales`가 유일한 진실. 사전 파일은 트리에 남아 있으나 아무도 읽지 않는다. 그리고 R29의 셋이 닫히고, **거절마다 픽스처가 하나** |
 | A4 | **캐시·세대·재그리기 기계 삭제.** 리듀서·`installId`/`epoch`·순번 울타리·직렬화 기록자·첫 렌더 게이트·재그리기 큐, 그리고 사전 파일 5벌 | `extension/i18n.js`, `extension/{background,content,options}.js`, `extension/_i18n/`, `tests/i18n.test.js` | A3 | 죽은 케이스 45건이 **지워졌다**(통과가 아니라 부재). node 케이스 수가 그만큼 준다 |
 | A5 | **소켓에서 로케일 분기 제거.** 상수 4개·`hostRequestKind`·`responseCarryingLocale`·`.localeQuery`·e2e 2케이스 | `app/Sources/App/HostServer.swift`, `app/e2e.sh`, `app/Tests/AppTests/HostProtocolTests.swift` | A4 | 모든 요청이 명령이다. e2e 9 PASS |
 | A6 | **발행 기계 삭제.** `LocalePublicationRight`·`Settings`의 발행부·`start(announcing:)`·`AppDelegate`의 발행. **피커는 남는다** | `app/Sources/App/{LocalePublicationRight,Settings,HostServer,AppDelegate}.swift`, `app/Tests/AppTests/{LocalePublicationTests,HostServerOwnershipTests,HostServerStartupPublicationTests}.swift` | A5 | swift에서 37건이 지워졌다. 앱은 자기 창의 언어만 정한다 |
@@ -977,6 +983,47 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | Q13(게이트가 사용자의 실제 앱 설정을 건드린다)의 로케일 절반 | **무의미해진다.** 나머지 절반(`lastRequestAt`)은 남는다 |
 | Q12(TCC 프롬프트의 언어) · Q14(재시작 대기 중 사용자가 보는 것) | **살아 있다** — 앱 쪽 질문이다 |
 | 항목 53의 기기 게이트(실제 클릭이 팝업에 포커스를 주는가) | **살아 있다** — 앱 창의 문제다 |
+
+### R29 접기 — 속성 게이트의 셋을 지금 고치지 않는 이유
+
+검증자 R29의 셋은 **다 실재한다**. 지금 고치지 않는 이유는 하나다: **셋 중 둘이 마이그레이션이 다시 쓰는 기계에 대한 것**이라, 지금 고치면 같은 술어를 두 번 쓴다(D154). 그래서 A3가 술어를 다시 쓸 때 함께 닫는다.
+
+| R29의 findings | 무엇인가 | 언제 |
+|:--|:--|:--|
+| `namesAMessage`가 **접두사** 검사다 | `button.title = t('ext.button.remove') + ' — extra prose'`가 `)`에서 잘려 **메시지로 수용된다**. 공유 키 정규식은 첫 토큰만 증명한다 | A3 — `t(…)`가 `chrome.i18n.getMessage(…)`가 되므로 **완전 표현식 검사를 그 모양에 대고 한 번** 쓴다 |
+| 자리 정체성이 아직 **다중집합**이다 | `(파일, 속성)` 쌍이 중복되면 개수 보존 삼각 교체(`content.js title` 하나를 지우고, 읽을 수 없는 계산된 쓰기를 넣고, `content.js title`을 하나 더 더한다)가 기대값을 그대로 둔다 | A3 — 마이그레이션과 **무관하지만 같은 파일·같은 게이트**다. 접으면 0원, 쪼개면 라운드 하나 |
+| 계산된 대괄호 가드가 **표현식 수신자를 놓친다** | `document.querySelector('#x')[name] = 'prose'`. 정규식은 단순 식별자와 점 연결 수신자만 읽는다 | A3 — 표현식 수신자를 **범위 안에 둘지 밖에 둘지**를 술어를 다시 쓸 때 한 번 정한다(두 번 정하지 않는다) |
+| **그리고 접을 수 없는 하나**: 계산된 대괄호 거절에 **픽스처가 없다** | 코퍼스에 그런 자리가 없으므로 **가드를 지워도 스위트가 초록**이다 — 죽은 가드 | 불변 원칙으로 올렸다(D154). 「거절마다 픽스처」와 「새 술어에 대고 liveness 소탕」이 A3의 완료 조건이다 |
+
+### 이관 기록 — 삭제되기 전에 발행·소유권 표면이 받은 유일한 외부 판정
+
+R29는 **옛 아키텍처의 마지막 리뷰**다. 아래 두 목록은 검증자의 원문 그대로다(영어 원문 보존 — 옮기면 판정이 아니라 우리의 요약이 된다).
+
+**Publication/ownership items to carry forward:**
+
+> - `HostServer.start()` still unlinks a stale socket path by name after a failed connection attempt, so a replacement owner can be deleted before this instance binds.
+> - `tearDown()` still has a stat-to-unlink race: a same-uid process can replace the path after identity verification.
+> - The dedicated publication-right file still permits a future same-file producer for an arbitrary bound path; the boundary is file-scoped, not type-global.
+> - The announcement API still lets a caller choose `.publish` versus `.nothing`; the binary’s role is not encoded in the type, so a wrong announcement remains compilable.
+> - The helper lifetime and late-launch residuals remain intentionally unfixed under the stopped 49*/50* scope.
+> - `languageChanged()` must also be checked: if it can be invoked while the window does not own publication, it changes the shared preference and redraws locally without publishing a generation, allowing app and extension state to diverge. Disabling the control is not an action-level invariant.
+
+**What is genuinely closed should not be reopened:**
+
+> the one-value envelope, the `whileHeld` publication commit, canonical-path right checks, bind-before-answer startup ordering, and the launch/termination admission fixes at their documented scopes.
+
+처분은 **세 부류로 갈라** 적는다 — 뭉치면 이 기록의 값이 사라진다. 「삭제」는 고쳐지는 것이 아니라 **결함이기를 그만두는 것**이다.
+
+| 검증자 항목 | 처분 | 왜 |
+|:--|:--|:--|
+| `HostServer.start()`의 이름 unlink | **후속 이슈로 상속** | 소켓 경로의 문제이지 로케일의 문제가 아니다. 이미 항목 51이고 D143이 이관을 결정했다 — 발행이 사라져도 `start()`는 남는다(`app/Sources/App/HostServer.swift:217`) |
+| `tearDown()`의 stat→unlink 경합 | **후속 이슈로 상속** | 같은 부류의 형제(`:280`). A6가 `tearDown`에서 **권리 반납만** 걷어내고 unlink는 남으므로, 경합은 그대로 상속된다 |
+| 발행 권리 파일의 같은 파일 생산자 | **삭제** | 파일 자체가 A6에서 사라진다. 만들 권리가 없으면 생산자의 범위도 없다 |
+| 발표 API가 `.publish`/`.nothing`을 고를 수 있다 | **삭제** | 이것이 항목 54였고 마이그레이션이 그것을 소멸시킨다 — `start(announcing:)`이 발행과 함께 사라지므로 잘못 고를 인자가 없다 |
+| 헬퍼 수명·늦은 launch 잔여 | **후속 이슈로 상속** | claude 전달 경로이고 이 전환이 닿지 않는다(D143, 49*/50* 중단분) |
+| `languageChanged()`가 비소유 창에서 공유 선호를 바꾼다 | **삭제 — 다만 남는 것을 정확히 적는다** | 「세대를 발행하지 않아 앱과 확장이 갈린다」는 **새 설계가 구성으로 받아들이는 것**이다(확장은 앱의 언어를 따르지 않는다). 남는 것은 더 작은 사실 하나: `Settings.language`는 여전히 **앱 인스턴스 사이의 공유 선호**이므로 창이 둘이면 마지막 쓰기가 이긴다. 각 창은 자기가 읽은 값으로 그리므로 **앱 안에서 살아 있는 성질**이고, 감추지 않고 이렇게 적는다 |
+| 닫힌 다섯 중 넷(한 값 봉투 · `whileHeld` 커밋 · 정본 경로 권리 검사 · 답하기 전에 bind) | **코드와 함께 삭제** | 「닫혔다」는 판정이 유효한 상태에서 그 코드가 사라진다 — 그 넷에 대한 검증 기록은 여기서 끝난다. 되돌릴 일이 생기면 그 판정이 아니라 이 문단이 근거다 |
+| 닫힌 다섯 중 하나(launch/termination admission) | **앱에 남는다** | 주제가 claude 전달이지 발행이 아니다. `LocaleRestartTests` 17건과 함께 산다 |
 
 ### 열린 질문 (설계 리뷰가 답할 것)
 
