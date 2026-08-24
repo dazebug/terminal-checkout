@@ -160,9 +160,6 @@ enum AppLocalization {
         let argument = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
         if let languages = argument[appleLanguagesKey] as? [String] { return languages }
 
-        let volatileGlobal = defaults.volatileDomain(forName: UserDefaults.globalDomain)
-        if let languages = volatileGlobal[appleLanguagesKey] as? [String] { return languages }
-
         let persistentGlobal = defaults.persistentDomain(forName: UserDefaults.globalDomain) ?? [:]
         if let languages = persistentGlobal[appleLanguagesKey] as? [String] { return languages }
 

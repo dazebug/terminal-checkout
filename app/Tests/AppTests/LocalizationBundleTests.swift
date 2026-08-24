@@ -3,6 +3,34 @@ import TestSupport
 import XCTest
 @testable import App
 
+/// Stages the two global-domain APIs without mutating the test runner's real defaults. Production
+/// reads the persistent global domain here; the volatile value is deliberately different so a
+/// test cannot pass while consulting the branch that does not exist on the measured host.
+private final class StagedGlobalDefaults: UserDefaults {
+    private let stagedVolatileGlobal: [String: Any]
+    private let stagedPersistentGlobal: [String: Any]
+
+    init(
+        suiteName: String,
+        volatileGlobal: [String: Any],
+        persistentGlobal: [String: Any]
+    ) {
+        stagedVolatileGlobal = volatileGlobal
+        stagedPersistentGlobal = persistentGlobal
+        super.init(suiteName: suiteName)!
+    }
+
+    override func volatileDomain(forName domainName: String) -> [String: Any] {
+        if domainName == UserDefaults.globalDomain { return stagedVolatileGlobal }
+        return super.volatileDomain(forName: domainName)
+    }
+
+    override func persistentDomain(forName domainName: String) -> [String: Any]? {
+        if domainName == UserDefaults.globalDomain { return stagedPersistentGlobal }
+        return super.persistentDomain(forName: domainName)
+    }
+}
+
 /// The bundle skeleton: five catalogs that each answer in their own language, and the one write
 /// that points AppKit's chrome at the same language.
 ///
@@ -153,12 +181,61 @@ final class LocalizationBundleTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "TerminalCheckoutAppleLanguagesProvenance"))
     }
 
-    /// The process's `Locale.preferredLanguages` includes the app-domain override after an
-    /// explicit choice. `auto` must instead read the argument/global system domains, which this
-    /// suite can stage without changing the test runner's own defaults.
-    func testAutomaticResolutionUsesTheExternalSystemLanguageOrder() throws {
+    /// **The value that answers afterwards is the one that answered before** (round 7 review).
+    ///
+    /// The test above proves our own copy of the key is gone, which is not the same claim: a
+    /// removal that also lost whatever the domain below was saying would satisfy it just as well.
+    /// What `auto` promises is that the system's list decides again, so the assertion is a
+    /// before/after comparison of the **effective** value — read through the search list rather
+    /// than out of our own domain.
+    ///
+    /// It also fixes the boundary of that promise. `auto` removes the **app-owned** override and
+    /// nothing else: an `-AppleLanguages` argument on the command line, or any domain with higher
+    /// precedence, still wins, and no amount of removing our key changes that. Users need to know
+    /// it (item 25 lists it in the README), and a future reader needs to know this test does not
+    /// claim otherwise.
+    func testAutomaticRestoresTheEffectiveValueItFound() throws {
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
+        // What the search list answers with no override of ours in the way. It comes from a domain
+        // this suite does not own, which is exactly why the comparison is worth making.
+        let before = defaults.array(forKey: "AppleLanguages") as? [String]
+        XCTAssertNotNil(before, "no effective AppleLanguages to restore — the comparison would be vacuous")
+
+        defaults.set("ja", forKey: languagePreferenceKey)
+        XCTAssertEqual(
+            AppLocalization.applyStoredLanguageToAppKit(defaults: defaults, systemPreferred: ["ko-KR"]),
+            "ja"
+        )
+        XCTAssertEqual(defaults.array(forKey: "AppleLanguages") as? [String], ["ja"], "the override did not take")
+
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
+        XCTAssertNil(AppLocalization.applyStoredLanguageToAppKit(
+            defaults: defaults, systemPreferred: ["ko-KR"]
+        ))
+
+        let after = defaults.array(forKey: "AppleLanguages") as? [String]
+        XCTAssertEqual(after, before, "auto removed our override but did not give the previous answer back")
+        XCTAssertNil(
+            UserDefaults.standard.persistentDomain(forName: suiteName)?["AppleLanguages"],
+            "our own copy is still there, so `after` may only be echoing it"
+        )
+    }
+
+    /// The process's `Locale.preferredLanguages` includes the app-domain override after an
+    /// explicit choice. `auto` must instead read the argument/global system domains. This fixture
+    /// stages the production `persistentDomain(forName:)` call through an isolated `UserDefaults`
+    /// double because writing `NSGlobalDomain` would mutate the test runner's real defaults. The
+    /// actual System Settings domain and AppKit's first lookup remain device-gate questions.
+    func testAutomaticResolutionUsesTheExternalSystemLanguageOrder() throws {
+        let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
+        let defaults = StagedGlobalDefaults(
+            suiteName: suiteName,
+            volatileGlobal: ["AppleLanguages": ["en-US"]],
+            persistentGlobal: ["AppleLanguages": ["zh-TW"]]
+        )
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
 
         defaults.set(["ja"], forKey: "AppleLanguages")
@@ -168,9 +245,6 @@ final class LocalizationBundleTests: XCTestCase {
         )
         defaults.set(["ja"], forKey: "TerminalCheckoutAppleLanguagesProvenance")
         defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
-        defaults.setVolatileDomain(
-            ["AppleLanguages": ["zh-TW"]], forName: UserDefaults.globalDomain
-        )
 
         XCTAssertEqual(
             AppLocalization.resolvedTag(defaults: defaults), "zh-Hant",
