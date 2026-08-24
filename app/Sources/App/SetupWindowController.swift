@@ -535,9 +535,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Cards — language
 
-    /// **The app owns the language and the extension follows** (D8): the picker is here because the
-    /// setup window is what a user sees *before* the extension exists, so an extension-side picker
-    /// would have no answer at the one moment it is first needed.
+    /// **This picker controls the app; Chrome controls the extension**: the setup window is here
+    /// because it is what a user sees *before* the extension exists. The app defaults to macOS's
+    /// language (or uses an explicit choice), while the extension reads Chrome's catalogue and is
+    /// not synchronized with this picker.
     ///
     /// The entries are each written in their own language, which is what a language menu does
     /// everywhere: a user who has landed in a language they cannot read has to be able to find
