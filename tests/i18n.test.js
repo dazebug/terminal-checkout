@@ -618,65 +618,131 @@ const MANIFEST_FILES = filesInRole('manifest');
 const CATALOGUE_FILES = filesInRole('localeCatalogue');
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
-// **Comments blanked, offsets kept — one lexical boundary for every scanner here.** Two gates were
-// reading prose as code (review 38). The Q21 scanner counted `` `tr('ext.header.options')` `` from a
-// comment in `i18n.js` as a call site, so its asserted total was already not the number its own
-// comment claimed; and `referencedKeys` had the same raw-literal defect, which is the gate that was
-// caught in A2 passing for the wrong reason. One real zero-argument call could disappear while a
-// comment-shaped one kept both the count and the arity result — the count preserved by the wrong
-// thing, which is the shape this file keeps finding.
-//
-// Offsets are preserved rather than removed, because the scanners index back into the source: a
-// comment becomes the same number of spaces, and a newline stays a newline so line numbers hold.
-//
-// A regular expression literal containing `//` is the known limit — `bracketPairs` has the same one —
-// and there is none in this extension (the scanners would report a nonsense site rather than pass
-// something, so the failure direction is right).
-const withoutComments = (source) => {
-  const out = [];
-  let state = 'code';
-  let quote = null;
-  for (let i = 0; i < source.length; i += 1) {
-    const character = source[i];
-    const next = source[i + 1];
-    if (state === 'code') {
-      if (character === '/' && next === '/') { state = 'line'; out.push(' ', ' '); i += 1; continue; }
-      if (character === '/' && next === '*') { state = 'block'; out.push(' ', ' '); i += 1; continue; }
-      if (character === "'" || character === '"' || character === '`') { state = 'string'; quote = character; }
-      out.push(character);
-      continue;
-    }
-    if (state === 'string') {
-      out.push(character);
-      if (character === '\\') { out.push(next ?? ''); i += 1; continue; }
-      if (character === quote) { state = 'code'; quote = null; }
-      continue;
-    }
-    if (state === 'line') {
-      if (character === '\n') { state = 'code'; out.push('\n'); continue; }
-      out.push(' ');
-      continue;
-    }
-    // block
-    if (character === '*' && next === '/') { state = 'code'; out.push(' ', ' '); i += 1; continue; }
-    out.push(character === '\n' ? '\n' : ' ');
-  }
-  return out.join('');
-};
-
-// Masked, because a key named in prose is not a key the page asks for (review 38).
-const speakingSource = SPEAKING_FILES.map(file => withoutComments(read(file))).join('\n');
-
-
 // A message id can only be named by a literal (checked below), and the markup names them in an
 // attribute — so between them this is the whole set.
 // The shape of a message id, in one place. The attribute gate asks whether a call names one of
 // these, and this set is what such a name is checked against — written twice, the two would
 // agree by coincidence until the day one of them was widened (round 27 review).
 const MESSAGE_KEY = 'ext\\.[A-Za-z0-9.]+';
-const keysInJs = new Set(
-  [...speakingSource.matchAll(new RegExp(`'(${MESSAGE_KEY})'`, 'g'))].map(m => m[1]),
-);
+
+// A small lexical reader, not a comment mask. A mask keeps the contents of strings, which is the
+// wrong product for a call scanner: `const example = "tr('ext.a')"` is a string literal that the
+// reference scanner may inspect, but it is not a call, text consumer, or argument-supplying site.
+// The reader walks code, quoted strings, comments, and template interpolations separately, so each
+// consumer can ask for the lexical product it means instead of sharing one ambiguous representation.
+const readQuotedLiteral = (source, start) => {
+  const quote = source[start];
+  for (let i = start + 1; i < source.length; i += 1) {
+    if (source[i] === '\\') { i += 1; continue; }
+    if (source[i] === quote) {
+      return { start, end: i + 1, value: source.slice(start + 1, i) };
+    }
+    if (source[i] === '\n') return null;
+  }
+  return null;
+};
+
+function scanJavaScriptTemplate(source, start, handlers) {
+  for (let i = start; i < source.length; i += 1) {
+    if (source[i] === '\\') { i += 1; continue; }
+    if (source[i] === '`') return i + 1;
+    if (source[i] === '$' && source[i + 1] === '{') {
+      i = scanJavaScript(source, i + 2, handlers, true) - 1;
+    }
+  }
+  return source.length;
+}
+
+function scanJavaScript(source, start = 0, handlers = {}, stopAtBrace = false) {
+  let braceDepth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    const character = source[i];
+    const next = source[i + 1];
+    if (character === '/' && next === '/') {
+      const newline = source.indexOf('\n', i + 2);
+      i = newline < 0 ? source.length : newline - 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      const close = source.indexOf('*/', i + 2);
+      i = close < 0 ? source.length : close + 1;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      const literal = readQuotedLiteral(source, i);
+      if (!literal) return source.length;
+      handlers.string?.(literal);
+      i = literal.end - 1;
+      continue;
+    }
+    if (character === '`') {
+      i = scanJavaScriptTemplate(source, i + 1, handlers) - 1;
+      continue;
+    }
+    if (stopAtBrace && character === '{') {
+      braceDepth += 1;
+      continue;
+    }
+    if (stopAtBrace && character === '}') {
+      if (braceDepth === 0) return i + 1;
+      braceDepth -= 1;
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(character)) {
+      let end = i + 1;
+      while (end < source.length && /[A-Za-z0-9_$]/.test(source[end])) end += 1;
+      handlers.identifier?.({ name: source.slice(i, end), start: i, end });
+      i = end - 1;
+    }
+  }
+  return source.length;
+}
+
+const messageKey = new RegExp(`^${MESSAGE_KEY}$`);
+const messageStringKeysIn = source => {
+  const keys = [];
+  scanJavaScript(source, 0, {
+    string: ({ value }) => { if (messageKey.test(value)) keys.push(value); },
+  });
+  return keys;
+};
+
+const skipJavaScriptTrivia = (source, start) => {
+  let index = start;
+  for (;;) {
+    while (/\s/.test(source[index] ?? '')) index += 1;
+    if (source[index] === '/' && source[index + 1] === '/') {
+      const newline = source.indexOf('\n', index + 2);
+      index = newline < 0 ? source.length : newline + 1;
+      continue;
+    }
+    if (source[index] === '/' && source[index + 1] === '*') {
+      const close = source.indexOf('*/', index + 2);
+      index = close < 0 ? source.length : close + 2;
+      continue;
+    }
+    return index;
+  }
+};
+
+const messageCallsIn = source => {
+  const calls = [];
+  scanJavaScript(source, 0, {
+    identifier: ({ name, end }) => {
+      if (!['t', 'tr', 'tHTML'].includes(name)) return;
+      const open = skipJavaScriptTrivia(source, end);
+      if (source[open] !== '(') return;
+      const first = skipJavaScriptTrivia(source, open + 1);
+      if (source[first] !== "'" && source[first] !== '"') return;
+      const literal = readQuotedLiteral(source, first);
+      if (!literal || !messageKey.test(literal.value)) return;
+      calls.push({ name, key: literal.value, openIndex: open });
+    },
+  });
+  return calls;
+};
+
+const keysInJs = new Set(SPEAKING_FILES.flatMap(file => messageStringKeysIn(read(file))));
 const keysInHtml = new Set(
   HTML_FILES.flatMap(file => [...read(file).matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])),
 );
@@ -684,17 +750,16 @@ const referencedKeys = new Set([...keysInJs, ...keysInHtml]);
 
 // Which half of the text/markup split a key is on. A key reached through `t(`/`tr(` becomes
 // textContent, a title or a `confirm()`; a key reached through `tHTML(` or `data-i18n` becomes
-// innerHTML.
-// Two patterns and not one alternation: this set was seeded with `/\bt r?\(/`, which has a space
-// in it and therefore matches nothing at all — the two loops under it were doing the whole job while
-// the line above them read like the one that did. Found while widening the attribute scan (round 16).
+// innerHTML. The call reader above supplies the code-only half, while markup still comes from the
+// literal `data-i18n` attributes.
 const textKeys = new Set();
-for (const match of speakingSource.matchAll(/\btr\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
-for (const match of speakingSource.matchAll(/\bt\('(ext\.[A-Za-z0-9.]+)'/g)) textKeys.add(match[1]);
-const markupKeys = new Set([
-  ...[...speakingSource.matchAll(/\btHTML\('(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]),
-  ...keysInHtml,
-]);
+const markupKeys = new Set(keysInHtml);
+for (const file of SPEAKING_FILES) {
+  for (const { name, key } of messageCallsIn(read(file))) {
+    if (name === 'tHTML') markupKeys.add(key);
+    else textKeys.add(key);
+  }
+}
 
 const placeholdersOf = value => (value.match(/%\d+\$[sd]/g) ?? []).sort();
 const tagsOf = value => (value.match(/<\/?[a-z][^>]*>/g) ?? []).map(tag => tag.replace(/\s+class="[^"]*"/, '')).sort();
@@ -798,21 +863,17 @@ const highestArgumentOf = value => Math.max(
 // Both shapes are read: a call naming its key, and the table that fills `data-i18n` nodes, whose
 // entries are arrays and are the only place arguments are supplied without a call in sight.
 const refuseArgumentMismatches = (file, rawSource, messages) => {
-  // Prose is not a call, and this gate was counting one (review 38). The masking is shared with the
-  // key scanners rather than repeated here, so the two cannot come to disagree about what code is.
-  const source = withoutComments(rawSource);
   const supplied = [];
-  for (const match of source.matchAll(/\b(?:t|tr|tHTML)\(\s*'(ext\.[A-Za-z0-9.]+)'/g)) {
-    const open = source.indexOf('(', match.index);
-    const parts = topLevelParts(source, open);
-    assert.ok(parts !== null, `${file}: a call to ${match[1]} runs off the end of the file`);
-    supplied.push([match[1], parts - 1, 'call']);
+  for (const { key, openIndex } of messageCallsIn(rawSource)) {
+    const parts = topLevelParts(rawSource, openIndex);
+    assert.ok(parts !== null, `${file}: a call to ${key} runs off the end of the file`);
+    supplied.push([key, parts - 1, 'call']);
   }
-  const table = source.indexOf('const STATIC_TEXT_ARGS = {');
+  const table = rawSource.indexOf('const STATIC_TEXT_ARGS = {');
   if (table >= 0) {
-    for (const match of source.slice(table).matchAll(/'(ext\.[A-Za-z0-9.]+)':\s*\(\)\s*=>\s*\[/g)) {
-      const open = source.indexOf('[', table + match.index + match[1].length);
-      const parts = topLevelParts(source, open);
+    for (const match of rawSource.slice(table).matchAll(/'(ext\.[A-Za-z0-9.]+)':\s*\(\)\s*=>\s*\[/g)) {
+      const open = rawSource.indexOf('[', table + match.index + match[1].length);
+      const parts = topLevelParts(rawSource, open);
       assert.ok(parts !== null, `${file}: the static arguments for ${match[1]} run off the end of the file`);
       supplied.push([match[1], parts, 'static fill']);
     }
@@ -863,6 +924,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // ...including across lines and with a trailing comma, which is how the one multi-line entry in
   // this repository is written
   assert.equal(refused("const STATIC_TEXT_ARGS = {\n  'ext.a': () => [\n    one,\n    two,\n  ],\n};", messages), null);
+});
+
+test('a call-shaped string is not a reference, text consumer, or argument-supplying call', () => {
+  const source = `const example = "tr('ext.a')";`;
+  assert.deepEqual(messageStringKeysIn(source), []);
+  assert.deepEqual(messageCallsIn(source), []);
+  assert.equal(refuseArgumentMismatches('fixture.js', source, { 'ext.a': 'takes nothing' }), 0);
 });
 
 test('_locales is what _i18n derives — every name, and the bytes as committed', () => {
