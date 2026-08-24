@@ -244,11 +244,14 @@ cd app && swift test   # Core unit tests
 node --test            # extension (JS) pure-function unit tests — repo root, no dependencies
 app/build.sh           # build the app bundle (app/build/Terminal Checkout.app)
 app/e2e.sh             # relay ↔ socket ↔ server round-trip regression test (after building)
+
+node tools/derive-locales.js          # rewrite extension/_locales/ from extension/_i18n/
+node tools/derive-locales.js --check  # the same derivation as a check (node --test runs it too)
 ```
 
 Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLAUDE.md). Adding support for a new terminal? Start from [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md). Why the project is shaped the way it is lives in [`docs/context/`](docs/context/index.md).
 
-**Adding a language.** Four places, and the gates find the rest: add the tag to `supportedLocales` (`app/Sources/Core/Localization.swift`), add `app/Sources/App/Resources/<tag>.lproj/` with `Localizable.strings` and `InfoPlist.strings`, add `extension/_i18n/<tag>.js`, and add `extension/_locales/<chrome-code>/messages.json` — that last one carries only the extension's name and description, because Chrome will not read those from anywhere else, and its directory is named in **Chrome's** locale codes rather than ours (`zh-Hans` is `zh_CN` there, `zh-Hant` is `zh_TW`). Then run the gates: the catalogue tests fail on a missing or extra key and on placeholders that disagree between languages, and `app/build.sh` fails if the built bundle does not match the source `.lproj` files byte for byte. Values are never translated for anything that reaches a shell — see the `ShellPayload` type and the note in [Language](#language).
+**Adding a language.** Four places, and the gates find the rest: add the tag to `supportedLocales` (`app/Sources/Core/Localization.swift`), add `app/Sources/App/Resources/<tag>.lproj/` with `Localizable.strings` and `InfoPlist.strings`, add `extension/_i18n/<tag>.js`, and add `extension/_locales/<chrome-code>/messages.json` with the extension's name and description — Chrome will not read those from anywhere else, and that directory is named in **Chrome's** locale codes rather than ours (`zh-Hans` is `zh_CN` there, `zh-Hant` is `zh_TW`). Everything else in that file is written for you: `node tools/derive-locales.js` derives one Chrome message per dictionary key, and `--check` is the gate that says the two stores still agree. Then run the gates: the catalogue tests fail on a missing or extra key and on placeholders that disagree between languages, and `app/build.sh` fails if the built bundle does not match the source `.lproj` files byte for byte. Values are never translated for anything that reaches a shell — see the `ShellPayload` type and the note in [Language](#language).
 
 ## Security
 

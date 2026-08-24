@@ -3,7 +3,7 @@
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout` (앱 `app/`, 확장 `extension/`)
 - 시작 커밋: `92a2354`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/i18n-review` (`worktree-i18n-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/agent-acd7793e35083a089` (`worktree-agent-acd7793e35083a089`) — 작업 트리는 에이전트마다 새로 만들어지므로 이 칸은 **마지막 승격을 낸 트리**를 가리킨다
-- 현재: **A0 verified · A2 claimed** — 자리 정체성 승격 70 · 표현식 수신자와 거절별 픽스처 승격 71 · 거절의 «적용»까지 픽스처 안으로 승격 72 · **A2 진행 중** — 경계 변환기 승격 74 · 자기 식별 태그가 승격 75 · `_locales` 유도와 인자 정체성 오라클이 승격 76 · Q21 게이트가 **승격 77**(이 줄을 담은 커밋) · 직전 승격 `45bd8d2`(76) · 리뷰 중 없음 · 게이트 그린(**이 승격에서 네 개를 다 돌린 결과**): swift `Executed 509 tests, with 1 test skipped and 0 failures (0 unexpected)` · node `# tests 243 / # pass 243 / # fail 0`(241 + 신규 2) · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` + `Build complete: …` · `e2e.sh` → **PASS 11** + `e2e: all cases passed`
+- 현재: **A0 verified · A2 claimed** — 자리 정체성 승격 70 · 표현식 수신자와 거절별 픽스처 승격 71 · 거절의 «적용»까지 픽스처 안으로 승격 72 · **A2 진행 중** — 경계 변환기 승격 74 · 자기 식별 태그가 승격 75 · `_locales` 유도와 인자 정체성 오라클이 승격 76 · Q21 게이트가 승격 77 · A2의 상시 단계 표와 README 정정이 **승격 78**(이 줄을 담은 커밋) · 직전 승격 `2bba9e6`(77) · 리뷰 중 없음 · 게이트 그린(**이 승격에서 네 개를 다 돌린 결과**): swift `Executed 509 tests, with 1 test skipped and 0 failures (0 unexpected)` · node `# tests 243 / # pass 243 / # fail 0`(241 + 신규 2) · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` + `Build complete: …` · `e2e.sh` → **PASS 11** + `e2e: all cases passed`
 - 최근 검증자 판정: **6차 설계 리뷰(리뷰 36) — 조건부**. 「**Verdict: no.** Add the real-Chrome placeholder-substitution oracle; then the plan is ready to implement.」 그리고 같은 보고의 「the migration design itself is otherwise ready」 · 조건은 **승격 68이 충족했고 7차 설계 리뷰는 없다** · 원문 `<스크래치패드>/review-36-response.md`. R8까지의 증분 리뷰는 「라운드 로그」에, R30∼R36의 설계 리뷰는 「전환 계획」의 상태 줄과 「N차 설계 리뷰가 A0 전에 요구한 …」 절들에 있다
 - **위 세 줄은 승격마다 갱신한다.** 방금 전까지 이 줄들은 「R8 · `c5ef554` · swift 400 / node 158 / e2e 9」였고 그 상태로 **커밋 47개**를 지났다(`git log -S 'c5ef554' -- docs/plans/i18n-five-locales.md` → `5e71587`, `git rev-list --count 5e71587..HEAD` → 47). 이 루프에서 **에이전트가 갈릴 때마다 후임이 가장 먼저 읽는 줄**이라 낡으면 후임이 틀린 자리에서 시작한다 — 실제로 승격 68의 에이전트는 여기서 승격 번호를 못 얻어 드라이버에게 들었다
 
@@ -953,6 +953,17 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 **신규 커밋 아티팩트 2건, 둘 다 입장 기준을 통과한다**(D146): `two sites in one file that write the same attribute are told apart by what fills them`은 **(i)** — 정체성을 되돌리면 이 케이스와 코퍼스 목록 둘이 실패한다(실측 `Executed 73 / fail 2`) · `a write whose attribute name the scan cannot read is refused, in every receiver shape`은 **(i)+(ii)** — 수신자 폭을 되돌리면 red(`fail 1`), 거절의 몸통을 비워도 red(`fail 1`)이고, 동시에 「읽는 목록이 무엇을 뜻하는가」를 고정한다. 부재 증명은 없다.
 
 **liveness 소탕(새 술어에 대고 다시)** — 술어를 테스트 파일에서 «꺼내» 실행한다(`<스크래치패드>/liveness.mjs`): 마크업 **13파일** · 속성 자리 **16**(코퍼스에 살아 있다) · `setAttribute` 계산 이름 **0** · 대괄호 계산 쓰기 **0**(코퍼스에 죽어 있고 **픽스처로만** 살아 있다 — D154가 요구하는 그대로) · 정체성 **16개 중 고유 13** · 같은 정체성 공유 **6자리/3쌍** · `(파일, 속성)` 공유 **14자리/3쌍**.
+
+### 승격 74∼78 상시 단계 — 세 형태 (A2의 diff 전수)
+
+| 형태 | 개수 | 자리 |
+|:--|:--|:--|
+| ① 이 diff 안의 문장이 이 diff 안의 코드와 어긋나는가 | **1(고쳤다)** | `i18n.js`의 새 주석이 「`tr('ext.header.options')`가 쓰이는 **157자리**가 그대로다」라고 적었다 — 157은 계획의 다른 측정에서 온 수이고 **내가 그 정의로 재현하지 못했다**(오늘 세면 `.js`의 `'ext.…'` 리터럴 117 + `data-i18n` 42 = 159, 정의가 다르다). 재현하지 못하는 수는 지우는 편이 낫다: 문장을 「쓰이는 모든 자리」로 바꿨다. 나머지 수치는 전부 이 라운드의 실측이다(125 이름 · 32×5 비교 · 어순 8 · 102 호출 자리) |
+| ② 이 변경이 리포 어디서든 문장을 거짓으로 만드는가 | **2(둘 다 고쳤다)** | ⓐ `README.md`의 「언어 추가」가 `_locales/<chrome-code>/messages.json`은 **「확장의 이름과 설명만 담는다」**고 말한다 — A2가 그 파일을 125 이름으로 만들었으므로 거짓이 됐다. 문장을 고치고 유도 명령을 개발 절차에 넣었다(문서 전면 개정은 A3의 몫 그대로) · ⓑ **Swift 소유권 게이트**가 「`_locales`는 그 둘만 갖는다」를 단언하고 있었다 — 615 실패로 red가 났고, 「Chrome의 두 키 **또는** ext 저장소가 소유한 키의 변환」으로 다시 썼다(A7이 세 저장소로 다시 쓸 자리, D192의 잔여 ②). `CLAUDE.md`·`docs/context/`에는 `_locales`·`_i18n`를 말하는 문장이 **0건**이다(전수 grep) |
+| ③ 소탕 표에 형태별 개수를 적었는가 | 이 표 | 신규 커밋 아티팩트: 생성기 1(`tools/derive-locales.js`) · 유도된 카탈로그 5 · 테스트 5건(경계 변환 · 자기 식별 태그 · 유도 대조 · 인자 정체성 오라클 · Q21). **테스트는 전부 (ii)**(불변 원칙이 이름으로 부르는 계약을 고정한다: `_locales` 문법 · D172의 자기 식별 · D159의 인자 정체성 · Q21의 도달 가능성) **이고 그중 셋은 (i)이기도 하다** — 변환기·태그·유도를 되돌리면 각각 red다. 부재 증명은 없다 |
+
+**liveness 소탕(새 술어들에 대고)**: 경계 변환 **123키**(122 + 메타데이터 1)에 매치 · 유도 대조 **5카탈로그 × 125 이름** · 인자 정체성 오라클 **160값**(32 × 5) · Q21 게이트 **102자리**(호출 96 + 정적 채움 6) · 계산된 이름 거절은 여전히 코퍼스 **0**(픽스처로만 살아 있다). **오라클과 바이트 게이트를 가르는 실측**: 생성기를 오염시키면 `--check`는 exit 0인데 오라클은 red(D192).
+
 
 ## 전환 계획 — 확장은 `chrome.i18n`을 쓴다 (R30 · 설계, 구현 없음)
 

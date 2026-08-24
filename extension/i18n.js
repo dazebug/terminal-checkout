@@ -44,8 +44,8 @@ const TC_I18N_METADATA_KEYS = [TC_I18N_CATALOGUE_TAG_KEY];
 // `_locales` message names may contain `[A-Za-z0-9_@]` and are matched **case-insensitively**
 // (measured against every extension installed on this machine: 739 `messages.json` files, 25,510
 // names, not one with a dot). Our ids are dotted, so something has to give — and what gives is the
-// **boundary**, not the source (D162). `tr('ext.header.options')` stays exactly that in every one of
-// the 157 places it is written, and `ext_header_options` exists only where the platform is looking.
+// **boundary**, not the source (D162). `tr('ext.header.options')` stays exactly that everywhere it
+// is written, and `ext_header_options` exists only where the platform is looking.
 // The alternative was renaming the source, which would have made "an old dictionary in memory
 // meeting a new consumer" produce raw keys on screen; with the conversion at the edge that state
 // cannot be written down at all.
