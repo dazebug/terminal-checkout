@@ -3,11 +3,11 @@
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout` (앱 `app/`, 확장 `extension/`)
 - 시작 커밋: `92a2354`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/i18n-review` (`worktree-i18n-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/agent-acd7793e35083a089` (`worktree-agent-acd7793e35083a089`) — 작업 트리는 에이전트마다 새로 만들어지므로 이 칸은 **마지막 승격을 낸 트리**를 가리킨다
-- 현재: **일시 중지**(사용자 요청, 승격 90에서 멈춘다) · **승격 90**(이 줄을 담은 커밋) · 직전 승격 `b9d67df`(89) · 리뷰 중 없음 · 게이트 그린(이 승격에서 네 개를 다 돌린 결과): swift `Executed 509 tests, with 1 test skipped and 0 failures (0 unexpected)` · node `# tests 261 / # pass 261 / # fail 0` · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` · `e2e.sh` → **PASS 11** · `node tools/check-locales.js` → `all 5 catalogues match what _i18n derives` · 이 작업 트리에는 아직 승격되지 않은 **A0‴ claimed** 커밋이 있다
-- 최근 검증자 판정: **리뷰 40 — A0‴로 네 항목**(원문은 스크래치패드에 있었고 **스크래치패드는 남지 않는다**, 그래서 요지를 아래 「이번 배정」에 옮겨 적었다). 그 앞: 리뷰 39가 **A3를 차단**했고 A3′(승격 87∼90)가 닫았다 · 리뷰 38이 A0″(승격 86) · 리뷰 37이 A0′(승격 79∼80)
+- 현재: **진행 중** · **승격 95** · 마지막 승격 `8796d7f`(95) · 직전 승격 `98edc9c`(94) · 리뷰 중 없음 · 드라이버가 기준 트리에서 독립 재실행한 게이트 4종 그린: swift `Executed 509 tests, with 1 test skipped and 0 failures` · node `# tests 262 / # pass 262 / # fail 0` · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` · `e2e.sh` → **PASS 11**
+- 최근 검증자 판정: **리뷰 40 — A0‴로 네 항목**(원문은 스크래치패드에 있었고 **스크래치패드는 남지 않는다**, 그래서 요지와 구현 근거를 아래 「A0‴ 구현 기록」에 옮겨 적었다). 그 앞: 리뷰 39가 **A3를 차단**했고 A3′(승격 87∼90)가 닫았다 · 리뷰 38이 A0″(승격 86) · 리뷰 37이 A0′(승격 79∼80)
 - **위 세 줄은 승격마다 갱신한다.** 방금 전까지 이 줄들은 「R8 · `c5ef554` · swift 400 / node 158 / e2e 9」였고 그 상태로 **커밋 47개**를 지났다(`git log -S 'c5ef554' -- docs/plans/i18n-five-locales.md` → `5e71587`, `git rev-list --count 5e71587..HEAD` → 47). 이 루프에서 **에이전트가 갈릴 때마다 후임이 가장 먼저 읽는 줄**이라 낡으면 후임이 틀린 자리에서 시작한다 — 실제로 승격 68의 에이전트는 여기서 승격 번호를 못 얻어 드라이버에게 들었다
-- **상태 사다리**: `verified` — A0 · A0′ · A2. `claimed` — A3(승격 81∼85) · A0″(86) · A3′(87∼90) · **A0‴(리뷰 40, 이 작업 트리)**. 남은 큐: **A4 → A5 → A6 → A7 → A8 → 테스트 감사 → 마무리 커밋 → cold 리뷰**.
-- **이번 배정(A0‴, 리뷰 40) — 네 항목이고 스크래치패드가 아니라 여기 적는다**: ① `withoutComments`는 주석을 닫았지만 **호출 «모양»의 문자열**은 남는다 — 호출 자리를 읽는 렉시컬 리더가 필요하고, **한 표현을 둘이 공유할 수 없다**(참조 발견은 문자열 리터럴을 «필요»로 하고 호출 발견은 그것을 «거절»해야 한다) ② 쓰기 인식기가 아직 «사람이 쓴 구문 목록»이라 `??=`·`||=`를 빠뜨리고, 그래서 **정확한 수 16이 아무것도 말하지 않는다** ③ 인용된 이름에 대한 주석이 **옳은 동작에 틀린 이유**를 댄다(D147 아래에서는 옳다) ④ **우리가 스스로 노출한 판단이 부류로는 맞고 우리 코드에 대해서는 틀렸다** — `roleOf`가 `_locales/<무엇이든>/messages.json`을 받아들이고 그 게이트는 **개수만** 보는데, 정체성은 Swift와 `check-locales.js`에서 강제된다. 처방: **로케일→Chrome 매핑 하나에서 허용 경로 집합을 «유도»**하고 문장을 고친다 — 두 번째 손으로 쓴 경로 목록은 그 부류를 다시 만든다
+- **상태 사다리**: `verified` — A0 · A0′ · A2 · **A0‴(승격 91∼95)**. `claimed` — A3(승격 81∼85) · A0″(86) · A3′(87∼90). 남은 큐: **A4 → A5 → A6 → A7 → A8 → 테스트 감사 → 마무리 커밋 → cold 리뷰**.
+- **이번 배정(A4)**: 새 소비자에서 캐시·세대·소켓 로케일 질의·재그리기 기계의 **사용**을 걷어내되, 직전 소비자가 부를 수 있는 심볼과 호출 모양·`_i18n` 사전·로드 항목은 세대 일관 배포까지 호환 승객으로 남긴다(D170·D210). 초점 테스트를 지우지 않고(D182), A4 최종 상태에 대해 네 혼합 세대 조합의 초기화와 이름 붙인 지연 생애 주기 경계를 모두 구동하며 뒤집힌 장부 오라클을 각 조합에 적용한다.
 
 이슈 #24 — "Localize the app's user-facing strings (en + ko)"를 사용자 요청으로 확장한 것이다. 이슈는 앱만, `en`+`ko`만 다뤘다. 사용자 요청은 **로케일 5개**(`ko`·`en`·`ja`·`zh-Hans`·`zh-Hant`)와 **확장·확장 설정 페이지까지**이고, 여기에 이슈가 "별도 추적"으로 미뤄 둔 **`app/`에 남은 한글의 영어화**가 같은 PR에 얹힌다. 축이 셋이고 서로 다른 판정을 받으므로 이 계획은 처음부터 셋을 갈라 다룬다: **로컬라이즈**(키 + 5개 카탈로그), **언어 소유권과 동기화**(앱이 정하고 확장이 따른다 — D8·D17), **영어화**(단일 언어로 번역, 키 없음).
 
@@ -1073,9 +1073,9 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 **토글 넷**: 인자를 다시 갈라 놓기 → `the old skeleton under new consumers (ja): the page drew "設定" while calling itself en` · 우리 버튼 선택자를 안 맞게 → `nothing was inserted …` · 기준선 픽스처 편집 → 핀이 잡는다 · 리더 우회 → `reached the filesystem some other way`.
 
 
-### A0‴ (리뷰 40) 구현 기록 — claimed, 미승격
+### A0‴ (리뷰 40) 구현 기록 — verified, 승격 91∼95
 
-- 상태: **claimed**. 드라이버가 `verified`로 올리기 전이며, 승격 번호도 이 작업 트리에서 올리지 않는다.
+- 상태: **verified**. 드라이버 재실행: `git fetch <clone> 8796d7f` → ff, 승격 95건, `git status --porcelain` 비어 있음. 커밋 본문의 리터럴 `\n` 0건 확인. 게이트 4종을 기준 트리에서 독립 재실행해 일치.
 - 변경 커밋: `d4600dc`은 `messageStringKeysIn`과 `messageCallsIn`을 분리해 `const example = "tr('ext.a')"`를 세 종류의 호출로 세지 않게 했고, `930da9f`는 `ASSIGNMENT_OPERATOR`로 `??=`·`||=`와 같은 logical/compound assignment를 읽게 했으며, `9c7c9da`는 assembled quoted/template name을 D147의 의도적 제외라고 설명했고, `98edc9c`는 `CATALOGUE_PATHS`를 `TC_I18N_LOCALES`와 `CHROME_LOCALE_DIRECTORIES`에서 유도해 `roleOf`의 역할 분류와 catalogue identity gate를 구분했다.
 - red → green 재현: `git apply -R` 각 toggle에 임시 최소 fixture를 붙여 `d4600dc`은 exit 1, actual `{ keys: [ 'ext.a' ], calls: [ 'ext.a' ], supplied: 1 }`, `930da9f`는 exit 1, actual `{ computed: [], sites: [] }`, `98edc9c`는 exit 1, actual `localeCatalogue`를 냈고, 정방향 복원 뒤 네 저장본 모두 `cmp=identical`과 빈 `git status --porcelain`을 냈다. `9c7c9da`는 wording-only라 역패치 후 focused node test `5 / 5 / 0`으로 동작 불변을 확인했다. 상세 로그와 패치는 `/private/tmp/terminal-checkout-a0-liveness.JdOYP8/toggles/`에 있다.
 - liveness sweep: `node /private/tmp/terminal-checkout-a0-liveness.JdOYP8/liveness-pipeline.mjs`가 테스트 파일에서 현재의 classification → enumeration → audit → refusal와 lexical readers를 추출해 `roles: {"speakingSource":12,"localeCatalogue":5,"manifest":1,"markupSource":1}` · catalogue paths `5` · audited files `13` · audit sites `16` · computed-name writes `setAttribute 0, bracket 0` · shared pairs `14 in 3 pairs` · same values `6`을 냈고, call-shaped string·logical assignments·assembled quoted name probes도 각각 의도한 결과를 냈다.
