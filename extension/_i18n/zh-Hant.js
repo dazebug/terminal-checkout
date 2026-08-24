@@ -3,6 +3,7 @@
 // 標記、佔位符與機器字面值（`{cd}`、`z {repo}` 等）不翻譯。
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['zh-Hant'] = {
+  "ext.meta.catalogueTag": "zh-Hant",
   "ext.header.options": "設定",
   "ext.header.subtitle": "PR、issue 與儲存庫按鈕、指令、main 分支 — 終端機選擇、權限以及儲存庫基準資料夾在 Terminal Checkout 應用程式的設定視窗中",
   "ext.migration.badge": "● 你儲存的按鈕早於目前預設 — 去檢視",

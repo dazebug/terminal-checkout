@@ -19,6 +19,7 @@
 // tag multiset.
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['en'] = {
+  "ext.meta.catalogueTag": "en",
   "ext.header.options": "options",
   "ext.header.subtitle": "PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window",
   "ext.migration.badge": "● Your saved buttons predate the current presets — review",

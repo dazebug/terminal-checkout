@@ -19,8 +19,10 @@ for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
 }
 // and defaults.js, whose presets resolve their display text through the dictionaries above
 vm.runInThisContext(read('defaults.js'));
-const { i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK } =
-  vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK })');
+const {
+  i18nText, applyDocumentLanguage, chromeMessageId,
+  TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
+} = vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
 
 test('the five dictionaries register themselves, and nothing else does', () => {
   assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
@@ -568,6 +570,33 @@ test('every locale carries the same keys, and every value says something', () =>
   }
 });
 
+test('each catalogue says which one it is, and that key is metadata rather than a message', () => {
+  // **The tag is asked of the catalogue, not computed** (D172). At A3 the options page has to put a
+  // language on `<html lang>`, and the honest answer is not Chrome's configured UI language —
+  // Chrome may report `fr` and then serve the English catalogue, and `lang="fr"` over English text
+  // is the accessibility defect we are fixing, reproduced in the other direction. A key whose value
+  // is the catalogue's own tag lets **Chrome's fallback choose the answer**: whichever catalogue it
+  // picked is the one that replies.
+  //
+  // It goes into `_i18n` **now**, before that store is pinned as the migration baseline, because of
+  // the general rule D178 states: anything the new side needs from the old store has to be in the
+  // baseline at the moment the baseline is pinned. A4's consumer asking an unpinned `i18n.js` for
+  // this key would otherwise get the raw key back.
+  for (const tag of TC_I18N_LOCALES) {
+    assert.equal(i18nText(TC_I18N_CATALOGUE_TAG_KEY, tag), tag, `${tag} does not name itself`);
+  }
+  // And it is **metadata**: not one of the 122 user-facing strings, so it stays out of the counts
+  // that ask whether the extension is fully translated, and out of the gate that says every message
+  // in the catalogue is asked for by the page. Nothing asks for it until A3.
+  assert.ok(TC_I18N_METADATA_KEYS.includes(TC_I18N_CATALOGUE_TAG_KEY));
+  // "Nothing draws it" is asked of the sets that mean drawn — `textKeys` and `markupKeys`.
+  // `referencedKeys` would answer yes and mean nothing: it collects every `'ext.…'` literal in the
+  // scripts, and the constant naming this key is one. A gate that passes because of the declaration
+  // of the thing it is checking is the accidental pass this file has been caught by before.
+  assert.ok(!textKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as text');
+  assert.ok(!markupKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as markup');
+});
+
 test('the boundary conversion is legal for every key, and collides for none', () => {
   // **The platform's grammar is satisfied at the boundary and nowhere else** (D162). A `_locales`
   // message name may hold `[A-Za-z0-9_@]` and is compared case-insensitively, so the dotted logical
@@ -600,7 +629,13 @@ test('the boundary conversion is legal for every key, and collides for none', ()
 test('the page can only ask for keys the catalogue has, and asks for all of them', () => {
   const en = Object.keys(globalThis.TC_I18N.en);
   const missing = [...referencedKeys].filter(key => !en.includes(key));
-  const unreferenced = en.filter(key => !referencedKeys.has(key));
+  // Metadata is exempt **by name**, and the exemption is one line rather than a silence: a key whose
+  // value is the catalogue's own tag is not a message the page draws, and until A3 asks it for the
+  // document language nothing reads it at all (D178). Leaving it to pass on the accident that its
+  // own declaration looks like a reference would be a gate agreeing for the wrong reason.
+  const unreferenced = en
+    .filter(key => !TC_I18N_METADATA_KEYS.includes(key))
+    .filter(key => !referencedKeys.has(key));
   assert.deepEqual(missing, [], 'the page names a message that is not in the catalogue');
   assert.deepEqual(unreferenced, [], 'the catalogue carries a message nothing asks for');
 });
@@ -1927,7 +1962,11 @@ test('a translation that is still English is caught where English is not the ans
   // forbids, and the threshold is what makes it a gate instead of a nuisance. **A gate people turn
   // off is worse than no gate** (the standard item 7 set), and a per-key rule here would fire on
   // `main branch` and `Terminal Checkout` forever.
-  const en = globalThis.TC_I18N.en;
+  // Metadata is out of both halves of the ratio (D178): `ext.meta.catalogueTag` is a tag, not a
+  // sentence, and counting it would let the denominator grow with values no translator ever sees.
+  const en = Object.fromEntries(
+    Object.entries(globalThis.TC_I18N.en).filter(([key]) => !TC_I18N_METADATA_KEYS.includes(key)),
+  );
   const total = Object.keys(en).length;
   for (const tag of TC_I18N_LOCALES) {
     if (tag === 'en') continue;

@@ -24,6 +24,21 @@ const TC_I18N_LOCALES = ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant'];
 // folding an unshipped language to English is a decision, not a property of the dictionaries.
 const TC_I18N_FALLBACK = 'en';
 
+// The key every catalogue answers with its own tag, and the list of keys that are **not** messages.
+//
+// A catalogue that names itself is how the document language stops being a guess (D172). Chrome
+// picks which catalogue answers, including when its UI language is one we do not ship and it falls
+// back; asking the catalogue rather than asking Chrome means the answer is the language actually on
+// screen. Reimplementing Chrome's fallback here would be a second copy of somebody else's
+// algorithm — the shape this project has lost to before.
+//
+// Metadata, not one of the strings a person reads: it stays out of "is this locale fully
+// translated" counts and out of the gate that every message in the catalogue is drawn somewhere
+// (D178). It is in the dictionaries **before** they are pinned as the migration baseline, because
+// anything the new side needs from the old store has to be there at the moment of the pin.
+const TC_I18N_CATALOGUE_TAG_KEY = 'ext.meta.catalogueTag';
+const TC_I18N_METADATA_KEYS = [TC_I18N_CATALOGUE_TAG_KEY];
+
 // The one conversion between the id a source names and the name Chrome's `_locales` can hold.
 //
 // `_locales` message names may contain `[A-Za-z0-9_@]` and are matched **case-insensitively**

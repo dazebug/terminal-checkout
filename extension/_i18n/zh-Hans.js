@@ -2,6 +2,7 @@
 // 标记、占位符与机器字面量（`{cd}`、`z {repo}` 等）不翻译。
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['zh-Hans'] = {
+  "ext.meta.catalogueTag": "zh-Hans",
   "ext.header.options": "设置",
   "ext.header.subtitle": "PR、issue 和仓库按钮、命令、main 分支 — 终端选择、权限以及仓库基准文件夹在 Terminal Checkout 应用的设置窗口中",
   "ext.migration.badge": "● 你保存的按钮早于当前预设 — 去查看",

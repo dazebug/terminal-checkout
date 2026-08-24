@@ -2,6 +2,7 @@
 // マークアップ・プレースホルダ・機械リテラル(`{cd}`・`z {repo}` など)は翻訳しない。
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['ja'] = {
+  "ext.meta.catalogueTag": "ja",
   "ext.header.options": "設定",
   "ext.header.subtitle": "PR・issue・リポジトリのボタン、コマンド、main ブランチ — ターミナルの選択、権限、リポジトリのベースフォルダは Terminal Checkout アプリの設定ウインドウにあります",
   "ext.migration.badge": "● 保存されたボタンが現在のプリセットより古いです — 確認する",
