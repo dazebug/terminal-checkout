@@ -773,6 +773,37 @@ const computedNameWritesIn = source => ({
   )].map(match => `${match[1]}[${match[2].trim()}]`),
 });
 
+// **The refusal itself, so that removing it is red.** The predicate above can be exercised by a
+// fixture, but the check that acts on its answer could not: the corpus has nothing to refuse, so
+// deleting both asserts out of the loop left every test passing — the dead-guard class one level up
+// from the one D154 names, found by toggling the commit that added the fixture. The corpus loop and
+// the fixture now enter the gate through this one function.
+//
+// The two refusals are not the same rule. A bare identifier is the shape somebody arrives at by
+// accident — a name held in a variable — and `setAttribute` is where that can be said flatly, because
+// the call itself is the evidence that an attribute is being written; there is no declaration escape
+// and there never has been. **The same rule spelled with brackets** (round 27 review) refuses less:
+// what can be established from outside is a **literal** written into a computed member, which is text
+// shipping through a name nobody can read. With the value an expression too there is nothing to
+// classify — no name, no words — and that is the line that also leaves `'ti' + 'tle'` alone, since
+// nobody writes that by mistake and against somebody writing it on purpose this gate has no standing
+// (D147). Deciding whether a receiver is an element would take knowing what `el` is, and a lint does
+// not get a parser — so the bracket rule keeps the escape the flat one lacks: a declared receiver.
+const refuseUnreadableComputedNames = (file, source, declared) => {
+  const computed = computedNameWritesIn(source);
+  assert.deepEqual(
+    computed.setAttribute, [],
+    `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
+  );
+  for (const write of computed.bracket) {
+    assert.ok(
+      Object.hasOwn(declared, write),
+      `${file} writes a literal into ${write}, whose name this scan cannot read — spell the name `
+        + 'out if it is an attribute, or declare here why that receiver is not an element',
+    );
+  }
+};
+
 // Which parts of a value ship as text and which are computed. Brace-aware: `${count > 1 ? … : ''}`
 // carries braces of its own, and stopping at the first `}` would read the tail of an interpolation
 // as text somebody forgot to translate. `null` is an interpolation that never closes.
@@ -893,30 +924,57 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   // through a computed name — measured, 0 across the 13 markup files — so deleting either guard left
   // the suite green: a guard nothing can fail is a dead guard, and this loop has been bitten by that
   // class twice (D154). The fixture below is what fails without them, one line per refusal.
+  // **Through the gate's own refusal, not past it.** Asking `computedNameWritesIn` what it found
+  // proves the predicate reads the shape; it says nothing about the check that acts on the answer,
+  // and that check is unfailable from the corpus too — measured by toggling the commit that added
+  // this test: deleting both asserts out of the loop left the suite green. So the fixture calls the
+  // refusal, and what it asserts is that the refusal happens and names the write.
   const refused = (source) => {
-    const { setAttribute, bracket } = computedNameWritesIn(source);
-    return [...setAttribute, ...bracket];
+    let failure = null;
+    try {
+      refuseUnreadableComputedNames('fixture.js', source, {});
+    } catch (error) {
+      // Only a refusal is an answer here. Anything else — a typo in a name, a broken regex — stays
+      // an error rather than being reshaped into a message this test then matches against.
+      if (error.code !== 'ERR_ASSERTION') throw error;
+      failure = error.message;
+    }
+    return failure;
   };
   // `setAttribute` is the flat case: the call itself is the evidence that an attribute is written, so
   // a name that is not a literal is refused whatever the value turns out to be.
-  assert.deepEqual(refused("el.setAttribute(name, 'prose');"), ['setAttribute(name, …)']);
+  assert.match(refused("el.setAttribute(name, 'prose');"), /sets an attribute whose name it computes/);
   // Brackets carry no such evidence — the receiver could be a plain object — so what is refused is
   // the part that can be established from outside: a **literal** going into a name nobody can read
-  // (D150). All four receiver shapes, because the reader that read only the first two is the finding:
-  assert.deepEqual(refused("el[name] = 'prose';"), ['el[name]']);
-  assert.deepEqual(refused("page.form.el[name] = 'prose';"), ['page.form.el[name]']);
-  assert.deepEqual(refused("rows[0].node[name] = 'prose';"), ['rows[0].node[name]']);
+  // (D150). All four receiver shapes, because the reader that read only the first two is the finding,
+  // and the message has to name the write it refused or the failure points at nothing:
+  assert.match(refused("el[name] = 'prose';"), /writes a literal into el\[name\]/);
+  assert.match(refused("page.form.el[name] = 'prose';"), /writes a literal into page\.form\.el\[name\]/);
+  // The receiver is named whole: read as `node[name]`, this failure would send its reader to the
+  // wrong expression.
+  assert.match(refused("rows[0].node[name] = 'prose';"), /writes a literal into rows\[0\]\.node\[name\]/);
   // **The one round 29 named**, and the reason this is not a paraphrase: a receiver that ends in a
   // call was read by neither pattern, so this exact line passed the gate.
-  assert.deepEqual(
+  assert.match(
     refused("document.querySelector('#x')[name] = 'prose';"),
-    ["document.querySelector('#x')[name]"],
+    /writes a literal into document\.querySelector\('#x'\)\[name\]/,
   );
   // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
   // above reads it as an ordinary site — and a computed write with no literal in it carries no text
   // to classify, which is the same line that leaves `'ti' + 'tle'` alone (D147).
-  assert.deepEqual(refused("el['title'] = 'read as a site, not as a computed name';"), []);
-  assert.deepEqual(refused('counts[key] = total;'), []);
+  assert.equal(refused("el['title'] = 'read as a site, not as a computed name';"), null);
+  assert.equal(refused('counts[key] = total;'), null);
+  // A declared receiver is accepted, which is the escape the bracket rule has and `setAttribute`
+  // does not — the list in the gate is empty today, so this is the only place that shape runs.
+  assert.equal(
+    (() => {
+      try {
+        refuseUnreadableComputedNames('fixture.js', "el[name] = 'prose';", { 'el[name]': 'declared' });
+        return null;
+      } catch (error) { return error.message; }
+    })(),
+    null,
+  )
 });
 
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
@@ -962,36 +1020,9 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   for (const file of MARKUP_FILES) {
     const source = read(file);
     // A computed attribute name hides *which* attribute is being written, and the scan reads names.
-    // A bare identifier is the shape somebody arrives at by accident — a name held in a variable —
-    // so it is refused, and `setAttribute` is where that can be said flatly: the call itself is the
-    // evidence that an attribute is being written. **A name assembled out of pieces (`'ti' + 'tle'`)
-    // is not refused**, and that is the threat model above rather than an oversight: nobody writes
-    // that by mistake, and against somebody writing it on purpose the gate has no standing (D147).
-    //
-    // **Both refusals are read by `computedNameWritesIn`, the same function the fixture pins.** They
-    // find nothing here and are meant to: the fixture is what makes them fail, and before it existed
-    // either guard could be deleted with the suite staying green (D154).
-    const computed = computedNameWritesIn(source);
-    assert.deepEqual(
-      computed.setAttribute, [],
-      `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
-    );
-    // **The same rule, spelled with brackets** (round 27 review). `el[name] = …` was left unread
-    // while the sentence above said a name held in a variable is refused — we declined the
-    // assembled name on a principle and then did not apply it where it pointed the other way.
-    //
-    // What is refused is the part that can be established from outside: a **literal** written into
-    // a computed member, which is text shipping through a name nobody can read. With the value an
-    // expression too there is nothing here to classify — no name, no words — and that is where the
-    // same line falls that leaves `'ti' + 'tle'` alone. Deciding whether the receiver is an element
-    // would take knowing what `el` is, and a lint does not get a parser (D147).
-    for (const write of computed.bracket) {
-      assert.ok(
-        Object.hasOwn(DECLARED_COMPUTED_WRITES, write),
-        `${file} writes a literal into ${write}, whose name this scan cannot read — spell the name `
-          + 'out if it is an attribute, or declare here why that receiver is not an element',
-      );
-    }
+    // Both refusals, and the reasons they differ, are at `refuseUnreadableComputedNames` — the same
+    // call the fixture goes through, so neither the reading nor the refusing can be removed quietly.
+    refuseUnreadableComputedNames(file, source, DECLARED_COMPUTED_WRITES);
     for (const site of attributeSitesIn(source)) {
       assert.ok(
         !site.unreadable,
