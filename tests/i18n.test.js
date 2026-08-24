@@ -482,8 +482,9 @@ test('the transport failure path carries no metadata and raises (lint)', () => {
 // tests are what keeps them that way.
 // ---------------------------------------------------------------------------------------------
 
+// `options.js` by name, because the checks below that name it are about *that* script's order of
+// operations. The markup is not read by name anywhere any more — see `HTML_FILES`.
 const optionsJs = read('options.js');
-const optionsHtml = read('options.html');
 
 // **Every file that can name a message**, not only the options page: item 22 moved the presets, the
 // button phase markers and the update notice's prose into the dictionaries too, and a gate that
@@ -508,13 +509,22 @@ const SPEAKING_FILES = walkFiles(extension, name => name.endsWith('.js'));
 // it — so a check about markup takes the union rather than the file that happened to hold the
 // example when it was written (round 16 review).
 const MARKUP_FILES = walkFiles(extension, name => name.endsWith('.js') || name.endsWith('.html'));
+// The markup half of that union on its own, for the checks whose subject is a page rather than the
+// code that fills one. **It is read from the directory for the same reason** (round 17 review):
+// there is one page today, so a scan of `options.html` and a scan of every `.html` file agree — by
+// accident, and only until the second page exists, at which point the narrower one would keep
+// answering as though the whole set were still one file.
+const HTML_FILES = walkFiles(extension, name => name.endsWith('.html'));
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
+assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
 const speakingSource = SPEAKING_FILES.map(read).join('\n');
 
-// A message id can only be named by a literal (checked below), and `options.html` names them in an
+// A message id can only be named by a literal (checked below), and the markup names them in an
 // attribute — so between them this is the whole set.
 const keysInJs = new Set([...speakingSource.matchAll(/'(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
-const keysInHtml = new Set([...optionsHtml.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1]));
+const keysInHtml = new Set(
+  HTML_FILES.flatMap(file => [...read(file).matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])),
+);
 const referencedKeys = new Set([...keysInJs, ...keysInHtml]);
 
 // Which half of the text/markup split a key is on. A key reached through `t(`/`tr(` becomes
@@ -632,6 +642,147 @@ test('markup in a value is balanced, and the same in every locale', () => {
   }
 });
 
+// The names whose value is **read to the user**. `value`, `href`, `id` and their like are
+// deliberately out: they carry machine data as often as not, and a gate that fires on correct code
+// is one somebody switches off (the reason the command-literal gate came down from ordered to
+// multiset).
+const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeholder|alt';
+
+// **A name can be written three ways and its value four**, and the scan this replaced read one
+// combination of them: `name="…"`, with the `=` against the name, declaring the other two quotings
+// absent by a pair of patterns that required the same thing. So `title = …` with spaces around the
+// `=` — how JavaScript assigns a property, and how all four such assignments in this repository are
+// written (two template literals, two bare expressions) — was read neither by the scan nor by the
+// guards, and neither was an uppercase name or `setAttribute` (round 17 review).
+//
+// The arrangement that replaced it is the point of the change: **a form the reader cannot read is a
+// failure, not a pass.** Naming the forbidden forms is an open list that quietly grows every time
+// somebody writes JavaScript a way nobody had yet; naming the readable ones closes it, because
+// everything else lands in the assertion below.
+//
+// `i` because HTML does not care about case. `\+?=` because `+=` appends to the same property, and
+// `(?!=)` because `===` is a comparison and not a write.
+const ATTRIBUTE_SITES = [
+  new RegExp(`(?<![\\w$-])(?:${TEXT_BEARING})\\s*\\+?=(?!=)\\s*`, 'gi'),
+  new RegExp(`\\.setAttribute\\(\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
+];
+
+// The value written at `at`, in whichever form it is in. `null` is "I cannot tell where this ends",
+// which the caller turns into a failure — the reader never guesses a boundary it cannot see.
+const readAttributeValue = (source, at) => {
+  const quote = source[at];
+  if (quote === '"' || quote === "'") {
+    for (let i = at + 1; i < source.length; i += 1) {
+      if (source[i] === '\\') { i += 1; continue; }
+      if (source[i] === quote) return { text: source.slice(at + 1, i), quoted: true };
+      if (source[i] === '\n') return null;
+    }
+    return null;
+  }
+  if (quote === '`') {
+    // A template literal ends at the backtick that is not inside one of its own interpolations
+    let depth = 0;
+    for (let i = at + 1; i < source.length; i += 1) {
+      const character = source[i];
+      if (character === '\\') { i += 1; continue; }
+      if (character === '`' && depth === 0) return { text: source.slice(at + 1, i), quoted: true };
+      if (character === '$' && source[i + 1] === '{') { depth += 1; i += 1; continue; }
+      if (character === '}' && depth > 0) depth -= 1;
+    }
+    return null;
+  }
+  // Unquoted: an HTML attribute value ends at whitespace or `>`, an expression at the punctuation
+  // that ends the statement or the call it sits in. Taking the first of either is what makes an
+  // expression with a space in it stop early — and the failure message prints what was read, so the
+  // declaration that answers it is the text in front of its author.
+  const stop = source.slice(at).search(/[\s>;,)]/);
+  if (stop <= 0) return null;
+  return { text: source.slice(at, at + stop), quoted: false };
+};
+
+// Every text-bearing attribute `source` writes, in source order — the two patterns are read
+// separately and the results put back in the order an author would find them in.
+const attributeSitesIn = source => ATTRIBUTE_SITES
+  .flatMap(pattern => [...source.matchAll(pattern)].map((match) => {
+    const at = match.index + match[0].length;
+    return { at, ...(readAttributeValue(source, at) ?? { unreadable: source.slice(match.index, at + 40) }) };
+  }))
+  .sort((left, right) => left.at - right.at);
+
+// Which parts of a value ship as text and which are computed. Brace-aware: `${count > 1 ? … : ''}`
+// carries braces of its own, and stopping at the first `}` would read the tail of an interpolation
+// as text somebody forgot to translate. `null` is an interpolation that never closes.
+const splitInterpolations = (text) => {
+  const statics = [];
+  const expressions = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '$' || text[i + 1] !== '{') continue;
+    let depth = 1;
+    let j = i + 2;
+    for (; j < text.length && depth > 0; j += 1) {
+      if (text[j] === '{') depth += 1;
+      else if (text[j] === '}') depth -= 1;
+    }
+    if (depth > 0) return null;
+    statics.push(text.slice(start, i));
+    expressions.push(text.slice(i + 2, j - 1));
+    start = j;
+    i = j - 1;
+  }
+  statics.push(text.slice(start));
+  return { statics, expressions };
+};
+
+test('the attribute scan reads every form the two languages permit', () => {
+  // A fixture and not the corpus, because **the corpus is the ceiling on what it can prove**: four
+  // of the nine lines below are written somewhere in this extension and the other five are not, and
+  // about those five the corpus would keep saying nothing right up until somebody wrote one — which
+  // is the miss this exists to make impossible. Every line here is legal in the file it would be
+  // written in, and the scan that preceded this one read exactly the first of them.
+  const fixture = [
+    '<input placeholder="double">',
+    "<input placeholder='single'>",
+    '<input PLACEHOLDER="upper case, because HTML does not care">',
+    '<input placeholder = "spaces around the equals sign">',
+    '<input placeholder=unquoted>',
+    'el.title = `a template literal ${t(\'ext.a\')}`;',
+    'el.title = buttonConfig.label;',
+    "el.setAttribute('aria-label', 'through setAttribute');",
+    'el.title += " appended to what is already there";',
+  ].join('\n');
+  assert.deepEqual(attributeSitesIn(fixture).map(site => site.text), [
+    'double',
+    'single',
+    'upper case, because HTML does not care',
+    'spaces around the equals sign',
+    'unquoted',
+    "a template literal ${t('ext.a')}",
+    'buttonConfig.label',
+    'through setAttribute',
+    ' appended to what is already there',
+  ]);
+  // A comparison is not a write, and a name that merely ends in one of these is not one of them
+  assert.deepEqual(attributeSitesIn('if (el.title === x) f();\n<div data-title="machine data">'), []);
+  // **And a value it cannot delimit is a failure rather than a skip.** That is the property the
+  // whole arrangement rests on: the forms it reads are a list, so the forms it does not read have
+  // to end up somewhere louder than a pass.
+  assert.deepEqual(attributeSitesIn('el.title = ;').map(site => Boolean(site.unreadable)), [true]);
+  assert.deepEqual(
+    attributeSitesIn('<input placeholder="never closed').map(site => Boolean(site.unreadable)),
+    [true],
+  );
+
+  // The other half of reading a value: which parts of it ship as text and which are computed.
+  const split = splitInterpolations("Terminal Checkout — ${t('ext.header.options')}");
+  assert.deepEqual(split.statics, ['Terminal Checkout — ', '']);
+  assert.deepEqual(split.expressions, ["t('ext.header.options')"]);
+  // Brace-aware, because `${count > 1 ? `…` : ''}` carries braces of its own — counting to the
+  // first `}` would cut an interpolation in half and read the rest of it as text to translate.
+  assert.deepEqual(splitInterpolations('${a ? `${b}` : ""}').expressions, ['a ? `${b}` : ""']);
+  assert.equal(splitInterpolations('${never closed'), null);
+});
+
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
   // **The scan looked at values and at interpolations, never at the static markup** (round 15
   // review). A `placeholder`, `title`, `aria-label` or `alt` written straight into a tag is
@@ -644,62 +795,91 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // whole time, one of them the same branch-name class as the single declaration this list started
   // with. So the subject is every file that can carry markup, taken from the directory.
   //
-  // Each value is therefore either **a message** — filled in from a dictionary at runtime — or a
-  // **declared literal**, named here with the reason it is not prose. What they have in common: each
-  // is a name or a command fragment that goes into a shell, so a translation of it would be a repo,
-  // a branch or a command that does not exist. That is the rule the command literals above are held
-  // to as well.
+  // **And it read one spelling of the syntax** (round 17 review): the forms `ATTRIBUTE_SITES` was
+  // widened to cover are listed there, and the four assignments this repository already writes with
+  // spaces around the `=` had never been read by it. What that hole shows is not those four values,
+  // which are fine — it is that a sentence written the same way would have been just as invisible.
+  //
+  // Each value is therefore one of three things. **A message**, filled in from a dictionary at
+  // runtime. A **declared literal**, named here with the reason it is not prose — a name a command
+  // needs, or the product's own name, which is a stated non-goal of this work. Or a **declared
+  // expression**, where the words are not in front of us at all and what is declared instead is
+  // whose they are.
   const DECLARED_LITERALS = {
     main: 'the default branch name — it goes into a command, so it is not prose',
     master: 'a branch name, shown as the example that field takes — the same class as `main`',
     'remy-worker': 'a repository name, shown as the example that field takes',
     '{cd} && claude': 'a command template — its literals are what the command gate holds fixed',
+    'Terminal Checkout —': 'the product name, which no language rewrites (a non-goal), and the dash '
+      + 'that joins it to the message naming the page',
   };
-  // The names are the ones whose value is **read to the user**. `value`, `href`, `id` and their
-  // like are deliberately out: they carry machine data as often as not, and a gate that fires on
-  // correct code is one somebody switches off (the reason the command-literal gate came down from
-  // ordered to multiset).
-  const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeholder|alt';
+  const DECLARED_EXPRESSIONS = {
+    'buttonConfig.label': "the user's own button label, read back from their settings and shown as "
+      + 'its tooltip — it is theirs, and translating it would rename the button they named',
+  };
   const found = [];
   for (const file of MARKUP_FILES) {
     const source = read(file);
-    // **The syntax this reads is checked rather than assumed.** It matches double-quoted values, so
-    // an attribute quoted the other way — or, since HTML permits it, not quoted at all — would pass
-    // by unread. Neither is an evasion anybody has to intend.
-    for (const [quoting, pattern] of [["'", "='"], ['no quotes', '=[^"\'\\s>]']]) {
-      assert.equal(
-        source.match(new RegExp(`(?:${TEXT_BEARING})${pattern}`, 'g')), null,
-        `${file} writes a text-bearing attribute with ${quoting} — this scan reads "…" only`,
+    // A computed attribute name would hide *which* attribute is being written, and the scan reads
+    // names. There is no such call, and this is what keeps it that way.
+    assert.equal(
+      source.match(/\.setAttribute\(\s*[^'"`\s]/g), null,
+      `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
+    );
+    for (const site of attributeSitesIn(source)) {
+      assert.ok(
+        !site.unreadable,
+        `${file} writes a text-bearing attribute in a form this scan cannot read: `
+          + `${JSON.stringify(site.unreadable)} — quote the value, or teach the reader that form`,
       );
-    }
-    for (const match of source.matchAll(new RegExp(`(?:${TEXT_BEARING})="([^"]*)"`, 'g'))) {
-      found.push([file, match[1]]);
+      found.push([file, site]);
     }
   }
-  assert.ok(found.length > 0, 'the attribute scan found nothing — check the pattern');
-  for (const [file, value] of found) {
+  assert.ok(found.length >= 12, `the attribute scan found ${found.length} — check the pattern`);
+  const declared = [];
+  for (const [file, site] of found) {
+    if (!site.quoted) {
+      // Unquoted in a script is an expression — its text is decided at run time, so what is asked
+      // of it is where that text comes from. (HTML permits an unquoted value, which is text the
+      // user reads; nobody writes one here, and one that appeared would land in this branch too and
+      // be refused rather than passed, which is the direction to be wrong in.)
+      assert.ok(
+        Object.hasOwn(DECLARED_EXPRESSIONS, site.text),
+        `${file} fills a text-bearing attribute from ${JSON.stringify(site.text)} — `
+          + 'declare here whose text that is, or make it a message',
+      );
+      declared.push(site.text);
+      continue;
+    }
+    const parts = splitInterpolations(site.text);
+    assert.ok(parts, `${file}: an interpolation in ${JSON.stringify(site.text)} never closes`);
     // An interpolated attribute has to interpolate a **message**, and then the escaping gate covers
     // it. Anything else in there — a variable holding prose, a string built somewhere else — is
     // outside every check in this file, which is the hole the static ones were in
-    if (value.includes('${')) {
+    for (const expression of parts.expressions) {
       assert.ok(
-        /^\$\{tr?\(/.test(value),
-        `${file} builds a text-bearing attribute from ${JSON.stringify(value)} — `
+        /^tr?\(/.test(expression.trim()),
+        `${file} builds a text-bearing attribute from ${JSON.stringify(expression)} — `
           + 'interpolate a message so the escaping and parity gates can see it',
       );
-      continue;
     }
-    assert.ok(
-      Object.hasOwn(DECLARED_LITERALS, value),
-      `${file} carries the untranslated attribute text ${JSON.stringify(value)} — `
-        + 'make it a message, or declare it here with the reason it is a literal',
-    );
+    // The text between the interpolations is what ships as written, and a value that interpolates
+    // nothing is all text. Whitespace between two messages is not a sentence, so it is skipped.
+    for (const chunk of parts.statics) {
+      const literal = chunk.trim();
+      if (!literal) continue;
+      assert.ok(
+        Object.hasOwn(DECLARED_LITERALS, literal),
+        `${file} carries the untranslated attribute text ${JSON.stringify(literal)} — `
+          + 'make it a message, or declare it here with the reason it is a literal',
+      );
+      declared.push(literal);
+    }
   }
   // ...and a declaration that stopped being true has to go, or the list becomes a place where old
   // judgements accumulate unread — the same rule the duplicate-value tables are held to.
-  const literals = found.map(([, value]) => value);
-  for (const literal of Object.keys(DECLARED_LITERALS)) {
-    assert.ok(literals.includes(literal), `${literal} is declared but no longer in the markup`);
+  for (const literal of [...Object.keys(DECLARED_LITERALS), ...Object.keys(DECLARED_EXPRESSIONS)]) {
+    assert.ok(declared.includes(literal), `${literal} is declared but no longer in the markup`);
   }
 });
 
@@ -789,9 +969,17 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   // user whose language is not English — so the markup holds ids and the fill happens while the
   // parser is still blocked on options.js, from `chrome.i18n.getUILanguage()`, which answers
   // without waiting. The cache the app fills corrects it a storage round trip later.
-  for (const match of optionsHtml.matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
-    assert.equal(match[1].trim(), '', `a localized node still ships prose: ${match[0].slice(0, 70)}`);
+  let localizedNodes = 0;
+  for (const file of HTML_FILES) {
+    for (const match of read(file).matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
+      localizedNodes += 1;
+      assert.equal(match[1].trim(), '', `${file} ships prose in a localized node: ${match[0].slice(0, 70)}`);
+    }
   }
+  // A loop over no matches is a test that says nothing while reading like one that says a lot — a
+  // failure this work has had twice already, once here (a pattern with a space in it) and once in a
+  // Swift gate (a filter that selected nothing). The count is what tells the two apart.
+  assert.ok(localizedNodes > 30, `only ${localizedNodes} localized nodes were read`);
   // The synchronous first answer, and the asynchronous correction, in that order
   const first = optionsJs.indexOf('let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));');
   const fill = optionsJs.indexOf('applyStaticText();\n\n//');
@@ -1261,10 +1449,19 @@ test('a translation cannot break out of an HTML attribute', () => {
   // The card template interpolates messages into `title="…"` and `placeholder="…"`. The other gates
   // check tags and placeholders and would not notice a quote, and one `"` in a translation ends the
   // attribute and turns the rest of the sentence into markup.
-  const attributeKeys = new Set(
-    [...read('options.js').matchAll(/(?:title|placeholder|aria-label)="\$\{t\('(ext\.[A-Za-z0-9.]+)'/g)]
-      .map(m => m[1]),
-  );
+  // **Read off the same scan the gate above uses**, rather than a second pattern that named three
+  // of the six attributes, one of the quotings and one file (round 17 review). Two patterns for one
+  // subject drift, and this one had drifted already: it could not see a message interpolated into
+  // an `alt`, into `title = ` with spaces, or into any file but `options.js`.
+  const attributeKeys = new Set();
+  for (const file of MARKUP_FILES) {
+    for (const site of attributeSitesIn(read(file))) {
+      for (const expression of splitInterpolations(site.text ?? '')?.expressions ?? []) {
+        const named = expression.trim().match(/^tr?\('(ext\.[A-Za-z0-9.]+)'/);
+        if (named) attributeKeys.add(named[1]);
+      }
+    }
+  }
   assert.ok(attributeKeys.size >= 5, `only ${attributeKeys.size} attribute interpolations found`);
   // **Every shipped language, not the two this used to visit.** Four loops in this file walked
   // `['en', 'ko']` because that is what existed when they were written, and three of the five are
@@ -1285,8 +1482,12 @@ test('no text ships in the markup without a message behind it', () => {
   // Item 12's F class, on this side: a string nobody localized is invisible to a gate that only
   // inspects the elements already carrying `data-i18n`. This reads the other direction — every text
   // node in the body — and refuses anything not on the whitelist below.
-  const html = read('options.html');
-  const body = html.slice(html.indexOf('<body>'));
+  // Every page, taken from the directory — the same reason `keysInHtml` is (round 17 review).
+  const body = HTML_FILES.map((file) => {
+    const html = read(file);
+    // A fragment need not have one; what matters is that no markup is skipped for lacking it
+    return html.includes('<body>') ? html.slice(html.indexOf('<body>')) : html;
+  }).join('\n');
   // Whitelisted, with the reason each one is permanent:
   //   `terminal-checkout` / `Terminal Checkout` — the product and command name (an explicit non-goal)
   //   `❯` `▊` `⏎` `$` `⠿` `✕` `×` `●` `⚠` — symbols and cursors, which no language rewrites
@@ -1295,12 +1496,17 @@ test('no text ships in the markup without a message behind it', () => {
   // localized word, and the parser hands that back as one text node.
   const permanent = /^(terminal-checkout|Terminal Checkout|[❯▊⏎$⠿✕×●⚠·/\-—|\s])+$/;
   const stray = [];
+  let nodes = 0;
   for (const match of body.matchAll(/>([^<>]+)</g)) {
+    nodes += 1;
     const text = match[1].replace(/\s+/g, ' ').trim();
     if (!text || permanent.test(text)) continue;
     stray.push(text);
   }
   assert.deepEqual(stray, [], 'markup carries text that no message owns');
+  // An empty list means either that the markup is clean or that the scan read nothing, and those
+  // two look identical from here (round 17 sweep)
+  assert.ok(nodes > 100, `only ${nodes} text nodes were read`);
 });
 
 // ---------------------------------------------------------------------------------------------

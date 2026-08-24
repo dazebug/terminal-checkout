@@ -92,10 +92,15 @@ final class AppMessageTests: XCTestCase {
     /// cannot reach.
     func testTheInstallerStatusMessagesComeFromTheCatalogue() throws {
         let source = try repoSource("app/Sources/App/Installer.swift")
-        for constructor in [".ok(\"", ".warning(\"", ".error(\""] {
-            XCTAssertFalse(
-                source.contains(constructor),
-                "a status message is written at the call site instead of read from the catalogue: \(constructor)"
+        // **A constructor and its argument need not be on the same line** (round 17 sweep), and
+        // four of the six here are not: `.error(` opens and the argument sits indented on the next
+        // line. The spelling this looked for was the quote up against the parenthesis, so those
+        // four had no position it could see, and a sentence hardcoded one line down was read by
+        // nothing. Swift's whitespace goes into the pattern instead of out of it.
+        for constructor in ["ok", "warning", "error"] {
+            XCTAssertNil(
+                source.range(of: "\\.\(constructor)\\(\\s*\"", options: .regularExpression),
+                "a status message is written at the call site instead of read from the catalogue: .\(constructor)("
             )
         }
 
@@ -163,12 +168,26 @@ final class AppMessageTests: XCTestCase {
         )
 
         let source = try repoSource("app/Sources/App/AppDelegate.swift")
-        for line in source.split(separator: "\n") where line.contains("withTitle:") || line.contains("NSMenu(title:") {
+        // **Every way a menu carries a title, and proof that it read some** (round 17 sweep). Two
+        // spellings were listed because they are the two this file uses, which leaves
+        // `NSMenuItem(title:)` and a `.title =` afterwards as titles no gate would look at. And the
+        // filter is the same shape as the locale filter this file already had to fix: one that
+        // selects nothing turns the loop into a test that passes by not running. The count is what
+        // tells "they all read from the catalogue" apart from "there were none".
+        var titles = 0
+        for line in source.split(separator: "\n")
+        where line.contains("withTitle:") || line.contains("NSMenu(title:")
+            || line.contains("NSMenuItem(title:")
+            || line.range(of: "\\.title\\s*=(?!=)", options: .regularExpression) != nil {
+            titles += 1
             XCTAssertTrue(
                 line.contains("localized("),
                 "a menu title is written at the call site instead of read from the catalogue: \(line.trimmingCharacters(in: .whitespaces))"
             )
         }
+        // Eight lines today; the floor sits below that because what it is here to catch is a filter
+        // that reads nothing, not a menu with one item fewer in it.
+        XCTAssertGreaterThanOrEqual(titles, 5, "the menu-title scan read \(titles) lines — check the pattern")
     }
 
     /// `NSAppleEventsUsageDescription` is the sentence tccd shows when the automation permission is

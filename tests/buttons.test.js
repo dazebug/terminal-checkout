@@ -534,7 +534,12 @@ test('nothing a button draws comes from an error message', () => {
   // means sending an **id** to the content script, not a sentence. That is the trigger recorded
   // next to both messages.
   const source = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
-  const drawn = [...source.matchAll(/button\.(?:textContent|title) = ([^;]+);/g)].map(m => m[1].trim());
+  // **Every receiver, every spacing, every way of writing text into a node** (round 17 sweep): this
+  // read `button.` with exactly one space on each side of the `=`, so the same statement written
+  // `el.textContent=x`, `button.title +=` or through `innerText` drew whatever it liked with the
+  // gate still green. The names are what the subject is about; the variable in front of them is not.
+  const drawn = [...source.matchAll(/\w+\.(?:textContent|innerText|innerHTML|title)\s*\+?=\s*([^;\n]+)/g)]
+    .map(m => m[1].trim());
   assert.ok(drawn.length >= 8, `only ${drawn.length} draw sites found — the scan missed some`);
   for (const expression of drawn) {
     // `phases.error` is a phase marker and is drawn on purpose — what must never appear is the

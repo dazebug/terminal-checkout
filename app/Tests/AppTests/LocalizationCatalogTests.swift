@@ -217,8 +217,11 @@ final class LocalizationCatalogTests: XCTestCase {
         // `Localization.swift` exempts one somebody adds in a subdirectory
         where pathInTree(file, under: Self.appSources) != "Localization.swift" {
             let text = try String(contentsOf: file, encoding: .utf8)
-            XCTAssertFalse(
-                text.contains("AppLocalization.string("),
+            // **The spelling is the language's, not this file's** (round 17 sweep): Swift permits
+            // whitespace and a line break around the dot and before the parenthesis, so the exact
+            // string this looked for was one of the ways to write the call rather than the way.
+            XCTAssertNil(
+                text.range(of: "AppLocalization\\s*\\.\\s*string\\s*\\(", options: .regularExpression),
                 "\(pathInTree(file, under: Self.appSources)) calls the lookup directly, which takes a String and skips the type"
             )
         }
