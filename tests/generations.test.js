@@ -52,18 +52,14 @@ const loadOrder = (realm, consumer) => {
   return [...markup.matchAll(/<script src="([^"]+)"><\/script>/g)].map(match => match[1]);
 };
 
-const load = (realm, consumer, { poisonRetiredCurrentMachinery = false } = {}) => {
+const load = (realm, consumer, { poisonCurrentCacheSelector = false } = {}) => {
   for (const file of loadOrder(realm, consumer)) {
-    if (poisonRetiredCurrentMachinery && file === consumer) {
-      realm.run(`
-        localeCacheUpdate = () => { throw new Error('current consumer called localeCacheUpdate'); };
-        localeGenerationOf = () => { throw new Error('current consumer called localeGenerationOf'); };
-        createLocaleCacheWriter = () => { throw new Error('current consumer called createLocaleCacheWriter'); };
-        localeToRenderIn = () => { throw new Error('current consumer called localeToRenderIn'); };
-        createFirstRenderGate = () => { throw new Error('current consumer called createFirstRenderGate'); };
-        createNativeRequester = () => { throw new Error('current consumer called createNativeRequester'); };
-        createLocaleRenderer = () => { throw new Error('current consumer called createLocaleRenderer'); };
-      `);
+    if (poisonCurrentCacheSelector && file === consumer) {
+      // One boundary, named exactly: the current consumer must not ask the compatibility cache
+      // selector. Storage/native/event observations below cover the rest of the retired pipeline.
+      // Calling this an oracle for every compatibility symbol would turn one hand-authored list
+      // into the ABI authority that D170 explicitly rejects.
+      realm.run("localeToRenderIn = () => { throw new Error('current consumer called localeToRenderIn'); };");
     }
     realm.feed(file);
   }
@@ -101,7 +97,7 @@ test('every generation pairing loads, and the baseline it loads is the pinned ar
         // This oracle is intentionally applicable only to the production current×current pairing:
         // an adjacent old skeleton still needs the current consumer's feature-detected seed branch.
         // The other lifecycle and language assertions below continue to run on all four pairings.
-        poisonRetiredCurrentMachinery: skeleton === 'current' && consumers === 'current',
+        poisonCurrentCacheSelector: skeleton === 'current' && consumers === 'current',
       });
       // Nothing here asserts a file list. What is asserted is that the combination ran: a symbol the
       // other generation does not provide would have thrown by now.
