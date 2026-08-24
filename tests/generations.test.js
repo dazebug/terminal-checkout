@@ -308,6 +308,11 @@ test('every pairing draws the requested catalogue and names its expected tag', a
   // box, and the only attribution obtainable from outside is what the thing under test left behind.
   // Internal agreement is not enough: English text under `lang="en"` is self-consistent even when
   // Traditional Chinese was requested. Pin both outputs to the requested catalogue instead.
+  assert.deepEqual(
+    ['zh_CN', 'zh_TW'].map(directory => platformFor(directory).uiLanguage),
+    ['zh-CN', 'zh-TW'],
+    'the Chinese catalogue siblings were not both converted to Chrome-shaped UI language tags',
+  );
   for (const { skeleton, consumers, what } of PAIRINGS) {
     for (const directory of Object.values(CHROME_LOCALE_DIRECTORIES)) {
       const realm = generationRealm({ skeleton, consumers, platform: platformFor(directory) });
