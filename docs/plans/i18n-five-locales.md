@@ -3,7 +3,7 @@
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout` (앱 `app/`, 확장 `extension/`)
 - 시작 커밋: `92a2354`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/i18n-review` (`worktree-i18n-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/agent-acd7793e35083a089` (`worktree-agent-acd7793e35083a089`) — 작업 트리는 에이전트마다 새로 만들어지므로 이 칸은 **마지막 승격을 낸 트리**를 가리킨다
-- 현재: **A0 완료(claimed)** — 자리 정체성 승격 70 · 표현식 수신자와 거절별 픽스처 승격 71 · 거절의 «적용»까지 픽스처 안으로 **승격 72**(이 줄을 담은 커밋) · 직전 승격 `5a30ab6`(71) · 리뷰 중 없음 · 게이트 그린(**이 승격에서 네 개를 다 돌린 결과**): swift `Executed 509 tests, with 1 test skipped and 0 failures (0 unexpected)` · node `# tests 243 / # pass 243 / # fail 0`(241 + 신규 2) · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` + `Build complete: …` · `e2e.sh` → **PASS 11** + `e2e: all cases passed`
+- 현재: **A0 완료(claimed)** — 자리 정체성 승격 70 · 표현식 수신자와 거절별 픽스처 승격 71 · 거절의 «적용»까지 픽스처 안으로 승격 72 · A0의 상시 단계 표 **승격 73**(이 줄을 담은 커밋) · 직전 승격 `da18e17`(72) · 리뷰 중 없음 · 게이트 그린(**이 승격에서 네 개를 다 돌린 결과**): swift `Executed 509 tests, with 1 test skipped and 0 failures (0 unexpected)` · node `# tests 243 / # pass 243 / # fail 0`(241 + 신규 2) · `build.sh` → `verify-bundle: 10 resource file(s) match the sources` + `Build complete: …` · `e2e.sh` → **PASS 11** + `e2e: all cases passed`
 - 최근 검증자 판정: **6차 설계 리뷰(리뷰 36) — 조건부**. 「**Verdict: no.** Add the real-Chrome placeholder-substitution oracle; then the plan is ready to implement.」 그리고 같은 보고의 「the migration design itself is otherwise ready」 · 조건은 **승격 68이 충족했고 7차 설계 리뷰는 없다** · 원문 `<스크래치패드>/review-36-response.md`. R8까지의 증분 리뷰는 「라운드 로그」에, R30∼R36의 설계 리뷰는 「전환 계획」의 상태 줄과 「N차 설계 리뷰가 A0 전에 요구한 …」 절들에 있다
 - **위 세 줄은 승격마다 갱신한다.** 방금 전까지 이 줄들은 「R8 · `c5ef554` · swift 400 / node 158 / e2e 9」였고 그 상태로 **커밋 47개**를 지났다(`git log -S 'c5ef554' -- docs/plans/i18n-five-locales.md` → `5e71587`, `git rev-list --count 5e71587..HEAD` → 47). 이 루프에서 **에이전트가 갈릴 때마다 후임이 가장 먼저 읽는 줄**이라 낡으면 후임이 틀린 자리에서 시작한다 — 실제로 승격 68의 에이전트는 여기서 승격 번호를 못 얻어 드라이버에게 들었다
 
@@ -938,6 +938,18 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | ① 이 diff 안의 문장이 이 diff 안의 코드와 어긋나는가 | **0** | 코드가 없는 diff다. 대신 이 diff가 «명령의 출력»을 인용하므로 그것을 인용 전에 다 돌렸다 — swift `Executed 509 tests, with 1 test skipped and 0 failures` · node `# tests 241 / # pass 241 / # fail 0` · `build.sh` → `verify-bundle: 10 …` · `e2e.sh` → PASS 11 + `e2e: all cases passed`(넷 다 exit 0). 「커밋 47개」도 실측이다(`git log -S 'c5ef554' -- docs/plans/i18n-five-locales.md` → `5e71587` · `git rev-list --count 5e71587..HEAD` → 47) |
 | ② 이 변경이 리포 어디서든 문장을 거짓으로 만드는가 | **1(고쳤다)** | 사다리 소유자 규칙이 항목 표 뒤(`- claimed까지가 …`)에 이미 있어서, 같은 규칙을 불변 원칙에 더하면 **사본이 둘**이 된다 — 그 줄을 포인터로 바꿨다. 그 밖에 이 계획의 게이트 기준선을 인용하는 자리는 리포에 없다 — 세 문자열(`351` · `node 158` · `e2e 9`)을 리포 전수 grep한 결과는 **다른 «완료된» 계획 파일 둘**뿐이고, 그 둘은 자기 게이트를 말하므로 이 변경과 무관하다 |
 | ③ 소탕 표에 형태별 개수를 적었는가 | 이 표 | 신규 커밋 아티팩트 **0**(문서 전용) — 테스트도 픽스처도 늘지 않았고, 네 게이트의 수도 불변이다(509 · 241 · 10 · 11). 불변 원칙에 더한 넷은 **새 규칙이 아니라 드라이버 프롬프트에만 있던 규칙의 이관**이다 |
+
+### 승격 70∼72 상시 단계 — 세 형태 (A0의 diff 전수)
+
+| 형태 | 개수 | 자리 |
+|:--|:--|:--|
+| ① 이 diff 안의 문장이 이 diff 안의 코드와 어긋나는가 | **2(둘 다 고쳤다)** | ⓐ 승격 70의 주석이 「열여섯 중 **열하나**가 쌍을 공유한다」라고 적었는데 바로 아래 16줄 목록이 **열넷**이라고 말한다 — 커밋 «전»에 고쳤다(중복 «쌍»의 여분 개수 11과 중복 쌍에 «속한 자리» 14를 섞었다) · ⓑ 승격 70의 **D187이 잔여를 「같은 값 쌍 하나」로 열거**했는데 실측은 **셋(자리 6)**이다 — 원장은 append-only라 **D189**가 정정한다. ⓑ는 이 라운드가 불변 원칙으로 올린 「열거하지 말고 실행에 세게 하라」를 **바로 다음 커밋에서 내가 어긴 것**이다 |
+| ② 이 변경이 리포 어디서든 문장을 거짓으로 만드는가 | **1(고쳤다)** | 항목 52″의 근거 칸 「**(b) 집합으로 고정했다**: `파일 + 속성 이름` 16줄」 — 그 16줄이 A0가 넓힌 바로 그 목록이라, 그 칸에 「A0가 다시 넓혔다(D187)」를 달았다. 그 밖에 이 게이트의 자리 목록·거절 술어를 인용하는 자리는 리포에 없다(`tests/`·`docs/`·`CLAUDE.md` 전수) |
+| ③ 소탕 표에 형태별 개수를 적었는가 | 이 표 — **그리고 이 표가 빠질 뻔했다** | 승격 69가 「③ 소탕 표에 형태별 개수를 적었는가」를 불변 원칙으로 올려 놓고, A0의 세 승격이 그것 없이 나갔다(이 승격이 메운다). **규칙을 «선언한 곳»에만 쓰고 «강제되는 곳»에서 잊는 부류**가 규칙을 쓴 사람에게 그대로 적용된 사례라 지우지 않고 적는다 |
+
+**신규 커밋 아티팩트 2건, 둘 다 입장 기준을 통과한다**(D146): `two sites in one file that write the same attribute are told apart by what fills them`은 **(i)** — 정체성을 되돌리면 이 케이스와 코퍼스 목록 둘이 실패한다(실측 `Executed 73 / fail 2`) · `a write whose attribute name the scan cannot read is refused, in every receiver shape`은 **(i)+(ii)** — 수신자 폭을 되돌리면 red(`fail 1`), 거절의 몸통을 비워도 red(`fail 1`)이고, 동시에 「읽는 목록이 무엇을 뜻하는가」를 고정한다. 부재 증명은 없다.
+
+**liveness 소탕(새 술어에 대고 다시)** — 술어를 테스트 파일에서 «꺼내» 실행한다(`<스크래치패드>/liveness.mjs`): 마크업 **13파일** · 속성 자리 **16**(코퍼스에 살아 있다) · `setAttribute` 계산 이름 **0** · 대괄호 계산 쓰기 **0**(코퍼스에 죽어 있고 **픽스처로만** 살아 있다 — D154가 요구하는 그대로) · 정체성 **16개 중 고유 13** · 같은 정체성 공유 **6자리/3쌍** · `(파일, 속성)` 공유 **14자리/3쌍**.
 
 ## 전환 계획 — 확장은 `chrome.i18n`을 쓴다 (R30 · 설계, 구현 없음)
 
