@@ -74,16 +74,20 @@ An intentional `_locales` translation edit keeps the compatibility checker green
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured with a windowless probe bundle)
-**Source:** PR #41 (ledger D14, D22 and D79); `applyStoredLanguageToAppKit` in `app/Sources/App/main.swift`, `AppLocalization` in `app/Sources/App/Localization.swift`
+**Source:** PR #41 (ledger D14, D22 and D79); C2 (ledger D301–D304); `applyStoredLanguageToAppKit` in `app/Sources/App/main.swift`, `AppLocalization` in `app/Sources/App/Localization.swift`
 **Revisit when:** AppKit starts honouring a language change mid-process, or the app gains a second entry point that draws UI
 
 Measured with an `LSUIElement` probe bundle that writes only its own domain: written **after** AppKit has come up, the same process keeps its old language — `preferredLocalizations` does not move and an `NSAlert` button stays `확인`, while only the readback changes; left in place, the next launch picks it up; written **before** AppKit is touched, the same process picks it up immediately (`zh-Hant`, with `好` and `打開`). So the write lives in `main.swift` ahead of `NSApplication.shared`, and a language change during a session needs a restart for AppKit's own chrome. Our own strings do not go through this key at all — they are read with `Bundle(path:)` — which is why they redraw immediately and the chrome does not.
 
-`auto` **removes** the key instead of writing the resolved tag. Writing it would turn "follow the system" into a permanent app-level override: the user changes the macOS language afterwards and every app follows except this one, with nothing on screen to say why.
+`auto` **never writes** the resolved tag. An explicit choice writes `[tag]` to `AppleLanguages` and records that exact value in the app-local `TerminalCheckoutAppleLanguagesProvenance` companion key. Automatic mode removes the language key only when its current value still equals that record, then removes the record; an unrecorded value or a value changed by System Settings or another writer is left alone. This is provenance, not a comparison against the value the app would have written, because a user's own single-language choice can happen to be identical.
 
 **Trap worth the next person's time (measured).** After removing the key, `object(forKey:)` still returns a value, because the search list falls through to `NSGlobalDomain` — and that fallthrough is *how `auto` works*, not an obstacle to it. Absence has to be asserted against `persistentDomain(forName:)`, and the useful assertion is that the effective value before a temporary override equals the effective value after removing it.
 
-**Boundary.** `auto` removes only the app-owned override. An `-AppleLanguages` argument on the command line, or a domain of higher priority, still wins.
+**Boundary.** Automatic resolution first honors an effective `AppleLanguages` value that does not match the app's provenance record, which includes a System Settings per-app choice. When the effective value matches the app's record, it reads the argument domain and then the global domain instead of feeding the app's own value back into `Locale.preferredLanguages`. An `-AppleLanguages` argument or a higher-priority external value therefore still wins.
+
+**Device release gate — ownership.** On a real Mac, with the app preference at `auto`, assign Terminal Checkout a per-app language in System Settings, quit and relaunch, and verify that the System Settings entry remains and both the setup window and AppKit chrome use that language. Then choose an explicit language in the app, relaunch, choose `auto`, and verify that only the value the app recorded is removed; an external per-app or global choice remains.
+
+**Device release gate — first lookup.** Launch the built app once for each of an explicit language, `auto` with a global language order, and `auto` with a per-app System Settings choice. Verify the first AppKit menu, alert and file-panel labels against the app's own strings. The unit tests inject language lists and cannot establish AppKit's first-lookup boundary or the language of macOS's own permission prompt.
 
 **Unmeasured.** Whether the TCC permission prompt follows the chosen language is not known. The prompt is drawn by tccd, and measuring it would mean resetting the user's live Automation grant.
 
@@ -237,3 +241,7 @@ These are the seven issue seeds carried out of PR #41; the issues are intentiona
 
 - **D291:** `languageNote(restartBlocked: Bool, restartFailed: Bool)` made a mutually exclusive three-state UI represent an impossible combined state; `LanguageNoteState` makes that state unrepresentable.
 - **D293:** Q12 stays on the device release-gate list with D14's “do not fight the prompt” decision and an open pre-statement choice; Q13 becomes a follow-up for the installed-settings side effect after A5 removed the locale-query aggravation; Q14 becomes a follow-up for missing progress feedback while the already-shipped deferred-restart explanation remains deliberate.
+- **D301:** `AppleLanguages` is shared with System Settings, so automatic mode records the exact array this app writes and removes it only while the effective value still matches that record; unconditional removal and comparison with a value the app merely intended to write were rejected because neither proves ownership.
+- **D302:** automatic app strings resolve from an effective unowned `AppleLanguages` value or from the external argument/global domains when the value matches this app's record; clearing the key during a switch and hoping `Locale.preferredLanguages` refreshes was rejected because the process may retain the old answer.
+- **D303:** the `Locale.preferredLanguages` default argument became an optional injected test value, with the production path reading the external source inside the function before any explicit write; the unit suite cannot observe AppKit's first-lookup consequence, so the device release gate remains required.
+- **D304:** the shared-domain write sweep found only `AppleLanguages` in the app's product sources; `terminal`, `baseDirectory`, `language`, `lastRequestAt`, `toolAvailability` and `toolExecutables` are app-owned keys, while private-suite cleanup in tests is not product behavior.

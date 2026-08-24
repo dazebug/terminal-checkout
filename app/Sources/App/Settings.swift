@@ -38,7 +38,8 @@ enum Settings {
 
     /// The language the user picked, or `auto`. A preference is app-local state: our own strings
     /// redraw after the notification, while AppKit chrome follows on the restart action because
-    /// AppKit reads its language before the process creates `NSApplication`.
+    /// AppKit reads its language before the process creates `NSApplication`. In automatic mode the
+    /// resolver reads macOS's argument/global language domains, not the app override it wrote.
     static var language: String {
         get { languagePreference(in: .standard) }
         set {

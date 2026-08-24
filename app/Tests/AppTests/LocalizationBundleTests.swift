@@ -72,67 +72,62 @@ final class LocalizationBundleTests: XCTestCase {
         )
     }
 
-    /// The `auto` probe D22 asked for, and the reason item 8 can build on it: an automatic
-    /// preference leaves **no** `AppleLanguages` entry behind, so the system language keeps
-    /// deciding. Writing the resolved tag there instead would freeze the app at today's system
-    /// language — every other app would follow a later change and this one would not.
+    /// `auto` may remove only the `AppleLanguages` value this app can prove it wrote. A value that
+    /// arrived from System Settings, another domain or an older build is not ours to delete, even
+    /// when it has the same shape as the value we would have written.
     ///
     /// A private suite is used because the subject is a `UserDefaults` write: running this against
     /// `.standard` would rewrite the language of the app installed on this machine.
     ///
-    /// **Absence is asserted on our own domain, not through `object(forKey:)`.** Measured while
-    /// writing this: after the key is removed, reading it back still answers `["ko-KR"]`, because
-    /// `AppleLanguages` also lives in `NSGlobalDomain` and the search list falls through to it.
-    /// That fall-through is not in the way of the test — it **is** the mechanism: removing our copy
-    /// is what puts the system's list back in charge, which is what `auto` means.
-    func testAnAutomaticPreferenceLeavesNoAppleLanguagesOverride() throws {
+    /// **Absence is asserted on our own domain, not through `object(forKey:)`.** Reading the
+    /// effective value after removal can still answer a global-domain value, so the test must
+    /// distinguish our copy from the value the system supplies below it.
+    func testAutomaticRemovesOnlyItsRecordedAppleLanguagesValue() throws {
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
         func ourOwnCopy() -> Any? {
             UserDefaults.standard.persistentDomain(forName: suiteName)?["AppleLanguages"]
         }
+        func ourRecord() -> Any? {
+            UserDefaults.standard.persistentDomain(forName: suiteName)?["TerminalCheckoutAppleLanguagesProvenance"]
+        }
 
-        // An override left by an earlier explicit choice has to be taken away, not merely skipped
+        // A value with no record is not ours, even if it is exactly the value an explicit choice
+        // would write.
         defaults.set(["ja"], forKey: "AppleLanguages")
         defaults.set("auto", forKey: languagePreferenceKey)
         XCTAssertNotNil(ourOwnCopy(), "the fixture did not take — the removal below proves nothing")
         XCTAssertNil(AppLocalization.applyStoredLanguageToAppKit(
             defaults: defaults, systemPreferred: ["ko-KR"]
         ))
-        XCTAssertNil(ourOwnCopy())
+        XCTAssertEqual(ourOwnCopy() as? [String], ["ja"], "auto removed a value with no provenance record")
+        XCTAssertNil(ourRecord())
 
-        // Absent means automatic too — the key is never written before the picker exists
-        defaults.removeObject(forKey: languagePreferenceKey)
+        // An explicit choice records the exact value it wrote, and `auto` may then remove that
+        // value together with the record.
+        defaults.set("ja", forKey: languagePreferenceKey)
+        XCTAssertEqual(
+            AppLocalization.applyStoredLanguageToAppKit(defaults: defaults, systemPreferred: ["ko-KR"]),
+            "ja"
+        )
+        XCTAssertEqual(ourRecord() as? [String], ["ja"])
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
         defaults.set(["ja"], forKey: "AppleLanguages")
         XCTAssertNil(AppLocalization.applyStoredLanguageToAppKit(
             defaults: defaults, systemPreferred: ["ko-KR"]
         ))
         XCTAssertNil(ourOwnCopy())
+        XCTAssertNil(ourRecord())
     }
 
-    /// **The value that answers afterwards is the one that answered before** (round 7 review).
-    ///
-    /// The test above proves our own copy of the key is gone, which is not the same claim: a
-    /// removal that also lost whatever the domain below was saying would satisfy it just as well.
-    /// What `auto` promises is that the system's list decides again, so the assertion is a
-    /// before/after comparison of the **effective** value — read through the search list rather
-    /// than out of our own domain.
-    ///
-    /// It also fixes the boundary of that promise. `auto` removes the **app-owned** override and
-    /// nothing else: an `-AppleLanguages` argument on the command line, or any domain with higher
-    /// precedence, still wins, and no amount of removing our key changes that. Users need to know
-    /// it (item 25 lists it in the README), and a future reader needs to know this test does not
-    /// claim otherwise.
-    func testAutomaticRestoresTheEffectiveValueItFound() throws {
+    /// Provenance is a comparison against the value we wrote, not a permanent right to erase the
+    /// key. If another writer changes the value before the user chooses `auto`, it stays and the
+    /// stale record is discarded.
+    func testAutomaticLeavesAChangedAppleLanguagesValueForItsWriter() throws {
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-
-        // What the search list answers with no override of ours in the way. It comes from a domain
-        // this suite does not own, which is exactly why the comparison is worth making
-        let before = defaults.array(forKey: "AppleLanguages") as? [String]
-        XCTAssertNotNil(before, "no effective AppleLanguages to restore — the comparison would be vacuous")
 
         defaults.set("ja", forKey: languagePreferenceKey)
         XCTAssertEqual(
@@ -140,17 +135,46 @@ final class LocalizationBundleTests: XCTestCase {
             "ja"
         )
         XCTAssertEqual(defaults.array(forKey: "AppleLanguages") as? [String], ["ja"], "the override did not take")
+        XCTAssertEqual(
+            defaults.array(forKey: "TerminalCheckoutAppleLanguagesProvenance") as? [String], ["ja"]
+        )
 
+        // Simulate System Settings or another writer changing the app-domain value after our write.
+        defaults.set(["ko"], forKey: "AppleLanguages")
         defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
         XCTAssertNil(AppLocalization.applyStoredLanguageToAppKit(
             defaults: defaults, systemPreferred: ["ko-KR"]
         ))
 
-        let after = defaults.array(forKey: "AppleLanguages") as? [String]
-        XCTAssertEqual(after, before, "auto removed our override but did not give the previous answer back")
-        XCTAssertNil(
-            UserDefaults.standard.persistentDomain(forName: suiteName)?["AppleLanguages"],
-            "our own copy is still there, so `after` may only be echoing it"
+        XCTAssertEqual(
+            defaults.array(forKey: "AppleLanguages") as? [String], ["ko"],
+            "auto removed a value that no longer matched our provenance record"
+        )
+        XCTAssertNil(defaults.object(forKey: "TerminalCheckoutAppleLanguagesProvenance"))
+    }
+
+    /// The process's `Locale.preferredLanguages` includes the app-domain override after an
+    /// explicit choice. `auto` must instead read the argument/global system domains, which this
+    /// suite can stage without changing the test runner's own defaults.
+    func testAutomaticResolutionUsesTheExternalSystemLanguageOrder() throws {
+        let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(["ja"], forKey: "AppleLanguages")
+        XCTAssertEqual(
+            AppLocalization.resolvedTag(defaults: defaults), "ja",
+            "an unowned per-app AppleLanguages choice must remain the system answer"
+        )
+        defaults.set(["ja"], forKey: "TerminalCheckoutAppleLanguagesProvenance")
+        defaults.set(automaticLocalePreference, forKey: languagePreferenceKey)
+        defaults.setVolatileDomain(
+            ["AppleLanguages": ["zh-TW"]], forName: UserDefaults.globalDomain
+        )
+
+        XCTAssertEqual(
+            AppLocalization.resolvedTag(defaults: defaults), "zh-Hant",
+            "auto resolved from the app's AppleLanguages value instead of the external system order"
         )
     }
 

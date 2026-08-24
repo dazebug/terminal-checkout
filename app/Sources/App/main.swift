@@ -16,11 +16,12 @@ if CommandLine.arguments.contains("--headless-server") {
     exit(0)
 }
 
-// Before **any** localization lookup happens in this process, not merely before AppKit exists:
-// measured (D14), a write that lands after the first lookup leaves this process in the old
-// language and only shows up on the next launch. `NSApplication.shared` below is that first touch.
-// The headless server above never reaches here on purpose — it draws nothing, and a process with
-// no window has no business rewriting the user's language defaults.
+// Capture the external system language order and apply AppKit's choice before `NSApplication.shared`.
+// The method must read that order before writing an explicit app override; `auto` later reads the
+// argument/global domains directly so this app's own value cannot become its system-language input.
+// Measured (D14), a write after AppKit's first localization lookup leaves that process in the old
+// language and only shows up on the next launch. The headless server above never reaches here on
+// purpose — it draws nothing, and a process with no window has no business rewriting defaults.
 AppLocalization.applyStoredLanguageToAppKit()
 
 let app = NSApplication.shared

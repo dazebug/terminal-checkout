@@ -34,6 +34,11 @@ let languagePreferenceKey = "language"
 /// AppKit's own key for the language its chrome is drawn in.
 private let appleLanguagesKey = "AppleLanguages"
 
+/// The app-local companion record for the exact `AppleLanguages` value this process last wrote. It
+/// is provenance, not another language preference: automatic mode may remove the system key only
+/// while the current value still matches this record.
+let appleLanguagesProvenanceKey = "TerminalCheckoutAppleLanguagesProvenance"
+
 /// Returned when a key is missing, so a lookup can tell "no such key" from a value that happens to
 /// equal the key. It cannot occur in a catalog: `PropertyListSerialization` would reject the file.
 private let missingValueSentinel = "\u{0}tc-missing"
@@ -53,9 +58,10 @@ enum AppLocalization {
     /// The tag this launch renders in.
     static func resolvedTag(
         defaults: UserDefaults = .standard,
-        systemPreferred: [String] = Locale.preferredLanguages
+        systemPreferred: [String]? = nil
     ) -> String {
         if let tagOverrideForTesting { return tagOverrideForTesting }
+        let systemPreferred = systemPreferred ?? externalSystemPreferred(in: defaults)
         return resolveLocale(
             preference: defaults.object(forKey: languagePreferenceKey),
             systemPreferred: systemPreferred
@@ -101,12 +107,14 @@ enum AppLocalization {
     /// only the readback changed; written before, the same process picked it up (`zh-Hant`, `好`).
     /// That is why the call site is `main.swift`, ahead of `NSApplication.shared`.
     ///
-    /// **`auto` removes the key instead of writing the resolved tag** (D22). Writing it would turn
-    /// "follow the system" into a permanent app-level override: the user changes the macOS
-    /// language afterwards and every app follows except this one, with nothing on screen to say
-    /// why. Everything that is not `auto` — including a stored value we cannot read — is written,
-    /// because our own strings resolve such a value to English and chrome that disagreed with them
-    /// would be the split D14 rules out.
+    /// **`auto` never writes the resolved tag** (D22). Writing it would turn "follow the system"
+    /// into a permanent app-level override: the user changes the macOS language afterwards and
+    /// every app follows except this one, with nothing on screen to say why. It removes an existing
+    /// `AppleLanguages` value only when the app-local provenance record proves that this app wrote
+    /// the same value; a value with no record, or one changed since our write, belongs to somebody
+    /// else and is left alone. Everything that is not `auto` — including a stored value we cannot
+    /// read — is written, because our own strings resolve such a value to English and chrome that
+    /// disagreed with them would be the split D14 rules out.
     ///
     /// Our own strings do not go through this key at all: they are read with `Bundle(path:)`, so
     /// they change on the next redraw while AppKit's chrome changes on the next launch. Item 8
@@ -114,17 +122,52 @@ enum AppLocalization {
     @discardableResult
     static func applyStoredLanguageToAppKit(
         defaults: UserDefaults = .standard,
-        systemPreferred: [String] = Locale.preferredLanguages
+        systemPreferred: [String]? = nil
     ) -> String? {
         let stored = defaults.object(forKey: languagePreferenceKey)
         let isAutomatic = stored == nil || (stored as? String) == automaticLocalePreference
         guard !isAutomatic else {
-            defaults.removeObject(forKey: appleLanguagesKey)
+            let current = defaults.array(forKey: appleLanguagesKey) as? [String]
+            let recorded = defaults.array(forKey: appleLanguagesProvenanceKey) as? [String]
+            if let current, let recorded, current == recorded {
+                defaults.removeObject(forKey: appleLanguagesKey)
+            }
+            defaults.removeObject(forKey: appleLanguagesProvenanceKey)
             return nil
         }
+        let systemPreferred = systemPreferred ?? externalSystemPreferred(in: defaults)
         let tag = resolveLocale(preference: stored, systemPreferred: systemPreferred)
-        defaults.set([tag], forKey: appleLanguagesKey)
+        let value = [tag]
+        defaults.set(value, forKey: appleLanguagesKey)
+        defaults.set(value, forKey: appleLanguagesProvenanceKey)
         return tag
+    }
+
+    /// The language order that belongs to macOS rather than to an override this app wrote. An
+    /// effective `AppleLanguages` value that does not match our provenance record is somebody
+    /// else's answer — including a per-app choice made in System Settings — and must win so our
+    /// catalogues agree with AppKit. When the value matches our record, the argument domain has
+    /// higher precedence than the global domain, just as it does in the defaults search list.
+    /// `Locale.preferredLanguages` is the fallback only when neither external domain exposes the
+    /// key and no provenance record exists. If a record exists but no external domain answers, the
+    /// empty list is deliberate: falling back to English is safer than feeding our own value back
+    /// through a system API whose domain ordering is not observable here.
+    private static func externalSystemPreferred(in defaults: UserDefaults) -> [String] {
+        let current = defaults.array(forKey: appleLanguagesKey) as? [String]
+        let recorded = defaults.array(forKey: appleLanguagesProvenanceKey) as? [String]
+        if let current, current != recorded { return current }
+
+        let argument = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        if let languages = argument[appleLanguagesKey] as? [String] { return languages }
+
+        let volatileGlobal = defaults.volatileDomain(forName: UserDefaults.globalDomain)
+        if let languages = volatileGlobal[appleLanguagesKey] as? [String] { return languages }
+
+        let persistentGlobal = defaults.persistentDomain(forName: UserDefaults.globalDomain) ?? [:]
+        if let languages = persistentGlobal[appleLanguagesKey] as? [String] { return languages }
+
+        if recorded != nil { return [] }
+        return Locale.preferredLanguages
     }
 }
 
