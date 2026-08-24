@@ -3,7 +3,7 @@ import Darwin
 import XCTest
 @testable import App
 
-private let rejectedCommandProbe: [String: Any] = [
+let rejectedCommandProbe: [String: Any] = [
     "command_template": "z {repo}", "variables": ["evil": "x"],
 ]
 
@@ -214,7 +214,7 @@ private final class HoldingDefaults: UserDefaults {
 /// What the relay does: keep trying the path until something is there, send one request, and wait
 /// for the answer. Its two facts are read from the test's thread, so they are taken under a lock —
 /// "no answer yet" is an assertion here, and an assertion on a value nothing orders proves nothing.
-private final class RelayAtTheDoor {
+final class RelayAtTheDoor {
     private let lock = NSLock()
     private var asked_ = false
     private var answer_: [String: Any]?

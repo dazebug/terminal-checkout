@@ -15,9 +15,10 @@ final class HostProtocolTests: XCTestCase {
             .path
     }
 
-    /// The socket response is Core's response exactly. This is a shape contract, not a list
-    /// of locale fields that happens not to be appended: the request path must call `handleRequest`
-    /// directly and must not inspect the decoded payload or compose a protocol answer around it.
+    /// The socket response is Core's response exactly. The source assertions pin the request-path
+    /// shape — direct `handleRequest`, no decoded-payload inspection, and no request-shape branch —
+    /// while the live socket assertion below compares the complete response, so a wrapper that adds
+    /// a field fails even when it preserves the call spelling.
     /// The installation record is a separate invariant: it is stamped for every framed message
     /// before parsing, so malformed input counts too (CLAUDE.md:45).
     func testServeUsesHandleRequestOutputAndRecordsBeforeParsing() throws {
@@ -38,6 +39,34 @@ final class HostProtocolTests: XCTestCase {
         let recordOffset = source.distance(from: source.startIndex, to: record)
         let parseOffset = source.distance(from: source.startIndex, to: parse)
         XCTAssertLessThan(recordOffset, parseOffset, "the install record moved after JSON parsing")
+
+        let expected = handleRequest(
+            json: rejectedCommandProbe, baseDirectory: Settings.baseDirectory
+        ) { _ in }
+        let directory = "/tmp/tc-protocol-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        let server = HostServer(socketPath: path)
+        try server.start(announcing: .nothing)
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(rejectedCommandProbe, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer, "the server did not answer the command")
+        let expectedBytes = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
+        let actualBytes = try JSONSerialization.data(withJSONObject: actual, options: [.sortedKeys])
+        XCTAssertEqual(
+            actualBytes, expectedBytes,
+            "the socket response differs from handleRequest's complete output"
+        )
     }
 
     /// **The internal-error literal is the one response that stays bare, and not by omission.**
