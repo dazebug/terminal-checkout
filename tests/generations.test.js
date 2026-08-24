@@ -31,6 +31,7 @@ const path = require('node:path');
 
 const { generationRealm } = require('./realm.js');
 const { catalogueBackend } = require('./chrome-messages.js');
+const { CHROME_LOCALE_DIRECTORIES } = require('../tools/check-locales.js');
 
 const BASELINE_HASHES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'baseline', 'HASHES.json'), 'utf8'));
 
@@ -76,18 +77,28 @@ const PAIRINGS = [
   { skeleton: 'baseline', consumers: 'baseline', what: 'the baseline, as a control' },
 ];
 
+const EXPECTED_TAG_BY_DIRECTORY = Object.fromEntries(
+  Object.entries(CHROME_LOCALE_DIRECTORIES).map(([tag, directory]) => [directory, tag]),
+);
+
+// Chrome's Chinese catalogue directories use underscores, while getUILanguage returns BCP-47.
+// Map the sibling spellings as one family: a one-off conversion for either side leaves the other
+// looking plausible while the baseline resolver silently falls back to English.
+const UI_LANGUAGE_BY_DIRECTORY = {
+  zh_CN: 'zh-CN',
+  zh_TW: 'zh-TW',
+};
+
 // Chrome answers from the shipped catalogue, so a raw key or a blank is visible as itself.
 const platformFor = (directory = 'ja') => {
   const backend = catalogueBackend(directory);
-  return { getMessage: (id, subs) => backend(id, subs), uiLanguage: directory === 'zh_CN' ? 'zh-CN' : directory };
+  return {
+    getMessage: (id, subs) => backend(id, subs),
+    uiLanguage: UI_LANGUAGE_BY_DIRECTORY[directory] ?? EXPECTED_TAG_BY_DIRECTORY[directory],
+  };
 };
 
 const drained = () => new Promise(resolve => setImmediate(resolve));
-
-// A document language is a dictionary tag; a catalogue lives in Chrome's directory spelling. The two
-// stores agree on the values themselves — that is what `tools/check-locales.js` holds — so either can
-// answer for "what does this catalogue say", and `_locales` is the one that is canonical now.
-const CHROME_DIRECTORY = { en: 'en', ko: 'ko', ja: 'ja', 'zh-Hans': 'zh_CN', 'zh-Hant': 'zh_TW' };
 
 test('every generation pairing loads, and the baseline it loads is the pinned artifact', () => {
   for (const { skeleton, consumers, what } of PAIRINGS) {
@@ -283,7 +294,7 @@ test('deferred platform events exercise every boundary its consumer generation o
   }
 });
 
-test('what the page drew and what the document says are the same catalogue, in every pairing', async () => {
+test('every pairing draws the requested catalogue and names its expected tag', async () => {
   // **The oracle used to run on one pairing while the load matrix ran on four** (review 39), and both
   // mixed combinations were broken underneath it: the signature of `applyDocumentLanguage` and its
   // call site had moved in opposite directions, so one wrote `en` over Japanese text and the other
@@ -295,20 +306,24 @@ test('what the page drew and what the document says are the same catalogue, in e
   // test* can look a message up; the title is what the page actually drew. It is the same distinction
   // `CLAUDE.md` draws for claude input: seeing our text on screen is not evidence it is in the input
   // box, and the only attribution obtainable from outside is what the thing under test left behind.
+  // Internal agreement is not enough: English text under `lang="en"` is self-consistent even when
+  // Traditional Chinese was requested. Pin both outputs to the requested catalogue instead.
   for (const { skeleton, consumers, what } of PAIRINGS) {
-    for (const directory of ['en', 'ja', 'zh_TW']) {
+    for (const directory of Object.values(CHROME_LOCALE_DIRECTORIES)) {
       const realm = generationRealm({ skeleton, consumers, platform: platformFor(directory) });
       load(realm, 'options.js');
       await drained();
       const tag = realm.context.document.documentElement.lang;
       const title = realm.context.document.title;
+      const expectedTag = EXPECTED_TAG_BY_DIRECTORY[directory];
       assert.ok(tag, `${what} (${directory}): the page never set a document language`);
       assert.ok(title, `${what} (${directory}): the page never set a title`);
+      assert.equal(tag, expectedTag, `${what} (${directory}): the document named the wrong catalogue`);
       // The title is `Terminal Checkout — <the header message>`, so the message the page drew is what
-      // follows the dash. The catalogue to compare against is the one the document names — that is
-      // the pair being checked, rather than an assumption about which store answered.
+      // follows the dash. The expected catalogue comes from the requested directory, never from the
+      // document's own answer: deriving one output from the other lets both fail together.
       const drawn = title.slice(title.indexOf('—') + 1).trim();
-      const expected = catalogueBackend(CHROME_DIRECTORY[tag])('ext_header_options');
+      const expected = catalogueBackend(directory)('ext_header_options');
       assert.equal(
         drawn, expected,
         `${what} (${directory}): the page drew ${JSON.stringify(drawn)} while calling itself ${tag}`,

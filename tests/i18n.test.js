@@ -2190,11 +2190,12 @@ test('a preset says its name when it is read, not the one it loaded with', () =>
   try {
     const english = PR_PRESETS[0].name;
     const englishFace = REPO_PRESETS[0].face;
+    const command = PR_PRESETS[0].command;
     installMessageBackend(catalogueBackend('ko'));
     assert.notEqual(PR_PRESETS[0].name, english, 'the preset name froze at load');
     assert.notEqual(REPO_PRESETS[0].face, englishFace, 'the preset face froze at load');
     // ...and what it runs does not move, which is the half that must not
-    assert.equal(PR_PRESETS[0].command, PR_PRESETS[0].command);
+    assert.equal(PR_PRESETS[0].command, command);
     installMessageBackend(catalogueBackend('en'));
     assert.equal(PR_PRESETS[0].name, english, 'it did not come back');
   } finally {
