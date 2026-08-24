@@ -243,8 +243,8 @@ final class LocaleRestartTests: XCTestCase {
     /// The farewell goes out before the register is cleared, so that a reader who sees "nothing in
     /// flight" may conclude "no helper of ours is still alive on that account". The reverse order
     /// leaves a window where the barrier is down and a helper is up, which is exactly what the
-    /// lifetime defence cannot afford. It is read from the source because reaching that `defer`
-    /// means running a real delivery.
+    /// lifetime defence cannot afford. This is a source-order lint, not a runtime delivery proof:
+    /// reaching that `defer` would require running a real delivery.
     func testTheHelperIsDismissedBeforeTheRegisterIsCleared() throws {
         let source = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
         let farewell = source.range(of: "if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }")
@@ -261,8 +261,9 @@ final class LocaleRestartTests: XCTestCase {
         )
     }
 
-    /// The one line that consumes the verdict. Reading it is the honest option: the branch that
-    /// follows calls `NSApp.terminate`, so a test that took it would end the test run.
+    /// The one line that consumes the verdict. This is a source-order lint, not a runtime restart
+    /// proof: the branch that follows calls `NSApp.terminate`, so a test that took it would end the
+    /// test run.
     func testThePickerAsksBeforeItRestarts() throws {
         let source = try String(
             contentsOfFile: Self.appSource("SetupWindowController.swift"), encoding: .utf8
@@ -298,7 +299,8 @@ final class LocaleRestartTests: XCTestCase {
     }
 
     /// And termination dismisses the helpers before it stops our own socket server: one of those is
-    /// a process on the user's machine and the other is ours to lose.
+    /// a process on the user's machine and the other is ours to lose. This is a source-order lint,
+    /// not a runtime termination proof, because invoking the path would stop the test process.
     func testTerminationDismissesHelpersBeforeStoppingOurOwnServer() throws {
         let source = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
         let function = try XCTUnwrap(source.range(of: "func applicationWillTerminate("))
@@ -414,7 +416,8 @@ final class AppTerminationAdmissionTests: XCTestCase {
 
     /// And the one place that brings a helper into existence writes the address first, so a refusal
     /// reaches it while nothing has been created — after the Tab Config is written there is no way to
-    /// recall the launch. Read from the source: the passing branch of `runInWarp` opens a real tab.
+    /// recall the launch. This is a source-order lint, not a runtime launch proof: the passing branch
+    /// of `runInWarp` opens a real tab.
     func testNoHelperIsLaunchedAfterTheGateCloses() throws {
         let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
         let function = try XCTUnwrap(source.range(of: "public func runInWarp(")).upperBound
@@ -448,11 +451,12 @@ final class AppTerminationAdmissionTests: XCTestCase {
     /// Both ways of leaving reach the same decision, so a third one has to find it too. The two
     /// entries differ by the one argument that says whether they may be refused.
     ///
-    /// Read as a **count** rather than as two lines of source. The lines were pinned verbatim and
-    /// went red the moment the decision grew a second job (round 17: shutting the gate also
-    /// withdraws the addresses of helpers that are not there yet) — a gate that fails when the thing
-    /// it guards is improved is a gate people delete. What has to stay true is that there is one
-    /// place, and that both ways of leaving arrive at it.
+    /// Read as a **count** rather than as two lines of source. The source-count half is a lint, not
+    /// a runtime proof of every termination route. The lines were pinned verbatim and went red the
+    /// moment the decision grew a second job (round 17: shutting the gate also withdraws the
+    /// addresses of helpers that are not there yet) — a gate that fails when the thing it guards is
+    /// improved is a gate people delete. What has to stay true is that there is one place, and that
+    /// both ways of leaving arrive at it.
     func testRestartAndTerminationShareOneDecision() throws {
         let core = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
         XCTAssertEqual(

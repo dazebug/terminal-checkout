@@ -150,8 +150,9 @@ final class AppMessageTests: XCTestCase {
     /// The menu bar is built once per language change, and every title in it comes from the
     /// catalogue. The window is not opened here: building the menu means `AppDelegate`, whose launch
     /// path also registers the Native Host manifest over the one this machine is using. So the case
-    /// is in two halves — the catalogue answers differently per language, and the call site reads it
-    /// rather than a literal. Neither half alone would catch a literal that happens to be Korean.
+    /// is in two halves — the catalogue answers differently per language, and the call-site half is
+    /// a source lint that reads it rather than a literal. Neither half alone would catch a literal
+    /// that happens to be Korean.
     func testTheMenuTitlesComeFromTheCatalogue() throws {
         let keys = [
             "app.menu.quit", "app.menu.edit", "app.menu.cut", "app.menu.copy", "app.menu.paste",
@@ -197,7 +198,8 @@ final class AppMessageTests: XCTestCase {
     ///
     /// **The subject is every shipped locale, so that is what is walked.** This used to loop over
     /// the languages *without* a body — `supportedLocales where !populatedLocales.contains(tag)` —
-    /// which stopped selecting anything the moment the last three catalogues were filled. Measured:
+    /// which stopped selecting anything the moment the last three catalogues were filled. The source
+    /// half is a lint, while the runtime half covers whichever branch this machine can reach. Measured:
     /// emptying `ja`'s file and rebuilding left `swift test` and `build.sh` both green, because
     /// `verify-bundle.sh` compares source against bundle and lints the syntax but never asks for a
     /// key. Nothing anywhere noticed a language losing the sentence macOS shows when it asks for the

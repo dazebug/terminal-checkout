@@ -536,7 +536,8 @@ test('nothing a button draws comes from an error message', () => {
   // The trace above, pinned. If a display path is ever added, this fails — and it should, because
   // the message is composed in the service worker, which has no render locale: showing it properly
   // means sending an **id** to the content script, not a sentence. That is the trigger recorded
-  // next to both messages.
+  // next to both messages. This is a source lint, not a runtime rendering proof: the content page
+  // has no browser harness here.
   const source = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
   // **Every receiver, every spacing, every way of writing text into a node** (round 17 sweep): this
   // read `button.` with exactly one space on each side of the `=`, so the same statement written

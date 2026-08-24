@@ -358,8 +358,9 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     ///
     /// Linking from a file the app already holds is what makes the take-back fail exactly when the
     /// claim would, but only while that file exists. A request whose pin could not be made is a
-    /// request whose helper cannot be taken back, which is the P0 reached by carrying on. So
-    /// `runInWarp` refuses it, and the source says so at the one place that creates one.
+    /// request whose helper cannot be taken back, which is the P0 reached by carrying on. The
+    /// source-order half is a lint, not a runtime `runInWarp` proof; the writable-directory fixture
+    /// below exercises the pin-creation failure itself.
     func testAWarpRequestIsRefusedWhenItsPinCannotBeMade() throws {
         let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
         let create = try XCTUnwrap(source.range(of: "guard createWarpHelperPin(forAdvertised: socketPath) else {"))
@@ -408,9 +409,10 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertFalse(helper.claim(), "the helper claimed after the delivery had ended")
     }
 
-    /// **A registration that threw takes its pin with it.** The pin is made before `record` on
-    /// purpose — a registered address whose pin does not exist yet is an address that cannot be taken
-    /// back — so the failing path is the one that has to clean up.
+    /// **A registration that threw takes its pin with it.** The source-order half is a lint, while
+    /// the runtime half exercises the cleanup. The pin is made before `record` on purpose — a
+    /// registered address whose pin does not exist yet is an address that cannot be taken back — so
+    /// the failing path is the one that has to clean up.
     func testAPinIsNotLeftBehindByARegistrationThatThrew() throws {
         let path = advertised("aaaaaaba")
         let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
@@ -444,8 +446,9 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         // The sweep's threshold is the number the helper enforces, not a derivation of its own
         XCTAssertGreaterThan(warpHelperOccupationLifetime, warpHelperClaimWindow)
 
-        // And the helper reads it: the serve path takes five words and treats an unreadable deadline
-        // as already past, because an unbounded claim is the thing being removed
+        // And the helper reads it: the serve-path assertions below are a source lint, not a launched
+        // helper proof. The path takes five words and treats an unreadable deadline as already past,
+        // because an unbounded claim is the thing being removed.
         let helper = try String(contentsOfFile: Self.helperSource(), encoding: .utf8)
         XCTAssertTrue(helper.contains("arguments.count == 5, arguments[1] == serveFlag"))
         XCTAssertTrue(helper.contains("Double(arguments[4]) ?? 0"), "an unreadable deadline is not fail-closed")
