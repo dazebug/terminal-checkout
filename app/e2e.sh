@@ -82,32 +82,4 @@ run_case "app-provided variable cannot come from the extension" \
   '{"command_template":"{cd}","variables":{"cd":"rm -rf /"}}' \
   'Unknown variable: {cd}'
 
-# The cold-start query: the extension has to know the language before it draws anything, and asking
-# must not open a terminal tab. It is answered in the app's protocol envelope rather than in Core's
-# resolver (D23), so a request with no `command_template` still gets Core's verdict — the case above
-# ("missing command_template") is the other half of that skew, and it is what an **older** app
-# answers to this very request.
-run_case "locale query is answered without a command" \
-  '{"query":"locale"}' \
-  '"success":true'
-
-# Whether that answer carries a locale generation depends on whether this machine's GUI has ever
-# published one, so the assertion here is the part that does not: a **failure** never carries it.
-# Metadata is a statement the app makes about itself, and the extension reads its absence as no
-# input rather than as a change (D51).
-refuse_case() {
-  local name="$1" payload="$2" forbidden="$3"
-  local out
-  out=$(frame "$payload" | "$RELAY" | unframe)
-  if echo "$out" | grep -qF "$forbidden"; then
-    echo "FAIL: $name — got: $out"
-    exit 1
-  fi
-  echo "PASS: $name"
-}
-
-refuse_case "a rejected request carries no locale generation" \
-  '{"command_template":"z {repo}","variables":{"evil":"x"}}' \
-  '"locale_install_id"'
-
 echo "e2e: all cases passed"

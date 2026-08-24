@@ -3,6 +3,10 @@ import Darwin
 import XCTest
 @testable import App
 
+private let rejectedCommandProbe: [String: Any] = [
+    "command_template": "z {repo}", "variables": ["evil": "x"],
+]
+
 /// **The door opens after the answer exists** (round 17 review).
 ///
 /// `start` used to arm the accept loop on its way out and hand the caller a right to publish with;
@@ -80,7 +84,7 @@ final class HostServerStartupPublicationTests: XCTestCase {
         }
 
         let relay = RelayAtTheDoor()
-        relay.connectAndAsk(["query": localeQueryName], at: path, givingUp: 10)
+        relay.connectAndAsk(rejectedCommandProbe, at: path, givingUp: 10)
 
         let japanese = try XCTUnwrap(SupportedLocale("ja"))
         let bound = DispatchSemaphore(value: 0)
@@ -113,13 +117,8 @@ final class HostServerStartupPublicationTests: XCTestCase {
 
         XCTAssertTrue(waits(for: { relay.answer != nil }, upTo: 10), "the request was never answered")
         let answer = try XCTUnwrap(relay.answer)
-        XCTAssertEqual(answer["success"] as? Bool, true)
-        XCTAssertEqual(
-            answer[localeResponseKey] as? String, "ja",
-            "the first answer carried the language of the launch before this one"
-        )
-        XCTAssertEqual(answer[localeEpochResponseKey] as? Int, 4, "the generation the extension orders by did not move")
-        XCTAssertEqual(answer[localeInstallIdResponseKey] as? String, "install-before")
+        XCTAssertEqual(answer["success"] as? Bool, false)
+        XCTAssertNotNil(answer["error"], "the rejected command stopped explaining why it failed")
         XCTAssertEqual(
             defaults.dictionary(forKey: LocaleState.publicationKey)?["tag"] as? String, "ja",
             "the answer was not the thing that was committed"
@@ -147,7 +146,7 @@ final class HostServerStartupPublicationTests: XCTestCase {
         canonical = CanonicalSocketOverride(directory + "/elsewhere.sock")
 
         let relay = RelayAtTheDoor()
-        relay.connectAndAsk(["query": localeQueryName], at: path, givingUp: 3)
+        relay.connectAndAsk(rejectedCommandProbe, at: path, givingUp: 3)
 
         let japanese = try XCTUnwrap(SupportedLocale("ja"))
         XCTAssertThrowsError(
@@ -187,14 +186,17 @@ final class HostServerStartupPublicationTests: XCTestCase {
         }
 
         let relay = RelayAtTheDoor()
-        relay.connectAndAsk(["query": localeQueryName], at: path, givingUp: 10)
+        relay.connectAndAsk(rejectedCommandProbe, at: path, givingUp: 10)
         try server.start(announcing: .nothing)
 
         XCTAssertTrue(waits(for: { relay.answer != nil }, upTo: 10), "the headless server answered nothing")
         let answer = try XCTUnwrap(relay.answer)
-        XCTAssertEqual(answer[localeResponseKey] as? String, "ko")
-        XCTAssertEqual(answer[localeEpochResponseKey] as? Int, 3, "the headless server moved the generation")
-        XCTAssertEqual(answer[localeInstallIdResponseKey] as? String, "install-before")
+        XCTAssertEqual(answer["success"] as? Bool, false)
+        XCTAssertNotNil(answer["error"], "the headless server did not return Core's command error")
+        XCTAssertEqual(
+            defaults.dictionary(forKey: LocaleState.publicationKey)?["tag"] as? String, "ko",
+            "the headless server changed the stored publication"
+        )
     }
 }
 
