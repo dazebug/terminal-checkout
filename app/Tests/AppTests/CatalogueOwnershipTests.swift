@@ -156,18 +156,25 @@ final class CatalogueOwnershipTests: XCTestCase {
             chromeTags.sorted(), expected.sorted(),
             "_locales holds \(chromeTags), and the languages we ship map to \(expected.sorted())"
         )
-        // **`_locales` now holds two namespaces, and that is A2's doing rather than a leak.** It
-        // carries the two manifest keys, as it always did, plus one derived name per extension
-        // message: `tools/derive-locales.js` writes `ext.header.options` there as
-        // `ext_header_options`, because a `_locales` name cannot contain a dot. So what ownership
-        // means here is that a name is either one of Chrome's two or the conversion of a key the
-        // extension store owns — an `app.` key or an invented name is still a foreign key.
+        // **`_locales` holds two namespaces, and that is the migration's doing rather than a leak.**
+        // It carries the two manifest keys, as it always did, plus one derived name per extension
+        // message: the conversion writes `ext.header.options` there as `ext_header_options`, because
+        // a `_locales` name cannot contain a dot. So what ownership means here is that a name is
+        // either one of Chrome's two or the conversion of a key the extension store owns — an `app.`
+        // key or an invented name is still a foreign key.
         //
-        // The conversion is spelled out rather than shared with the JavaScript side, and that is a
-        // measured limitation of this test rather than a choice: Swift cannot call
-        // `chromeMessageId`. What keeps the two spellings from drifting is that the JavaScript gate
-        // compares byte for byte against what the generator produces, so a change to the rule shows
-        // up there; here it would show up as a foreign key.
+        // The conversion is spelled out here rather than shared with the JavaScript side, and that is
+        // a limitation of this test rather than a choice: Swift cannot call `chromeMessageId`.
+        //
+        // **What that costs, corrected.** This used to say the JavaScript byte comparison stops the
+        // two spellings drifting. It does not: change the JavaScript converter, regenerate, and that
+        // comparison is green — it compares the store against what the *current* converter derives,
+        // so a converter change is invisible to it (review 38). What actually catches one-sided drift
+        // is the **conjunction** — the JavaScript side comparing the derivation against the committed
+        // artifact, and this test independently checking the generated physical names against the
+        // dictionary keys. Change one spelling and one of the two goes red. The protection was real;
+        // the reason given for it was false, which is the disposition `CoreTests.swift`'s osascript
+        // note took in round 26: conclusion kept, reason replaced. A7 removes the second spelling.
         for tag in chromeTags {
             let owned = Set(try extensionDictionary(extensionLocale(forChromeTag: tag)).keys)
                 .map { $0.replacingOccurrences(of: ".", with: "_") }

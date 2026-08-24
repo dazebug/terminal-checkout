@@ -33,20 +33,34 @@ const {
 const { catalogueBackend } = require('./chrome-messages.js');
 vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
-test('every file in the extension is audited or classified, and nothing is neither', () => {
-  const everything = walkFiles(extension, () => true);
-  const unaccounted = everything.filter((name) => {
-    const suffix = name.slice(name.lastIndexOf('.'));
-    return !AUDITED_SUFFIXES.includes(suffix) && !Object.hasOwn(CLASSIFIED_SUFFIXES, suffix);
-  });
+test('every file has a role, and a role is what makes a file enter a gate', () => {
+  // The universe, and the fact that being in it is the same thing as being read. A file with no role
+  // fails here; a role with no files fails here; and a role whose files are not the ones the
+  // pipelines below take would be a third authority, which is what this replaced (review 38).
+  const unclassified = EXTENSION_FILES.filter(file => roleOf(file) === null);
   assert.deepEqual(
-    unaccounted, [],
-    'the extension ships a file this suite neither audits nor classifies — audit it, or record here what it is',
+    unclassified, [],
+    'the extension ships a file with no role — give it one, or say here what it is and which gate owns it',
   );
-  // ...and neither audited suffix is empty, so a rename cannot quietly empty the gates below
-  for (const suffix of AUDITED_SUFFIXES) {
-    assert.ok(everything.some(name => name.endsWith(suffix)), `nothing in the extension ends in ${suffix}`);
+  for (const [role, files] of Object.entries({
+    speakingSource: SPEAKING_FILES,
+    markupSource: HTML_FILES,
+    manifest: MANIFEST_FILES,
+    localeCatalogue: CATALOGUE_FILES,
+  })) {
+    assert.ok(files.length > 0, `nothing in the extension is ${role}, so its gates read nothing`);
   }
+  // Each data role is exactly what its name claims rather than "whatever had that suffix": one
+  // manifest, and one catalogue per shipped locale. A stray `probe.json` is neither.
+  assert.deepEqual(MANIFEST_FILES, ['manifest.json']);
+  assert.equal(CATALOGUE_FILES.length, TC_I18N_LOCALES.length, 'the catalogues and the locales disagree');
+  // And the sets the gates use are derived from the roles, not re-filtered beside them
+  assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
+  assert.deepEqual(
+    EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
+    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES].sort(),
+    'a file has a role that no set takes',
+  );
 });
 
 test('the five dictionaries register themselves, and nothing else does', () => {
@@ -566,35 +580,91 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
     ? walkFiles(path.join(dir, entry.name), keep, `${prefix}${entry.name}/`)
     : (keep(entry.name) ? [`${prefix}${entry.name}`] : [])))
   .sort();
-// **Every file in the tree is either audited or classified, and there is no third answer.** The two
-// lists below are suffix filters somebody wrote, which makes "which files even enter" an authored
-// enumeration one level under every gate here: a source Chrome would load in another form — an
-// `.mjs`, a stylesheet, a second page — sits outside all of them, and no liveness sweep that starts
-// from the file list can see the file that is not in it (review 37). So the tree is walked with no
-// filter at all, and anything that is neither audited nor named here fails **this** test rather than
-// passing silently in the ones below. Adding a form of source becomes a decision somebody records,
-// which is the cheap half of the stronger contract: it fails closed, without reconstructing Chrome's
-// load graph.
-const AUDITED_SUFFIXES = ['.js', '.html'];
-const CLASSIFIED_SUFFIXES = {
-  '.json': 'data Chrome reads directly — the manifest and the `_locales` catalogues, which the '
-    + 'catalogue gates parse as JSON rather than scan as source',
+// **One classifier, and every file set below comes out of it.** The version this replaces had two
+// authorities: a suffix list that decided whether a file was *accounted for*, and three more suffix
+// filters that decided what each pipeline actually *read*. Two ways through the gap (review 38): put
+// `.mjs` on the audited list with a real `.mjs` file — accounted for, read by nothing — or drop any
+// `probe.json` into the tree and have it classified as manifest-or-catalogue data on the strength of
+// a suffix, with no gate owning it. The verifier's words for the shape: the authored input
+// classification did not imply entry into the application.
+//
+// So a path gets a **role**, the roles are the only way a file enters anything, and the data roles
+// are recognised **by path** rather than by suffix — `manifest.json` is one file and a catalogue is
+// `_locales/<tag>/messages.json`, and nothing else is either. A file with no role fails the gate
+// below, which is what "fails closed" has to mean once the classification and the entry are one
+// operation. Same move as `auditSource`, one level out.
+const roleOf = (relativePath) => {
+  if (relativePath === 'manifest.json') return 'manifest';
+  if (/^_locales\/[^/]+\/messages\.json$/.test(relativePath)) return 'localeCatalogue';
+  if (relativePath.endsWith('.js')) return 'speakingSource';
+  if (relativePath.endsWith('.html')) return 'markupSource';
+  return null;
 };
+const EXTENSION_FILES = walkFiles(extension, () => true);
+const filesInRole = role => EXTENSION_FILES.filter(file => roleOf(file) === role);
 
-const SPEAKING_FILES = walkFiles(extension, name => name.endsWith('.js'));
+const SPEAKING_FILES = filesInRole('speakingSource');
+// The markup half on its own, for the checks whose subject is a page rather than the code that fills
+// one. **Read from the tree for the same reason** (round 17 review): there is one page today, so a
+// scan of `options.html` and a scan of every page agree — by accident, and only until the second one.
+const HTML_FILES = filesInRole('markupSource');
 // Markup is written in both kinds of file — a page's own HTML and the scripts that build rows into
 // it — so a check about markup takes the union rather than the file that happened to hold the
 // example when it was written (round 16 review).
-const MARKUP_FILES = walkFiles(extension, name => name.endsWith('.js') || name.endsWith('.html'));
-// The markup half of that union on its own, for the checks whose subject is a page rather than the
-// code that fills one. **It is read from the directory for the same reason** (round 17 review):
-// there is one page today, so a scan of `options.html` and a scan of every `.html` file agree — by
-// accident, and only until the second page exists, at which point the narrower one would keep
-// answering as though the whole set were still one file.
-const HTML_FILES = walkFiles(extension, name => name.endsWith('.html'));
+const MARKUP_FILES = [...SPEAKING_FILES, ...HTML_FILES].sort();
+const MANIFEST_FILES = filesInRole('manifest');
+const CATALOGUE_FILES = filesInRole('localeCatalogue');
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
-const speakingSource = SPEAKING_FILES.map(read).join('\n');
+// **Comments blanked, offsets kept — one lexical boundary for every scanner here.** Two gates were
+// reading prose as code (review 38). The Q21 scanner counted `` `tr('ext.header.options')` `` from a
+// comment in `i18n.js` as a call site, so its asserted total was already not the number its own
+// comment claimed; and `referencedKeys` had the same raw-literal defect, which is the gate that was
+// caught in A2 passing for the wrong reason. One real zero-argument call could disappear while a
+// comment-shaped one kept both the count and the arity result — the count preserved by the wrong
+// thing, which is the shape this file keeps finding.
+//
+// Offsets are preserved rather than removed, because the scanners index back into the source: a
+// comment becomes the same number of spaces, and a newline stays a newline so line numbers hold.
+//
+// A regular expression literal containing `//` is the known limit — `bracketPairs` has the same one —
+// and there is none in this extension (the scanners would report a nonsense site rather than pass
+// something, so the failure direction is right).
+const withoutComments = (source) => {
+  const out = [];
+  let state = 'code';
+  let quote = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const character = source[i];
+    const next = source[i + 1];
+    if (state === 'code') {
+      if (character === '/' && next === '/') { state = 'line'; out.push(' ', ' '); i += 1; continue; }
+      if (character === '/' && next === '*') { state = 'block'; out.push(' ', ' '); i += 1; continue; }
+      if (character === "'" || character === '"' || character === '`') { state = 'string'; quote = character; }
+      out.push(character);
+      continue;
+    }
+    if (state === 'string') {
+      out.push(character);
+      if (character === '\\') { out.push(next ?? ''); i += 1; continue; }
+      if (character === quote) { state = 'code'; quote = null; }
+      continue;
+    }
+    if (state === 'line') {
+      if (character === '\n') { state = 'code'; out.push('\n'); continue; }
+      out.push(' ');
+      continue;
+    }
+    // block
+    if (character === '*' && next === '/') { state = 'code'; out.push(' ', ' '); i += 1; continue; }
+    out.push(character === '\n' ? '\n' : ' ');
+  }
+  return out.join('');
+};
+
+// Masked, because a key named in prose is not a key the page asks for (review 38).
+const speakingSource = SPEAKING_FILES.map(file => withoutComments(read(file))).join('\n');
+
 
 // A message id can only be named by a literal (checked below), and the markup names them in an
 // attribute — so between them this is the whole set.
@@ -725,7 +795,10 @@ const highestArgumentOf = value => Math.max(
 //
 // Both shapes are read: a call naming its key, and the table that fills `data-i18n` nodes, whose
 // entries are arrays and are the only place arguments are supplied without a call in sight.
-const refuseArgumentMismatches = (file, source, messages) => {
+const refuseArgumentMismatches = (file, rawSource, messages) => {
+  // Prose is not a call, and this gate was counting one (review 38). The masking is shared with the
+  // key scanners rather than repeated here, so the two cannot come to disagree about what code is.
+  const source = withoutComments(rawSource);
   const supplied = [];
   for (const match of source.matchAll(/\b(?:t|tr|tHTML)\(\s*'(ext\.[A-Za-z0-9.]+)'/g)) {
     const open = source.indexOf('(', match.index);
@@ -759,7 +832,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), globalThis.TC_I18N.en);
-  assert.equal(readSites, 102, `the scan read ${readSites} argument-supplying sites`);
+  // **101, and the 102 that stood here is the third wrong number on this item's line.** It counted
+  // a call written inside a comment in `i18n.js` — prose about the boundary conversion, added in
+  // A2 in the commit that deleted an unreproducible `157`. A sentence written to avoid a false
+  // number produced a false number in another gate (D206). What matters more than the digit is
+  // what it hid: a real zero-argument call could have been removed while the comment-shaped one
+  // kept both the count and the arity result intact.
+  assert.equal(readSites, 101, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1248,11 +1327,25 @@ const computedNameWritesIn = source => ({
   setAttribute: [...source.matchAll(/\.setAttribute\s*\(\s*([^'"`\s][^,)]*)/g)]
     .map(match => `setAttribute(${match[1].trim()}, …)`),
   bracket: (() => {
+    // **The name is balanced too, and it was not** (review 38). The receiver walked backwards through
+    // balanced groups while the *name* was still a character class that stops at the first `]` — so
+    // `document.querySelector('#x')[names[index]] = 'prose'` never reached `receiverStart` at all:
+    // the match ended inside the name and the assignment was not there to find. The nested-receiver
+    // fixture proved a nested receiver and said nothing about a nested name.
+    //
+    // So the assignment is found first — a `]` followed by `=` and a literal — and its opening `[`
+    // comes from the same pair map the receiver already uses. One reader, both halves.
     const pairs = bracketPairs(source);
-    return [...source.matchAll(/\[\s*([^\]'"`][^\]]*)\]\s*\+?=\s*['"`]/g)].map((match) => {
-      const start = receiverStart(source, match.index, pairs);
-      const receiver = start === null ? '<unreadable receiver>' : source.slice(start, match.index).trim();
-      return `${receiver}[${match[1].trim()}]`;
+    return [...source.matchAll(/\]\s*\+?=\s*['"`]/g)].flatMap((match) => {
+      const closing = match.index;
+      const opening = pairs.get(closing);
+      if (opening === undefined) return [];
+      const name = source.slice(opening + 1, closing).trim();
+      // A quoted name is not computed — the site scan above reads it as an ordinary attribute write.
+      if (name.length === 0 || /^['"`]/.test(name)) return [];
+      const start = receiverStart(source, opening, pairs);
+      const receiver = start === null ? '<unreadable receiver>' : source.slice(start, opening).trim();
+      return [`${receiver}[${name}]`];
     });
   })(),
 });
@@ -1482,6 +1575,13 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
     refused("rows[indices[0]].node[name] = 'prose';"),
     /writes a literal into rows\[indices\[0\]\]\.node\[name\]/,
   );
+  // **And a computed name that is itself an expression** (review 38): the reader balanced the
+  // receiver and not the name, so this exact line was not seen at all.
+  assert.match(
+    refused("document.querySelector('#x')[names[index]] = 'user-facing prose';"),
+    /writes a literal into document\.querySelector\('#x'\)\[names\[index\]\]/,
+  );
+  assert.match(refused("el[keys.title] = 'prose';"), /writes a literal into el\[keys\.title\]/);
   // A receiver it cannot describe is refused too, named for what it is rather than passed
   assert.match(refused("= 'prose';\n[name] = 'prose';"), /<unreadable receiver>\[name\]/);
   // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
