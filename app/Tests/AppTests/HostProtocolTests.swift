@@ -15,7 +15,7 @@ final class HostProtocolTests: XCTestCase {
             .path
     }
 
-    /// The socket response is Core's response, byte for byte. This is a shape contract, not a list
+    /// The socket response is Core's response exactly. This is a shape contract, not a list
     /// of locale fields that happens not to be appended: the request path must call `handleRequest`
     /// directly and must not inspect the decoded payload or compose a protocol answer around it.
     /// The installation record is a separate invariant: it is stamped for every framed message

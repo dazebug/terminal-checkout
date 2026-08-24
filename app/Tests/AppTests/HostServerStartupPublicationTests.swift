@@ -7,20 +7,18 @@ private let rejectedCommandProbe: [String: Any] = [
     "command_template": "z {repo}", "variables": ["evil": "x"],
 ]
 
-/// **The door opens after the answer exists** (round 17 review).
+/// **The door opens after the launch publication exists** (round 17 review).
 ///
 /// `start` used to arm the accept loop on its way out and hand the caller a right to publish with;
-/// the caller published afterwards. Between those two points the server was answering, and what it
-/// answered with was whatever this machine published the last time it ran — so an `auto` user whose
-/// system language changed while the app was down got the *old* language in the extension's opening
-/// question, cached it, and had nothing to make them ask again. The window is not a rare
-/// interleaving: the relay launches the app when nothing answers on the path and then retries the
-/// connection, so it is standing at the socket waiting for that `listen`.
+/// the caller published afterwards. Between those two points the server could answer before this
+/// launch had completed its publication. The window is not a rare interleaving: the relay launches
+/// the app when nothing answers on the path and then retries the connection, so it is standing at the
+/// socket waiting for that `listen`.
 ///
 /// **Why the case has to hold the publication open.** The two statements were microseconds apart, so
 /// a case that merely raced them would pass under the defect nearly always and prove nothing either
 /// way. Holding the write is the only way to make the question — *can anything be answered while the
-/// launch has not said what the language is* — answerable at all. The hold is on the store, not on
+/// launch publication is still uncommitted* — answerable at all. The hold is on the store, not on
 /// the server: the same `UserDefaults` subclass trick `LocalePublicationTests` uses to enumerate what
 /// a reader can see mid-write, one step earlier.
 final class HostServerStartupPublicationTests: XCTestCase {
@@ -64,12 +62,11 @@ final class HostServerStartupPublicationTests: XCTestCase {
         return condition()
     }
 
-    /// **Nothing is answered before this launch has said what the language is.**
+    /// **Nothing is answered before this launch has committed its publication.**
     ///
-    /// The store already holds the previous launch's publication, in a different language. If a
-    /// request can be answered while the new one is still being written, the extension caches `ko`
-    /// with an epoch it will then refuse to move for — which is this feature failing in the exact
-    /// scenario it was built for.
+    /// The store already holds the previous launch's publication. If a request can be answered while
+    /// the new one is still being written, the socket has exposed a server before its startup
+    /// publication contract completed.
     func testNoRequestIsAnsweredBeforeTheLaunchPublicationIsCommitted() throws {
         defaults.set(
             ["installId": "install-before", "epoch": 3, "tag": "ko"],
@@ -121,7 +118,7 @@ final class HostServerStartupPublicationTests: XCTestCase {
         XCTAssertNotNil(answer["error"], "the rejected command stopped explaining why it failed")
         XCTAssertEqual(
             defaults.dictionary(forKey: LocaleState.publicationKey)?["tag"] as? String, "ja",
-            "the answer was not the thing that was committed"
+            "the launch publication was not committed before the server answered"
         )
     }
 
@@ -130,8 +127,8 @@ final class HostServerStartupPublicationTests: XCTestCase {
     /// `publishLocaleAtLaunch` used to answer `Void` and this call used to ignore it, so the accept
     /// loop was armed whether or not anything had been written. The invariant above it says *the
     /// publication is committed before anything is answered*; what the code held was *a publication
-    /// was attempted*. The failure lands where a failed bind already lands: nothing is served, the
-    /// path is given back, and the log says this instance publishes no locale.
+    /// was attempted*. The failure lands where a failed bind already lands: nothing is served and
+    /// the path is given back.
     func testStartDoesNotArmAfterPublicationIsRefused() throws {
         defaults.set(
             ["installId": "install-before", "epoch": 3, "tag": "ko"],
@@ -171,11 +168,11 @@ final class HostServerStartupPublicationTests: XCTestCase {
         )
     }
 
-    /// **The headless server answers too, and announcing nothing is how it says what it is.**
+    /// **The headless server answers too, and announcing nothing leaves publication untouched.**
     ///
     /// It draws nothing and has no picker, so inventing a revision there is what D49 rules out — but
-    /// it still has to serve, which is the constraint any arming mechanism has to satisfy. What it
-    /// hands back is the GUI's last publication, unchanged, and the store is left as it was found.
+    /// it still has to serve Core's command output, which is the constraint any arming mechanism has
+    /// to satisfy. The store is left as it was found.
     func testTheHeadlessServerAnswersAndPublishesNothing() throws {
         defaults.set(
             ["installId": "install-before", "epoch": 3, "tag": "ko"],

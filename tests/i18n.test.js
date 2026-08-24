@@ -341,7 +341,7 @@ test('an unknown locale in a response is not a generation', () => {
   }
   // **This assertion used to run the other way, and it was wrong.** A bare
   // `{locale, locale_install_id, locale_epoch}` is not a response this app can compose — everything
-  // `hostResponse` returns carries `success` — so accepting it meant the "did the app compose it"
+  // The app's response path carries `success` — so accepting it meant the "did the app compose it"
   // rule was really only checking the shape of the metadata. The test blessed the hole it left.
   assert.equal(
     localeGenerationOf({ locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),

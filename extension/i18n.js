@@ -284,7 +284,7 @@ function localeGenerationOf(response, seq, scope) {
   if (!response || typeof response !== 'object') return null;
   // **The envelope is part of "the app composed it".** Without this the rule was only checking the
   // *shape of the metadata*, and a bare `{locale, locale_install_id, locale_epoch}` — a response
-  // `hostResponse` cannot produce, because everything it returns carries `success` — was accepted
+  // the app cannot produce, because every valid response carries `success` — was accepted
   // and cached. A test used to bless exactly that object. Both values are welcome: a refusal is a
   // statement about the language too (D83). What is refused is something that never came from a
   // response at all.
