@@ -1,4 +1,5 @@
 import Darwin
+import TestSupport
 import XCTest
 @testable import Core
 
@@ -362,7 +363,9 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     /// source-order half is a lint, not a runtime `runInWarp` proof; the writable-directory fixture
     /// below exercises the pin-creation failure itself.
     func testAWarpRequestIsRefusedWhenItsPinCannotBeMade() throws {
-        let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
+        let source = try auditSource(
+            Self.coreSource("TerminalRunner.swift"), claim: .sourceOrder
+        ).text
         let create = try XCTUnwrap(source.range(of: "guard createWarpHelperPin(forAdvertised: socketPath) else {"))
         let record = try XCTUnwrap(source.range(of: "try claudeInput.record(.warp(helperSocket: socketPath))"))
         XCTAssertLessThan(create.lowerBound, record.lowerBound, "the pin is made after the register entry")
@@ -415,7 +418,9 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     /// the failing path is the one that has to clean up.
     func testAPinIsNotLeftBehindByARegistrationThatThrew() throws {
         let path = advertised("aaaaaaba")
-        let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
+        let source = try auditSource(
+            Self.coreSource("TerminalRunner.swift"), claim: .sourceOrder
+        ).text
         let create = try XCTUnwrap(source.range(of: "guard createWarpHelperPin(forAdvertised: socketPath) else {"))
         let record = try XCTUnwrap(source.range(of: "try claudeInput.record(.warp(helperSocket: socketPath))"))
         XCTAssertLessThan(create.lowerBound, record.lowerBound, "the pin is made after the address is registered")
@@ -449,7 +454,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         // And the helper reads it: the serve-path assertions below are a source lint, not a launched
         // helper proof. The path takes five words and treats an unreadable deadline as already past,
         // because an unbounded claim is the thing being removed.
-        let helper = try String(contentsOfFile: Self.helperSource(), encoding: .utf8)
+        let helper = try auditSource(Self.helperSource(), claim: .sourceStructure).text
         XCTAssertTrue(helper.contains("arguments.count == 5, arguments[1] == serveFlag"))
         XCTAssertTrue(helper.contains("Double(arguments[4]) ?? 0"), "an unreadable deadline is not fail-closed")
         let deadlineCheck = try XCTUnwrap(helper.range(of: "Date().timeIntervalSince1970 <= claimDeadline"))

@@ -1,5 +1,6 @@
 import Core
 import Darwin
+import TestSupport
 import XCTest
 @testable import App
 
@@ -73,7 +74,7 @@ final class HostProtocolTests: XCTestCase {
     /// The installation record is a separate invariant: it is stamped for every framed message
     /// before parsing, so malformed input counts too (CLAUDE.md:45).
     func testServeUsesHandleRequestOutputAndRecordsBeforeParsing() throws {
-        let source = try String(contentsOfFile: hostServerSourcePath, encoding: .utf8)
+        let source = try auditSource(hostServerSourcePath, claim: .sourceStructure).text
         let requestPathStart = try XCTUnwrap(source.range(of: "let response = execQueue.sync {")).lowerBound
         let responseEncoding = try XCTUnwrap(source.range(of: "let payload =")).lowerBound
         let requestPath = String(source[requestPathStart..<responseEncoding])
@@ -137,7 +138,7 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(parsed["error"] as? String, "internal error")
         // and the source still emits exactly that literal — a lint, because the branch needs a
         // failed serialisation to reach
-        let source = try String(contentsOfFile: hostServerSourcePath, encoding: .utf8)
+        let source = try auditSource(hostServerSourcePath, claim: .sourceLiteral).text
         XCTAssertTrue(
             source.contains(#"Data(#"{"success":false,"error":"internal error"}"#),
             "the fallback literal moved; decide again whether it may claim a locale"

@@ -1,13 +1,13 @@
 # Localization
 
-How the app decides which language it renders in, where the catalogues live, and who owns the answer. The mechanisms and the invariants live in `CLAUDE.md`; the decision ledger for the work in progress is in `docs/plans/i18n-five-locales.md`. This file holds the forks — what was chosen over what, and why.
+How the app decides which language it renders in, where the catalogues live, and who owns the answer. The mechanisms and the invariants live in `CLAUDE.md`; the promotion ledger and audit tables for the migration are preserved in PR #41. This file holds the forks — what was chosen over what, and why.
 
 ## Catalogues live in `Contents/Resources/<tag>.lproj` and are read with `Bundle(path:)`
 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** issue #24, which prescribed the opposite; ledger D1 and D21 in `docs/plans/i18n-five-locales.md`; `app/Sources/App/Localization.swift`, `app/Package.swift:15-21`, `app/verify-bundle.sh`
+**Source:** issue #24, which prescribed the opposite; PR #41 (ledger D1 and D21); `app/Sources/App/Localization.swift`, `app/Package.swift:15-21`, `app/verify-bundle.sh`
 **Revisit when:** the `.app` stops being assembled by hand in `build.sh`, or SwiftPM's generated accessor stops falling back to a build-machine path
 
 Issue #24 prescribed SwiftPM `resources:` with `Bundle.module`. That was rejected on measurement, not on taste: the generated accessor looks in exactly two places — `Bundle.main.bundleURL/<Name>.bundle`, which is the top of the `.app` and not `Contents/Resources`, and an absolute `.build` path baked into the binary — and calls `fatalError` when neither is there. The consequence is the dangerous one: on the machine that compiled it, a catalogue that was never copied into the bundle still resolves through `.build`, so the missing copy is invisible locally and the crash happens only on someone else's Mac. Reading `Contents/Resources/<tag>.lproj` by path fails in the same place for everybody.
@@ -20,9 +20,9 @@ That choice forces `exclude: ["Resources"]` in `Package.swift`. SwiftPM demands 
 
 **Type:** decision
 **Status:** superseded — see "Each surface follows its own platform" below
-**Superseded by:** user decision, 2026-08-24; ledger D152 in `docs/plans/i18n-five-locales.md`
+**Superseded by:** user decision, 2026-08-24; PR #41 (ledger D152)
 **Evidence:** confirmed
-**Source:** issue #24; ledger D8, D9 and D17 in `docs/plans/i18n-five-locales.md`; the picker in `app/Sources/App/SetupWindowController.swift`
+**Source:** issue #24; PR #41 (ledger D8, D9 and D17); the picker in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** the setup window stops being the first screen a user sees, or the extension gains a way to answer before the app can
 
 The requirement is one language across the app and the extension, chosen by the user.
@@ -42,7 +42,7 @@ The requirement is one language across the app and the extension, chosen by the 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured — `chrome.i18n` has no per-extension language setting; the display language is `chrome://settings/languages`, checked on Chrome 151.0.7922.172)
-**Source:** user decision, 2026-08-24; ledger D152, D162, D163, D171, D172 in `docs/plans/i18n-five-locales.md`; `extension/i18n.js`, `extension/_locales/`
+**Source:** user decision, 2026-08-24; PR #41 (ledger D152, D162, D163, D171, D172); `extension/i18n.js`, `extension/_locales/`
 **Revisit when:** Chrome gains a per-extension language setting, or the product decides that one language across both surfaces is worth a synchronization protocol again
 
 The extension asks `chrome.i18n` and the app asks macOS. Neither tells the other, and the two can differ — that is not a defect, it is what two platforms answer.
@@ -55,12 +55,26 @@ The extension asks `chrome.i18n` and the app asks macOS. Neither tells the other
 
 **The two Chrome-namespace keys are unchanged** — `name` and `description` in `manifest.json` still come from `_locales`, as they always had to.
 
+## Three stores, three verdicts
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the ownership gate checks the app catalogues, the live Chrome catalogues and the compatibility passengers separately; the live argument-identity gate reads `_locales` itself
+**Source:** PR #41 (ledger D168, D173, D267); `app/Tests/AppTests/CatalogueOwnershipTests.swift`, `tools/check-locales.js`, `extension/_locales/`, `extension/_i18n/`
+**Revisit when:** the compatibility passengers are retired under a generation-consistent deployment, or either platform changes its catalogue format
+
+The app `.lproj` catalogues are canonical for AppKit, `_locales` is canonical for the extension and is the store Chrome reads, and `_i18n` is a non-canonical compatibility artifact retained for adjacent-generation consumers. `_i18n` is pinned to the migration baseline; it is not a second live catalogue that must track every reviewed translation edit in `_locales`.
+
+The checks therefore have separate subjects. Ownership asks whether each store has exactly the entries it owns. The compatibility pin asks whether the passenger still has its baseline bytes. The live argument-identity check reads `_locales` entries and compares placeholder positions and sentinel projections with the source, because a byte pin can report only that a reviewed edit happened and cannot distinguish a translation change from structural corruption.
+
+An intentional `_locales` translation edit keeps the compatibility checker green and requires a reviewed baseline update; an edit that changes a placeholder binding must fail the semantic gate before anyone updates that pin.
+
 ## The boundary for `AppleLanguages` is the first localization lookup, not the existence of AppKit
 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured with a windowless probe bundle)
-**Source:** ledger D14, D22 and D79 in `docs/plans/i18n-five-locales.md`; `applyStoredLanguageToAppKit` in `app/Sources/App/main.swift`, `AppLocalization` in `app/Sources/App/Localization.swift`
+**Source:** PR #41 (ledger D14, D22 and D79); `applyStoredLanguageToAppKit` in `app/Sources/App/main.swift`, `AppLocalization` in `app/Sources/App/Localization.swift`
 **Revisit when:** AppKit starts honouring a language change mid-process, or the app gains a second entry point that draws UI
 
 Measured with an `LSUIElement` probe bundle that writes only its own domain: written **after** AppKit has come up, the same process keeps its old language — `preferredLocalizations` does not move and an `NSAlert` button stays `확인`, while only the readback changes; left in place, the next launch picks it up; written **before** AppKit is touched, the same process picks it up immediately (`zh-Hant`, with `好` and `打開`). So the write lives in `main.swift` ahead of `NSApplication.shared`, and a language change during a session needs a restart for AppKit's own chrome. Our own strings do not go through this key at all — they are read with `Bundle(path:)` — which is why they redraw immediately and the chrome does not.
@@ -78,7 +92,7 @@ Measured with an `LSUIElement` probe bundle that writes only its own domain: wri
 **Type:** decision
 **Status:** superseded by A6 — the app-to-extension publication protocol was removed; this entry records the retired design
 **Evidence:** confirmed at the API level — the torn read was reproduced as a failing test before the change; the cross-process and crash behaviour underneath it was not measured
-**Source:** round 9 review; ledger D80 and item 34 in `docs/plans/i18n-five-locales.md`; the pre-A6 `LocaleState` implementation and its focused tests
+**Source:** round 9 review; PR #41 (ledger D80 and item 34); the pre-A6 `LocaleState` implementation and its focused tests
 **Disposition:** A6 removed the compatibility publication protocol after current extension consumers stopped reading it; `LocaleRestartGate` remains because it protects delivery lifetime, not publication
 
 Before A6, the app composed three compatibility values — an install id, an epoch, and a tag — and an adjacent old extension accepted a snapshot from the same install only when the epoch was strictly greater. A4's current consumers already ignored them; A5/A6 then removed the protocol. The three values were once three `UserDefaults` keys, written one after another.
@@ -100,7 +114,7 @@ In the retired design, one key held one dictionary, and what that bought had two
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** ledger D25, D38 and D66 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/WarpControl.swift:24` and `:63-73`, `uninstall.sh:69-70`
+**Source:** PR #41 (ledger D25, D38 and D66); `app/Sources/Core/WarpControl.swift:24` and `:63-73`, `uninstall.sh:69-70`
 **Revisit when:** the tab-config file format changes, or Warp starts giving `#!` lines a meaning
 
 The marker is `#!terminal-checkout/tab-config/v1`. `#` is a TOML comment, so Warp's parsing is unaffected; the `!`-and-path shape reads as a marker to a human; `v1` means a later format change does not reopen the language question; and it is all ASCII.
@@ -120,7 +134,7 @@ The marker is `#!terminal-checkout/tab-config/v1`. `#` is a TOML comment, so War
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured); the last hop into the terminal is unmeasured and marked so below
-**Source:** ledger D73 and D100, item 31 in `docs/plans/i18n-five-locales.md`; commit `682b6c7`; `runAppleScript` in `app/Sources/Core/AppleScriptSupport.swift`, `wezTermFallbackArguments` in `app/Sources/Core/TerminalRunner.swift`
+**Source:** PR #41 (ledger D73 and D100, item 31); `runAppleScript` in `app/Sources/Core/AppleScriptSupport.swift`, `wezTermFallbackArguments` in `app/Sources/Core/TerminalRunner.swift`
 **Revisit when:** a value that is not a path has to cross `Process.arguments` or the environment, or Foundation stops re-encoding them
 
 Shipping five languages means users write to claude in Korean, Japanese and Chinese, and text handed to a subprocess in `Process.arguments` arrives **decomposed** — Foundation re-encodes it to NFD on Darwin. On the iTerm2 branch the message is embedded in an AppleScript that used to go out as `osascript -e`, so what reached claude was not what was typed; when the input is a `!` one, the decomposed bytes reach the **shell**, where a byte-literal tool like `grep` stops matching.
@@ -138,7 +152,7 @@ Shipping five languages means users write to claude in Korean, Japanese and Chin
 **Type:** constraint
 **Status:** active
 **Evidence:** confirmed
-**Source:** ledger D29 and D34 in `docs/plans/i18n-five-locales.md`; `ShellPayload` and `localized` in `app/Sources/App/Localization.swift`, `testCommand` in `app/Sources/App/SetupWindowController.swift:177`, `renderCommand` in `app/Sources/Core/CommandRenderer.swift`
+**Source:** PR #41 (ledger D29 and D34); `ShellPayload` and `localized` in `app/Sources/App/Localization.swift`, `testCommand` in `app/Sources/App/SetupWindowController.swift:177`, `renderCommand` in `app/Sources/Core/CommandRenderer.swift`
 **Revisit when:** a string has to be both translated and executed, or a second value earns the whitelist exemption
 
 `testCommand` is shown on screen *and* run in the user's terminal. Translate it and an apostrophe in the new language breaks the `echo '…'` quoting, so the test button reports a shell error — a translator, working only in the catalogue, would have no way to see that coming.
@@ -164,19 +178,29 @@ The transitional Korean glosses these scripts and `README.md` carried while the 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** ledger D92 in `docs/plans/i18n-five-locales.md`; `LocaleRestartGate` in `app/Sources/App/Settings.swift`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
+**Source:** PR #41 (ledger D92); `LocaleRestartGate` in `app/Sources/App/Settings.swift`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** claude input delivery gains a bounded worst case, or the restart stops being user-initiated
 
 A language change moves AppKit's own chrome only on the next launch, so the card offers a restart. Restarting through an in-flight claude input delivery would cut it off and orphan a Warp injection helper whose only defence is its lifetime, so the gate answers "not now".
 
 **Rejected alternative — defer the restart until the delivery finishes.** Two reasons. The window already says "not restarting right now, press again when the delivery has finished", and a queue that fired by itself would contradict a sentence about to exist in five languages. More fundamentally, deferring needs the deferral to outlive whatever it waits for — including a delivery that never ends — which is the same self-lifetime problem the gate exists to avoid. The user keeps the trigger.
 
+## Restart notes use a closed state
+
+**Type:** constraint
+**Status:** active
+**Evidence:** confirmed by the implementation
+**Source:** PR #41 (closing change); `LanguageNoteState` and `languageNote` in `app/Sources/App/SetupWindowController.swift`
+**Revisit when:** the language card gains another mutually exclusive restart outcome
+
+The language card has three outcomes: the ordinary note, a restart blocked because delivery is in flight, and a relaunch that failed to start. They are represented by `LanguageNoteState`, not by two independent booleans, so the impossible combination “blocked and failed” cannot be passed to the formatter. The failed-launch path therefore keeps its own message instead of borrowing the explanation for a delivery refusal.
+
 ## Residual: the compatibility cache's fence is per worker, not per account
 
 **Type:** constraint
 **Status:** active
 **Evidence:** unknown — the interleaving is a reviewer's scenario and was not reproduced
-**Source:** ledger D90 in `docs/plans/i18n-five-locales.md`
+**Source:** PR #41 (ledger D90)
 **Revisit when:** generation-consistent deployment lets the adjacent-generation cache ABI be removed, a browser API can prove at most one service-worker realm writes it, or the cache moves somewhere with a compare-and-set
 
 **What this limits is the retained compatibility implementation, not the current consumer path.** A4 removed cache reads and writes from current consumers, but an adjacent old service worker can still open the new `i18n.js` after a folder swap and call its preserved writer. Removing that implementation now would abort the old worker; generation-consistent deployment is the point at which this residual can leave with its passenger.
@@ -190,9 +214,26 @@ It is written down rather than fixed because it cannot be observed from where we
 **Type:** constraint
 **Status:** active
 **Evidence:** confirmed (measured — one mixed read in roughly 10,200)
-**Source:** ledger D19, D98 and D99 in `docs/plans/i18n-five-locales.md`; `<scratchpad>/probe_replace.swift`; `Installer.swift`
+**Source:** PR #41 (ledger D19, D98 and D99); `<scratchpad>/probe_replace.swift`; `Installer.swift`
 **Revisit when:** Chrome gains a way to snapshot an unpacked extension folder, or the folder stops being read file by file
 
 Adding locale files meant the extension copy had to be replaced rather than edited in place, and the replacement is atomic: the folder is built complete beside the old one and swapped, so it is never observed missing or half-built (measured, zero occurrences in roughly 10,200 reads; `rename(2)` cannot be used because it refuses a non-empty directory, so it is `replaceItemAt`).
 
 **Atomic does not mean a reader sees one generation.** Measured once in that same run: a reader opened `manifest.json` before the swap and a nested file after it, and mixed two generations. There is no filesystem primitive that protects a reader opening several files in sequence — the reader has to take a snapshot, and ours is Chrome, which we do not control. The `try?` that used to swallow the failure is gone, so a swap that fails is reported instead of leaving a half-state, but this residual is not closed by that.
+
+## Closure follow-up seeds
+
+These are the seven issue seeds carried out of PR #41; the issues are intentionally not opened until cold review can add any further findings to the same list.
+
+1. `HostServer.start()` still unlinks a stale socket path by name after a failed connection probe, so a replacement owner can be deleted before this instance binds; the fix must make pathname cleanup identity-safe.
+2. `HostServer.tearDown()` still has a stat-to-unlink race in which a same-uid process can replace the socket path after identity verification; the fix must close that check-and-remove window.
+3. The Warp helper can still be born after farewell or outlive the app until its idle and lifetime caps; the follow-up must close the late-launch and helper-lifetime residuals without weakening the uid trust boundary.
+4. The `_i18n` compatibility passengers and their `background.js` and manifest load entries can be retired only after generation-consistent deployment proves that a previous-release reader can execute against the new tree's ABI.
+5. Q12 remains a device release-gate question: D14 says not to fight the TCC prompt, but a device measurement is needed before deciding whether the setup window should pre-state the same permission sentence in the chosen language.
+6. Q13 remains a test-isolation issue: A5 removed the locale-query aggravation from e2e, but running the gate still updates the installed app's `lastRequestAt` and can show “extension connection confirmed” in the user's setup window.
+7. Q14 remains a deliberate UX residual: `app.language.restartDeferred` already explains why to wait and what to do, but delivery can take minutes while the window shows no progress indication and may look half-translated.
+
+## Closure dispositions preserved from PR #41
+
+- **D291:** `languageNote(restartBlocked: Bool, restartFailed: Bool)` made a mutually exclusive three-state UI represent an impossible combined state; `LanguageNoteState` makes that state unrepresentable.
+- **D293:** Q12 stays on the device release-gate list with D14's “do not fight the prompt” decision and an open pre-statement choice; Q13 becomes a follow-up for the installed-settings side effect after A5 removed the locale-query aggravation; Q14 becomes a follow-up for missing progress feedback while the already-shipped deferred-restart explanation remains deliberate.

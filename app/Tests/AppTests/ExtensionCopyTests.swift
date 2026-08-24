@@ -1,4 +1,5 @@
 import Core
+import TestSupport
 import XCTest
 @testable import App
 
@@ -133,7 +134,9 @@ final class ExtensionCopyTests: XCTestCase {
     /// So the gate is not optional decoration: it is the only thing standing between these two and
     /// the next person who fixes one of them.
     func testNeitherInstallPathDeletesItsDestinationFirst() throws {
-        let installer = try String(contentsOfFile: Self.repositoryFile("app/Sources/App/Installer.swift"), encoding: .utf8)
+        let installer = try auditSource(
+            Self.repositoryFile("app/Sources/App/Installer.swift"), claim: .sourceStructure
+        ).text
         let copyFunction = try XCTUnwrap(installer.range(of: "static func installExtensionCopy() throws {"))
         // **The window is the function, found by matching its braces.** It was a fixed 1400
         // characters over a 1147-character body — five lines of headroom — and the two directions
@@ -163,7 +166,9 @@ final class ExtensionCopyTests: XCTestCase {
             "a failed staging now leaves a full copy of the extension beside the installed one"
         )
 
-        let script = try String(contentsOfFile: Self.repositoryFile("install.sh"), encoding: .utf8)
+        let script = try auditSource(
+            Self.repositoryFile("install.sh"), claim: .sourceStructure
+        ).text
         XCTAssertFalse(
             script.contains(#"rm -rf "$INSTALL_DIR/$APP_NAME""#),
             "install.sh deletes the installed app before it has a replacement"
@@ -193,7 +198,9 @@ final class ExtensionCopyTests: XCTestCase {
     /// shadowed by a function that fails on the swap and delegates everything else to the real one.
     /// `ditto` is shadowed too, so no app bundle has to exist to run this.
     func testAFailedSwapPutsThePreviousAppBack() throws {
-        let script = try String(contentsOfFile: Self.repositoryFile("install.sh"), encoding: .utf8)
+        let script = try auditSource(
+            Self.repositoryFile("install.sh"), claim: .sourceLifecycle
+        ).text
         let start = try XCTUnwrap(
             script.range(of: #"STAGING="$INSTALL_DIR/.$APP_NAME.staging""#),
             "the replacement block is no longer where this test reads it from"

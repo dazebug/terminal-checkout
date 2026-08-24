@@ -114,7 +114,7 @@ Every wait in the delivery loop reads before it sleeps, and the sleep is shorten
 **Type:** decision
 **Status:** superseded
 **Evidence:** confirmed
-**Source:** PR #3 (`20d7617`), which introduced both the gate and the fallback; superseded by ledger D75 in `docs/plans/i18n-five-locales.md`
+**Source:** PR #3, which introduced both the gate and the fallback; superseded by PR #41 (ledger D75)
 **Revisit when:** never on its own — it is here so the replacement is read as an expiry rather than as a discovery
 
 The commit that added gate ② also added a way past it: when `stty` could not be read, the check was treated as undecidable and delivery continued on the `ps` check alone. The commit body says so twice — "stty를 읽지 못하면 판정 불가로 보고 기존처럼 ps만으로 진행한다", and "iTerm2 경로는 미검증이나, stty 조회 실패 시 ps만으로 폴백하므로 회귀 위험은 없다". A test named `testAcceptsInputFallsBackToForegroundWhenSttyUnavailable` then pinned it, so the fallback was the documented behaviour rather than an oversight.
@@ -126,7 +126,7 @@ The commit that added gate ② also added a way past it: when `stty` could not b
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed for the case measured — one pty, three states, plus three unreadable ttys
-**Source:** ledger D75 in `docs/plans/i18n-five-locales.md`; `app/Sources/Core/ClaudeInjector.swift:52` and `:73`
+**Source:** PR #41 (ledger D75); `app/Sources/Core/ClaudeInjector.swift:52` and `:73`
 **Revisit when:** a terminal appears where `stty` cannot be read while the tty is genuinely usable
 
 `ttyIsRawMode(...) ?? true` became `== true`: an undecidable raw-mode check no longer opens the gate.
@@ -142,7 +142,7 @@ The commit that added gate ② also added a way past it: when `stty` could not b
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** ledger D70, D76 and D77 in `docs/plans/i18n-five-locales.md`; `WarpForeground` in `app/Sources/Core/WarpHelperProtocol.swift:83-91`, its `diagnosis` at `:98`, `app/Sources/WarpHelper/main.swift:110`
+**Source:** PR #41 (ledger D70, D76 and D77); `WarpForeground` in `app/Sources/Core/WarpHelperProtocol.swift:83-91`, its `diagnosis` at `:98`, `app/Sources/WarpHelper/main.swift:110`
 **Revisit when:** a caller appears that needs to act differently on `.different` and `.unknown`, rather than only to say something different
 
 A single `Bool` gave "another process group was observed" and "the lookup failed" the same value, and the diagnostic built on it then said something false — `.drainedByOther` names a reader that nothing had identified.
@@ -158,7 +158,7 @@ A single `Bool` gave "another process group was observed" and "the lookup failed
 **Type:** constraint
 **Status:** superseded — the delivery paths no longer cross this boundary (commit `682b6c7`); the platform behaviour it describes is unchanged
 **Evidence:** confirmed (measured)
-**Source:** ledger D73 and D100, item 31 in `docs/plans/i18n-five-locales.md`; `ProcessArgumentBoundaryTests` in `app/Tests/CoreTests/CoreTests.swift`
+**Source:** PR #41 (ledger D73 and D100, item 31); `ProcessArgumentBoundaryTests` in `app/Tests/CoreTests/CoreTests.swift`
 **Revisit when:** a delivery path has to put a value that is not a path into `Process.arguments` or the environment again
 
 Measured by reading codepoints with AppleScript's `id of`: text handed to `osascript -e` arrives **decomposed** (NFD — `4361 4453 4527 4352 4456`), while the same text read from a script file or from stdin arrives **composed** (NFC — `49444 44228`). So a claude message a user wrote in Korean or Japanese reached the iTerm2 path in a different form from the one they typed, and where the input was a `!` one the decomposed bytes reached the shell.

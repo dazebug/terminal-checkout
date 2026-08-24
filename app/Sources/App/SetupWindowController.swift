@@ -591,7 +591,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     ///
     @objc private func restartForLanguage() {
         guard LocaleRestartGate.admitRestart() else {
-            languageNoteLabel.stringValue = languageNote(restartBlocked: true)
+            languageNoteLabel.stringValue = languageNote(.restartBlocked)
             return
         }
         let app = Bundle.main.bundlePath
@@ -607,22 +607,29 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             // input for the rest of its life is a worse outcome than the restart not happening
             LocaleRestartGate.withdrawAdmission()
             checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
-            languageNoteLabel.stringValue = languageNote(restartFailed: true)
+            languageNoteLabel.stringValue = languageNote(.restartFailed)
             return
         }
         NSApp.terminate(nil)
     }
 
-    /// What the card says, in the order the states exclude each other.
-    ///
-    private func languageNote(restartBlocked: Bool = false, restartFailed: Bool = false) -> String {
-        if restartFailed {
+    /// The note is a closed state, so a blocked restart and a failed relaunch cannot be requested
+    /// together or silently collapse into the ordinary note.
+    private enum LanguageNoteState {
+        case ordinary
+        case restartBlocked
+        case restartFailed
+    }
+
+    private func languageNote(_ state: LanguageNoteState = .ordinary) -> String {
+        switch state {
+        case .restartFailed:
             return localized("app.language.restartFailed")
-        }
-        if restartBlocked {
+        case .restartBlocked:
             return localized("app.language.restartDeferred")
+        case .ordinary:
+            return localized("app.language.note")
         }
-        return localized("app.language.note")
     }
 
     private func terminalCard() -> NSView {

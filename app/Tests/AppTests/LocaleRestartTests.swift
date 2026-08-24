@@ -1,5 +1,6 @@
 import Core
 import Darwin
+import TestSupport
 import XCTest
 @testable import App
 
@@ -246,7 +247,9 @@ final class LocaleRestartTests: XCTestCase {
     /// lifetime defence cannot afford. This is a source-order lint, not a runtime delivery proof:
     /// reaching that `defer` would require running a real delivery.
     func testTheHelperIsDismissedBeforeTheRegisterIsCleared() throws {
-        let source = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
+        let source = try auditSource(
+            Self.coreSource("ClaudeInjector.swift"), claim: .sourceOrder
+        ).text
         let farewell = source.range(of: "if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }")
         let clear = source.range(of: "admission.end()")
         XCTAssertTrue(
@@ -265,9 +268,9 @@ final class LocaleRestartTests: XCTestCase {
     /// proof: the branch that follows calls `NSApp.terminate`, so a test that took it would end the
     /// test run.
     func testThePickerAsksBeforeItRestarts() throws {
-        let source = try String(
-            contentsOfFile: Self.appSource("SetupWindowController.swift"), encoding: .utf8
-        )
+        let source = try auditSource(
+            Self.appSource("SetupWindowController.swift"), claim: .sourceOrder
+        ).text
         let function = try XCTUnwrap(source.range(of: "@objc private func restartForLanguage() {"))
         let body = source[function.upperBound...]
         let guardIndex = try XCTUnwrap(
@@ -302,7 +305,9 @@ final class LocaleRestartTests: XCTestCase {
     /// a process on the user's machine and the other is ours to lose. This is a source-order lint,
     /// not a runtime termination proof, because invoking the path would stop the test process.
     func testTerminationDismissesHelpersBeforeStoppingOurOwnServer() throws {
-        let source = try String(contentsOfFile: Self.appSource("AppDelegate.swift"), encoding: .utf8)
+        let source = try auditSource(
+            Self.appSource("AppDelegate.swift"), claim: .sourceOrder
+        ).text
         let function = try XCTUnwrap(source.range(of: "func applicationWillTerminate("))
         let body = source[function.upperBound...]
         let helpers = try XCTUnwrap(
@@ -419,7 +424,9 @@ final class AppTerminationAdmissionTests: XCTestCase {
     /// recall the launch. This is a source-order lint, not a runtime launch proof: the passing branch
     /// of `runInWarp` opens a real tab.
     func testNoHelperIsLaunchedAfterTheGateCloses() throws {
-        let source = try String(contentsOfFile: Self.coreSource("TerminalRunner.swift"), encoding: .utf8)
+        let source = try auditSource(
+            Self.coreSource("TerminalRunner.swift"), claim: .sourceOrder
+        ).text
         let function = try XCTUnwrap(source.range(of: "public func runInWarp(")).upperBound
         let body = source[function...]
         let record = try XCTUnwrap(
@@ -458,7 +465,9 @@ final class AppTerminationAdmissionTests: XCTestCase {
     /// improved is a gate people delete. What has to stay true is that there is one place, and that
     /// both ways of leaving arrive at it.
     func testRestartAndTerminationShareOneDecision() throws {
-        let core = try String(contentsOfFile: Self.coreSource("ClaudeInjector.swift"), encoding: .utf8)
+        let core = try auditSource(
+            Self.coreSource("ClaudeInjector.swift"), claim: .sourceStructure
+        ).text
         XCTAssertEqual(
             core.components(separatedBy: "admissionClosed = true").count - 1, 1,
             "the gate is shut in more than one place, so a third way of leaving can shut it differently"

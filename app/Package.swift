@@ -12,6 +12,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "Core"),
+        .target(name: "TestSupport"),
         // `exclude` and not `resources`: SwiftPM notices any `.lproj` under a target and, left to
         // itself, demands `defaultLocalization` and starts producing a `Bundle.module` accessor —
         // the machinery D1 rejected, because that accessor resolves through an absolute `.build`
@@ -21,7 +22,7 @@ let package = Package(
         .executableTarget(name: "App", dependencies: ["Core"], exclude: ["Resources"]),
         .executableTarget(name: "Relay", dependencies: ["Core"]),
         .executableTarget(name: "WarpHelper", dependencies: ["Core"]),
-        .testTarget(name: "CoreTests", dependencies: ["Core"]),
-        .testTarget(name: "AppTests", dependencies: ["App", "Core"]),
+        .testTarget(name: "CoreTests", dependencies: ["Core", "TestSupport"]),
+        .testTarget(name: "AppTests", dependencies: ["App", "Core", "TestSupport"]),
     ]
 )
