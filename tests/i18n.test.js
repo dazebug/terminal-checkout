@@ -867,8 +867,11 @@ const consumerReferenceKeysIn = (files, readSource) => {
     const events = javaScriptEvents(readSource(file));
     const strings = new Set(messageStringKeysFrom(events));
     const calls = messageCallsFrom(events);
+    // This containment is guaranteed today: both projections select the same static message-key
+    // literal event. It is a tripwire, not independent evidence. It starts doing work if a later
+    // change gives calls their own scanner or otherwise lets the projections stop sharing events.
     for (const { key } of calls) {
-      assert.ok(strings.has(key), `${file}: ${key} was a call without a matching string-key event`);
+      assert.ok(strings.has(key), `${file}: ${key} escaped the shared-event projection tripwire`);
       references.add(key);
     }
     for (const key of declaredMessageKeysFrom(events)) references.add(key);
@@ -1116,22 +1119,26 @@ test('message strings and calls are separate projections of every JavaScript lex
     'tr:ext.interpolation',
   ]);
   for (const { key } of messageCallsIn(source)) {
-    assert.ok(strings.includes(key), `${key} was a call without a string event`);
+    assert.ok(strings.includes(key), `${key} escaped the shared-event projection tripwire`);
   }
 });
 
-test('_locales is what _i18n derives — every name, and the bytes as committed', () => {
-  // **A derivation, so that a wrong edit cannot be made twice.** Two stores holding the same 122
-  // values are two places to edit, and an edit made identically in both satisfies any comparison
-  // anyone would write; the answer is that only one of them is written by hand (D159). The generator
-  // is `tools/derive-locales.js`, this is the same code run as a check, and both take
-  // `chromeMessageId` out of `extension/i18n.js` rather than restating it (D171, D177).
+const catalogueMismatchInstruction = (directory, tag) => (
+  `_locales/${directory}/messages.json differs from pinned compatibility _i18n/${tag}.js — `
+  + "keep _locales canonical and do not regenerate it from _i18n; update A7's pinned-baseline checks, "
+  + 'then run node tools/check-locales.js'
+);
+
+test('_locales still matches the pinned _i18n compatibility baseline — every name and byte', () => {
+  // `_locales` is canonical and `_i18n` is the frozen migration baseline. This read-only mixed-
+  // generation check still runs the old derivation to compare them; it is not authority to write
+  // either store. A legitimate `_locales` edit triggers A7's pinned-baseline rewrite (D173).
   const context = loadExtensionI18n();
   for (const tag of TC_I18N_LOCALES) {
     const { directory, messages } = deriveCatalogue(tag, context);
     assert.equal(
       serialize(messages), read(`_locales/${directory}/messages.json`),
-      `_locales/${directory}/messages.json is not what _i18n/${tag}.js derives — run tools/derive-locales.js`,
+      catalogueMismatchInstruction(directory, tag),
     );
     // The name set is the two Chrome-namespace keys plus every logical id, converted. Stated as a
     // set so that a key silently dropped by the derivation is a failure and not a smaller file.
@@ -1452,24 +1459,6 @@ const ASSIGNMENT_OPERATORS = new Set([
 ]);
 const isAssignment = event => event?.type === 'punctuator' && ASSIGNMENT_OPERATORS.has(event.value);
 
-const skipJavaScriptTrivia = (source, start) => {
-  let index = start;
-  for (;;) {
-    while (/\s/.test(source[index] ?? '')) index += 1;
-    if (source[index] === '/' && source[index + 1] === '/') {
-      const newline = source.indexOf('\n', index + 2);
-      index = newline < 0 ? source.length : newline + 1;
-      continue;
-    }
-    if (source[index] === '/' && source[index + 1] === '*') {
-      const close = source.indexOf('*/', index + 2);
-      index = close < 0 ? source.length : close + 2;
-      continue;
-    }
-    return index;
-  }
-};
-
 // **A call names a message when the key is there to read.** `t(dynamicKey)` is not a catalogue
 // lookup anybody can check — it is an expression whose text arrives at run time, which is the class
 // this gate calls undeclared — and accepting it because it *looks* like a lookup was the hole in the
@@ -1526,10 +1515,14 @@ const markupAttributeSitesIn = (source) => {
 // Every text-bearing attribute `source` writes, in source order. JavaScript assignments come from
 // lexical events; HTML attributes use HTML tag syntax, including tags embedded in template text.
 const attributeSitesIn = (source) => {
-  const events = javaScriptEvents(source);
+  // Interpolated templates emit their inner events before the enclosing template event is closed;
+  // source order makes the event after an assignment operator the value event in every shape.
+  const events = javaScriptEvents(source).sort((left, right) => left.start - right.start);
   const sites = markupAttributeSitesIn(source);
-  const add = (name, siteStart, valueStart) => {
-    const at = skipJavaScriptTrivia(source, valueStart);
+  const add = (name, siteStart, valueEvent) => {
+    // Comments and whitespace are absent from the event stream, so the next event owns the value
+    // start. Falling off the stream preserves an unreadable site for a missing value.
+    const at = valueEvent?.start ?? source.length;
     sites.push({
       at,
       name: name.toLowerCase(),
@@ -1543,7 +1536,7 @@ const attributeSitesIn = (source) => {
       if (name) {
         let operator = i + 1;
         while (events[operator]?.start < event.start + name.length) operator += 1;
-        if (isAssignment(events[operator])) add(name, event.start, events[operator].end);
+        if (isAssignment(events[operator])) add(name, event.start, events[operator + 1]);
       }
     }
     if (event.type === 'punctuator' && event.value === '[') {
@@ -1552,7 +1545,7 @@ const attributeSitesIn = (source) => {
       const operator = events[i + 3];
       if (name?.type === 'literal' && name.static && TEXT_BEARING_NAME.test(name.value)
           && close?.type === 'punctuator' && close.value === ']' && isAssignment(operator)) {
-        add(name.value, event.start, operator.end);
+        add(name.value, event.start, events[i + 4]);
       }
     }
     if (event.type === 'identifier' && event.name === 'setAttribute'
@@ -1562,7 +1555,7 @@ const attributeSitesIn = (source) => {
       const comma = events[i + 3];
       if (name?.type === 'literal' && name.static && TEXT_BEARING_NAME.test(name.value)
           && comma?.type === 'punctuator' && comma.value === ',') {
-        add(name.value, event.start, comma.end);
+        add(name.value, event.start, events[i + 4]);
       }
     }
   }
