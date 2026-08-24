@@ -24,6 +24,28 @@ const TC_I18N_LOCALES = ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant'];
 // folding an unshipped language to English is a decision, not a property of the dictionaries.
 const TC_I18N_FALLBACK = 'en';
 
+// The one conversion between the id a source names and the name Chrome's `_locales` can hold.
+//
+// `_locales` message names may contain `[A-Za-z0-9_@]` and are matched **case-insensitively**
+// (measured against every extension installed on this machine: 739 `messages.json` files, 25,510
+// names, not one with a dot). Our ids are dotted, so something has to give — and what gives is the
+// **boundary**, not the source (D162). `tr('ext.header.options')` stays exactly that in every one of
+// the 157 places it is written, and `ext_header_options` exists only where the platform is looking.
+// The alternative was renaming the source, which would have made "an old dictionary in memory
+// meeting a new consumer" produce raw keys on screen; with the conversion at the edge that state
+// cannot be written down at all.
+//
+// **It is here so that there is one of it** (D171, D177). The derivation that writes `_locales`, the
+// read-only checker that verifies it, and — from A3 — the runtime lookup all load this function from
+// this file. A generator with its own copy of "the same rule" is two implementations, and the way
+// this project would have got there is item ordering rather than disagreement: the generator needs
+// the rule before the runtime does.
+//
+// Nothing calls it yet. That is the point of introducing it here: A2 changes no behaviour.
+function chromeMessageId(key) {
+  return String(key).replace(/\./g, '_');
+}
+
 // The registry the `_i18n/<tag>.js` files write into. Declared here so there is one place that says
 // what shape it has; the dictionaries create it themselves if they load first, because the file
 // order in `manifest.json` is a fact about the manifest rather than about this contract.

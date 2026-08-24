@@ -19,8 +19,8 @@ for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
 }
 // and defaults.js, whose presets resolve their display text through the dictionaries above
 vm.runInThisContext(read('defaults.js'));
-const { i18nText, applyDocumentLanguage, TC_I18N_LOCALES, TC_I18N_FALLBACK } =
-  vm.runInThisContext('({ i18nText, applyDocumentLanguage, TC_I18N_LOCALES, TC_I18N_FALLBACK })');
+const { i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK } =
+  vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK })');
 
 test('the five dictionaries register themselves, and nothing else does', () => {
   assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
@@ -566,6 +566,35 @@ test('every locale carries the same keys, and every value says something', () =>
       assert.ok(value.trim().length > 0, `${tag}/${key} is empty`);
     }
   }
+});
+
+test('the boundary conversion is legal for every key, and collides for none', () => {
+  // **The platform's grammar is satisfied at the boundary and nowhere else** (D162). A `_locales`
+  // message name may hold `[A-Za-z0-9_@]` and is compared case-insensitively, so the dotted logical
+  // id the source writes cannot be one; `.`→`_` is the whole conversion, and the source keeps its
+  // dots — which is what makes "an old dictionary meeting a new consumer" a state that cannot be
+  // written down rather than one a gate has to catch.
+  //
+  // It lives in `i18n.js` because **the generator, the read-only checker and later the runtime all
+  // load this function from here** (D171, D177). "The same rule" written twice is two
+  // implementations that agree until they do not, and the way that would have happened is item
+  // ordering: a generator with its own copy now, a runtime copy at A3.
+  assert.equal(chromeMessageId('ext.header.options'), 'ext_header_options');
+  assert.equal(chromeMessageId('ext.migration.effect.behaviorChange'), 'ext_migration_effect_behaviorChange');
+  // A name already legal is its own conversion — the two Chrome-namespace keys are the case
+  assert.equal(chromeMessageId('extName'), 'extName');
+  const byFoldedName = new Map();
+  for (const key of Object.keys(globalThis.TC_I18N.en)) {
+    const id = chromeMessageId(key);
+    assert.match(id, /^[A-Za-z0-9_@]+$/, `${key} becomes ${id}, which _locales cannot hold`);
+    const folded = id.toLowerCase();
+    assert.ok(
+      !byFoldedName.has(folded),
+      `${key} and ${byFoldedName.get(folded)} become the same name once case is folded away`,
+    );
+    byFoldedName.set(folded, key);
+  }
+  assert.equal(byFoldedName.size, Object.keys(globalThis.TC_I18N.en).length);
 });
 
 test('the page can only ask for keys the catalogue has, and asks for all of them', () => {
