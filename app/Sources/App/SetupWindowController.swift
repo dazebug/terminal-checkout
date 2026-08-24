@@ -255,11 +255,89 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// State survives because the views that hold it are stored properties: the base-directory
     /// field, the status labels and the pipeline strip are re-parented into the new stack rather
     /// than recreated, so what the user has typed is still there afterwards.
+    ///
+    /// **What does not survive on its own is where the user was.** The scroll origin lives in the
+    /// scroll view being replaced, and the first responder is dropped the moment its view leaves
+    /// the window — so a language change scrolled the window back to the top and took the focus
+    /// away, in the one interaction this whole feature is entered through. `SetupWindowPlace`
+    /// carries both across in terms that a rebuilt tree can still answer.
     func rebuildForLanguageChange() {
         guard let window = window else { return }
+        let place = capturePlace(in: window)
         window.contentView = buildContent()
         window.contentView?.layoutSubtreeIfNeeded()
         refresh()
+        // Restored after `refresh()`, not before: refresh rewrites the status lines, and one that
+        // wraps onto a second line moves every card below it. Measuring against a document that is
+        // about to change height would put the user a status line away from where they were.
+        window.contentView?.layoutSubtreeIfNeeded()
+        restore(place, in: window)
+    }
+
+    /// Where the user was, in terms that outlive the views that held it: **a role and a card**,
+    /// never a view and never a bare number of points from the top.
+    private struct SetupWindowPlace {
+        /// The control that had focus. A field being edited answers with its field editor, so the
+        /// selection is carried too — `makeFirstResponder` on a text field selects the whole value,
+        /// and restoring focus without the range would leave the next keystroke replacing the path
+        /// the user was halfway through fixing.
+        var focusedRole: NSUserInterfaceItemIdentifier?
+        var selection: NSRange?
+        /// The card at the top of the viewport, and how far into it the viewport began.
+        var anchorRole: NSUserInterfaceItemIdentifier?
+        var anchorOffset: CGFloat = 0
+    }
+
+    private func capturePlace(in window: NSWindow) -> SetupWindowPlace {
+        var place = SetupWindowPlace()
+        let editor = window.firstResponder as? NSTextView
+        let focused = (editor?.delegate as? NSView) ?? (window.firstResponder as? NSView)
+        place.focusedRole = focused?.identifier
+        place.selection = editor?.selectedRange
+
+        guard let scroll = window.contentView as? NSScrollView, let stack = rootStack else { return place }
+        let top = scroll.documentVisibleRect.maxY
+        // The document view is **not flipped**, so the first card has the largest `y` and the top of
+        // the viewport is `maxY` rather than `minY`. The anchor is the lowest card whose own top is
+        // still at or above that line — the card the reader's eye is in. Hidden cards are skipped:
+        // a collapsed one keeps a stale frame, and the rebuilt tree would put it somewhere else.
+        let cards = stack.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
+        let anchor = cards.filter { $0.frame.maxY >= top }.min(by: { $0.frame.maxY < $1.frame.maxY })
+            ?? cards.max(by: { $0.frame.maxY < $1.frame.maxY })
+        guard let anchor else { return place }
+        place.anchorRole = anchor.identifier
+        place.anchorOffset = anchor.frame.maxY - top
+        return place
+    }
+
+    /// **"The same place" is the card, not the offset.** A translated sentence is longer or shorter
+    /// than the one it replaced, so the cards above the viewport are a different height afterwards
+    /// and the old origin points at different content. Putting the anchor card back under the same
+    /// line of the window is the reading of "unchanged" that survives a reflow, and `scrollOrigin`
+    /// is where the one position the document may not have — above its first line — is answered.
+    private func restore(_ place: SetupWindowPlace, in window: NSWindow) {
+        if let scroll = window.contentView as? NSScrollView,
+           let document = scroll.documentView,
+           let role = place.anchorRole,
+           // Visible, because a hidden card keeps the frame it had when it was last laid out —
+           // restoring against one would aim at where it used to be
+           let anchor = rootStack?.arrangedSubviews.first(where: { $0.identifier == role && !$0.isHidden }) {
+            let origin = scrollOrigin(
+                anchorTop: anchor.frame.maxY, offset: place.anchorOffset,
+                clip: scroll.contentView.bounds.height
+            )
+            document.scroll(NSPoint(x: 0, y: origin))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        guard let role = place.focusedRole,
+              let control = window.contentView?.firstDescendant(withRole: role),
+              window.makeFirstResponder(control) else { return }
+        guard let selection = place.selection, let editor = (control as? NSControl)?.currentEditor() else { return }
+        // The text can have changed under the cursor: an edit that ended on an invalid path is not
+        // stored, and `refresh()` then draws the stored value instead of what was typed
+        let location = min(selection.location, editor.string.count)
+        editor.selectedRange = NSRange(location: location, length: min(selection.length, editor.string.count - location))
     }
 
     // MARK: - Building the UI
@@ -272,6 +350,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         stack.edgeInsets = NSEdgeInsets(top: 38, left: 20, bottom: 18, right: 20)
         stack.wantsLayer = true
         stack.layer?.backgroundColor = Theme.bg.cgColor
+        // The stand-in for the screen belongs to the display, not to this instance of the stack:
+        // the screen does not change because the language did, and a rebuild that dropped it would
+        // measure the next layout against the real display in the middle of a test that pinned one
+        stack.visibleFrameOverride = rootStack?.visibleFrameOverride
 
         chromeCard = buildChromeCard()
         extensionCard = buildExtensionCard()
@@ -279,18 +361,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsCard = buildToolsCard()
         utilityRow = buildUtilityRow()
 
-        stack.addArrangedSubview(header())
-        stack.addArrangedSubview(pipeline)
-        stack.setCustomSpacing(16, after: pipeline)
-
-        stack.addArrangedSubview(chromeCard)
-        stack.addArrangedSubview(extensionCard)
-        stack.addArrangedSubview(languageCard())
-        stack.addArrangedSubview(terminalCard())
-        stack.addArrangedSubview(baseDirCard)
-        stack.addArrangedSubview(toolsCard)
-        stack.addArrangedSubview(testCard())
-        stack.addArrangedSubview(utilityRow)
+        // **Named, because a rebuild has to be able to find them again.** The scroll anchor is a
+        // card, and a card's own text is the one thing a language change rewrites — so the name is
+        // declared here rather than derived from anything drawn. Reordering this list moves the
+        // cards and carries their names with them, which is what an index could not do.
+        for (name, card) in [
+            ("header", header()), ("pipeline", pipeline), ("chrome", chromeCard!),
+            ("extension", extensionCard!), ("language", languageCard()), ("terminal", terminalCard()),
+            ("baseDir", baseDirCard!), ("tools", toolsCard!), ("test", testCard()),
+            ("utility", utilityRow!),
+        ] {
+            card.identifier = NSUserInterfaceItemIdentifier("card.\(name)")
+            stack.addArrangedSubview(card)
+            if card === pipeline { stack.setCustomSpacing(16, after: pipeline) }
+        }
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.widthAnchor.constraint(equalToConstant: setupContentWidth + 40).isActive = true
@@ -380,6 +464,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         baseDirField.font = Theme.mono(11.5)
         baseDirField.target = self
         baseDirField.action = #selector(baseDirectoryEdited)
+        baseDirField.identifier = role(#selector(baseDirectoryEdited))
         // Save on focus loss as well as Enter — nobody should close the window wondering
         // whether it was saved
         baseDirField.cell?.sendsActionOnEndEditing = true
@@ -441,6 +526,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         languagePopUp.target = self
         languagePopUp.action = #selector(languageChanged)
+        languagePopUp.identifier = role(#selector(languageChanged))
 
         // Half of the change lands now and half on the next launch (D14), so the button that closes
         // that gap sits next to the control that opens it rather than in a menu somewhere
@@ -559,6 +645,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             target: self, action: #selector(terminalChanged)
         )
         button.isEnabled = installed
+        // The untranslated argument, not the drawn title: the drawn one is wrapped in a sentence
+        // when the terminal is missing, and that sentence is in whatever language the window is in
+        button.identifier = role(#selector(terminalChanged), title)
         return button
     }
 
@@ -578,6 +667,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         requestPermissionButton.title = localized("app.button.requestItermPermission")
         requestPermissionButton.target = self
         requestPermissionButton.action = #selector(requestPermission)
+        requestPermissionButton.identifier = role(#selector(requestPermission))
         requestPermissionButton.bezelStyle = .rounded
         permissionSection.addArrangedSubview(buttonRow([
             requestPermissionButton,
@@ -700,9 +790,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return label
     }
 
+    /// The name a control answers to after the window has been rebuilt around it.
+    ///
+    /// **Derived from the action rather than declared**, so it cannot go stale on its own: a
+    /// control that stopped having this action stopped being this control, and one that never had
+    /// an action does nothing for anyone to focus. The qualifier is for the one case where a single
+    /// action serves several controls — the terminal radios, told apart by a product name, which no
+    /// language rewrites either. A control with no action is not one this window owns, and
+    /// `testEveryControlTheWindowOwnsCarriesADistinctRole` is the enumeration of the ones it does.
+    private func role(_ action: Selector, _ qualifier: String? = nil) -> NSUserInterfaceItemIdentifier {
+        NSUserInterfaceItemIdentifier((["control", "\(action)"] + [qualifier].compactMap { $0 }).joined(separator: "."))
+    }
+
     private func button(_ title: String, _ action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
+        button.identifier = role(action)
         return button
     }
 
@@ -1266,6 +1369,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+/// Where the viewport goes so the card the user was reading stays under the same line of the
+/// window: `anchorTop` is that card's top edge and `offset` is how far below it the viewport began.
+///
+/// **A free function because the arithmetic is the part worth testing**, and it needs no window.
+/// Only the near end is clamped, and only that end can be reached: an anchor is a visible card
+/// *inside* this document, so `anchorTop` never passes the document's own height and the answer
+/// never passes its last scrollable line. Wanting to see above the first line is ordinary — any
+/// card within one viewport of the top asks for it. Measured, and the reason this is arithmetic we
+/// do rather than a request we make: `NSView.scroll(_:)` keeps a point past the end instead of
+/// correcting it, so a target that could pass the end would leave the window on blank space.
+func scrollOrigin(anchorTop: CGFloat, offset: CGFloat, clip: CGFloat) -> CGFloat {
+    max(0, anchorTop - offset - clip)
+}
+
 /// What to say when claude can be called but does **not** resolve to an executable — an install
 /// that is only a shell function or an alias.
 ///
@@ -1309,4 +1426,17 @@ func warpAccessibilityHelpText() -> String {
     // showing up as literal asterisks on screen — and translating them would have copied that into
     // five catalogues
     localized("app.section.accessibility.help")
+}
+
+private extension NSView {
+    /// The view here that answers to a role — the question a rebuild asks about a control it has
+    /// just replaced. Depth first, so a control inside a card is found without the caller knowing
+    /// which card that is.
+    func firstDescendant(withRole role: NSUserInterfaceItemIdentifier) -> NSView? {
+        for view in subviews {
+            if view.identifier == role { return view }
+            if let found = view.firstDescendant(withRole: role) { return found }
+        }
+        return nil
+    }
 }

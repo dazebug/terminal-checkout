@@ -4378,9 +4378,10 @@ final class UninstallScriptSyncTests: XCTestCase {
             // late helper's advertised name by creating a directory there, and an uninstall that
             // removed it would hand the name back to a helper that has not been born yet — `pkill`
             // reaches only the ones that exist. A directory is not `-S`, and this is the line that
-            // says so. It is a lint and not a run: the socket sweep walks hardcoded `/tmp` paths
-            // that no variable redirects, so executing it from a test would delete the files of
-            // whoever is using the app on this machine, mid-delivery
+            // says so. It is a lint and not a run: the socket sweep walks two globs, `$TMPDIR` and
+            // a literal `/tmp`, and **neither can be pointed away from the user** — the second is
+            // not redirectable at all, and the first resolves, in a test, to the same per-user
+            // directory the helpers use. Executing it here would delete their files mid-delivery
             "[ -S \"$sock\" ]",
         ]
         for needle in expected {
@@ -4398,9 +4399,10 @@ final class UninstallScriptSyncTests: XCTestCase {
 /// So this runs the sweep against real files and looks at what is left.
 ///
 /// **Only the Tab Config block is run, never the whole script.** The rest of `uninstall.sh` kills a
-/// running TerminalCheckout and any live Warp injection helper, and sweeps `/tmp/tcw-*.sock` and
-/// `/tmp/tc-prompt-*` through hardcoded paths that no environment variable redirects — running that
-/// from a test would delete the files of whoever is using the app on this machine, mid-delivery.
+/// running TerminalCheckout and any live Warp injection helper, and sweeps `tcw-*.sock` and
+/// `tc-prompt-*` under **both** `"${TMPDIR:-/tmp}"` and a literal `/tmp` — the literal branch is
+/// not redirectable, and `$TMPDIR` in a test is the same per-user directory the helpers write to,
+/// so running that here would delete the files of whoever is using the app on this machine.
 /// The block is lifted out of the shipped script verbatim, so the bytes under test are the shipped
 /// bytes; when it can no longer be found the test fails rather than passing on a script it never
 /// read. `set -euo pipefail` is put back because the script runs under it, and the block's

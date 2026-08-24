@@ -70,10 +70,11 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// automatic check of that: a translated sentence is longer or shorter than the Korean it
     /// replaced, and a card that fits one can clip in another.
     ///
-    /// It walks `populatedLocales`, which is a **hardcoded list** — now of five rather than the
-    /// original pair, but still a list and not a reading of `supportedLocales`. A locale that is
-    /// shipped and not added there is simply never drawn here, and the failure that hides is a
-    /// silent one: a clipped card in a language nobody measured.
+    /// It walks `populatedLocales`, which **is** `supportedLocales` and is declared four lines
+    /// above with the measurement that made it one. This paragraph used to say the opposite — that
+    /// it was a hardcoded list, kept next to the fix that had stopped it being one — and a sentence
+    /// wrong in that direction is the worse kind: it invites someone to re-fix what is fixed, or to
+    /// distrust a gate that works.
     func testTheWindowFitsItsContentInEveryPopulatedLocale() throws {
         for tag in Self.populatedLocales {
             AppLocalization.tagOverrideForTesting = tag
