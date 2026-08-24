@@ -126,14 +126,11 @@ const endOfArgument = (source, start) => {
 };
 
 const readTargetKind = (source, token, argumentEnd, receiver) => {
-  const functionStart = source.lastIndexOf('func ', token.start);
-  const context = functionStart === -1 ? '' : source.slice(functionStart, argumentEnd);
   const expression = source.slice(token.end + 1, argumentEnd);
-  const evidence = `${expression}\n${context}`;
   const dataPath = /(?:\/Resources\/|\/_locales\/|\/_i18n\/|\.strings\b|\.plist\b|\.json\b|\.toml\b|\/marker\b)/i;
   const sourcePath = /(?:\/Sources(?:\/|\b)|\.swift\b|\.js\b|\.sh\b)/i;
-  if (dataPath.test(evidence)) return 'data';
-  if (sourcePath.test(evidence)) return 'source';
+  if (dataPath.test(expression)) return 'data';
+  if (sourcePath.test(expression)) return 'source';
   if (receiver === 'Data') return 'data';
   return 'unknown';
 };
