@@ -46,8 +46,8 @@
 "app.install.feedback" = "경로가 클립보드에 복사되었고 Chrome이 열렸습니다. 위 ①→④ 순서대로 진행하세요.";
 "app.language.followSystem" = "시스템 언어를 따름";
 "app.language.note" = "앱이 그리는 문자열은 즉시 바뀝니다. 시스템 대화상자(파일 선택·경고)는 다음 실행부터 이 언어로 뜹니다.";
-"app.language.notOwner" = "다른 Terminal Checkout이 실행 중이며 이 설정을 소유하고 있습니다. 그 창에서 언어를 바꾸세요.";
 "app.language.restartDeferred" = "claude 입력을 전달하는 중이라 지금은 다시 시작하지 않습니다. 전달이 끝난 뒤 다시 눌러 주세요.";
+"app.language.restartFailed" = "앱을 다시 시작하지 못해 계속 실행 중입니다. 다시 시도해 주세요.";
 "app.menu.close" = "닫기";
 "app.menu.copy" = "복사";
 "app.menu.cut" = "잘라내기";

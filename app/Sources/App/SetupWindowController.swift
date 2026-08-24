@@ -606,7 +606,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             // input for the rest of its life is a worse outcome than the restart not happening
             LocaleRestartGate.withdrawAdmission()
             checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
-            languageNoteLabel.stringValue = languageNote(restartBlocked: true)
+            languageNoteLabel.stringValue = languageNote(restartFailed: true)
             return
         }
         NSApp.terminate(nil)
@@ -614,7 +614,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     /// What the card says, in the order the states exclude each other.
     ///
-    private func languageNote(restartBlocked: Bool = false) -> String {
+    private func languageNote(restartBlocked: Bool = false, restartFailed: Bool = false) -> String {
+        if restartFailed {
+            return localized("app.language.restartFailed")
+        }
         if restartBlocked {
             return localized("app.language.restartDeferred")
         }

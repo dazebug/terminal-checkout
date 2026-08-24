@@ -282,7 +282,11 @@ final class LocaleRestartTests: XCTestCase {
     /// policy that prevents termination from cutting off a live helper.
     ///
     /// It is driven through the selector because the method is private, and the gate is left
-    /// refusing so the case proves that the refusal blocks `NSApp.terminate`.
+    /// refusing so the case proves that the action reaches the refusal path. It cannot observe
+    /// `NSApp.terminate` itself: letting that branch run would terminate the test process. The
+    /// source-order case above proves only that the gate is consulted before termination; whether
+    /// the false branch returns without terminating is a human-review boundary, recorded in the
+    /// plan rather than disguised as this case's runtime oracle.
     func testTheRestartActionReachesDeliveryGateWithoutSocketOwnership() throws {
         var asked = 0
         LocaleRestartGate.admitRestart = { asked += 1; return false }

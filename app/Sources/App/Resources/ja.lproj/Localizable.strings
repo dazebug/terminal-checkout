@@ -46,8 +46,8 @@
 "app.install.feedback" = "パスをクリップボードにコピーし、Chrome を開きました。上の ① → ④ に従ってください。";
 "app.language.followSystem" = "システムの言語に従う";
 "app.language.note" = "このアプリが描く文字列はすぐに変わります。システムのダイアログ(ファイル選択、警告)は次回の起動からこの言語になります。";
-"app.language.notOwner" = "別の Terminal Checkout が実行中で、この設定を所有しています。そちらのウインドウで言語を変更してください。";
 "app.language.restartDeferred" = "claude 入力を配信中のため、いまは再起動しません。配信が終わってからもう一度押してください。";
+"app.language.restartFailed" = "アプリを再起動できなかったため、起動したままです。もう一度お試しください。";
 "app.menu.close" = "閉じる";
 "app.menu.copy" = "コピー";
 "app.menu.cut" = "カット";
