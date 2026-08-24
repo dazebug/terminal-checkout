@@ -99,53 +99,6 @@ public func resolveLocale(
     return lastResort
 }
 
-/// A retained migration-era snapshot model and the revision of its resolved tag.
-///
-/// `epoch` is the revision of **this snapshot**, not of the preference (D48). The preference can
-/// sit at `auto` for years while the resolved tag changes underneath it. A counter that moved only
-/// when the preference was edited would leave the pure model on the old language.
-///
-/// No current app path persists this value or sends it over the socket; the focused Core tests
-/// retain the migration-era revision contract.
-public struct LocaleSnapshot: Equatable {
-    public let tag: String
-    public let epoch: Int
-
-    public init(tag: String, epoch: Int) {
-        self.tag = tag
-        self.epoch = epoch
-    }
-}
-
-/// The next revision in the retained migration-era snapshot model for a freshly resolved tag.
-///
-/// An unchanged tag returns the snapshot it was given, epoch and all: resolving happens on every
-/// launch, and a number that moved each time would make every launch look like a language change in
-/// the old protocol. A changed tag takes the next revision — including a change back to a tag that
-/// appeared earlier, which is a new revision and not the old number again.
-///
-/// There is no current persistence or socket publication caller; this pure function remains for
-/// the focused migration-era contract tests.
-public func localeSnapshotToPublish(resolved: String, lastPublished: LocaleSnapshot?) -> LocaleSnapshot {
-    guard let last = lastPublished else { return LocaleSnapshot(tag: resolved, epoch: 0) }
-    guard last.tag != resolved else { return last }
-    return LocaleSnapshot(tag: resolved, epoch: last.epoch + 1)
-}
-
-/// Whether this retained snapshot identity has a next revision left to give.
-///
-/// `Int.max` is malformed for the retained model because it cannot express its own successor, so an
-/// identity sitting at `Int.max - 1` is one advance away from a snapshot the old reader would refuse.
-/// The migration-era caller had to mint a fresh identity at that point rather than advance, which
-/// is the same answer D51 gives from the other end: an epoch that cannot move means the identity has
-/// to.
-///
-/// It is a question rather than a clamp because the recovery is minting, and only the caller has an
-/// identity to mint.
-public func localeIdentityIsExhausted(_ snapshot: LocaleSnapshot) -> Bool {
-    snapshot.epoch >= Int.max - 1
-}
-
 /// Case and `_` are levelled so that `zh_TW` and `ZH-Hant` are read as the tags they name.
 /// Nothing else is trimmed — a value with spaces around it is not a tag we wrote.
 ///

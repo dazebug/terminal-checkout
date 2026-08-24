@@ -239,21 +239,65 @@ final class LocalizationCatalogTests: XCTestCase {
     ///
     /// So the two directions are read off the source. A key called as `localized("k", x)` must carry
     /// a placeholder in **every** language, and one called as `localized("k")` must carry none — a
-    /// stray `%@` there renders as the literal characters, since nothing is substituted.
-    ///
-    /// **Its limit**: a key nothing calls through `localized(` is skipped, which is why the count is
-    /// asserted at the end. It reads the argument list only far enough to see whether one exists; it
-    /// does not count arguments, so a sentence taking two placeholders while the call passes one is
-    /// still only caught by the parity check against English.
+    /// stray `%@` there renders as the literal characters, since nothing is substituted. The source
+    /// reader covers direct calls, the two literal branches of a conditional passed to `localized`,
+    /// and the `format:` StaticString forwarded to `localized($0, state.message)`. Those are the
+    /// three call-site shapes in the App target today; a new shape is an explicit failure, not a
+    /// key silently disappearing from the count.
     func testAPlaceholderIsRequiredByTheCallSiteRatherThanByEnglish() throws {
         let sources = try sourceText()
-        var checked = 0
-        for (key, _) in try catalogue(fallbackLocale) {
-            let escaped = NSRegularExpression.escapedPattern(for: key)
-            let called = try matches("localized\\(\\s*\"\(escaped)\"\\s*([,)])", in: sources)
-            guard !called.isEmpty else { continue }
-            checked += 1
-            let takesArguments = called.contains(",")
+        let english = try catalogue(fallbackLocale)
+        let allLiteralKeys = Set(try matches("\"(app\\.[A-Za-z0-9._]+)\"", in: sources))
+        let directWithArguments = try matches(
+            #"localized\s*\(\s*"(app\.[A-Za-z0-9._]+)"\s*,"#, in: sources
+        )
+        let directWithoutArguments = try matches(
+            #"localized\s*\(\s*"(app\.[A-Za-z0-9._]+)"\s*\)"#, in: sources
+        )
+        let conditionalFirstBranches = try matches(
+            #"localized\s*\(\s*[^()]*\?\s*"(app\.[A-Za-z0-9._]+)"\s*:\s*"(app\.[A-Za-z0-9._]+)"\s*\)"#,
+            in: sources,
+        )
+        let conditionalSecondBranches = try matches(
+            #"localized\s*\(\s*[^()]*\?\s*"(app\.[A-Za-z0-9._]+)"\s*:\s*"(app\.[A-Za-z0-9._]+)"\s*\)"#,
+            in: sources,
+            group: 2,
+        )
+        let formatArguments = try matches(
+            #"format:\s*"(app\.[A-Za-z0-9._]+)""#, in: sources
+        )
+
+        var argumentChoices: [String: Set<Bool>] = [:]
+        func record(_ key: String, takesArguments: Bool) {
+            argumentChoices[key, default: []].insert(takesArguments)
+        }
+        directWithArguments.forEach { record($0, takesArguments: true) }
+        directWithoutArguments.forEach { record($0, takesArguments: false) }
+        conditionalFirstBranches.forEach { record($0, takesArguments: false) }
+        conditionalSecondBranches.forEach { record($0, takesArguments: false) }
+        formatArguments.forEach { record($0, takesArguments: true) }
+
+        let unclassified = allLiteralKeys.subtracting(Set(argumentChoices.keys))
+        XCTAssertEqual(
+            unclassified, [],
+            "catalogue-key literals were not classified as a localized call site: \(unclassified.sorted())"
+        )
+        let contradictory = argumentChoices
+            .filter { $0.value.count != 1 }
+            .map(\.key)
+            .sorted()
+        XCTAssertEqual(
+            contradictory, [],
+            "one key was classified as both argument-bearing and argument-free: \(contradictory)"
+        )
+        XCTAssertEqual(
+            Set(argumentChoices.keys), Set(english.keys),
+            "the placeholder gate covered a different key set than the app catalogue"
+        )
+
+        for (key, _) in english {
+            let choices = try XCTUnwrap(argumentChoices[key], "no call-site verdict for \(key)")
+            let takesArguments = try XCTUnwrap(choices.first, "no argument verdict for \(key)")
             for tag in supportedLocales {
                 let value = try XCTUnwrap(try catalogue(tag)[key])
                 let hasPlaceholder = !(try placeholders(value).isEmpty)
@@ -265,7 +309,6 @@ final class LocalizationCatalogTests: XCTestCase {
                 )
             }
         }
-        XCTAssertGreaterThan(checked, 50, "the call-site scan matched almost nothing — check the pattern")
     }
 
     /// **A sentence that quotes a button names the button's key** (D28), and that key is real.

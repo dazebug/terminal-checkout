@@ -19,7 +19,7 @@ final class CanonicalSocketOverride {
     }
 }
 
-final class LocalePublicationTests: XCTestCase {
+final class LocalizationTests: XCTestCase {
     private var suiteName = ""
     private var defaults: UserDefaults!
 

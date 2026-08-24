@@ -4731,34 +4731,4 @@ final class LocaleResolutionTests: XCTestCase {
         XCTAssertEqual(resolveLocale(preference: "zh_TW", systemPreferred: ["ko-KR"], available: bundled), "zh-Hant")
     }
 
-    /// This is the retained migration-era pure snapshot contract, not a current socket
-    /// publication. `epoch` counts revisions of the **resolved** locale, not of the preference
-    /// (D48). The preference stays `auto` for the whole of the last block below while the language
-    /// changes underneath it — counting preference edits would leave the model on the old answer.
-    ///
-    /// Reusing an unchanged locale returns the snapshot untouched: every launch resolves, and if
-    /// that moved the number, every launch would look like a language change and no epoch would
-    /// ever mean anything.
-    func testTheEpochAdvancesOnlyWhenTheResolvedLocaleChanges() {
-        let first = localeSnapshotToPublish(resolved: "ko", lastPublished: nil)
-        XCTAssertEqual(first, LocaleSnapshot(tag: "ko", epoch: 0))
-        XCTAssertEqual(localeSnapshotToPublish(resolved: "ko", lastPublished: first), first)
-
-        let second = localeSnapshotToPublish(resolved: "ja", lastPublished: first)
-        XCTAssertEqual(second, LocaleSnapshot(tag: "ja", epoch: 1))
-
-        // Returning to a tag seen before is a new revision, not the old number again.
-        XCTAssertEqual(
-            localeSnapshotToPublish(resolved: "ko", lastPublished: second),
-            LocaleSnapshot(tag: "ko", epoch: 2)
-        )
-
-        let beforeChange = resolveLocale(preference: "auto", systemPreferred: ["ko-KR"], available: bundled)
-        let afterChange = resolveLocale(preference: "auto", systemPreferred: ["ja-JP"], available: bundled)
-        let published = localeSnapshotToPublish(resolved: beforeChange, lastPublished: nil)
-        XCTAssertEqual(
-            localeSnapshotToPublish(resolved: afterChange, lastPublished: published),
-            LocaleSnapshot(tag: "ja", epoch: 1)
-        )
-    }
 }

@@ -1258,8 +1258,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// The Korean wording for a rejection. Core hands back only the reason so each surface can word
-    /// it its own way — the button response is English, this window is Korean until #24 lands.
+    /// The localized wording for a rejection. Core hands back only the reason so each surface can
+    /// word it its own way — the button response remains an English protocol diagnostic.
     private func baseDirectoryReason(_ error: Error) -> String {
         guard case CommandError.invalidBaseDirectory(let problem, _) = error else {
             return errorMessage(error)

@@ -31,9 +31,8 @@ final class HostServer {
     private var bound: BoundSocket?
     /// **Starting and stopping are one transition each, and they do not interleave.** The window was
     /// not between two lines that could be swapped: it ran from the moment the socket existed to the
-    /// moment the server was answering, and a `stop()` could land anywhere in it. So both take this,
-    /// and `start`'s own failure paths call the half that assumes it is already held — `NSLock` is
-    /// not recursive, and calling `stop()` there would deadlock.
+    /// moment the server was answering, and a `stop()` could land anywhere in it. So both take this;
+    /// `stop()` calls the lock-held teardown half rather than recursively acquiring `NSLock`.
     ///
     /// This lock is the only ordering boundary: startup and teardown cannot observe half of the
     /// other transition.
@@ -98,8 +97,8 @@ final class HostServer {
         tearDown()
     }
 
-    /// The same thing **with the lifecycle lock already held** — `start` invokes it only on a
-    /// failure path, because `NSLock` is not recursive.
+    /// The lock-held half of `stop()`. It is separate so the public transition does not recursively
+    /// acquire `NSLock`.
     private func tearDown() {
         guard let bound else { return }
         if let identity = bound.identity, let now = Self.identity(ofPathAt: socketPath), now == identity {

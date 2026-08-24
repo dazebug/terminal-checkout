@@ -188,7 +188,7 @@ const chromeStub = (options = {}) => {
     action: { onClicked: { addListener: fn => listeners.action.push(fn) } },
     i18n: {
       getUILanguage: () => options.uiLanguage || 'en',
-      getMessage: (id, subs) => (options.getMessage ? options.getMessage(id, subs) : id),
+      getMessage: (id, subs) => (options.getMessage ? options.getMessage(id, subs) : ''),
     },
   };
   return { chrome, listeners, calls, local, sync };

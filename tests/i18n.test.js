@@ -1154,19 +1154,6 @@ test('message strings and calls are separate projections of every JavaScript lex
   }
 });
 
-const catalogueMismatchInstruction = (directory, tag) => (
-  `_locales/${directory}/messages.json differs from the committed catalogue baseline pin — `
-  + "review whether this is an intentional translation edit or an unintended structural change before updating the pin, "
-  + 'then run node tools/check-locales.js'
-);
-
-test('a catalogue mismatch points to the canonical edit direction and the read-only checker', () => {
-  assert.equal(
-    catalogueMismatchInstruction('zh_TW', 'zh-Hant'),
-    '_locales/zh_TW/messages.json differs from the committed catalogue baseline pin — review whether this is an intentional translation edit or an unintended structural change before updating the pin, then run node tools/check-locales.js',
-  );
-});
-
 test('_locales is pinned by bytes while the compatibility checker pins _i18n separately', () => {
   // `_i18n` is the compatibility passenger and its exact bytes are the migration baseline. The
   // live `_locales` values are canonical and may evolve, so its own exact-byte pin is a review
@@ -1217,7 +1204,7 @@ test('a live catalogue may add a message before the compatibility passenger reti
   }
 });
 
-test('a legitimate _locales edit stays green in the compatibility checker and red only at its pin', () => {
+test('a legitimate _locales edit stays green in the compatibility checker and names only its live pin', () => {
   const { readOnlyFiles } = require('../tools/check-locales.js');
   const original = readOnlyFiles.read;
   const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
@@ -1233,9 +1220,13 @@ test('a legitimate _locales edit stays green in the compatibility checker and re
     };
     assert.deepEqual(checkCompatibilityBaseline().failures, []);
     const liveFailures = checkLiveLocaleBaseline().failures;
-    assert.equal(liveFailures.length, 1);
-    assert.match(liveFailures[0], /committed catalogue baseline pin/);
-    assert.match(liveFailures[0], /intentional translation edit or an unintended structural change/);
+    assert.deepEqual(
+      liveFailures,
+      [
+        '_locales/en/messages.json differs from the committed catalogue baseline pin — review whether this is an intentional translation edit or an unintended structural change before updating the pin',
+      ],
+      'the live pin must report the edited locale and the fact of the difference, not an authored count or a benign explanation',
+    );
   } finally {
     readOnlyFiles.read = original;
   }

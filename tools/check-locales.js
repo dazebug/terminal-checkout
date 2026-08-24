@@ -12,7 +12,7 @@
 //
 // **What the baseline means now.** `_i18n` is pinned at the migration baseline and `_locales` is
 // canonical, so the command pins the compatibility passenger without treating a later canonical
-// translation as an illegal edit. The live `_locales` bytes have their own pin in the ownership
+// translation as an illegal edit. The live `_locales` bytes have their own pin in the live-content
 // tests, while machine-checkable placeholder identity stays a live gate: a changed byte may be an
 // intentional translation edit or an unintended structural change, and the pin cannot decide which.
 //
@@ -31,7 +31,7 @@ const extension = path.join(__dirname, '..', 'extension');
 
 // These are hashes of the exact bytes in the two catalogue surfaces at the migration boundary.
 // The compatibility hashes are the command's authority: a changed `_i18n` file is an unreviewed
-// compatibility edit. The `_locales` hashes are the live-catalogue pin used by the ownership gate; a
+// compatibility edit. The `_locales` hashes are the live-catalogue pin used by the live-content tests; a
 // changed file must be reviewed before its pin moves, while the compatibility hashes do not.
 // Keeping both in one committed object makes the two meanings visible without comparing two live
 // stores and calling that proof of non-editing.

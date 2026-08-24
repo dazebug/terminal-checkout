@@ -1,8 +1,8 @@
 import Foundation
 
-/// Why a base directory was rejected. Each surface words it differently (the button response is
-/// English, the setup window is Korean until #24), so only the reason travels as a value and every
-/// surface builds its own sentence.
+/// Why a base directory was rejected. Each surface words it differently: the button response is an
+/// English protocol diagnostic, while the setup window uses its localized catalogue, so only the
+/// reason travels as a value and every surface builds its own sentence.
 public enum BaseDirectoryProblem {
     case notAbsolute
     case invalidCharacters

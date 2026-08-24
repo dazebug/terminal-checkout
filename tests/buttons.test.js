@@ -189,7 +189,20 @@ test('the options page never finds a preset by its display name', () => {
   // out again in options.js is how the two halves come to disagree, and nothing on the options page
   // runs under `node --test` to catch it.
   const source = fs.readFileSync(path.join(__dirname, '../extension/options.js'), 'utf8');
-  assert.deepEqual(source.match(/\.name\s*===/g) ?? [], []);
+  const nameOperand = String.raw`(?:\b[\w$]+(?:\.[\w$]+)*\.name\b|\.name\b|\bname\b|\[['"]name['"]\])`;
+  const nameEquality = new RegExp(
+    `(?:${nameOperand}\\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\\s*${nameOperand})`,
+    'g',
+  );
+  assert.deepEqual(
+    source.match(nameEquality) ?? [], [],
+    'options.js contains an equality relation involving a preset display name',
+  );
+  const reversedOperand = `${source}\nconst accidentalLookup = presets.find(p => name === p.name);`;
+  assert.ok(
+    (reversedOperand.match(nameEquality) ?? []).length > 0,
+    'the source oracle does not see a reversed display-name equality',
+  );
   assert.ok(source.includes('presetOptions('), 'options.js fills the dropdown some other way');
   assert.ok(source.includes('presetById('), 'options.js no longer looks a preset up at all');
 });

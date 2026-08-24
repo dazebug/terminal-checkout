@@ -100,6 +100,11 @@ const platformFor = (directory = 'ja') => {
 
 const drained = () => new Promise(resolve => setImmediate(resolve));
 
+test('the Chrome realm answers an unknown message with an empty string', () => {
+  const realm = generationRealm({ platform: { uiLanguage: 'en' } });
+  assert.equal(realm.chrome.i18n.getMessage('not-in-the-catalogue'), '');
+});
+
 test('every generation pairing loads, and the baseline it loads is the pinned artifact', () => {
   for (const { skeleton, consumers, what } of PAIRINGS) {
     for (const consumer of CONSUMERS) {

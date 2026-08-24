@@ -287,9 +287,9 @@ final class ClaudeWrapperAdviceTests: XCTestCase {
     func testAdviceAppearsOnlyForAReachableClaudeThatIsNotAnExecutable() {
         XCTAssertNotNil(claudeWrapperAdvice(available: ["claude": true], executable: ["claude": false]))
         XCTAssertNil(claudeWrapperAdvice(available: ["claude": true], executable: ["claude": true]))
-        // claude 자체가 없으면 그건 "없음" 줄이 말한다 — 두 번 말하지 않는다
+        // When claude itself is absent, the "missing" row says so — do not repeat it.
         XCTAssertNil(claudeWrapperAdvice(available: ["claude": false], executable: ["claude": false]))
-        // 확인 전에는 아무 말도 하지 않는다
+        // Before the check answers, say nothing.
         XCTAssertNil(claudeWrapperAdvice(available: nil, executable: nil))
     }
 }
