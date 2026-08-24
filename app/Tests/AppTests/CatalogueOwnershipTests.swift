@@ -98,12 +98,6 @@ final class CatalogueOwnershipTests: XCTestCase {
         "en": "en", "ko": "ko", "ja": "ja", "zh-Hans": "zh_CN", "zh-Hant": "zh_TW",
     ]
 
-    /// The dictionary tag a `_locales` directory answers for — the inverse of the table above, and
-    /// derived from it rather than written twice.
-    private func extensionLocale(forChromeTag tag: String) -> String {
-        chromeLocaleDirectories.first { $0.value == tag }?.key ?? tag
-    }
-
     /// The `_locales/` directories, read rather than listed. A hardcoded pair is what let three of
     /// them go unchecked when D95 took this from two locales to five.
     private func chromeLocaleTags() throws -> [String] {
@@ -163,24 +157,15 @@ final class CatalogueOwnershipTests: XCTestCase {
         // either one of Chrome's two or the conversion of a key the extension store owns — an `app.`
         // key or an invented name is still a foreign key.
         //
-        // The conversion is spelled out here rather than shared with the JavaScript side, and that is
-        // a limitation of this test rather than a choice: Swift cannot call `chromeMessageId`.
-        //
-        // **What that costs, corrected.** This used to say the JavaScript byte comparison stops the
-        // two spellings drifting. It does not: change the JavaScript converter, regenerate, and that
-        // comparison is green — it compares the store against what the *current* converter derives,
-        // so a converter change is invisible to it (review 38). What actually catches one-sided drift
-        // is the **conjunction** — the JavaScript side comparing the derivation against the committed
-        // artifact, and this test independently checking the generated physical names against the
-        // dictionary keys. Change one spelling and one of the two goes red. The protection was real;
-        // the reason given for it was false, which is the disposition `CoreTests.swift`'s osascript
-        // note took in round 26: conclusion kept, reason replaced. A7 removes the second spelling.
+        // **The physical-name conversion is not repeated here.** The JavaScript ownership gate and
+        // the read-only checker share `chromeMessageId`; this Swift gate owns only the namespace
+        // boundary. Repeating `.`→`_` here would create a second converter that could drift while
+        // both tests stayed green. The independent check below therefore asks whether every Chrome
+        // name belongs to the extension namespace, while the JavaScript gate checks exact identity.
         for tag in chromeTags {
-            let owned = Set(try extensionDictionary(extensionLocale(forChromeTag: tag)).keys)
-                .map { $0.replacingOccurrences(of: ".", with: "_") }
             for key in try chromeMessages(tag).keys {
                 XCTAssertTrue(
-                    ["extName", "extDescription"].contains(key) || owned.contains(key),
+                    ["extName", "extDescription"].contains(key) || key.hasPrefix("ext_"),
                     "_locales/\(tag) holds \(key), which belongs to another store"
                 )
             }
@@ -213,7 +198,12 @@ final class CatalogueOwnershipTests: XCTestCase {
         for locale in try filledLocales() {
             let app = try appCatalogue(locale)
             let ext = try extensionDictionary(locale)
-            let shared = Set(app.values).intersection(Set(ext.values))
+            let chrome = try chromeMessages(chromeLocaleDirectories[locale] ?? locale)
+                .compactMap { value in
+                    (value as? [String: Any])?["message"] as? String
+                }
+            let extensionValues = Set(ext.values).union(chrome)
+            let shared = Set(app.values).intersection(extensionValues)
             XCTAssertEqual(
                 shared.sorted(), [],
                 "\(locale): the app and the extension both own \(shared.sorted())"
@@ -223,7 +213,7 @@ final class CatalogueOwnershipTests: XCTestCase {
 
     /// Two keys in one catalogue holding the same sentence. Each pair is a judgement — the same
     /// words, deliberately, in two places that mean different things — so each is listed with the
-    /// reason it is not a duplicate to remove.
+    /// reason it is not a duplicate to remove. There are three such judgements.
     ///
     /// **Keyed by the pair of keys, not by the sentence.** The first version of this table was keyed
     /// by the English text, and the gate caught it on its first run: the same two pairs share a
