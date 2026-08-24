@@ -1,6 +1,57 @@
 import Core
+import Darwin
 import XCTest
 @testable import App
+
+let rejectedCommandProbe: [String: Any] = [
+    "command_template": "z {repo}", "variables": ["evil": "x"],
+]
+
+/// What the retained response oracle does: keep trying the path until something is there, send one
+/// request, and wait for the answer. Its two facts are read from the test's thread under a lock.
+final class RelayAtTheDoor {
+    private let lock = NSLock()
+    private var asked_ = false
+    private var answer_: [String: Any]?
+
+    var asked: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return asked_
+    }
+
+    var answer: [String: Any]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return answer_
+    }
+
+    func connectAndAsk(_ request: [String: Any], at path: String, givingUp seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        Thread.detachNewThread { [self] in
+            var connection: Int32?
+            while connection == nil, Date() < deadline {
+                connection = connectToUnixSocket(path: path)
+                if connection == nil { usleep(2_000) }
+            }
+            guard let connection else { return }
+            defer { close(connection) }
+            guard let payload = try? JSONSerialization.data(withJSONObject: request),
+                  writeFramedMessage(payload, toFD: connection)
+            else { return }
+            lock.lock()
+            asked_ = true
+            lock.unlock()
+
+            guard let data = readFramedMessage(fromFD: connection),
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { return }
+            lock.lock()
+            answer_ = json
+            lock.unlock()
+        }
+    }
+}
 
 /// The request path has no protocol branch left between JSON decoding and Core's response.
 final class HostProtocolTests: XCTestCase {
