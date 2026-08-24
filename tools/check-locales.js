@@ -240,14 +240,24 @@ const checkCompatibilityBaseline = () => {
       failures.push(`${compatibilityPath} differs from the committed migration baseline`);
     }
 
-    // `_locales` remains the live store. The command checks its name set and manifest entries so a
-    // compatibility file cannot silently lose a passenger, and checks machine structure and
-    // argument identity without comparing translated prose: a reviewed canonical translation is
-    // precisely the edit A7 permits, but a translator cannot choose a different source position.
+    // `_locales` remains the live store. Every frozen baseline name must remain present so a
+    // compatibility file cannot silently lose a passenger, but the live store may carry additional
+    // `ext_` names for reviewed messages added before the compatibility passenger retires. The
+    // command checks machine structure and baseline argument identity without comparing translated
+    // prose: a reviewed canonical translation is precisely the edit A7 permits, but a translator
+    // cannot choose a different source position.
     const { directory, messages } = deriveCatalogue(tag, context);
     const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
-    if (JSON.stringify(Object.keys(actual).sort()) !== JSON.stringify(Object.keys(messages).sort())) {
-      failures.push(`_locales/${directory}/messages.json has a different message-name set`);
+    const expectedNames = new Set(Object.keys(messages));
+    for (const name of expectedNames) {
+      if (!Object.hasOwn(actual, name)) {
+        failures.push(`_locales/${directory}/messages.json is missing baseline message ${name}`);
+      }
+    }
+    for (const name of Object.keys(actual)) {
+      if (!expectedNames.has(name) && !name.startsWith('ext_')) {
+        failures.push(`_locales/${directory}/messages.json has an undeclared non-extension message ${name}`);
+      }
     }
     for (const [key, entry] of Object.entries(actual)) {
       if (!entry || typeof entry !== 'object' || typeof entry.message !== 'string') {

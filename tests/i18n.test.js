@@ -37,6 +37,28 @@ const {
 const { catalogueBackend } = require('./chrome-messages.js');
 vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
+// One projection for every assertion whose subject is what Chrome will show. Keeping the physical
+// entries here, rather than converting them back into the frozen dictionaries, is the boundary that
+// prevents a future authority move from leaving the content gates behind again. Compatibility and
+// mixed-generation tests below deliberately continue to read `globalThis.TC_I18N`.
+const liveCataloguePathFor = tag => {
+  const directory = CHROME_LOCALE_DIRECTORIES[tag];
+  assert.ok(directory, `no Chrome catalogue directory is mapped for ${tag}`);
+  return `_locales/${directory}/messages.json`;
+};
+const LIVE_CATALOGUES = Object.fromEntries(
+  TC_I18N_LOCALES.map(tag => [tag, JSON.parse(read(liveCataloguePathFor(tag)))])
+);
+const liveEntryFor = (tag, logicalKey) => LIVE_CATALOGUES[tag][chromeMessageId(logicalKey)];
+const liveMessageFor = (tag, logicalKey) => liveEntryFor(tag, logicalKey)?.message ?? '';
+const livePhysicalKeysFor = tag => Object.keys(LIVE_CATALOGUES[tag]);
+const baselinePhysicalKeysFor = tag => Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId);
+const liveValuesFor = tag => Object.values(LIVE_CATALOGUES[tag]).map(entry => entry.message);
+const livePlaceholderNamesFor = entry => Object.keys(entry.placeholders ?? {}).sort();
+const liveMessagesFor = tag => new Proxy({}, {
+  get: (_target, logicalKey) => liveMessageFor(tag, logicalKey),
+});
+
 test('every file has a role, and a role is what makes a file enter a gate', () => {
   // The universe, and the fact that being in it is the same thing as being read. A file with no role
   // fails here; a role with no files fails here; and a role whose files are not the ones the
@@ -171,19 +193,25 @@ test('the key spaces are separate, whatever is in them', () => {
   // English in three of the five languages it otherwise speaks.
   //
   // **And `_locales` now carries the extension's own messages too** (A2). It holds two namespaces,
-  // not one: the two keys a manifest cannot fill any other way, and one derived name per logical id.
-  // They do not overlap and cannot — every derived name begins `ext_`, which is what the dotted
-  // prefix becomes, and the two manifest keys have no dot to convert.
-  const derivedNames = Object.keys(globalThis.TC_I18N.en).map(chromeMessageId);
-  for (const tag of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
-    const messages = JSON.parse(read(`_locales/${tag}/messages.json`));
+  // not one: the two keys a manifest cannot fill any other way, and one baseline-derived name per
+  // logical id. They do not overlap and cannot — every baseline-derived name begins `ext_`, which is
+  // what the dotted prefix becomes, and the two manifest keys have no dot to convert. New live `ext_`
+  // names are allowed while the compatibility passenger is retained.
+  for (const tag of TC_I18N_LOCALES) {
+    const messages = LIVE_CATALOGUES[tag];
     assert.deepEqual(
       Object.keys(messages).filter(name => !name.startsWith('ext_')).sort(),
       ['extDescription', 'extName'],
-      `${tag} carries something that is neither a manifest key nor a converted id`,
+      `${CHROME_LOCALE_DIRECTORIES[tag]} carries something that is neither a manifest key nor an extension id`,
     );
-    assert.deepEqual(Object.keys(messages).filter(name => name.startsWith('ext_')).sort(), [...derivedNames].sort());
+    for (const name of [...MANIFEST_KEYS, ...baselinePhysicalKeysFor(tag)]) {
+      assert.ok(Object.hasOwn(messages, name), `${tag} is missing baseline message ${name}`);
+    }
     for (const key of Object.keys(messages)) {
+      assert.ok(
+        MANIFEST_KEYS.includes(key) || key.startsWith('ext_'),
+        `${tag} carries undeclared message ${key}`,
+      );
       assert.equal(typeof messages[key].message, 'string');
       assert.ok(messages[key].message.length > 0, `${tag}/${key} is empty`);
     }
@@ -917,14 +945,14 @@ test('every locale carries the same keys, and every value says something', () =>
   // *empty*, which was true and useless: a catalogue filled with three keys would have passed it
   // just as a complete one would have failed it. Now every shipped locale answers the same
   // question, and the day a translation is missing one key it is that locale that goes red.
-  const en = globalThis.TC_I18N.en;
+  const en = LIVE_CATALOGUES.en;
   assert.ok(Object.keys(en).length >= 89, `the catalogue shrank to ${Object.keys(en).length}`);
   for (const tag of TC_I18N_LOCALES) {
-    const table = globalThis.TC_I18N[tag];
-    assert.deepEqual(Object.keys(table).sort(), Object.keys(en).sort(), `${tag} does not match en`);
-    for (const [key, value] of Object.entries(table)) {
-      assert.equal(typeof value, 'string', `${tag}/${key}`);
-      assert.ok(value.trim().length > 0, `${tag}/${key} is empty`);
+    const live = LIVE_CATALOGUES[tag];
+    assert.deepEqual(Object.keys(live).sort(), Object.keys(en).sort(), `${tag} does not match en`);
+    for (const [key, entry] of Object.entries(live)) {
+      assert.equal(typeof entry.message, 'string', `${tag}/${key}`);
+      assert.ok(entry.message.trim().length > 0, `${tag}/${key} is empty`);
     }
   }
 });
@@ -995,17 +1023,18 @@ const topLevelParts = (source, openIndex) => {
   return null;
 };
 
-// The highest argument a message asks for. `%2$d` alone means the message needs two, because the
-// formatter takes them positionally — asking for the second without the first is still a call that
-// has to supply two.
+// The highest argument a message asks for. `%2$d` in the compatibility dictionary and `$ARG2$` in
+// Chrome's live store both mean the message needs two, because the formatter takes them positionally
+// — asking for the second without the first is still a call that has to supply two.
 const highestArgumentOf = value => Math.max(
   0,
   ...[...String(value ?? '').matchAll(/%(\d+)\$[sd]/g)].map(match => Number(match[1])),
+  ...[...String(value ?? '').matchAll(/\$ARG(\d+)\$/g)].map(match => Number(match[1])),
 );
 
 // **Q21, as a gate rather than as a measurement** (D166). The two formats differ when a call supplies
-// fewer arguments than its message asks for: today `%2$s` is left standing on screen, and
-// `chrome.i18n` instead returns the message with nothing substituted. That difference is
+// fewer arguments than its message asks for: today the compatibility formatter leaves `%2$s` standing
+// on screen, and `chrome.i18n` instead returns the live message with nothing substituted. That difference is
 // unreachable — every call site supplies exactly through the highest index — and the property is
 // pinned here rather than left as a paragraph, because the day it stops holding is the day that
 // difference becomes a product change nobody decided on.
@@ -1032,7 +1061,7 @@ const refuseArgumentMismatches = (file, rawSource, messages) => {
     const highest = highestArgumentOf(messages[key]);
     assert.equal(
       count, highest,
-      `${file}: the ${shape} for ${key} supplies ${count} argument(s) and the message asks through %${highest}$`,
+      `${file}: the ${shape} for ${key} supplies ${count} argument(s) and the message asks through argument ${highest}`,
     );
   }
   return supplied.length;
@@ -1044,7 +1073,7 @@ test('every call supplies arguments through its message, and the gate says so wh
   // fixture too, one line per way it can be broken, and the corpus counts are stated so that a
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
-  for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), globalThis.TC_I18N.en);
+  for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
   // **100 after A4 removed the options page's second title write.** The 102 that first stood here
   // was the third wrong number on this item's line: it counted
   // a call written inside a comment in `i18n.js` — prose about the boundary conversion, added in
@@ -1064,8 +1093,8 @@ test('every call supplies arguments through its message, and the gate says so wh
     return null;
   };
   const messages = { 'ext.a': 'takes %1$s and %2$d', 'ext.b': 'takes nothing' };
-  assert.match(refused("t('ext.a', one);", messages), /supplies 1 argument\(s\) and the message asks through %2\$/);
-  assert.match(refused("tr('ext.b', one);", messages), /supplies 1 argument\(s\) and the message asks through %0\$/);
+  assert.match(refused("t('ext.a', one);", messages), /supplies 1 argument\(s\) and the message asks through argument 2/);
+  assert.match(refused("tr('ext.b', one);", messages), /supplies 1 argument\(s\) and the message asks through argument 0/);
   assert.match(
     refused("const STATIC_TEXT_ARGS = {\n  'ext.a': () => [one],\n};", messages),
     /the static fill for ext\.a supplies 1 argument/,
@@ -1150,13 +1179,12 @@ test('_locales is pinned by bytes while the compatibility checker pins _i18n sep
   for (const tag of TC_I18N_LOCALES) {
     const { directory, messages } = deriveCatalogue(tag, context);
     const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
-    // The name set remains shared even when a canonical translation value changes. Stating it as a
-    // set catches missing and undeclared entries without turning a legitimate value edit into an
-    // instruction to regenerate the canonical store.
-    assert.deepEqual(
-      Object.keys(actual).sort(), Object.keys(messages).sort(),
-      `${directory} does not carry one name per logical id`,
-    );
+    // The frozen baseline remains a subset of the live name set. A reviewed live message may arrive
+    // before the compatibility passenger retires, so exact equality here would turn a legitimate
+    // addition into a false regeneration instruction.
+    for (const name of Object.keys(messages)) {
+      assert.ok(Object.hasOwn(actual, name), `${directory} is missing baseline message ${name}`);
+    }
     assert.deepEqual(
       Object.keys(messages).sort(),
       [...MANIFEST_KEYS, ...Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId)].sort(),
@@ -1164,6 +1192,29 @@ test('_locales is pinned by bytes while the compatibility checker pins _i18n sep
     );
   }
   assert.equal(Object.keys(CATALOGUE_BASELINE_HASHES.locales).length, TC_I18N_LOCALES.length);
+});
+
+test('a live catalogue may add a message before the compatibility passenger retires', () => {
+  // This is the name-set contract for the canonical store: a reviewed message may be added to
+  // `_locales` before the frozen `_i18n` passenger is retired. The baseline direction remains
+  // exact for the passenger itself; the live side must therefore accept a well-shaped superset.
+  const { readOnlyFiles, checkCompatibilityBaseline } = require('../tools/check-locales.js');
+  const original = readOnlyFiles.read;
+  const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
+  try {
+    readOnlyFiles.read = (file, encoding) => {
+      const originalValue = original(file, encoding);
+      if (file !== editedPath) return originalValue;
+      const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
+      const messages = JSON.parse(text);
+      messages.ext_future_reviewed_message = { message: 'A reviewed future message' };
+      const edited = `${JSON.stringify(messages, null, 2)}\n`;
+      return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
+    };
+    assert.deepEqual(checkCompatibilityBaseline().failures, []);
+  } finally {
+    readOnlyFiles.read = original;
+  }
 });
 
 test('a legitimate _locales edit stays green in the compatibility checker and red only at its pin', () => {
@@ -1248,7 +1299,7 @@ test('the derivation can only read, and that is a capability rather than a rule'
   assert.deepEqual(Object.keys(readOnlyFiles), ['read']);
 });
 
-test('both formats render the same bytes for every argument-bearing message', () => {
+test('the frozen compatibility formats render the same bytes for every argument-bearing message', () => {
   // **Parity is not identity** (D159, P0-3 of the first design review). Five catalogues can agree on
   // placeholder names and counts while every one of them binds those names to the wrong argument —
   // all five saying `$ARG1$` where the source said `%2$d` passes every parity gate in this file. The
@@ -1371,7 +1422,7 @@ test('a key the catalogue does not have comes back blank, and nothing shipped ca
   }
   // So: every key the page asks for exists in the store Chrome will read, under its physical name.
   // The dictionaries had this gate; it moves here with the authority.
-  const shipped = new Set(Object.keys(JSON.parse(read('_locales/en/messages.json'))));
+  const shipped = new Set(livePhysicalKeysFor('en'));
   const missing = [...referencedKeys].filter(key => !shipped.has(chromeMessageId(key)));
   assert.deepEqual(missing, [], 'the page asks for a message Chrome will answer with a blank');
 });
@@ -1406,14 +1457,19 @@ test('the boundary conversion is legal for every key, and collides for none', ()
 });
 
 test('the page can only ask for keys the catalogue has, and asks for all of them', () => {
-  const en = Object.keys(globalThis.TC_I18N.en);
-  const missing = [...referencedKeys].filter(key => !en.includes(key));
+  const shipped = new Set(livePhysicalKeysFor('en'));
+  const referencedPhysicalKeys = new Set([...referencedKeys].map(chromeMessageId));
+  const missing = [...referencedPhysicalKeys].filter(key => !shipped.has(key));
   // Metadata is exempt **by name**, and the exemption is one line rather than a silence: a key whose
   // value is the catalogue's own tag is not a message the page draws, and until A3 asks it for the
   // document language nothing reads it at all (D178). Leaving it to pass on the accident that its
   // own declaration looks like a reference would be a gate agreeing for the wrong reason.
   assert.deepEqual(missing, [], 'the page names a message that is not in the catalogue');
-  assertEveryCatalogueMessageIsReferenced(en, referencedKeys, TC_I18N_METADATA_KEYS);
+  assertEveryCatalogueMessageIsReferenced(
+    [...shipped],
+    referencedPhysicalKeys,
+    [...MANIFEST_KEYS, ...TC_I18N_METADATA_KEYS.map(chromeMessageId)],
+  );
 });
 
 test('the options page keeps dynamic message dispatch inside its static fill', () => {
@@ -1436,9 +1492,10 @@ test('placeholders match across locales, key by key', () => {
   // the refusal-wording tables carried, in a gate rather than in a fixture.
   for (const tag of TC_I18N_LOCALES) {
     if (tag === 'en') continue;
-    for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
+    for (const key of livePhysicalKeysFor('en')) {
       assert.deepEqual(
-        placeholdersOf(globalThis.TC_I18N[tag][key]), placeholdersOf(value), `${tag}/${key}`,
+        livePlaceholderNamesFor(LIVE_CATALOGUES[tag][key]), livePlaceholderNamesFor(LIVE_CATALOGUES.en[key]),
+        `${tag}/${key}`,
       );
     }
   }
@@ -1454,12 +1511,15 @@ test('text and markup are separate halves, and nothing is on both', () => {
   // value carrying markup being asked for as text, where the tags would be drawn as characters.
   for (const key of textKeys) {
     for (const tag of TC_I18N_LOCALES) {
-      assert.deepEqual(tagsOf(globalThis.TC_I18N[tag][key]), [], `${tag}/${key} carries markup into textContent`);
+      assert.deepEqual(tagsOf(liveMessageFor(tag, key)), [], `${tag}/${key} carries markup into textContent`);
     }
   }
   // and the converse, stated as the set it is: everything with a tag in it is markup-only
-  for (const [key, value] of Object.entries(globalThis.TC_I18N.en)) {
+  for (const [physical, entry] of Object.entries(LIVE_CATALOGUES.en)) {
+    const value = entry.message;
     if (!tagsOf(value).length) continue;
+    const key = Object.keys(globalThis.TC_I18N.en).find(logical => chromeMessageId(logical) === physical);
+    if (!key) continue; // A future live message has no source call until it is adopted by a consumer.
     assert.ok(!textKeys.has(key), `${key} has markup and is asked for as text`);
     assert.ok(markupKeys.has(key), `${key} has markup and nothing asks for it as markup`);
   }
@@ -1472,7 +1532,7 @@ test('markup in a value is balanced, and the same in every locale', () => {
   // sentence to put back together, which is the defect the app unlearned across 25 fragments.
   const allowed = new Set(['<b>', '</b>', '<span>', '</span>', '<code>', '</code>']);
   for (const key of markupKeys) {
-    const tags = tagsOf(globalThis.TC_I18N.en[key]);
+    const tags = tagsOf(liveMessageFor('en', key));
     for (const tag of tags) assert.ok(allowed.has(tag), `${key} uses ${tag}`);
     assert.equal(tags.filter(t => t === '<b>').length, tags.filter(t => t === '</b>').length, `${key} <b>`);
     assert.equal(tags.filter(t => t === '<span>').length, tags.filter(t => t === '</span>').length, `${key} <span>`);
@@ -1482,7 +1542,7 @@ test('markup in a value is balanced, and the same in every locale', () => {
     // catalogue passed (round 14 review, measured with `<b>⠿</b>` planted in `ja`). Those three are
     // the machine-translated pass, which is where a stray tag is most likely to be.
     for (const tag of TC_I18N_LOCALES) {
-      assert.deepEqual(tagsOf(globalThis.TC_I18N[tag][key]), tags, `${tag}/${key} has a different tag set`);
+      assert.deepEqual(tagsOf(liveMessageFor(tag, key)), tags, `${tag}/${key} has a different tag set`);
     }
   }
 });
@@ -2156,10 +2216,10 @@ test('what a <code> span holds is a literal, so it is identical in every locale'
   // that helpfully localises it produces a command the app rejects as an unknown variable.
   let compared = 0;
   for (const key of markupKeys) {
-    const spans = codeSpansOf(globalThis.TC_I18N.en[key]);
+    const spans = codeSpansOf(liveMessageFor('en', key));
     if (!spans.length) continue;
     for (const tag of TC_I18N_LOCALES) {
-      assert.deepEqual(codeSpansOf(globalThis.TC_I18N[tag][key]), spans, `${tag}/${key} rewrote a literal`);
+      assert.deepEqual(codeSpansOf(liveMessageFor(tag, key)), spans, `${tag}/${key} rewrote a literal`);
     }
     compared += spans.length;
   }
@@ -2188,8 +2248,8 @@ test('prose that names a control receives the label, it does not spell it out ag
   };
   for (const [key, labels] of Object.entries(quoting)) {
     for (const tag of TC_I18N_LOCALES) {
-      const value = globalThis.TC_I18N[tag][key];
-      assert.ok(placeholdersOf(value).length >= labels.length, `${tag}/${key}: fewer placeholders than labels`);
+      const value = liveEntryFor(tag, key);
+      assert.ok(livePlaceholderNamesFor(value).length >= labels.length, `${tag}/${key}: fewer placeholders than labels`);
     }
     // The relation itself, read off the source: wherever this message is asked for, the label
     // messages it quotes are asked for in the same breath. This is what a translator cannot break —
@@ -2204,9 +2264,9 @@ test('prose that names a control receives the label, it does not spell it out ag
     // English also has to be free of the spelled-out label. Only English: a Korean label is a short
     // word that turns up inside ordinary ones (`저장` lives inside `저장된`), so the same check
     // there reports a hit that is not one — the relation above is what covers every language.
-    const english = globalThis.TC_I18N.en[key];
+    const english = liveMessageFor('en', key);
     for (const label of labels) {
-      const literal = globalThis.TC_I18N.en[label];
+      const literal = liveMessageFor('en', label);
       const spelledOut = new RegExp(`(^|[^\\w>])${literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w<]|$)`);
       assert.ok(!spelledOut.test(english), `en/${key} spells "${literal}" out instead of quoting it`);
     }
@@ -2219,11 +2279,11 @@ test('a count sits behind a noun, and the two outcomes are two messages', () => 
   // behind a noun and a colon, where nothing inflects, and each outcome became its own message.
   for (const tag of TC_I18N_LOCALES) {
     for (const key of ['ext.migration.applied', 'ext.migration.appliedWithDeclined']) {
-      const value = globalThis.TC_I18N[tag][key];
+      const value = liveMessageFor(tag, key);
       assert.ok(!/\(s\)/.test(value), `${tag}/${key} still carries an English plural marker`);
     }
   }
-  assert.match(globalThis.TC_I18N.en['ext.migration.applied'], /^Commands updated in the form: %1\$d\./);
+  assert.match(liveMessageFor('en', 'ext.migration.applied'), /^Commands updated in the form: \$ARG1\$\./);
   // and the branch that produced the plural is gone from the source
   assert.ok(!/command\$\{applied === 1/.test(optionsJs), 'the plural branch is still in options.js');
   assert.ok(!/\? 'was' : 'were'/.test(optionsJs), 'the was/were branch is still in options.js');
@@ -2544,7 +2604,7 @@ test('the messages that only reach a console are not in the dictionaries', () =>
   // reading a single catalogue for no reason (D104's rule — a sweep run before the fixes does
   // not cover them). A translation that left one of these sentences in English would be the
   // case it misses, and widening costs one line.
-  const values = new Set(TC_I18N_LOCALES.flatMap(tag => Object.values(globalThis.TC_I18N[tag])));
+  const values = new Set(TC_I18N_LOCALES.flatMap(liveValuesFor));
   const diagnostics = [
     'This button no longer matches your saved settings — reload the page and try again.',
     'The page changed while this was running — reload and try again.',
@@ -2683,7 +2743,7 @@ test('a translation cannot break out of an HTML attribute', () => {
   // are clean, not that two of five was enough.
   for (const key of attributeKeys) {
     for (const tag of TC_I18N_LOCALES) {
-      const value = globalThis.TC_I18N[tag][key];
+      const value = liveMessageFor(tag, key);
       assert.ok(!value.includes('"'), `${tag}/${key} would close the attribute it is written into`);
       assert.ok(!value.includes('<'), `${tag}/${key} carries markup into an attribute`);
     }
@@ -2793,11 +2853,11 @@ test('a command literal reads the same in every language', () => {
   // that keeps every token and reorders them into a different meaning; nothing here can tell that
   // from ordinary word order, and no rule over these strings can.
   let compared = 0;
-  for (const key of Object.keys(globalThis.TC_I18N.en)) {
+  for (const key of livePhysicalKeysFor('en')) {
     for (const literal of COMMAND_LITERALS) {
       const counts = TC_I18N_LOCALES
-        .filter(tag => globalThis.TC_I18N[tag][key] !== undefined) // the key gate owns that failure
-        .map(tag => [tag, (globalThis.TC_I18N[tag][key].match(literal) ?? []).length]);
+        .filter(tag => LIVE_CATALOGUES[tag][key] !== undefined) // the key gate owns that failure
+        .map(tag => [tag, (LIVE_CATALOGUES[tag][key].message.match(literal) ?? []).length]);
       const highest = Math.max(...counts.map(([, n]) => n));
       if (highest === 0) continue; // no locale claims this literal in this message
       for (const [tag, found] of counts) {
@@ -2844,30 +2904,39 @@ test('the two Chinese catalogues are not one script converted into the other', (
   // Keys and placeholders cannot tell these apart, and neither can a length check: a `zh-Hant` that
   // is a copy of `zh-Hans`, or of English, satisfies every other gate in this file. What separates
   // them is the writing system, so that is what is asked about.
-  const hans = globalThis.TC_I18N['zh-Hans'];
-  const hant = globalThis.TC_I18N['zh-Hant'];
-  const en = globalThis.TC_I18N.en;
-  const joined = table => Object.values(table).join('\n');
+  const hans = LIVE_CATALOGUES['zh-Hans'];
+  const hant = LIVE_CATALOGUES['zh-Hant'];
+  const en = LIVE_CATALOGUES.en;
 
-  const hansText = joined(hans);
-  const hantText = joined(hant);
-  assert.notEqual(hansText, hantText, 'zh-Hant is a copy of zh-Hans');
-  assert.notEqual(hantText, joined(en), 'zh-Hant is a copy of English');
-  assert.notEqual(hansText, joined(en), 'zh-Hans is a copy of English');
+  for (const [left, right, label] of [
+    [hans, hant, 'zh-Hant is a copy of zh-Hans'],
+    [hant, en, 'zh-Hant is a copy of English'],
+    [hans, en, 'zh-Hans is a copy of English'],
+  ]) {
+    const same = Object.keys(left).filter(key => left[key]?.message === right[key]?.message);
+    assert.ok(
+      same.length < Object.keys(left).length,
+      `${label}; first unchanged key: ${same[0] ?? '<none>'}`,
+    );
+  }
 
   let checked = 0;
   for (const [simplified, traditional] of SCRIPT_PAIRS) {
-    const inHans = hansText.includes(simplified);
-    const inHant = hantText.includes(traditional);
+    const inHans = Object.values(hans).some(entry => entry.message.includes(simplified));
+    const inHant = Object.values(hant).some(entry => entry.message.includes(traditional));
     if (!inHans && !inHant) continue;
     checked += 1;
-    assert.ok(
-      !hantText.includes(simplified),
-      `zh-Hant contains the simplified form "${simplified}"`,
+    const simplifiedInTraditional = Object.entries(hant).find(([, entry]) => entry.message.includes(simplified));
+    assert.equal(
+      simplifiedInTraditional,
+      undefined,
+      `zh-Hant/${simplifiedInTraditional?.[0] ?? '<unknown>'} contains the simplified form "${simplified}"`,
     );
-    assert.ok(
-      !hansText.includes(traditional),
-      `zh-Hans contains the traditional form "${traditional}"`,
+    const traditionalInSimplified = Object.entries(hans).find(([, entry]) => entry.message.includes(traditional));
+    assert.equal(
+      traditionalInSimplified,
+      undefined,
+      `zh-Hans/${traditionalInSimplified?.[0] ?? '<unknown>'} contains the traditional form "${traditional}"`,
     );
   }
   assert.ok(checked >= 4, `only ${checked} script-sensitive characters were found to compare`);
@@ -2881,13 +2950,14 @@ test('a translation that is still English is caught where English is not the ans
   // `main branch` and `Terminal Checkout` forever.
   // Metadata is out of both halves of the ratio (D178): `ext.meta.catalogueTag` is a tag, not a
   // sentence, and counting it would let the denominator grow with values no translator ever sees.
+  const metadata = new Set(TC_I18N_METADATA_KEYS.map(chromeMessageId));
   const en = Object.fromEntries(
-    Object.entries(globalThis.TC_I18N.en).filter(([key]) => !TC_I18N_METADATA_KEYS.includes(key)),
+    Object.entries(LIVE_CATALOGUES.en).filter(([key]) => !metadata.has(key)),
   );
   const total = Object.keys(en).length;
   for (const tag of TC_I18N_LOCALES) {
     if (tag === 'en') continue;
-    const identical = Object.entries(en).filter(([key, value]) => globalThis.TC_I18N[tag][key] === value);
+    const identical = Object.entries(en).filter(([key, entry]) => LIVE_CATALOGUES[tag][key]?.message === entry.message);
     assert.ok(
       identical.length < total * 0.2,
       `${tag}: ${identical.length}/${total} values are byte-identical to English — `

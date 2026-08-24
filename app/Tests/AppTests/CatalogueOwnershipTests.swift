@@ -13,8 +13,8 @@ import XCTest
 /// rather than a list:
 ///
 ///   * `app.…`                      → `app/Sources/App/Resources/<locale>.lproj/Localizable.strings`
-///   * `ext.…`                      → `extension/_i18n/<tag>.js`
-///   * `extName` / `extDescription` → `extension/_locales/<chrome tag>/messages.json`
+///   * compatibility `ext.…`       → `extension/_i18n/<tag>.js`
+///   * live extension messages     → `extension/_locales/<chrome tag>/messages.json`
 ///
 /// A key's name says where it lives; a file's location says what it may hold. Both directions are
 /// asserted, because either one alone permits a key to exist in two places at once.
@@ -25,9 +25,9 @@ import XCTest
 /// exception tables below, and each one carries its reason. There are three.
 ///
 /// This gate lives on the Swift side because it is the only side that can already read all three
-/// stores: `PropertyListSerialization` parses `.strings`, and the extension's dictionaries are a
-/// JSON object literal that can be read directly (pinned from the JavaScript side, which owns those
-/// files, by `tests/i18n.test.js`).
+/// stores: `PropertyListSerialization` parses `.strings`, the compatibility dictionaries are JSON
+/// object literals, and the live Chrome entries are JSON objects. The JavaScript side pins the
+/// compatibility files and owns their argument identity; this gate owns cross-store ownership.
 final class CatalogueOwnershipTests: XCTestCase {
     private static var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/CatalogueOwnershipTests.swift
@@ -76,6 +76,18 @@ final class CatalogueOwnershipTests: XCTestCase {
         return try XCTUnwrap(parsed as? [String: Any], "\(tag)/messages.json is not an object")
     }
 
+    /// The message text in the live store Chrome actually reads. Its physical names are retained so
+    /// duplicate and containment judgements cannot silently fall back to the frozen passenger.
+    private func chromeMessageValues(_ tag: String) throws -> [String: String] {
+        var values: [String: String] = [:]
+        for (key, value) in try chromeMessages(tag) {
+            if let message = (value as? [String: Any])?["message"] as? String {
+                values[key] = message
+            }
+        }
+        return values
+    }
+
     /// The locales both catalogues have actually been filled for — **derived from
     /// `supportedLocales`, not a second copy of it**.
     ///
@@ -87,7 +99,8 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// locale we cannot read" into a failure instead of a shorter loop.
     private func filledLocales() throws -> [String] {
         try supportedLocales.filter { locale in
-            try !appCatalogue(locale).isEmpty && !extensionDictionary(locale).isEmpty
+            let chromeTag = try XCTUnwrap(chromeLocaleDirectories[locale], "no _locales directory is declared for \(locale)")
+            return try !appCatalogue(locale).isEmpty && !chromeMessageValues(chromeTag).isEmpty
         }
     }
 
@@ -151,11 +164,11 @@ final class CatalogueOwnershipTests: XCTestCase {
             "_locales holds \(chromeTags), and the languages we ship map to \(expected.sorted())"
         )
         // **`_locales` holds two namespaces, and that is the migration's doing rather than a leak.**
-        // It carries the two manifest keys, as it always did, plus one derived name per extension
-        // message: the conversion writes `ext.header.options` there as `ext_header_options`, because
-        // a `_locales` name cannot contain a dot. So what ownership means here is that a name is
-        // either one of Chrome's two or the conversion of a key the extension store owns — an `app.`
-        // key or an invented name is still a foreign key.
+        // It carries the two manifest keys, as it always did, plus one baseline-derived name per
+        // compatibility message: the conversion writes `ext.header.options` there as
+        // `ext_header_options`, because a `_locales` name cannot contain a dot. Reviewed live
+        // additions use the same `ext_` namespace before the compatibility passenger retires.
+        // An `app.` key or a name outside those namespaces is still foreign.
         //
         // **The physical-name conversion is not repeated here.** The JavaScript ownership gate and
         // the read-only checker share `chromeMessageId`; this Swift gate owns only the namespace
@@ -228,21 +241,27 @@ final class CatalogueOwnershipTests: XCTestCase {
             "two independent permission rows report their own state",
         // The section heading `❯ main branch` and the column header of the override table under it.
         // Merging them would tie a heading's wording to a table column's.
-        ["ext.section.main.title", "ext.table.mainBranch"]:
+        ["ext_section_main_title", "ext_table_mainBranch"]:
             "a section heading and a table column that happen to name the same thing",
         // **Found by this gate when Japanese landed, and kept rather than worked around.** English
         // distinguishes removing a row ("Remove") from deleting a button ("Delete"); Japanese uses
         // 削除 for both, and Korean and both Chinese catalogues keep them apart. Inventing a second
         // Japanese word to satisfy a check would make that screen read worse than it does now — the
         // gate's job here was to make the collapse visible, and it is.
-        ["ext.button.remove", "ext.card.delete"]:
+        ["ext_button_remove", "ext_card_delete"]:
             "Japanese uses one word where English has two, and a second one would be worse UI",
     ]
 
     func testDuplicateValuesWithinAStoreAreDeclared() throws {
         var seen: Set<[String]> = []
         for locale in try filledLocales() {
-            for (store, table) in [("app", try appCatalogue(locale)), ("ext", try extensionDictionary(locale))] {
+            let stores: [(String, [String: String])] = [
+                ("app", try appCatalogue(locale)),
+                ("live extension", try chromeMessageValues(try XCTUnwrap(
+                    chromeLocaleDirectories[locale], "no _locales directory is declared for \(locale)"
+                ))),
+            ]
+            for (store, table) in stores {
                 var byValue: [String: [String]] = [:]
                 for (key, value) in table { byValue[value, default: []].append(key) }
                 for (value, keys) in byValue where keys.count > 1 {
@@ -275,7 +294,7 @@ final class CatalogueOwnershipTests: XCTestCase {
         // Item 21 split one status message into two complete ones so that neither had a clause
         // substituted into it (D31a/D46). The shorter is necessarily a prefix of the longer; that is
         // the shape of the fix, not a duplicate.
-        "ext.status.imported": "the two-message split that replaced a substituted clause",
+        "ext_status_imported": "the two-message split that replaced a substituted clause",
         // **Recorded as debt, not as correct.** The z advice spells the base-directory card's title
         // out — `“Repository base folder”` — instead of receiving it as a `%@` the way the other
         // eight quotations do (D28). It was missed because that convention was found by looking for
@@ -289,7 +308,10 @@ final class CatalogueOwnershipTests: XCTestCase {
         for locale in try filledLocales() {
             var everything: [(String, String)] = []
             for (key, value) in try appCatalogue(locale) { everything.append((key, value)) }
-            for (key, value) in try extensionDictionary(locale) { everything.append((key, value)) }
+            let chromeTag = try XCTUnwrap(
+                chromeLocaleDirectories[locale], "no _locales directory is declared for \(locale)"
+            )
+            for (key, value) in try chromeMessageValues(chromeTag) { everything.append((key, value)) }
 
             for (shortKey, shortValue) in everything where shortValue.count >= 20 {
                 for (longKey, longValue) in everything where longKey != shortKey {
@@ -319,6 +341,9 @@ final class CatalogueOwnershipTests: XCTestCase {
         )
         XCTAssertGreaterThan(try appCatalogue("en").count, 90)
         XCTAssertGreaterThan(try extensionDictionary("en").count, 110)
+        XCTAssertGreaterThan(
+            try chromeMessageValues(try XCTUnwrap(chromeLocaleDirectories["en"])).count, 110
+        )
         for tag in try filledLocales() {
             XCTAssertEqual(
                 try appCatalogue(tag).count, try appCatalogue("en").count,
@@ -327,6 +352,14 @@ final class CatalogueOwnershipTests: XCTestCase {
             XCTAssertEqual(
                 try extensionDictionary(tag).count, try extensionDictionary("en").count,
                 "the extension dictionaries disagree on size at \(tag)"
+            )
+            let chromeTag = try XCTUnwrap(
+                chromeLocaleDirectories[tag], "no _locales directory is declared for \(tag)"
+            )
+            XCTAssertEqual(
+                try chromeMessageValues(chromeTag).count,
+                try chromeMessageValues(try XCTUnwrap(chromeLocaleDirectories["en"])).count,
+                "the live extension catalogues disagree on size at \(tag)"
             )
         }
     }
