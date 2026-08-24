@@ -214,7 +214,7 @@ It is written down rather than fixed because it cannot be observed from where we
 **Type:** constraint
 **Status:** active
 **Evidence:** confirmed (measured — one mixed read in roughly 10,200)
-**Source:** PR #41 (ledger D19, D98 and D99); `<scratchpad>/probe_replace.swift`; `Installer.swift`
+**Source:** PR #41 (ledger D19, D98 and D99; measured replacement probe); `app/Sources/App/Installer.swift`
 **Revisit when:** Chrome gains a way to snapshot an unpacked extension folder, or the folder stops being read file by file
 
 Adding locale files meant the extension copy had to be replaced rather than edited in place, and the replacement is atomic: the folder is built complete beside the old one and swapped, so it is never observed missing or half-built (measured, zero occurrences in roughly 10,200 reads; `rename(2)` cannot be used because it refuses a non-empty directory, so it is `replaceItemAt`).
