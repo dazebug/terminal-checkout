@@ -1,21 +1,19 @@
 #!/usr/bin/env node
-// Checks `extension/_locales/<directory>/messages.json` against what `extension/_i18n/<tag>.js`
-// derives. **It does not write.**
+// Checks the compatibility catalogue against its committed migration baseline. **It does not write.**
 //
-//     node tools/check-locales.js   # exit 1 if the two stores have come apart
+//     node tools/check-locales.js   # exit 1 if the compatibility baseline has changed
 //
 // **It used to write, and A3 is where that stopped** (D167). While `_i18n` was canonical, deriving
 // the second store by program was what kept a wrong edit from being made identically in both. A3
 // moved the authority: `_locales` is what Chrome reads and what the extension draws from, so a
 // generator pointed at it would be a path for the frozen compatibility store to overwrite the live
-// one. The derivation survives only as a comparison — the same code, no `writeFileSync`, and a test
-// holds it to that.
+// one. The derivation survives only as a read-only name-and-entry-shape check — the same code, no
+// `writeFileSync`, and a test holds it to that.
 //
-// **What the comparison means now.** `_i18n` is pinned at the migration baseline and `_locales` is
-// canonical, so this is a mixed-generation check rather than a definition: it says the two still
-// agree, which is what the compatibility passengers need while both ship. A legitimate correction
-// made in `_locales` would turn it red — and that day is when A7's rewrite is due, which makes the
-// contract "pinned to the committed baseline" instead of "equal" (D173).
+// **What the baseline means now.** `_i18n` is pinned at the migration baseline and `_locales` is
+// canonical, so the command pins the compatibility passenger without treating a later canonical
+// translation as an illegal edit. The live `_locales` bytes have their own pin in the ownership
+// tests: an intentional correction turns that pin red and asks for its committed update (D173).
 //
 // **It loads the extension's own function rather than restating the rule** (D171, D177):
 // `chromeMessageId`, the locale list and the metadata list all come out of `extension/i18n.js` by
@@ -30,14 +28,42 @@ const vm = require('node:vm');
 
 const extension = path.join(__dirname, '..', 'extension');
 
+// These are hashes of the exact bytes in the two catalogue surfaces at the migration boundary.
+// The compatibility hashes are the command's authority: a changed `_i18n` file is an unreviewed
+// compatibility edit. The `_locales` hashes are the live-catalogue pin used by the ownership gate;
+// it is expected to move with an intentional translation change, while the compatibility hashes do
+// not. Keeping both in one committed object makes the two meanings visible without comparing two
+// live stores and calling that proof of non-editing.
+const CATALOGUE_BASELINE_HASHES = {
+  compatibility: {
+    en: 'cafcae916db9a88cd43673d12c184f3c0e0723d6496ff801a7aea4b1612473a9',
+    ja: 'ac0ec5a45fba39fe645846387c44b9d4cde86b5b73dde5c32e9a6e89430bb530',
+    ko: 'a7b23e0870c211dba0f4dd10dbd002c68cbc93782cd1e8603685ecea4a3f1f00',
+    'zh-Hans': 'd0f503621e69e20e59cd2bdbff591e22bb6fb7c341cb6aeee6d80a0b1b7ae0f3',
+    'zh-Hant': 'b72614421825cb6f0c71a89e240cf10a37ba43beff027ce4d1f4929eef111f7d',
+  },
+  locales: {
+    en: 'a36041a50c933627cb1789e4b898dd70ce2bccfa1edbec26e38cdeb1348fe017',
+    ja: 'c77ed63cfa15114ddd84572000a6e8b603cab72a8221f2e57970594cee42a8cf',
+    ko: '7ed4af9cab494d6df8af50533f01d80833dd730414098f01d613af19a30b8e2c',
+    'zh-Hans': 'a15f11b7efa5f1caf8490fcae7df627f9e8b51aa0c630a2654401128bbfc390a',
+    'zh-Hant': '6db3096d64bf6186782ed8745c3978e5de1e6a7624e21ba6d80c820e24856115',
+  },
+};
+
 // **The only file capability this module has is reading, and it is injected.** The gate that used to
 // hold this file to being read-only listed four spellings of writing and missed `fs.writeFile`,
 // `fs.write`, `copyFileSync` and every rename-based replacement (review 39) — an authored blacklist
 // standing in for a property, which is the class this work keeps finding. So the property is
 // structural instead: everything here reads through one reader, and a test can swap it to see that
 // nothing else is reachable.
-const readOnlyFiles = { read: file => fs.readFileSync(file, 'utf8') };
-const read = name => readOnlyFiles.read(path.join(extension, name));
+const readOnlyFiles = { read: (file, encoding = 'utf8') => fs.readFileSync(file, encoding) };
+const read = name => readOnlyFiles.read(path.join(extension, name), 'utf8');
+const readBytes = name => {
+  const value = readOnlyFiles.read(path.join(extension, name), null);
+  return Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+};
+const sha256 = bytes => require('node:crypto').createHash('sha256').update(bytes).digest('hex');
 
 // The extension's scripts are classic scripts that register into their global, so a context is all
 // they need — and a fresh one, so nothing here can be answered by something Node happened to define.
@@ -132,21 +158,61 @@ const deriveCatalogue = (tag, context = loadExtensionI18n()) => {
   return { directory, messages: derived };
 };
 
+const checkCompatibilityBaseline = () => {
+  const context = loadExtensionI18n();
+  const failures = [];
+  for (const tag of context.TC_I18N_LOCALES) {
+    const compatibilityPath = `_i18n/${tag}.js`;
+    const expectedHash = CATALOGUE_BASELINE_HASHES.compatibility[tag];
+    const actualHash = sha256(readBytes(compatibilityPath));
+    if (actualHash !== expectedHash) {
+      failures.push(`${compatibilityPath} differs from the committed migration baseline`);
+    }
+
+    // `_locales` remains the live store. The command checks its name set and manifest entries so a
+    // compatibility file cannot silently lose a passenger, but deliberately does not compare its
+    // message values: a reviewed canonical translation is precisely the edit A7 permits.
+    const { directory, messages } = deriveCatalogue(tag, context);
+    const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
+    if (JSON.stringify(Object.keys(actual).sort()) !== JSON.stringify(Object.keys(messages).sort())) {
+      failures.push(`_locales/${directory}/messages.json has a different message-name set`);
+    }
+    for (const [key, entry] of Object.entries(actual)) {
+      if (!entry || typeof entry !== 'object' || typeof entry.message !== 'string') {
+        failures.push(`_locales/${directory}/messages.json has an invalid entry for ${key}`);
+      }
+    }
+  }
+  return { failures };
+};
+
+const checkLiveLocaleBaseline = () => {
+  const failures = [];
+  const context = loadExtensionI18n();
+  for (const tag of context.TC_I18N_LOCALES) {
+    const directory = CHROME_LOCALE_DIRECTORIES[tag];
+    const relativePath = `_locales/${directory}/messages.json`;
+    const actualHash = sha256(readBytes(relativePath));
+    if (actualHash !== CATALOGUE_BASELINE_HASHES.locales[tag]) {
+      failures.push(
+        `${relativePath} differs from the committed A7 baseline pin — `
+        + '_locales is canonical, so an intentional translation edit is allowed; update the baseline pin',
+      );
+    }
+  }
+  return { failures };
+};
+
 const serialize = messages => `${JSON.stringify(messages, null, 2)}\n`;
 
 const main = () => {
-  const context = loadExtensionI18n();
-  let differences = 0;
-  for (const tag of context.TC_I18N_LOCALES) {
-    const { directory, messages } = deriveCatalogue(tag, context);
-    const file = path.join(extension, '_locales', directory, 'messages.json');
-    if (readOnlyFiles.read(file) !== serialize(messages)) {
-      differences += 1;
-      process.stderr.write(`_locales/${directory}/messages.json is not what _i18n/${tag}.js derives\n`);
-    }
+  const { failures } = checkCompatibilityBaseline();
+  if (failures.length > 0) {
+    for (const failure of failures) process.stderr.write(`${failure}\n`);
+    process.exit(1);
   }
-  if (differences > 0) process.exit(1);
-  process.stdout.write(`all ${context.TC_I18N_LOCALES.length} catalogues match what _i18n derives\n`);
+  const context = loadExtensionI18n();
+  process.stdout.write(`all ${context.TC_I18N_LOCALES.length} compatibility catalogues match the pinned migration baseline\n`);
 };
 
 module.exports = {
@@ -159,6 +225,9 @@ module.exports = {
   placeholderName,
   CHROME_LOCALE_DIRECTORIES,
   MANIFEST_KEYS,
+  CATALOGUE_BASELINE_HASHES,
+  checkCompatibilityBaseline,
+  checkLiveLocaleBaseline,
 };
 
 if (require.main === module) main();

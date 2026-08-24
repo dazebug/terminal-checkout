@@ -3,7 +3,8 @@
 // **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
 // what this extension draws from; these files are pinned at the migration baseline so the previous
 // release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
-// `tools/check-locales.js` is what says the two have not come apart.
+// `tools/check-locales.js` pins this compatibility file at the migration baseline; reviewed
+// translations belong in `_locales` and update its A7 baseline pin.
 //
 // 标记、占位符与机器字面量（`{cd}`、`z {repo}` 等）不翻译。
 

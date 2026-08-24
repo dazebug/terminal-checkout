@@ -10,9 +10,11 @@ const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
 // The derivation `_locales` came from, imported so the gate below runs it rather than a
 // description of it — the same reason the liveness sweep extracts its predicate. Since A3 it
-// only compares: the authority moved to `_locales`, so a generator would be a way back.
+// only checks the compatibility baseline and live catalogue shape: the authority moved to
+// `_locales`, so a generator would be a way back.
 const {
   loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS, CHROME_LOCALE_DIRECTORIES,
+  CATALOGUE_BASELINE_HASHES, checkCompatibilityBaseline, checkLiveLocaleBaseline,
 } = require('../tools/check-locales.js');
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
@@ -1124,36 +1126,67 @@ test('message strings and calls are separate projections of every JavaScript lex
 });
 
 const catalogueMismatchInstruction = (directory, tag) => (
-  `_locales/${directory}/messages.json differs from pinned compatibility _i18n/${tag}.js — `
-  + "keep _locales canonical and do not regenerate it from _i18n; update A7's pinned-baseline checks, "
+  `_locales/${directory}/messages.json differs from the committed A7 baseline pin — `
+  + "_locales is canonical, so an intentional translation edit is allowed; update the baseline pin, "
   + 'then run node tools/check-locales.js'
 );
 
 test('a catalogue mismatch points to the canonical edit direction and the read-only checker', () => {
   assert.equal(
     catalogueMismatchInstruction('zh_TW', 'zh-Hant'),
-    '_locales/zh_TW/messages.json differs from pinned compatibility _i18n/zh-Hant.js — keep _locales canonical and do not regenerate it from _i18n; update A7\'s pinned-baseline checks, then run node tools/check-locales.js',
+    '_locales/zh_TW/messages.json differs from the committed A7 baseline pin — _locales is canonical, so an intentional translation edit is allowed; update the baseline pin, then run node tools/check-locales.js',
   );
 });
 
-test('_locales still matches the pinned _i18n compatibility baseline — every name and byte', () => {
-  // `_locales` is canonical and `_i18n` is the frozen migration baseline. This read-only mixed-
-  // generation check still runs the old derivation to compare them; it is not authority to write
-  // either store. A legitimate `_locales` edit triggers A7's pinned-baseline rewrite (D173).
+test('_locales is pinned by bytes while the compatibility checker pins _i18n separately', () => {
+  // `_i18n` is the compatibility passenger and its exact bytes are the migration baseline. The
+  // live `_locales` values are canonical and may evolve, so its own exact-byte pin is the gate that
+  // asks for an intentional baseline update. The command checks the former and the test checks the
+  // latter; neither claims that two live catalogues must remain textually equal.
+  assert.deepEqual(checkCompatibilityBaseline().failures, []);
+  assert.deepEqual(checkLiveLocaleBaseline().failures, []);
+
   const context = loadExtensionI18n();
   for (const tag of TC_I18N_LOCALES) {
     const { directory, messages } = deriveCatalogue(tag, context);
-    assert.equal(
-      serialize(messages), read(`_locales/${directory}/messages.json`),
-      catalogueMismatchInstruction(directory, tag),
+    const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
+    // The name set remains shared even when a canonical translation value changes. Stating it as a
+    // set catches missing and undeclared entries without turning a legitimate value edit into an
+    // instruction to regenerate the canonical store.
+    assert.deepEqual(
+      Object.keys(actual).sort(), Object.keys(messages).sort(),
+      `${directory} does not carry one name per logical id`,
     );
-    // The name set is the two Chrome-namespace keys plus every logical id, converted. Stated as a
-    // set so that a key silently dropped by the derivation is a failure and not a smaller file.
     assert.deepEqual(
       Object.keys(messages).sort(),
       [...MANIFEST_KEYS, ...Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId)].sort(),
       `${directory} does not carry one name per logical id`,
     );
+  }
+  assert.equal(Object.keys(CATALOGUE_BASELINE_HASHES.locales).length, TC_I18N_LOCALES.length);
+});
+
+test('a legitimate _locales edit stays green in the compatibility checker and red only at its pin', () => {
+  const { readOnlyFiles } = require('../tools/check-locales.js');
+  const original = readOnlyFiles.read;
+  const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
+  try {
+    readOnlyFiles.read = (file, encoding) => {
+      const originalValue = original(file, encoding);
+      if (file !== editedPath) return originalValue;
+      const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
+      const messages = JSON.parse(text);
+      messages.ext_header_options.message += ' (edited)';
+      const edited = `${JSON.stringify(messages, null, 2)}\n`;
+      return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
+    };
+    assert.deepEqual(checkCompatibilityBaseline().failures, []);
+    const liveFailures = checkLiveLocaleBaseline().failures;
+    assert.equal(liveFailures.length, 1);
+    assert.match(liveFailures[0], /committed A7 baseline pin/);
+    assert.match(liveFailures[0], /intentional translation edit is allowed/);
+  } finally {
+    readOnlyFiles.read = original;
   }
 });
 
