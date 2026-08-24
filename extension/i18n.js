@@ -136,11 +136,47 @@ function currentLocale() {
   return TC_CURRENT_LOCALE;
 }
 
-// A message in the current language. **Resolved when called, never when a file loads** — a value
-// captured at load time is the language that context started in, which is the defect the options
-// page's preset dropdown had and the app's settings window had before it.
+// ---------------------------------------------------------------------------------------------
+// The lookup, and the one seam in it.
+// ---------------------------------------------------------------------------------------------
+
+// **One chain, and only its last link is replaceable** (D171). `tr` converts the logical id to the
+// physical one with the function A2 already put in this file, turns every substitution into a
+// string, and hands both to a backend. A test that swaps the backend therefore still goes through
+// `chromeMessageId` and through the stringification — swap the *whole* function, as the first
+// design of this seam did, and every test in Node passes while production maps keys wrongly or
+// hands `chrome.i18n` a number it will not take.
+let messageBackend = null;
+
+// Returns the previous backend so a test can put it back; `null` restores the production default.
+function installMessageBackend(backend) {
+  const previous = messageBackend;
+  messageBackend = backend;
+  return previous;
+}
+
+// **The default is lazy, and in Node it throws** (D163, D174). Lazy because an old service worker
+// that opens this file after a copy swap never calls the installer, and a lookup that failed there
+// would take the worker down — the file is loaded by `importScripts`, so "no adapter installed" has
+// to be a normal state rather than an error. Throwing in Node is the other half: there is no
+// `chrome` there, so a context that forgot to inject gets a `ReferenceError` instead of text, and
+// the tests cannot end up with a fake that is more generous than the runtime. That is also why the
+// realm tests below build their own contexts: a `chrome` left on Node's global by another test
+// would answer this call and hide exactly that.
+function messageFor(physicalId, substitutions) {
+  const backend = messageBackend || ((id, subs) => chrome.i18n.getMessage(id, subs));
+  return backend(physicalId, substitutions);
+}
+
+// A message, from whichever catalogue Chrome chose. **Resolved when called, never when a file
+// loads** — a value captured at load time is the language that context started in, which is the
+// defect the options page's preset dropdown had and the app's settings window had before it.
+//
+// `String(value)` and not the value: `chrome.i18n.getMessage` takes strings, and the count this
+// page passes is a number. The old formatter took `%2$d` and called `String` itself, so the
+// conversion did not disappear — it moved to the one place both paths share.
 function tr(key, ...args) {
-  return formatMessage(i18nText(key, TC_CURRENT_LOCALE), args);
+  return messageFor(chromeMessageId(key), args.map(String));
 }
 
 // The document's own language attribute — the one string here that is not a translation but the

@@ -27,6 +27,11 @@ const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
   vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
 const { presetById, presetOptions } = vm.runInThisContext('({ presetById, presetOptions })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
+// Node has no `chrome`, so every lookup throws unless a backend is installed (D163). This one
+// reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
+// than evidence about Chrome — the real load is a release gate.
+const { catalogueBackend } = require('./chrome-messages.js');
+vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
 const faces = list => list.map(b => b.face);
 const sample = () => [

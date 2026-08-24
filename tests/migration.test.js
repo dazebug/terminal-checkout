@@ -22,6 +22,11 @@ const { BUTTON_KINDS, SETTINGS_VERSION, SETTINGS_KEYS, VERSION_KEY } =
   vm.runInThisContext('({ BUTTON_KINDS, SETTINGS_VERSION, SETTINGS_KEYS, VERSION_KEY })');
 const { MIGRATIONS, storedSchemaVersion, versionToSave } =
   vm.runInThisContext('({ MIGRATIONS, storedSchemaVersion, versionToSave })');
+// Node has no `chrome`, so every lookup throws unless a backend is installed (D163). This one
+// reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
+// than evidence about Chrome — the real load is a release gate.
+const { catalogueBackend } = require('./chrome-messages.js');
+vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
 // --- The stored version, and the only ways it may go up ---
 // A save that stamps the current version without the user having seen anything would erase the
@@ -1226,17 +1231,19 @@ test('a payload too large for one sync item is refused, and says which key', () 
 // instruction while the test went on passing.
 
 test('every refusal the options page can show is a message, resolved when it is read', () => {
-  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
-  const before = currentLocale();
+  // A3 moved what "the language" is: Chrome picks the catalogue and the lookup asks it on every
+  // call, so the extension has no locale of its own to move. The question this case asks is the same
+  // one a layer down — is the refusal resolved now, or was it frozen when the module loaded?
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
   try {
-    setCurrentLocale('en');
     const english = SAVE_CONFLICT_MESSAGE();
-    setCurrentLocale('ko');
+    installMessageBackend(catalogueBackend('ko'));
     const korean = SAVE_CONFLICT_MESSAGE();
-    assert.notEqual(english, korean, 'the refusal did not follow the language');
+    assert.notEqual(english, korean, 'the refusal did not follow the catalogue');
     assert.ok(korean.length > 0);
   } finally {
-    setCurrentLocale(before);
+    installMessageBackend(previous);
   }
 });
 

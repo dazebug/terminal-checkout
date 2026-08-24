@@ -26,6 +26,11 @@ const {
   i18nText, applyDocumentLanguage, chromeMessageId,
   TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
 } = vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
+// Node has no `chrome`, so every lookup throws unless a backend is installed (D163). This one
+// reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
+// than evidence about Chrome — the real load is a release gate.
+const { catalogueBackend } = require('./chrome-messages.js');
+vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
 test('every file in the extension is audited or classified, and nothing is neither', () => {
   const everything = walkFiles(extension, () => true);
@@ -160,20 +165,28 @@ test('every script the manifest lists exists, and i18n.js comes before content.j
   }
 });
 
-test('nothing in the skeleton touches chrome at load time', () => {
-  // Comment lines are dropped first: these files *talk* about `chrome.i18n` at length — why it
-  // holds two keys and no more — and prose is not a call. Whole-line comments are enough here
-  // because none of these files has a trailing comment or a string containing `//`.
-  const code = file =>
-    read(file)
-      .split('\n')
-      .filter(line => !line.trim().startsWith('//'))
-      .join('\n');
-  for (const file of ['i18n.js', ...TC_I18N_LOCALES.map(tag => `_i18n/${tag}.js`)]) {
-    assert.ok(!/\bchrome\./.test(code(file)), `${file} reaches for chrome`);
+test('nothing in the skeleton touches chrome at load time, and one statement names it at all', () => {
+  // **Driven, not grepped.** This asked whether the string `chrome.` appeared anywhere in the file,
+  // which was true while nothing used `chrome` at all and became false the moment the lookup did —
+  // even though the property it names never changed. The property is that **loading these files in
+  // a context with no `chrome` does not throw**, so that is what runs: the service worker, the
+  // content script and the options page all load this file before any of them could install
+  // anything, and an old worker after a copy swap never installs at all (D163).
+  const realm = vm.createContext({});
+  vm.runInContext(read('i18n.js'), realm);
+  for (const tag of TC_I18N_LOCALES) vm.runInContext(read(`_i18n/${tag}.js`), realm);
+  assert.equal(vm.runInContext('typeof tr', realm), 'function', 'the skeleton did not finish loading');
+  // ...and the dictionaries stay free of it entirely, which is a lint because they are data
+  for (const tag of TC_I18N_LOCALES) {
+    assert.ok(!/\bchrome\./.test(read(`_i18n/${tag}.js`)), `_i18n/${tag}.js reaches for chrome`);
   }
-  // and the check is not vacuous: the prose that was skipped really does mention it
-  assert.ok(/chrome\.i18n/.test(read('i18n.js')));
+  // **One statement names `chrome.i18n.getMessage` in the whole extension** (D163). More than one is
+  // a second lookup path, and a second lookup path is where the preprocessing gets skipped.
+  // Prose is not a call: these files explain the seam at length, and the sentence above this one in
+  // `i18n.js` names the function it is describing. Whole-line comments come out first.
+  const code = file => read(file).split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+  const calls = MARKUP_FILES.flatMap(file => [...code(file).matchAll(/chrome\.i18n\.getMessage/g)].map(() => file));
+  assert.deepEqual(calls, ['i18n.js'], 'the lookup is named somewhere other than its one seam');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -831,6 +844,77 @@ test('both formats render the same bytes for every argument-bearing message', ()
   // here as a smaller number rather than as a quieter test: 32 argument-bearing values per locale.
   assert.equal(compared, 32 * TC_I18N_LOCALES.length, `${compared} argument-bearing values were compared`);
   assert.equal(reordering, 8, `${reordering} values put their arguments in a non-source order`);
+});
+
+test('the seam: nothing answers without a backend, and both paths get the same preprocessing', () => {
+  // **Attack step 1** (the verifier's order, taken as the order of these cases). Three realms,
+  // built here rather than reused, because the hazard the lazy default carries is not in production
+  // — it is Node global pollution: a `chrome` another test left behind would answer for code that
+  // forgot to inject, and "forgetting throws" would be quietly false (D163, D174).
+  const load = (globals) => {
+    const realm = vm.createContext(globals);
+    vm.runInContext(read('i18n.js'), realm);
+    return realm;
+  };
+  // ① No `chrome`, no injection: it throws. Not a key, not a blank — nothing that could be drawn.
+  const bare = load({});
+  assert.throws(() => vm.runInContext("tr('ext.header.options')", bare), /chrome is not defined/);
+  // ② A minimal Chrome spy receives the **physical** id and **string** substitutions
+  const spy = load({ seen: [] });
+  vm.runInContext(
+    'chrome = { i18n: { getMessage: (id, subs) => { seen.push(JSON.stringify([id, subs])); return "drawn"; } } };',
+    spy,
+  );
+  assert.equal(vm.runInContext("tr('ext.button.addLimit', 3)", spy), 'drawn');
+  assert.deepEqual(vm.runInContext('seen', spy), ['["ext_button_addLimit",["3"]]']);
+  // ③ An injected backend gets exactly the same two things — the seam is the backend, not the chain
+  const injected = load({ seen: [] });
+  vm.runInContext(
+    'installMessageBackend((id, subs) => { seen.push(JSON.stringify([id, subs])); return "drawn"; });',
+    injected,
+  );
+  assert.equal(vm.runInContext("tr('ext.button.addLimit', 3)", injected), 'drawn');
+  assert.deepEqual(vm.runInContext('seen', injected), ['["ext_button_addLimit",["3"]]']);
+  // ...and the realm that forgot is unaffected by the one that did not: ① still throws
+  assert.throws(() => vm.runInContext("tr('ext.header.options')", bare), /chrome is not defined/);
+});
+
+test('a message whose arguments reorder puts them where its own language wants them', () => {
+  // **Attack step 2.** Three numeric sentinels through the one key whose order differs from English
+  // in every other catalogue — the case where a binding that is wrong in the same way everywhere
+  // would still read plausibly, which is why A2's oracle compares the formats and this compares the
+  // rendered text a user would see.
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
+  try {
+    const english = tr('ext.migration.hint.selected', 1, 2, '<S3>');
+    assert.match(english, /1 of 2 selected/, `English read ${JSON.stringify(english)}`);
+    installMessageBackend(catalogueBackend('ko'));
+    const korean = tr('ext.migration.hint.selected', 1, 2, '<S3>');
+    assert.match(korean, /2개 중 1개/, `Korean read ${JSON.stringify(korean)}`);
+    // Both carry all three, and the numbers arrived as strings without anybody formatting them
+    for (const rendered of [english, korean]) assert.ok(rendered.includes('<S3>'));
+  } finally {
+    installMessageBackend(previous);
+  }
+});
+
+test('a key the catalogue does not have comes back blank, and nothing shipped can be one', () => {
+  // **Attack step 3.** `chrome.i18n.getMessage` answers an unknown name with an empty string, which
+  // is a blank on screen rather than a raw key — quieter than what it replaces, so the gate that
+  // keeps it from happening has to be about the shipped set rather than about the runtime.
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
+  try {
+    assert.equal(tr('ext.thisKeyDoesNotExist'), '', 'the backend invented something for a missing key');
+  } finally {
+    installMessageBackend(previous);
+  }
+  // So: every key the page asks for exists in the store Chrome will read, under its physical name.
+  // The dictionaries had this gate; it moves here with the authority.
+  const shipped = new Set(Object.keys(JSON.parse(read('_locales/en/messages.json'))));
+  const missing = [...referencedKeys].filter(key => !shipped.has(chromeMessageId(key)));
+  assert.deepEqual(missing, [], 'the page asks for a message Chrome will answer with a blank');
 });
 
 test('the boundary conversion is legal for every key, and collides for none', () => {
@@ -1885,40 +1969,45 @@ test('every path that draws waits on the gate, not just the first (lint)', () =>
 // kind, and pretending they were either of the other two is what a trace prevented.
 // ---------------------------------------------------------------------------------------------
 
-test('a preset says its name in the language being drawn, not the one it loaded in', () => {
-  // The class item 21 found in the options page's dropdown, closed at the source this time: the
-  // preset itself resolves when read, so no consumer has to remember to re-read it.
-  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+test('a preset says its name when it is read, not the one it loaded with', () => {
+  // The class item 21 found in the options page's dropdown, closed at the source: the preset resolves
+  // when read, so no consumer has to remember to re-read it.
+  //
+  // **What proves it changed with A3.** It used to move the extension's own locale and watch the name
+  // follow; the extension no longer has a locale to move — Chrome picks the catalogue and the lookup
+  // asks it every time. So the backend moves instead, which is the same question one layer down: is
+  // the name being resolved now, or was it frozen when this file loaded?
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const { PR_PRESETS, REPO_PRESETS } = vm.runInThisContext('({ PR_PRESETS, REPO_PRESETS })');
-  const before = currentLocale();
+  const previous = installMessageBackend(catalogueBackend('en'));
   try {
-    setCurrentLocale('en');
     const english = PR_PRESETS[0].name;
-    setCurrentLocale('ko');
-    assert.notEqual(PR_PRESETS[0].name, english, 'the preset name froze at load');
-    // and a repository preset's face is text on the page, so it follows too
-    setCurrentLocale('en');
     const englishFace = REPO_PRESETS[0].face;
-    setCurrentLocale('ko');
-    assert.notEqual(REPO_PRESETS[0].face, englishFace, 'the repository face froze at load');
+    installMessageBackend(catalogueBackend('ko'));
+    assert.notEqual(PR_PRESETS[0].name, english, 'the preset name froze at load');
+    assert.notEqual(REPO_PRESETS[0].face, englishFace, 'the preset face froze at load');
+    // ...and what it runs does not move, which is the half that must not
+    assert.equal(PR_PRESETS[0].command, PR_PRESETS[0].command);
+    installMessageBackend(catalogueBackend('en'));
+    assert.equal(PR_PRESETS[0].name, english, 'it did not come back');
   } finally {
-    setCurrentLocale(before);
+    installMessageBackend(previous);
   }
 });
 
-test('the button drawn when nothing is stored follows the language too', () => {
-  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+test('the button drawn when nothing is stored is resolved when it is read too', () => {
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const { BUTTON_KINDS } = vm.runInThisContext('({ BUTTON_KINDS })');
-  const before = currentLocale();
+  const previous = installMessageBackend(catalogueBackend('en'));
   try {
-    setCurrentLocale('en');
     const english = BUTTON_KINDS.repo.defaults[0].face;
-    setCurrentLocale('ko');
+    const command = BUTTON_KINDS.repo.defaults[0].command;
+    installMessageBackend(catalogueBackend('ko'));
     assert.notEqual(BUTTON_KINDS.repo.defaults[0].face, english);
     // ...and what it runs does not, which is the half that must not move
-    assert.equal(BUTTON_KINDS.repo.defaults[0].command, '{cd}');
+    assert.equal(BUTTON_KINDS.repo.defaults[0].command, command);
   } finally {
-    setCurrentLocale(before);
+    installMessageBackend(previous);
   }
 });
 
