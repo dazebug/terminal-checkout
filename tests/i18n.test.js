@@ -611,6 +611,118 @@ test('each catalogue says which one it is, and that key is metadata rather than 
   assert.ok(!markupKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as markup');
 });
 
+// How many arguments a call or a table entry supplies — a reader, not a parser, and one that says
+// so when it cannot read (the arrangement the attribute scan settled on). It counts commas at the
+// top level of one bracket, stepping over nested brackets, strings and line comments, and a trailing
+// comma is not an element: `[a, b, c,]` supplies three. That last rule is not a nicety — without it
+// the one entry in this repository written across several lines reported four arguments for a
+// three-argument message, which is a gate failing on its own reading rather than on the code.
+const CLOSING_BRACKET = { '(': ')', '[': ']', '{': '}' };
+const topLevelParts = (source, openIndex) => {
+  let depth = 0;
+  let parts = 0;
+  let seenSinceComma = false;
+  let quote = null;
+  for (let i = openIndex; i < source.length; i += 1) {
+    const character = source[i];
+    if (quote) {
+      if (character === '\\') { i += 1; continue; }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') { quote = character; seenSinceComma = true; continue; }
+    if (CLOSING_BRACKET[character]) { depth += 1; if (depth > 1) seenSinceComma = true; continue; }
+    if (character === ')' || character === ']' || character === '}') {
+      depth -= 1;
+      if (depth === 0) return parts + (seenSinceComma ? 1 : 0);
+      continue;
+    }
+    if (character === ',' && depth === 1) { parts += 1; seenSinceComma = false; continue; }
+    if (!/\s/.test(character)) seenSinceComma = true;
+  }
+  return null;
+};
+
+// The highest argument a message asks for. `%2$d` alone means the message needs two, because the
+// formatter takes them positionally — asking for the second without the first is still a call that
+// has to supply two.
+const highestArgumentOf = value => Math.max(
+  0,
+  ...[...String(value ?? '').matchAll(/%(\d+)\$[sd]/g)].map(match => Number(match[1])),
+);
+
+// **Q21, as a gate rather than as a measurement** (D166). The two formats differ when a call supplies
+// fewer arguments than its message asks for: today `%2$s` is left standing on screen, and
+// `chrome.i18n` instead returns the message with nothing substituted. That difference is
+// unreachable — every call site supplies exactly through the highest index — and the property is
+// pinned here rather than left as a paragraph, because the day it stops holding is the day that
+// difference becomes a product change nobody decided on.
+//
+// Both shapes are read: a call naming its key, and the table that fills `data-i18n` nodes, whose
+// entries are arrays and are the only place arguments are supplied without a call in sight.
+const refuseArgumentMismatches = (file, source, messages) => {
+  const supplied = [];
+  for (const match of source.matchAll(/\b(?:t|tr|tHTML)\(\s*'(ext\.[A-Za-z0-9.]+)'/g)) {
+    const open = source.indexOf('(', match.index);
+    const parts = topLevelParts(source, open);
+    assert.ok(parts !== null, `${file}: a call to ${match[1]} runs off the end of the file`);
+    supplied.push([match[1], parts - 1, 'call']);
+  }
+  const table = source.indexOf('const STATIC_TEXT_ARGS = {');
+  if (table >= 0) {
+    for (const match of source.slice(table).matchAll(/'(ext\.[A-Za-z0-9.]+)':\s*\(\)\s*=>\s*\[/g)) {
+      const open = source.indexOf('[', table + match.index + match[1].length);
+      const parts = topLevelParts(source, open);
+      assert.ok(parts !== null, `${file}: the static arguments for ${match[1]} run off the end of the file`);
+      supplied.push([match[1], parts, 'static fill']);
+    }
+  }
+  for (const [key, count, shape] of supplied) {
+    const highest = highestArgumentOf(messages[key]);
+    assert.equal(
+      count, highest,
+      `${file}: the ${shape} for ${key} supplies ${count} argument(s) and the message asks through %${highest}$`,
+    );
+  }
+  return supplied.length;
+};
+
+test('every call supplies arguments through its message, and the gate says so when one does not', () => {
+  // The corpus is the subject and cannot be the whole evidence: the property holds today, so nothing
+  // here can fail — the same dead-guard shape D154 names. The refusal is therefore entered from a
+  // fixture too, one line per way it can be broken, and the corpus counts are stated so that a
+  // catalogue or a call site quietly leaving the scan shows up as a smaller number.
+  let readSites = 0;
+  for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), globalThis.TC_I18N.en);
+  assert.equal(readSites, 102, `the scan read ${readSites} argument-supplying sites`);
+
+  const refused = (source, messages) => {
+    try {
+      refuseArgumentMismatches('fixture.js', source, messages);
+    } catch (error) {
+      if (error.code !== 'ERR_ASSERTION') throw error;
+      return error.message;
+    }
+    return null;
+  };
+  const messages = { 'ext.a': 'takes %1$s and %2$d', 'ext.b': 'takes nothing' };
+  assert.match(refused("t('ext.a', one);", messages), /supplies 1 argument\(s\) and the message asks through %2\$/);
+  assert.match(refused("tr('ext.b', one);", messages), /supplies 1 argument\(s\) and the message asks through %0\$/);
+  assert.match(
+    refused("const STATIC_TEXT_ARGS = {\n  'ext.a': () => [one],\n};", messages),
+    /the static fill for ext\.a supplies 1 argument/,
+  );
+  // A call that supplies exactly what its message asks for is the shape everything here is in
+  assert.equal(refused("tHTML('ext.a', one, two);\nt('ext.b');", messages), null);
+  // ...including across lines and with a trailing comma, which is how the one multi-line entry in
+  // this repository is written
+  assert.equal(refused("const STATIC_TEXT_ARGS = {\n  'ext.a': () => [\n    one,\n    two,\n  ],\n};", messages), null);
+});
+
 test('_locales is what _i18n derives — every name, and the bytes as committed', () => {
   // **A derivation, so that a wrong edit cannot be made twice.** Two stores holding the same 122
   // values are two places to edit, and an edit made identically in both satisfies any comparison
