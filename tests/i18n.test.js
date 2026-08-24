@@ -11,7 +11,9 @@ const manifest = JSON.parse(read('manifest.json'));
 // The derivation `_locales` came from, imported so the gate below runs it rather than a
 // description of it — the same reason the liveness sweep extracts its predicate. Since A3 it
 // only compares: the authority moved to `_locales`, so a generator would be a way back.
-const { loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS } = require('../tools/check-locales.js');
+const {
+  loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS, CHROME_LOCALE_DIRECTORIES,
+} = require('../tools/check-locales.js');
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
 // classic script, run with **no `chrome` global in sight**. That is the constraint the whole
@@ -54,6 +56,12 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   // manifest, and one catalogue per shipped locale. A stray `probe.json` is neither.
   assert.deepEqual(MANIFEST_FILES, ['manifest.json']);
   assert.equal(CATALOGUE_FILES.length, TC_I18N_LOCALES.length, 'the catalogues and the locales disagree');
+  assert.deepEqual(
+    CATALOGUE_FILES,
+    TC_I18N_LOCALES.map(cataloguePathForLocale).sort(),
+    'the catalogue paths are not the paths derived from the shipped locale mapping',
+  );
+  assert.equal(roleOf('_locales/not-shipped/messages.json'), null, 'an unshipped catalogue path was classified');
   // And the sets the gates use are derived from the roles, not re-filtered beside them
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
@@ -591,13 +599,22 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
 // classification did not imply entry into the application.
 //
 // So a path gets a **role**, the roles are the only way a file enters anything, and the data roles
-// are recognised **by path** rather than by suffix — `manifest.json` is one file and a catalogue is
-// `_locales/<tag>/messages.json`, and nothing else is either. A file with no role fails the gate
-// below, which is what "fails closed" has to mean once the classification and the entry are one
-// operation. Same move as `auditSource`, one level out.
+// are recognised **by exact path** rather than by suffix. The catalogue paths are derived from the
+// one locale-to-Chrome mapping owned by `tools/check-locales.js`; this classifier decides only
+// whether a path is an allowed catalogue-shaped input. It does not inspect catalogue contents or
+// prove that a file's data belongs to its locale — `check-locales.js` and the Swift ownership gate
+// enforce that identity. A file with no role fails the gate below, which is what "fails closed" has
+// to mean once the classification and the entry are one operation. Same move as `auditSource`, one
+// level out.
+const cataloguePathForLocale = tag => {
+  const directory = CHROME_LOCALE_DIRECTORIES[tag];
+  assert.ok(directory, `no Chrome catalogue directory is mapped for ${tag}`);
+  return `_locales/${directory}/messages.json`;
+};
+const CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(cataloguePathForLocale));
 const roleOf = (relativePath) => {
   if (relativePath === 'manifest.json') return 'manifest';
-  if (/^_locales\/[^/]+\/messages\.json$/.test(relativePath)) return 'localeCatalogue';
+  if (CATALOGUE_PATHS.has(relativePath)) return 'localeCatalogue';
   if (relativePath.endsWith('.js')) return 'speakingSource';
   if (relativePath.endsWith('.html')) return 'markupSource';
   return null;
