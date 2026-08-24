@@ -1085,12 +1085,12 @@ test('a compatibility catalogue cannot witness its own keys as consumer referenc
     ['_i18n/en.js', 'const messages = { "ext.used": "used", "ext.orphan": "orphan" };'],
   ]);
   const consumers = [...sources.keys()].filter(file => roleOf(file) === 'speakingSource');
-  assert.deepEqual(consumers, ['consumer.js']);
   const references = consumerReferenceKeysIn(consumers, file => sources.get(file));
   assert.throws(
     () => assertEveryCatalogueMessageIsReferenced(['ext.used', 'ext.orphan'], references),
     /catalogue carries a message nothing asks for/,
   );
+  assert.deepEqual(consumers, ['consumer.js']);
 });
 
 test('message strings and calls are separate projections of every JavaScript lexical state', () => {
@@ -1342,11 +1342,10 @@ test('the page can only ask for keys the catalogue has, and asks for all of them
   assertEveryCatalogueMessageIsReferenced(en, referencedKeys, TC_I18N_METADATA_KEYS);
 });
 
-test('no message id is computed — the source literals are the whole set', () => {
-  // The one call that takes its key from data rather than from a literal is the static fill, and
-  // its data is an attribute set in a file we ship. Everything else names a literal, which is what
-  // makes "referenced" above an enumeration instead of a guess. (The app does this with a
-  // `StaticString` parameter; JavaScript has no such type, so the property is asserted here.)
+test('the options page keeps dynamic message dispatch inside its static fill', () => {
+  // The static fill reads a key from `data-i18n`, then its three dispatches pass that value through.
+  // Those are declared data positions in the reference projection above; any other dynamic dispatch
+  // on this page would have no statically enumerable message behind it.
   const dynamic = [...optionsJs.matchAll(/\bt(?:HTML)?\(([^'\s)][^,)]*)/g)].map(m => m[1].trim());
   assert.deepEqual(dynamic, ['key', 'key', 'key'],
     'a message id is being computed somewhere other than the two declarations and the static fill');
