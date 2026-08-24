@@ -3,18 +3,19 @@ import Foundation
 /// Which language the app renders in — the verdict only, never the rendering.
 ///
 /// The two questions here are "given what the user stored and what the system prefers, which of
-/// the bundled catalogs answers" and "is that a different answer from the one we last told the
-/// extension about". Both are pure: every input arrives as an argument, so a test can state the
-/// case it means instead of the case the machine it runs on happens to be in. Reading
-/// `Locale.preferredLanguages` or the bundle in here would put the host machine's language into
-/// the answer — measured (D7): a `Bundle(url:)` lookup for `en` resolves through the host language
-/// and returns the ko-KR string on a ko-KR machine.
+/// the bundled catalogs answers" and "is that a different answer from a prior resolved snapshot
+/// in the retained migration-era pure model". Both are pure: every input arrives as an argument,
+/// so a test can state the case it means instead of the case the machine it runs on happens to be
+/// in. Reading `Locale.preferredLanguages` or the bundle in here would put the host machine's
+/// language into the answer — measured (D7): a `Bundle(url:)` lookup for `en` resolves through the
+/// host language and returns the ko-KR string on a ko-KR machine.
 ///
 /// It lives in Core rather than in App for the same reason `BaseDirectory` does: the App target's
 /// only tests drive AppKit windows and save and restore the user's live settings, so asserting on
 /// a verdict placed there would mean asserting through a window server and the real defaults. The
-/// protocol layer (`HostServer`) also has to publish the same tag the window renders in, and a
-/// verdict that existed in two copies would only ever get fixed in one.
+/// The snapshot helpers below are retained as a pure migration-era model for focused Core tests;
+/// no current app path persists or sends one to the extension. Keeping the resolver in Core still
+/// prevents a second copy from drifting from the verdict the window renders.
 
 /// The tags the app ships a catalog for. This is the whole list — `zh-Hant` covers Hong Kong and
 /// Macau as well, which is what macOS itself does with them (D12).
@@ -31,12 +32,12 @@ public let fallbackLocale = "en"
 
 /// A tag we actually ship a catalogue for.
 ///
-/// It exists because validating on the way **out** was not enough: `publish` used to take any
-/// string, so `publish(resolved: "fr", …)` persisted a tag nothing can render and the mistake was
-/// only noticed by the next read, which then threw the whole identity away (round 10 review). The
-/// type moves that check to the moment the value is made, and the compiler asks the question
-/// instead of a reviewer — the same move `ShellPayload` makes in the App target, one direction over:
-/// there a computed value must not reach a shell, here an unshipped tag must not reach storage.
+/// It keeps the pure model from carrying an unshipped tag. The migration-era writer used to accept
+/// any string, so a value such as `"fr"` could be persisted even though no shipped catalog could
+/// render it; the type moves that check to the moment the value is made and asks the compiler
+/// instead of a reviewer. That is the same move `ShellPayload` makes in the App target, one
+/// direction over: there a computed value must not reach a shell, here an unshipped tag must not
+/// reach the model.
 ///
 /// The only way to build one without asking is `fallback`, which is `fallbackLocale` — a member of
 /// `supportedLocales` by construction, and `testTheFallbackIsALocaleWeShip` keeps that true.
@@ -98,12 +99,14 @@ public func resolveLocale(
     return lastResort
 }
 
-/// The locale the app last told the extension about, and the revision of that fact.
+/// A retained migration-era snapshot model and the revision of its resolved tag.
 ///
 /// `epoch` is the revision of **this snapshot**, not of the preference (D48). The preference can
-/// sit at `auto` for years while the resolved tag changes underneath it, and the extension accepts
-/// a snapshot from the same install only when the epoch is strictly greater (D32) — a counter that
-/// moved only when the preference was edited would leave every `auto` user on the old language.
+/// sit at `auto` for years while the resolved tag changes underneath it. A counter that moved only
+/// when the preference was edited would leave the pure model on the old language.
+///
+/// No current app path persists this value or sends it over the socket; the focused Core tests
+/// retain the migration-era revision contract.
 public struct LocaleSnapshot: Equatable {
     public let tag: String
     public let epoch: Int
@@ -114,28 +117,28 @@ public struct LocaleSnapshot: Equatable {
     }
 }
 
-/// The snapshot to publish for a freshly resolved tag.
+/// The next revision in the retained migration-era snapshot model for a freshly resolved tag.
 ///
-/// An unchanged tag republishes the snapshot it was given, epoch and all: resolving happens on
-/// every launch, and a number that moved each time would make every launch look like a language
-/// change to the extension. A changed tag takes the next revision — including a change back to a
-/// tag published earlier, which is a new revision and not the old number again.
+/// An unchanged tag returns the snapshot it was given, epoch and all: resolving happens on every
+/// launch, and a number that moved each time would make every launch look like a language change in
+/// the old protocol. A changed tag takes the next revision — including a change back to a tag that
+/// appeared earlier, which is a new revision and not the old number again.
 ///
-/// Persisting the result, and the rule that only the process with the picker may persist it (D49),
-/// belong to the caller.
+/// There is no current persistence or socket publication caller; this pure function remains for
+/// the focused migration-era contract tests.
 public func localeSnapshotToPublish(resolved: String, lastPublished: LocaleSnapshot?) -> LocaleSnapshot {
     guard let last = lastPublished else { return LocaleSnapshot(tag: resolved, epoch: 0) }
     guard last.tag != resolved else { return last }
     return LocaleSnapshot(tag: resolved, epoch: last.epoch + 1)
 }
 
-/// Whether this identity has a next revision left to give.
+/// Whether this retained snapshot identity has a next revision left to give.
 ///
-/// `Int.max` is the epoch storage treats as malformed — it cannot express its own successor — so an
-/// identity sitting at `Int.max - 1` is one advance away from a snapshot the app would refuse on the
-/// very next read (round 10 review; it was persisted first and rejected afterwards). The caller has
-/// to mint a fresh identity at that point rather than advance, which is the same answer D51 gives
-/// from the other end: an epoch that cannot move means the identity has to.
+/// `Int.max` is malformed for the retained model because it cannot express its own successor, so an
+/// identity sitting at `Int.max - 1` is one advance away from a snapshot the old reader would refuse.
+/// The migration-era caller had to mint a fresh identity at that point rather than advance, which
+/// is the same answer D51 gives from the other end: an epoch that cannot move means the identity has
+/// to.
 ///
 /// It is a question rather than a clamp because the recovery is minting, and only the caller has an
 /// identity to mint.

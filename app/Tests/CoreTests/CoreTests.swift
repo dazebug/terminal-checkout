@@ -4723,15 +4723,14 @@ final class LocaleResolutionTests: XCTestCase {
         XCTAssertEqual(resolveLocale(preference: "zh_TW", systemPreferred: ["ko-KR"], available: bundled), "zh-Hant")
     }
 
-    /// `epoch` counts revisions of the **resolved** locale, not of the preference (D48). The
-    /// preference stays `auto` for the whole of the last block below while the language changes
-    /// underneath it — counting preference edits there would leave the extension on the old
-    /// language forever, because its rule is to accept a same-install snapshot only when the
-    /// epoch is strictly greater (D32).
+    /// This is the retained migration-era pure snapshot contract, not a current socket
+    /// publication. `epoch` counts revisions of the **resolved** locale, not of the preference
+    /// (D48). The preference stays `auto` for the whole of the last block below while the language
+    /// changes underneath it — counting preference edits would leave the model on the old answer.
     ///
-    /// Republishing an unchanged locale returns the snapshot untouched: every launch resolves and
-    /// publishes, and if that moved the number, the extension would redraw on every launch and no
-    /// epoch would ever mean anything.
+    /// Reusing an unchanged locale returns the snapshot untouched: every launch resolves, and if
+    /// that moved the number, every launch would look like a language change and no epoch would
+    /// ever mean anything.
     func testTheEpochAdvancesOnlyWhenTheResolvedLocaleChanges() {
         let first = localeSnapshotToPublish(resolved: "ko", lastPublished: nil)
         XCTAssertEqual(first, LocaleSnapshot(tag: "ko", epoch: 0))
@@ -4740,7 +4739,7 @@ final class LocaleResolutionTests: XCTestCase {
         let second = localeSnapshotToPublish(resolved: "ja", lastPublished: first)
         XCTAssertEqual(second, LocaleSnapshot(tag: "ja", epoch: 1))
 
-        // Returning to a tag published before is a new revision, not the old number again
+        // Returning to a tag seen before is a new revision, not the old number again.
         XCTAssertEqual(
             localeSnapshotToPublish(resolved: "ko", lastPublished: second),
             LocaleSnapshot(tag: "ko", epoch: 2)
