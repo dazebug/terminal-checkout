@@ -759,7 +759,19 @@ const messageCallsIn = source => {
   return calls;
 };
 
-const keysInJs = new Set(SPEAKING_FILES.flatMap(file => messageStringKeysIn(read(file))));
+const consumerReferenceKeysIn = (files, readSource) => new Set(
+  files.flatMap(file => messageStringKeysIn(readSource(file))),
+);
+
+const assertEveryCatalogueMessageIsReferenced = (catalogueKeys, references, exempt = []) => {
+  const exemptKeys = new Set(exempt);
+  const unreferenced = catalogueKeys
+    .filter(key => !exemptKeys.has(key))
+    .filter(key => !references.has(key));
+  assert.deepEqual(unreferenced, [], 'the catalogue carries a message nothing asks for');
+};
+
+const keysInJs = consumerReferenceKeysIn(SPEAKING_FILES, read);
 const keysInHtml = new Set(
   HTML_FILES.flatMap(file => [...read(file).matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])),
 );
@@ -1169,11 +1181,8 @@ test('the page can only ask for keys the catalogue has, and asks for all of them
   // value is the catalogue's own tag is not a message the page draws, and until A3 asks it for the
   // document language nothing reads it at all (D178). Leaving it to pass on the accident that its
   // own declaration looks like a reference would be a gate agreeing for the wrong reason.
-  const unreferenced = en
-    .filter(key => !TC_I18N_METADATA_KEYS.includes(key))
-    .filter(key => !referencedKeys.has(key));
   assert.deepEqual(missing, [], 'the page names a message that is not in the catalogue');
-  assert.deepEqual(unreferenced, [], 'the catalogue carries a message nothing asks for');
+  assertEveryCatalogueMessageIsReferenced(en, referencedKeys, TC_I18N_METADATA_KEYS);
 });
 
 test('no message id is computed — the source literals are the whole set', () => {
