@@ -127,6 +127,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// user may want to change, not an install step that completes and disappears.
     private var baseDirCard: NSView!
     private let baseDirField = NSTextField(string: "")
+    /// **What this window last put in that field**, which is how it can tell its own text from the
+    /// user's. Anything else in there is a draft — typed and not stored, because an unusable path is
+    /// deliberately never stored — and a draft is not something a redraw may throw away. `nil` until
+    /// the first draw, so the first one happens.
+    private var drawnBaseDirectory: String?
     private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private var guideBlock: NSView!
     private var utilityRow: NSView!
@@ -288,6 +293,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         var anchorOffset: CGFloat = 0
     }
 
+    /// The card to measure from, which is the captured one unless `refresh()` has just collapsed it.
+    ///
+    /// **A hidden card keeps the frame it last had**, so it cannot be measured from — and skipping
+    /// the restore because of that leaves the window at its first line, which is the whole defect
+    /// this machinery exists for, in the one case it did not cover (round 26 review). So the search
+    /// falls through to the next card **down the stack**, and "next" means next in the order the
+    /// cards are added rather than nearest in points: when a card collapses, the one below it moves
+    /// up into the space, so its top edge is about where the measurement was taken. Falling upwards
+    /// is the last resort, for an anchor that was the last visible card.
+    private func anchorToRestore(_ role: NSUserInterfaceItemIdentifier) -> NSView? {
+        let cards = rootStack?.arrangedSubviews ?? []
+        guard let index = cards.firstIndex(where: { $0.identifier == role }) else { return nil }
+        return cards[index...].first(where: { !$0.isHidden && $0.frame.height > 0 })
+            ?? cards[..<index].last(where: { !$0.isHidden && $0.frame.height > 0 })
+    }
+
     private func capturePlace(in window: NSWindow) -> SetupWindowPlace {
         var place = SetupWindowPlace()
         let editor = window.firstResponder as? NSTextView
@@ -310,18 +331,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return place
     }
 
-    /// **"The same place" is the card, not the offset.** A translated sentence is longer or shorter
-    /// than the one it replaced, so the cards above the viewport are a different height afterwards
-    /// and the old origin points at different content. Putting the anchor card back under the same
-    /// line of the window is the reading of "unchanged" that survives a reflow, and `scrollOrigin`
-    /// is where the one position the document may not have — above its first line — is answered.
+    /// **What comes back is the anchor card's top edge and the distance below it**, not the line of
+    /// text the reader was on: the words inside the card reflowed too, and nothing here can say
+    /// where a particular sentence went. A translation is longer or shorter than the one it
+    /// replaced, so the cards above the viewport are a different height afterwards and the old
+    /// origin points at different content — which is why the measurement is taken from a card edge.
+    /// `scrollOrigin` answers the one position the document may not have, above its first line.
     private func restore(_ place: SetupWindowPlace, in window: NSWindow) {
         if let scroll = window.contentView as? NSScrollView,
            let document = scroll.documentView,
            let role = place.anchorRole,
-           // Visible, because a hidden card keeps the frame it had when it was last laid out —
-           // restoring against one would aim at where it used to be
-           let anchor = rootStack?.arrangedSubviews.first(where: { $0.identifier == role && !$0.isHidden }) {
+           let anchor = anchorToRestore(role) {
             let origin = scrollOrigin(
                 anchorTop: anchor.frame.maxY, offset: place.anchorOffset,
                 clip: scroll.contentView.bounds.height
@@ -334,10 +354,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
               let control = window.contentView?.firstDescendant(withRole: role),
               window.makeFirstResponder(control) else { return }
         guard let selection = place.selection, let editor = (control as? NSControl)?.currentEditor() else { return }
-        // The text can have changed under the cursor: an edit that ended on an invalid path is not
-        // stored, and `refresh()` then draws the stored value instead of what was typed
-        let location = min(selection.location, editor.string.count)
-        editor.selectedRange = NSRange(location: location, length: min(selection.length, editor.string.count - location))
+        // The text can have changed under the cursor — a stored value drawn over a field that held
+        // this window's own text — so the range is clamped to what is there now.
+        //
+        // **In the units `NSRange` is written in, which are UTF-16 and not characters** (round 26
+        // review). `String.count` counts what a reader would call characters, so for a path with an
+        // emoji or a decomposed vowel in it the two disagree and clamping against the wrong one
+        // moves the cursor to before where it was. Decomposition is not exotic here: this
+        // repository already carries what re-encodes to NFD and what does not.
+        let length = editor.string.utf16.count
+        let location = min(selection.location, length)
+        editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
     }
 
     // MARK: - Building the UI
@@ -1043,10 +1070,26 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// Redraws the base directory card from what is stored. The field is not touched while the
     /// user is typing in it — refresh() runs on every window activation and on every socket
     /// request, and overwriting a half-typed path would be maddening.
+    ///
+    /// **"Is being typed into" was a proxy for "holds the user's text", and the two came apart on
+    /// the path this work added** (round 26 review). A language change through the picker ends the
+    /// edit *before* the rebuild, so the field editor is gone by the time this runs and the
+    /// condition let the stored value overwrite a draft the user had just been refused — type a
+    /// path, change the language, lose the typing. The condition asks the question it meant to ask
+    /// now: the field is redrawn only while it still holds **what this window put there**, which is
+    /// true on every path rather than on the two it was written for.
+    ///
+    /// The original condition stays, and what it is left covering is narrow and real: the stored
+    /// value changing *while* the field is open and untouched — a hand-edited plist, another
+    /// instance — where the write would land in a live edit. It is not what protects the cursor;
+    /// measured, writing the **same** value into a field being edited leaves the selection where it
+    /// was.
     private func updateBaseDirCard() {
         let stored = Settings.baseDirectory
-        if window?.firstResponder !== baseDirField.currentEditor() {
+        let ours = drawnBaseDirectory == nil || baseDirField.stringValue == drawnBaseDirectory
+        if window?.firstResponder !== baseDirField.currentEditor(), ours {
             baseDirField.stringValue = stored
+            drawnBaseDirectory = stored
         }
         // A stored value can only be invalid if it was edited outside this window (a hand-edited
         // plist, an older build). Say so here rather than let every button fail unexplained.
@@ -1250,6 +1293,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let normalized = try normalizedBaseDirectory(typed)
             Settings.baseDirectory = normalized ?? ""
             baseDirField.stringValue = normalized ?? ""
+            // Stored and echoed back, so what is in the field is this window's text again and a
+            // redraw may replace it. The failure path below leaves it a draft on purpose
+            drawnBaseDirectory = normalized ?? ""
         } catch {
             apply(
                 .error(localized("app.baseDir.notSaved", baseDirectoryReason(error))),
@@ -1369,8 +1415,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// Where the viewport goes so the card the user was reading stays under the same line of the
-/// window: `anchorTop` is that card's top edge and `offset` is how far below it the viewport began.
+/// Where the viewport goes so the anchor card's **top edge** returns to the same line of the
+/// window: `anchorTop` is that edge and `offset` is how far below it the viewport began. What that
+/// preserves is the edge and the distance, which is all that survives a reflow — the text inside
+/// the card was rewritten too, so no sentence has a place to be put back to.
 ///
 /// **A free function because the arithmetic is the part worth testing**, and it needs no window.
 /// Only the near end is clamped, and only that end can be reached: an anchor is a visible card

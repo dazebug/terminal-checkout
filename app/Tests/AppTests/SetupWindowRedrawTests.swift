@@ -12,19 +12,26 @@ import XCTest
 /// **What these tests never write is `Settings.language`.** Its setter publishes and posts, and
 /// running that against `.standard` would rewrite the language of the app installed on this
 /// machine — so the notification is posted directly, which is the same thing the setter does and
-/// nothing more. The terminal and the base directory they do write, and put back: measured, a
-/// `UserDefaults.standard` write from `swift test` lands in the runner's own domain
-/// (`com.apple.dt.xctest.tool`) rather than the app's, so the save-and-restore is about keeping
-/// the cases in this file independent of each other.
+/// nothing more. The settings they *do* write — the terminal, the base directory, the tool answers
+/// and the last request time, which are what decides which cards a redraw hides — are saved and put
+/// back: measured, a `UserDefaults.standard` write from `swift test` lands in the runner's own
+/// domain (`com.apple.dt.xctest.tool`) rather than the app's, so the save-and-restore is about
+/// keeping the cases in this file independent of each other.
 final class SetupWindowRedrawTests: XCTestCase {
     private var savedTerminal: Terminal!
     private var savedBaseDirectory: String!
     private var savedResources: String?
+    private var savedAvailability: [String: Bool]?
+    private var savedExecutables: [String: Bool]?
+    private var savedLastRequestAt: Date?
 
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
         savedBaseDirectory = Settings.baseDirectory
+        savedAvailability = Settings.toolAvailability
+        savedExecutables = Settings.toolExecutables
+        savedLastRequestAt = Settings.lastRequestAt
         // The window has to be drawn from the real catalogues here, not from raw keys: two of these
         // cases are about **where** things end up, and a key is shorter than the sentence it stands
         // for — the same reason the layout tests read the source tree (`swift test` has no bundle).
@@ -35,6 +42,9 @@ final class SetupWindowRedrawTests: XCTestCase {
     override func tearDown() {
         Settings.terminal = savedTerminal
         Settings.baseDirectory = savedBaseDirectory
+        Settings.toolAvailability = savedAvailability
+        Settings.toolExecutables = savedExecutables
+        Settings.lastRequestAt = savedLastRequestAt
         AppLocalization.resourcesPath = savedResources
         AppLocalization.tagOverrideForTesting = nil
         super.tearDown()
@@ -150,6 +160,101 @@ final class SetupWindowRedrawTests: XCTestCase {
         )
     }
 
+    /// **The draft nobody stored is still the user's text.** An unusable path is deliberately not
+    /// saved — it stays in the field so it can be fixed — and `refresh()` runs after the rebuild,
+    /// where `updateBaseDirCard` draws the stored value over any field that is not being edited.
+    /// Changing the language *through the picker* ends the edit first, so that condition holds and
+    /// the typing is gone: type a path, change the language, lose it (round 26 review).
+    func testALanguageChangeKeepsTheDraftNobodyStored() throws {
+        Settings.baseDirectory = NSTemporaryDirectory()
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        let field = try XCTUnwrap(
+            window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+                as? NSTextField
+        )
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(window.makeFirstResponder(field))
+        try XCTUnwrap(field.currentEditor()).string = "not a path"
+        // The way the picker ends it: focus moves, the edit is committed, and the value is refused
+        let picker = try XCTUnwrap(window.contentView?.firstDescendant(role: "control.languageChanged"))
+        XCTAssertTrue(window.makeFirstResponder(picker))
+        XCTAssertEqual(field.stringValue, "not a path", "the fixture never left a draft in the field")
+        XCTAssertNotEqual(Settings.baseDirectory, "not a path", "the fixture stored it, so nothing is at risk")
+
+        post(.terminalCheckoutLanguageChanged)
+
+        XCTAssertEqual(
+            field.stringValue, "not a path",
+            "the redraw replaced what the user typed with the stored value"
+        )
+    }
+
+    /// **`NSRange` counts UTF-16, and a `String` counts what people call characters.** A path with
+    /// an emoji or a decomposed character in it makes the two differ, so clamping the restored
+    /// selection against `String.count` lands the cursor before where it was. This repository knows
+    /// the neighbouring hazard already — which carriers re-encode to NFD — so a decomposed path
+    /// here is not exotic (round 26 review).
+    func testTheRestoredSelectionIsClampedInTheUnitsItIsMeasuredIn() throws {
+        // Stored rather than typed, which is the state a hand-edited plist leaves: the field draws
+        // it, the status line says it is unusable, and none of that moves the cursor
+        Settings.baseDirectory = "/tmp/🙂/notes"
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        let field = try XCTUnwrap(
+            window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+                as? NSTextField
+        )
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor())
+        XCTAssertEqual(editor.string, "/tmp/🙂/notes", "the fixture drew something else")
+        let end = NSRange(location: (editor.string as NSString).length, length: 0)
+        XCTAssertNotEqual(end.location, editor.string.count, "the fixture has no character that counts twice")
+        editor.selectedRange = end
+
+        post(.terminalCheckoutLanguageChanged)
+
+        XCTAssertEqual(
+            field.currentEditor()?.selectedRange, end,
+            "the cursor came back before where it was, by the width of what the two units disagree on"
+        )
+    }
+
+    /// **The anchor card can be gone by the time the position is restored.** `refresh()` decides
+    /// which cards are hidden, and it runs after the rebuild — so a card that was the anchor can be
+    /// collapsed a moment later, and skipping the restore leaves the window at its first line,
+    /// which is this item's whole defect in the one case its fix did not cover (round 26 review).
+    func testAHiddenAnchorFallsBackToTheCardBelowIt() throws {
+        Settings.lastRequestAt = nil // nothing has connected yet, so the extension card is showing
+        let (controller, window, scroll) = try makeScrollingController()
+        let card = try XCTUnwrap(controller.rootStack.firstDescendant(role: "card.extension"))
+        XCTAssertFalse(card.isHidden, "the fixture never showed the card it is about to hide")
+        let clipHeight = scroll.contentView.bounds.height
+        try XCTUnwrap(scroll.documentView).scroll(NSPoint(x: 0, y: card.frame.maxY - clipHeight - 20))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        XCTAssertEqual(
+            card.frame.maxY - scroll.documentVisibleRect.maxY, 20, accuracy: 0.5,
+            "the fixture did not land where it meant to"
+        )
+
+        // A request arrives, so the card this position is anchored to collapses during `refresh()`
+        Settings.lastRequestAt = Date()
+        post(.terminalCheckoutLanguageChanged)
+
+        let after = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertTrue(
+            try XCTUnwrap(controller.rootStack.firstDescendant(role: "card.extension")).isHidden,
+            "the fixture did not hide the anchor, so it is not testing the fallback"
+        )
+        // The card below it moved up into the space, so its top is where the measurement was taken
+        let neighbour = try XCTUnwrap(controller.rootStack.firstDescendant(role: "card.language"))
+        XCTAssertEqual(
+            neighbour.frame.maxY - after.documentVisibleRect.maxY, 20, accuracy: 0.5,
+            "a hidden anchor dropped the position instead of falling through to the card below it"
+        )
+    }
+
     /// **Focus is restored by finding the control again, not by keeping a pointer to it.** Every
     /// control in this window except the field is built anew by `buildContent()`, so the object
     /// that had focus does not exist afterwards — what survives a rebuild is the role, and the role
@@ -191,9 +296,10 @@ final class SetupWindowRedrawTests: XCTestCase {
 
     /// **What "the same place" means when the text reflows.** A translation is longer or shorter
     /// than the sentence it replaces, so the document is a different height afterwards and no
-    /// absolute offset can mean the same thing. What is kept is the card the user was looking at,
-    /// and how far into it they were.
-    func testTheCardYouWereLookingAtStaysWhereItWasWhenTheTextReflows() throws {
+    /// absolute offset can mean the same thing. What is kept is **a card's top edge and the
+    /// distance below it** — not the sentence or the line that was there, which the translation
+    /// rewrote (round 26 review: the contract is the edge, and the name should not promise finer).
+    func testTheAnchorCardsEdgeAndOffsetSurviveAReflow() throws {
         AppLocalization.tagOverrideForTesting = "ko"
         let (controller, window, scroll) = try makeScrollingController()
         let heightBefore = try XCTUnwrap(scroll.documentView).frame.height
@@ -217,7 +323,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         )
         XCTAssertEqual(
             cardAfter.frame.maxY - after.documentVisibleRect.maxY, offsetBefore, accuracy: 0.5,
-            "the card the user was reading moved out from under them"
+            "the anchor edge is no longer the same distance above the top of the viewport"
         )
         // ...and an absolute restore would have been a different answer, which is why this is
         // anchored to a card rather than to a number of points from the top
@@ -244,9 +350,18 @@ final class SetupWindowRedrawTests: XCTestCase {
     }
 
     /// The assumption the two restores rest on, asserted rather than trusted: **a control this
-    /// window owns has a role, and no two share one.** Without it a control added later would
-    /// silently lose its focus across a rebuild, or take the focus meant for another.
-    func testEveryControlTheWindowOwnsCarriesADistinctRole() throws {
+    /// window owns answers to the role its own action names, and no two share one.** Without it a
+    /// control added later would silently lose its focus across a rebuild, or take the focus meant
+    /// for another.
+    ///
+    /// **The gate recomputes the role rather than checking that there is one** (round 26 review).
+    /// Non-empty and unique was weaker than the sentence it stood for: a hardcoded identifier that
+    /// named nothing in particular passed it, and then the invariant — *derived from the action, so
+    /// it cannot go stale on its own* — was true of the code and not of the check. Here that is a
+    /// one-line recomputation, so the check says what the sentence says. (The attribute lint next
+    /// door is the opposite case: what it would take to close is a parser, and D147 says why a lint
+    /// stops short of one.)
+    func testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames() throws {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
         var owned: [NSControl] = []
@@ -254,9 +369,17 @@ final class SetupWindowRedrawTests: XCTestCase {
         XCTAssertGreaterThan(owned.count, 10, "the scan found almost nothing — check the walk")
         var roles: Set<String> = []
         for control in owned {
+            let action = try XCTUnwrap(control.action, "a control this window owns does nothing: \(type(of: control))")
             let role = try XCTUnwrap(
                 control.identifier?.rawValue,
-                "a control with no role: \(type(of: control)) \(control.action.map(String.init(describing:)) ?? "no action")"
+                "a control with no role: \(type(of: control)) \(action)"
+            )
+            // The rule the code writes: `control.<action>`, plus `.<qualifier>` where one action
+            // serves several controls (the terminal radios, told apart by a product name)
+            let derived = "control.\(action)"
+            XCTAssertTrue(
+                role == derived || role.hasPrefix("\(derived)."),
+                "\(role) is not the role \(action) names — a role that is written rather than derived goes stale silently"
             )
             XCTAssertTrue(roles.insert(role).inserted, "two controls answer to \(role)")
         }
