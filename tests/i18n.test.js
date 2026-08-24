@@ -1129,6 +1129,13 @@ const catalogueMismatchInstruction = (directory, tag) => (
   + 'then run node tools/check-locales.js'
 );
 
+test('a catalogue mismatch points to the canonical edit direction and the read-only checker', () => {
+  assert.equal(
+    catalogueMismatchInstruction('zh_TW', 'zh-Hant'),
+    '_locales/zh_TW/messages.json differs from pinned compatibility _i18n/zh-Hant.js — keep _locales canonical and do not regenerate it from _i18n; update A7\'s pinned-baseline checks, then run node tools/check-locales.js',
+  );
+});
+
 test('_locales still matches the pinned _i18n compatibility baseline — every name and byte', () => {
   // `_locales` is canonical and `_i18n` is the frozen migration baseline. This read-only mixed-
   // generation check still runs the old derivation to compare them; it is not authority to write
