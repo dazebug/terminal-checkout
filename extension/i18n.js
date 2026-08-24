@@ -20,10 +20,11 @@
 // shows a Japanese app and English buttons, with nowhere to change both.
 //
 // **Everything below the lookup is temporary.** The locale cache, its reducer, the fence, the
-// first-render gate and the renderer are **compatibility implementations**: nothing in this
-// generation calls them, the previous release does, and they leave when the compatibility passengers
-// do — a generation-consistent deployment, which is a follow-up issue. Read them as machinery being
-// carried, not as design.
+// first-render gate and the renderer are **compatibility implementations**: the current skeleton and
+// current consumers execute none of them. A current consumer paired with the adjacent old skeleton
+// takes a feature-detected locale-seed branch because that old lookup still needs its holder; the
+// previous consumers call the rest. They leave together after a generation-consistent deployment,
+// which is a follow-up issue. Read them as machinery being carried, not as design.
 //
 // **Nothing here touches `chrome` at load time, and nothing looks anything up at load time.** Both
 // rules come from the same measurement (D6): the test files run these scripts with no `chrome`
@@ -31,10 +32,10 @@
 // names `chrome.i18n.getMessage` inside a function for exactly that reason, and a test loads this
 // file in a `chrome`-less realm rather than grepping for the string (D199).
 
-// The tags the extension ships a dictionary for. The same spelling the app uses, on purpose: the
-// locale arrives from the app as `zh-Hans`, and a second naming convention here would mean a
-// mapping table that can drift. (Chrome's own `_locales/` directories use `zh_CN`/`zh_TW`; that is
-// Chrome's namespace, and it holds two keys we never read from JavaScript.)
+// The tags the compatibility dictionaries use. They retain the app-era spelling because changing
+// that ABI while an adjacent consumer can still load `_i18n` would defeat the compatibility copy.
+// Chrome's canonical `_locales/` directories use `zh_CN`/`zh_TW`; the one locale-to-directory map
+// belongs to the read-only catalogue checker rather than to this lookup.
 const TC_I18N_LOCALES = ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant'];
 
 // Where every question we cannot answer lands — the same choice the app makes for the same reason:
@@ -73,7 +74,7 @@ const TC_I18N_METADATA_KEYS = [TC_I18N_CATALOGUE_TAG_KEY];
 // this project would have got there is item ordering rather than disagreement: the generator needs
 // the rule before the runtime does.
 //
-// Nothing calls it yet. That is the point of introducing it here: A2 changes no behaviour.
+// A2 introduced it before any runtime call used it; the checker and the runtime now share it.
 function chromeMessageId(key) {
   return String(key).replace(/\./g, '_');
 }

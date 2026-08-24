@@ -85,7 +85,7 @@ When the app opens, walk through the setup window in order. Native Host registra
    - Click **Load unpacked** (top left)
    - In the file picker: **⇧⌘G → ⌘V (paste) → Enter → [Select]**
    - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
-   - This step is marked complete when the app first receives a request from the extension. The service worker contacts the app as soon as Chrome loads it, so this usually happens on its own within a few seconds of [Select]; if the card is still waiting, press any Terminal Checkout button on GitHub once
+   - This step is marked complete when the app first receives a request from the extension. After Chrome loads it, open a GitHub PR, issue, or repository page and press any Terminal Checkout button once
 2. **Language** — English, Korean, Japanese, Simplified Chinese, Traditional Chinese, or [Follow the system language] (the default). This is the **app's** language; the extension follows Chrome. See [Language](#language)
 3. **Terminal** — choose iTerm2, WezTerm, or Warp
 4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.

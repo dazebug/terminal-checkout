@@ -49,7 +49,7 @@ The extension asks `chrome.i18n` and the app asks macOS. Neither tells the other
 
 **What that costs, stated plainly:** a user on Japanese macOS with English Chrome sees the app in Japanese and the buttons in English, with no single place to change both. That is the exact cost the previous decision existed to avoid.
 
-**What it buys** is the removal of everything the previous answer required: a locale query on the native socket, a cache with a generation and an install identity, a per-worker sequence fence, a serialized cache writer, a redraw queue, and a restart to move the app's own AppKit chrome. The property that machinery could never quite reach — one language, always, on both surfaces — was eventually-consistent by construction, and the interval where the two disagreed was documented rather than eliminated. Two platform answers disagree in the same places, without the machinery.
+**What it buys** is the removal of the extension synchronization machinery the previous answer required: a locale query on the native socket, a cache with a generation and an install identity, a per-worker sequence fence, a serialized cache writer, and a redraw queue. The property that machinery could never quite reach — one language, always, on both surfaces — was eventually-consistent by construction, and the interval where the two disagreed was documented rather than eliminated. Two platform answers disagree in the same places, without the machinery.
 
 **How the extension's own document language is decided.** Not by Chrome's configured UI language: Chrome may report a language we do not ship and then serve the English catalogue, and writing that language onto `<html lang>` declares English text as something else. Every catalogue carries one non-user-facing message whose value is its own tag, so the catalogue that answered names itself and `<html lang>` is that answer.
 
@@ -79,11 +79,11 @@ Measured with an `LSUIElement` probe bundle that writes only its own domain: wri
 **Status:** active
 **Evidence:** confirmed at the API level — the torn read was reproduced as a failing test before the change; the cross-process and crash behaviour underneath it was not measured
 **Source:** round 9 review; ledger D80 and item 34 in `docs/plans/i18n-five-locales.md`; `LocaleState` in `app/Sources/App/Settings.swift`, `app/Tests/AppTests/LocalePublicationTests.swift`
-**Revisit when:** a second process gains a reason to write the publication, or the extension stops ordering by `(installId, epoch)`
+**Revisit when:** A5/A6 remove the compatibility publication protocol, or a second process gains a reason to write the publication
 
-The app tells the extension three things — an install id, an epoch, and a tag — and the extension accepts a snapshot from the same install only when the epoch is strictly greater. Those three were three `UserDefaults` keys, written one after another.
+The app still composes three compatibility values — an install id, an epoch, and a tag — and an adjacent old extension accepts a snapshot from the same install only when the epoch is strictly greater. A4's current consumers ignore them; A5/A6 remove the protocol after that ordering is safe. The three values were once three `UserDefaults` keys, written one after another.
 
-**A single-writer rule does not make readers atomic.** The rule that only the GUI may write removed the race between two *writers*; it says nothing about a *reader*, which could observe the writer's half-finished sequence: between the epoch write and the tag write, the new epoch carrying the old tag — a pair that was never published. The extension accepts that pair, and then turns down the correct publication behind it for carrying an epoch it already holds, so the language stays wrong for good. The two failures are different axes, and several rounds of designing this contract asked only what to publish, never how to commit it.
+**A single-writer rule does not make readers atomic.** The rule that only the GUI may write removed the race between two *writers*; it says nothing about a *reader*, which could observe the writer's half-finished sequence: between the epoch write and the tag write, the new epoch carrying the old tag — a pair that was never published. An adjacent old extension accepts that pair, and then turns down the correct publication behind it for carrying an epoch it already holds, so its language stays wrong for good. The two failures are different axes, and several rounds of designing this contract asked only what to publish, never how to commit it.
 
 One key now holds one dictionary, and what that buys has two halves worth keeping apart.
 
@@ -171,22 +171,19 @@ A language change moves AppKit's own chrome only on the next launch, so the card
 
 **Rejected alternative — defer the restart until the delivery finishes.** Two reasons. The window already says "not restarting right now, press again when the delivery has finished", and a queue that fired by itself would contradict a sentence about to exist in five languages. More fundamentally, deferring needs the deferral to outlive whatever it waits for — including a delivery that never ends — which is the same self-lifetime problem the gate exists to avoid. The user keeps the trigger.
 
-## Residual: the extension's fence is per worker, not per account
+## Residual: the compatibility cache's fence is per worker, not per account
 
 **Type:** constraint
 **Status:** active
 **Evidence:** unknown — the interleaving is a reviewer's scenario and was not reproduced
 **Source:** ledger D90 in `docs/plans/i18n-five-locales.md`
-**Revisit when:** a browser API can prove at most one service-worker realm writes the cache, or the cache moves somewhere with a compare-and-set
+**Revisit when:** generation-consistent deployment lets the adjacent-generation cache ABI be removed, a browser API can prove at most one service-worker realm writes it, or the cache moves somewhere with a compare-and-set
 
-**What this limits is the monotonicity claim itself.** The cache is described elsewhere as one a stale
-or out-of-order answer can never move backwards; that holds **inside one service-worker realm**, and
-this entry is the boundary of the word "never". Anyone repeating the promise should repeat it with
-this beside it.
+**What this limits is the retained compatibility implementation, not the current consumer path.** A4 removed cache reads and writes from current consumers, but an adjacent old service worker can still open the new `i18n.js` after a folder swap and call its preserved writer. Removing that implementation now would abort the old worker; generation-consistent deployment is the point at which this residual can leave with its passenger.
 
-The extension's cache is fenced against stale writes inside one service-worker realm. A realm that keeps running after a new one has started is outside that fence: the two have different scopes, so the fence does not see them as competing, and because the ordering rule accepts a different `installId` unconditionally, an old realm's write can land on top of a new one.
+For such an adjacent consumer, the cache is fenced against stale writes inside one service-worker realm. A realm that keeps running after a new one has started is outside that fence: the two have different scopes, so the fence does not see them as competing, and because the ordering rule accepts a different `installId` unconditionally, an old realm's write can land on top of a new one.
 
-It is written down rather than fixed because it cannot be observed from where we stand — nothing in the extension can ask "is another realm of me still alive", and the scenario has never been reproduced. The damage is bounded to a wrong language that the next publication corrects.
+It is written down rather than fixed because it cannot be observed from where we stand — nothing in the extension can ask "is another realm of me still alive", and the scenario has never been reproduced. In the compatibility window the damage is bounded to an old consumer rendering the wrong language until another publication; current consumers follow Chrome and never read this cache.
 
 ## What the atomic extension-folder swap does not buy
 

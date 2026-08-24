@@ -473,10 +473,9 @@ test('buttonFingerprint: a remote reorder is caught at the index that was clicke
 
 test('a fingerprint check cannot fail because two contexts resolved different locales', () => {
   // The repro: nothing is stored, so both sides build the default button from the preset — the
-  // content script in the language the page resolved, the service worker in the language its own
-  // locale cache answered with. Those two can differ for a whole request (the app publishes a new
-  // locale between the draw and the click; the cache write reaches the worker before the page
-  // redraws). Nothing about the command changed, and the click used to be refused all the same.
+  // content script through one catalogue and the service worker through another. Chrome contexts
+  // can outlive an extension-folder swap, so adjacent generations can differ for a whole request.
+  // Nothing about the command changed, and the click used to be refused all the same.
   const { clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR } =
     vm.runInThisContext('({ clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR })');
   const english = BUTTON_KINDS.repo.defaults[0];

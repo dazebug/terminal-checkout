@@ -74,7 +74,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
 test('the five dictionaries register themselves, and nothing else does', () => {
   assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
   assert.deepEqual(TC_I18N_LOCALES, ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']);
-  // The same spelling the app publishes, so a locale arriving from the app needs no mapping table
+  // The app-era spelling is part of the retained dictionary ABI; adjacent consumers need no map.
   assert.equal(TC_I18N_FALLBACK, 'en');
 });
 
@@ -912,13 +912,14 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), globalThis.TC_I18N.en);
-  // **101, and the 102 that stood here is the third wrong number on this item's line.** It counted
+  // **100 after A4 removed the options page's second title write.** The 102 that first stood here
+  // was the third wrong number on this item's line: it counted
   // a call written inside a comment in `i18n.js` — prose about the boundary conversion, added in
   // A2 in the commit that deleted an unreproducible `157`. A sentence written to avoid a false
   // number produced a false number in another gate (D206). What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 101, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 100, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1786,7 +1787,6 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     "options.js title = ${t('ext.card.palette.tooltip', e)}",
     "options.js title = ${t('ext.card.reorder.tooltip')}",
     'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
-    'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
   ]);
   // **The counts are executed, never typed.** Three sentences in this file used to carry "how many
   // sites share a `(file, attribute)` pair"; one of them said eleven when the answer is fourteen, and
@@ -1795,11 +1795,11 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 14, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(repeated.length, 13, `${repeated.length} sites share a (file, attribute) pair`);
   assert.equal(new Set(repeated).size, 3, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
-  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
+  assert.equal(sameValueToo.length, 4, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {
@@ -1938,8 +1938,8 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   // already reading when a button appears, the options page is text from edge to edge the moment it
   // opens. English left in the markup would be painted first and translated afterwards for every
   // user whose language is not English — so the markup holds ids and the fill happens while the
-  // parser is still blocked on options.js, from `chrome.i18n.getUILanguage()`, which answers
-  // without waiting. The cache the app fills corrects it a storage round trip later.
+  // parser is still blocked on options.js, from Chrome's catalogue, which answers without waiting.
+  // There is no cache correction or locale redraw in this consumer after A4.
   let localizedNodes = 0;
   for (const file of HTML_FILES) {
     for (const match of read(file).matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
@@ -1951,19 +1951,12 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   // failure this work has had twice already, once here (a pattern with a space in it) and once in a
   // Swift gate (a filter that selected nothing). The count is what tells the two apart.
   assert.ok(localizedNodes > 30, `only ${localizedNodes} localized nodes were read`);
-  // The synchronous first answer, and the asynchronous correction, in that order
-  const first = optionsJs.indexOf('let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));');
+  // The adjacent-generation compatibility branch and the synchronous fill, in that order. The
+  // current skeleton bypasses the branch and asks Chrome; the baseline skeleton takes it.
+  const first = optionsJs.indexOf("const compatibilityLocale = typeof installMessageBackend === 'function'");
   const fill = optionsJs.indexOf('applyStaticText();\n\n//');
-  // The first cache read is no longer a bare call — it is the renderer's first notification, so it
-  // takes its turn in the same queue as every later one (R12 C). What still has to hold is that it
-  // happens *after* the synchronous fill.
-  const adopt = optionsJs.indexOf('localeRenderer.start();');
   assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
-  assert.ok(adopt > fill, 'the cache is read before the synchronous fill, which reinstates the gap');
-  assert.ok(
-    !/^adoptLocaleFromCache\(\);$/m.test(optionsJs),
-    'the first adoption is outside the queue again',
-  );
+  assert.ok(!/adoptLocaleFromCache|localeRenderer/.test(optionsJs), 'the retired locale redraw still runs');
 });
 
 test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
@@ -2173,39 +2166,6 @@ test('a gate whose read fails still lets the page draw', async () => {
   await ready();
 });
 
-test('the worker scope is minted per worker and rides on every request (lint)', () => {
-  // The wiring needs a `chrome` global to exercise; what is pinned here is that the scope exists,
-  // is not persisted anywhere, and reaches both the generation and nothing else.
-  const source = read('background.js');
-  assert.match(source, /const workerSequenceScope = /, 'the worker scope is gone');
-  assert.match(
-    source,
-    /nativeRequester\(message, workerSequenceScope\)/,
-    'the request no longer carries the worker it was sent from',
-  );
-  assert.ok(
-    !/storage\.(local|sync)\.set\([^)]*workerSequenceScope/.test(source),
-    'the worker scope is being persisted, which would make it not a worker scope',
-  );
-  // and the orchestration is the serialized writer rather than a bare read-modify-write
-  assert.match(source, /createLocaleCacheWriter\(\{/, 'the cache write is no longer serialized');
-  assert.ok(
-    !/const stored = await chrome\.storage\.local\.get\(\[TC_LOCALE_CACHE_KEY\]\);\n\s*const \{ cache/.test(source),
-    'the unserialized read-reduce-write is back',
-  );
-  // ...and the send path is the composition a test can drive, not a copy written out here again
-  assert.match(source, /createNativeRequester\(\{/, 'the worker writes its own send path again');
-});
-
-test('every path that draws waits on the gate, not just the first (lint)', () => {
-  // Gating the initial call alone would leave the poll, the navigation events and the
-  // MutationObserver drawing in the fallback — and the observer can fire before the initial run.
-  const source = read('content.js');
-  const body = source.slice(source.indexOf('async function tryInsertButton()'));
-  assert.match(body.slice(0, 400), /await localeReady\(\);/, 'the draw no longer waits for the cache');
-  assert.match(source, /const localeReady = createFirstRenderGate\(refreshLocaleToDrawIn\)/);
-});
-
 // ---------------------------------------------------------------------------------------------
 // The rest of the extension's strings (item 22).
 //
@@ -2299,16 +2259,6 @@ test('the messages that only reach a console are not in the dictionaries', () =>
   for (const sentence of diagnostics) {
     assert.ok(!values.has(sentence), `${sentence} was translated, but nothing displays it`);
   }
-});
-
-test('every file that draws sets the locale it draws in', () => {
-  // One holder per context (`i18n.js`), and the two files that draw have to fill it — otherwise
-  // `defaults.js` and `migrations.js`, which have no locale of their own, resolve against the
-  // fallback while the page around them is in another language.
-  assert.match(read('content.js'), /setCurrentLocale\(localeToRenderIn\(/, 'the content script draws in no particular language');
-  assert.match(read('options.js'), /setCurrentLocale\(localeToRenderIn\(/, 'the options page draws in no particular language');
-  // and the worker deliberately does not: it draws nothing, so it has no locale to set
-  assert.ok(!/setCurrentLocale\(/.test(read('background.js')), 'the service worker set a render locale it cannot use');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -2408,17 +2358,6 @@ test('a redraw that returns nothing is noticed rather than silently unserialized
   good.start();
   await ok();
   assert.equal(good.unwaitableRedraws, 0, 'a proper adapter was reported as unserializable');
-});
-
-test('the options page hands the renderer something it can wait for (lint)', () => {
-  // The wiring needs `chrome` and a DOM to run; what is pinned is the shape the defect had.
-  const source = read('options.js');
-  assert.match(source, /redraw\(\) \{ return adoptLocaleFromCache\(\); \}/, 'the adapter drops its promise again');
-  assert.ok(
-    !/^adoptLocaleFromCache\(\);$/m.test(source),
-    'the first adoption runs outside the queue again',
-  );
-  assert.match(source, /onLocaleChanged\(\);\n\s*\},/, 'the first read no longer goes through the queue');
 });
 
 test('a translation cannot break out of an HTML attribute', () => {

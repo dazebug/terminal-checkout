@@ -1,6 +1,6 @@
-// The dictionaries first, then defaults. Order is not load-bearing — every lookup happens when
-// it is called, never at load (D6) — but keeping it the same as the manifest's content-script
-// list means one story rather than two.
+// The compatibility dictionaries first, then defaults. The dictionary loads stay even though this
+// worker now reads Chrome's catalogue: a previous worker can open this directory after a folder
+// swap, and one missing import aborts that worker before it can run a command (D170).
 importScripts(
   'i18n.js', '_i18n/en.js', '_i18n/ko.js', '_i18n/ja.js', '_i18n/zh-Hans.js', '_i18n/zh-Hant.js',
   'defaults.js' // the single source of truth for button defaults and presets
@@ -234,98 +234,22 @@ async function clickedButton(kind, index, shown) {
   return button;
 }
 
-// Every request this extension sends takes the next number, and the number means something only
-// inside this worker. It never leaves the browser: `sendNativeMessage` resolves per call, so the
-// pairing of request to response is already ours, and ordering by what **we** sent is what makes the
-// fence hold against an app too old to know about any of this (D50).
-//
-// The counter restarts at zero with the worker while `appliedSeq` is persisted, so the two are only
-// comparable when they came from the same worker — which is what this identity says, and why the
-// cache stores it alongside the number (`localeCacheUpdate`). Without it a cache holding
-// `appliedSeq: 10` refused this worker's first response for as long as the profile lived. The
-// comment that used to stand here claimed the reset was safe *because* the cache carries the last
-// applied sequence; that is the cause, offered as the reassurance.
-//
-// A fresh value per worker start, and it only ever has to differ from the previous worker's — it
-// names a lifetime, not a machine, and it never leaves this browser profile.
-const workerSequenceScope = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-
-// Hand a message to the app and take the locale generation out of the answer — **whatever the
-// answer is**.
-//
-// The split matters: this used to throw on a failure response and the metadata went with it, so
-// nothing could have learned the language from a request whose command was rejected. The generation
-// now comes off the response first and the failure is raised afterwards, which is also the order
-// that keeps the button's error behaviour exactly as it was (the app reports validation and launch
-// failures as `{success:false, error}` rather than as an exception, so this throw is what surfaces
-// them on the button).
-//
-// **The app attaches the generation to every response it composes, a refused command included** —
-// the boundary is origin, not outcome (D83). This comment used to say the opposite, that item 15
-// attached it to successes only, and it was left saying so for a whole promotion after the rule was
-// reversed: a stale claim about the file it sits in, which is the class this work keeps sweeping.
-//
-// **The bookkeeping is started, not awaited, and it cannot fail this call.** What it answers with is
-// decided by `nativeOutcome(response)` — a function that is never handed the cache or its writer, so
-// a storage failure has no route to a click's result. Awaiting it here is what once turned an
-// already-executed command into a reported failure.
-const nativeRequester = createNativeRequester({
-  send: message => chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message),
-  record: (response, seq, scope) => applyLocaleGeneration(localeGenerationOf(response, seq, scope)),
-});
-
-function sendToNativeHost(message) {
-  return nativeRequester(message, workerSequenceScope);
-}
-
-// Put a response's generation through the reducer, and tell the pages only when something changed.
-//
-// Nothing is written when the reducer says no: a cache write plus a notification for a response that
-// changes nothing would redraw every open page for no reason, and a corrupt stored value would be
-// rewritten into a shape we invented rather than left as the evidence it is.
-//
-// The read, the reduce, the write and the notification are **one step that cannot interleave with
-// another of itself** — that serialization is `createLocaleCacheWriter`'s, along with why a promise
-// chain is the right shape for a context there is only one of. This file supplies the storage.
-const applyLocaleGeneration = createLocaleCacheWriter({
-  async read() {
-    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
-    return stored?.[TC_LOCALE_CACHE_KEY];
-  },
-  write(cache) {
-    return chrome.storage.local.set({ [TC_LOCALE_CACHE_KEY]: cache });
-  },
-  notify(locale) {
-    return notifyLocaleChanged(locale);
-  },
-});
-
-// Tell every GitHub page that the language moved. A page that is not listening (none of ours, or one
-// still loading) rejects the message, and that is not an error worth reporting — hence the catch.
-async function notifyLocaleChanged(locale) {
-  let tabs = [];
+// Hand one command to the app and interpret only the command outcome. Locale metadata may still be
+// present while old apps and extensions overlap, but this generation neither records nor forwards
+// it: Chrome owns the extension language now. `nativeOutcome` stays in the compatibility skeleton
+// and remains the one response-shape verdict in both generations.
+async function sendToNativeHost(message) {
+  let response;
   try {
-    tabs = await chrome.tabs.query({ url: 'https://github.com/*' });
+    response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
   } catch (error) {
-    console.log('Could not list tabs to notify:', error);
-    return;
+    console.log('Native host error:', error);
+    throw error;
   }
-  await Promise.all(tabs.map(tab =>
-    chrome.tabs.sendMessage(tab.id, { action: 'localeChanged', locale }).catch(() => {})
-  ));
-}
-
-// The cold start. The extension has to know the language before it draws anything, and the only
-// other way to ask would be to send a command — which opens a terminal tab nobody asked for. An app
-// that is not running is launched by the relay for this, which is the same cost the first button
-// press would pay, moved to a moment when nobody is waiting on it.
-async function queryLocale() {
-  try {
-    await sendToNativeHost({ query: 'locale' });
-  } catch (error) {
-    // An app that is absent, old, or broken answers nothing usable, and that is a no-op by design
-    console.log('Locale query did not answer:', error?.message || error);
-  }
+  console.log('Native host response:', response);
+  const verdict = nativeOutcome(response);
+  if (verdict.failed) throw new Error(verdict.error);
+  return verdict.response;
 }
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
@@ -511,9 +435,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   });
   return true; // return true to respond asynchronously
 });
-
-// Ask once when the worker starts, and again when Chrome says the extension was installed or
-// updated. A service worker is torn down and restarted constantly, so this is the cheap, frequent
-// path — and the reducer makes a repeat answer a no-op rather than a redraw.
-queryLocale();
-chrome.runtime.onInstalled.addListener(() => { queryLocale(); });

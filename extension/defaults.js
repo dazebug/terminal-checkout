@@ -508,9 +508,10 @@ function executionPayload(button) {
 // `face` and `label` were part of this and had to come out. They are display text: they never leave
 // the browser (runButton sends the command template, the page's variables and the claude inputs —
 // never the face or the tooltip), and they will be translated. Two extension contexts can resolve
-// different languages for a whole request — the app publishes a new locale between the draw and the
-// click, and the cache reaches the service worker before the page redraws — and with a display
-// string in the key, that difference refused a command that had not changed by a character.
+// different languages for a whole request — Chrome contexts can outlive an extension-folder swap,
+// and adjacent generations can therefore render the same button through different catalogues — and
+// with a display string in the key, that difference refused a command that had not changed by a
+// character.
 //
 // So this is the identity of **what the button will run**. It is not a security identity and not a
 // UX one: two buttons with the same command and the same inputs are one button to this check. That

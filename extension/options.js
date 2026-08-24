@@ -29,14 +29,14 @@ const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '�
 // **What this paragraph said until review 39** was that the dictionaries in `_i18n/` supply every
 // sentence and that the app's cache decides the paint. Both stopped being true when the lookup moved,
 // and the sentence outlived the change by four promotions because the standing question was read
-// against the diff's own lines. The locale cache read below is **compatibility machinery**: it still
-// runs, it no longer decides anything on this page, and it leaves with the rest of the passengers.
+// against the diff's own lines. A4 removes the cache read and locale redraw from this consumer; their
+// implementations remain in `i18n.js` only for an adjacent consumer generation.
 //
 // What this removes is the **asynchronous** gap, the one that lasts a storage round trip. Whether
 // Chrome paints a half-parsed document before a parser-blocking script at the end of `<body>` runs
 // is not something this repository can measure, and it is not claimed here.
-// The holder lives in `i18n.js` so that `defaults.js` and `migrations.js` — which also draw on
-// this page — resolve against the same one. This file decides it; they read it.
+// The compatibility holder lives in `i18n.js` so a baseline skeleton under this consumer still gives
+// `defaults.js`, `migrations.js` and this page one catalogue. The current lookup does not consult it.
 
 function browserLanguage() {
   return chrome.i18n?.getUILanguage?.() || '';
@@ -63,12 +63,13 @@ function tHTML(key, ...args) {
 
 // The arguments the static prose takes, in one table, so that "what can reach innerHTML on this
 // page" is a list to read rather than a search to run. Thunks rather than values: the labels they
-// quote are themselves messages, and the language can change after this file is loaded.
+// quote are themselves messages and must resolve in the same paint as the containing sentence.
 //
 // The quotations are D28 relations. Prose that names another control used to spell that control's
 // label out again — and the two had already drifted apart here, with one paragraph calling the
 // field `Face` and another calling it `face`. Naming the message instead of the string means a
-// translator cannot make them disagree.
+// translator cannot make them disagree. Thunks resolve the quoted labels in the same paint as the
+// sentence that contains them.
 const STATIC_TEXT_ARGS = {
   'ext.section.pr.help1': () => [MAX_BUTTONS, t('ext.field.face'), t('ext.field.tooltip')],
   'ext.section.pr.help2': () => [t('ext.card.duplicate')],
@@ -82,8 +83,7 @@ const STATIC_TEXT_ARGS = {
   'ext.button.addLimit': () => [MAX_BUTTONS],
 };
 
-// Fill every node that names a message. Called once while the parser is still here, and again
-// whenever the language moves.
+// Fill every node that names a message while the parser is still here.
 function applyStaticText(root = document) {
   for (const node of root.querySelectorAll('[data-i18n]')) {
     const key = node.dataset.i18n;
@@ -92,71 +92,16 @@ function applyStaticText(root = document) {
   }
 }
 
-// Everything on screen, in the current language. The button and override values are the user's own
-// data and come from the edit state, so a redraw moves the words and not the settings — but it does
-// rebuild the cards, which costs the caret of anyone typing at that moment. The language only moves
-// when the app publishes a new one, so that is a rare cost for a correct screen.
-function redrawInCurrentLocale() {
-  applyDocumentLanguage(uiLocale);
-  // The tab title has no element to hang a `data-i18n` on, so it is written here — the product name
-  // stays as it is and only the word after it is a message.
-  document.title = `Terminal Checkout — ${t('ext.header.options')}`;
-  applyStaticText();
-  presetTemplates = buildPresetTemplates();
-  SECTIONS.forEach(({ kind }) => renderButtons(kind));
-  renderOverrides();
-  renderMigration();
-}
-
-// The first answer, taken synchronously so that the first paint is already in a language.
-let uiLocale = setCurrentLocale(localeToRenderIn(null, browserLanguage()));
-applyDocumentLanguage(uiLocale);
+// Prime only an adjacent old dictionary skeleton. The current skeleton exposes
+// `installMessageBackend` and ignores the legacy locale argument; the baseline skeleton lacks that
+// backend and still needs its UI-language fallback. Keeping the old argument shape preserves both
+// sides of the mixed-generation call (D210) without executing retired machinery in current×current.
+const compatibilityLocale = typeof installMessageBackend === 'function'
+  ? TC_I18N_FALLBACK
+  : setCurrentLocale(localeToRenderIn(null, browserLanguage()));
+applyDocumentLanguage(compatibilityLocale);
 document.title = `Terminal Checkout — ${t('ext.header.options')}`;
 applyStaticText();
-
-// And the app's own answer, which arrives a storage round trip later. `changed` is returned so a
-// test can tell "adopted" from "already right" — a redraw that was not needed is not a redraw.
-async function adoptLocaleFromCache() {
-  let cached;
-  try {
-    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
-    cached = stored?.[TC_LOCALE_CACHE_KEY];
-  } catch (error) {
-    // The page is already drawn in the browser language; an unreadable cache leaves it there
-    console.log('Locale cache unreadable, keeping the browser language:', error);
-    return false;
-  }
-  const next = localeToRenderIn(cached, browserLanguage());
-  if (next === uiLocale) return false;
-  uiLocale = setCurrentLocale(next);
-  redrawInCurrentLocale();
-  return true;
-}
-
-// The options page is not one of the tabs the service worker notifies — that message goes to GitHub
-// pages — so this page watches the cache itself. `createLocaleRenderer` is what keeps the
-// subscription to one: registering it from inside the redraw path is the leak that makes one
-// language change cost five redraws.
-//
-// **The adapter returns its promise, and the first adoption goes through the queue.** Both were
-// missing, and the queue that serializes redraws was therefore doing nothing here: a redraw that
-// returns nothing cannot be waited for, and the initial read was not queued at all — so a slow
-// first read could finish after a newer notification and repaint the older language. That is the
-// defect the queue had just been added to prevent, still present on this page one promotion later,
-// and invisible because the renderer's test injected a `redraw` that *did* return a promise. The
-// double was better behaved than the adapter it stood for.
-const localeRenderer = createLocaleRenderer({
-  subscribe(onLocaleChanged) {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'local' && changes[TC_LOCALE_CACHE_KEY]) onLocaleChanged();
-    });
-    // The first read is a notification like any other, so it takes its turn in the same queue
-    // instead of racing it
-    onLocaleChanged();
-  },
-  redraw() { return adoptLocaleFromCache(); },
-});
-localeRenderer.start();
 
 // Unlike the storage schema, overrides are kept as an array. Keying them by repo would mean
 // deleting and re-adding the key on every keystroke in the name, and redrawing the row each time
@@ -224,11 +169,8 @@ function section(kind) {
 
 // The preset list is fixed per section, so build it once and clone it for each card.
 //
-// Rebuilt when the language changes, though, rather than cloned forever: a template built at load
-// is a long-lived capture of the language it was built in, and every card cloned from it afterwards
-// carries that language no matter what the page has since been redrawn in. The app's settings
-// window had exactly this — a picker still speaking the old language with everything around it
-// changed — and the fix there was the same, to rebuild rather than to keep.
+// Chrome fixes the catalogue for this extension context, so a template built at load can be cloned
+// for the page's lifetime. A Chrome-language change creates a new context on the next page load.
 let presetTemplates = buildPresetTemplates();
 
 function buildPresetTemplates() {
@@ -1671,15 +1613,3 @@ document.getElementById('retry-btn').addEventListener('click', () => {
 updateLoadedGate();
 renderStaleBanner();
 loadSettings();
-
-// The page's own `lang` is **not written here**, and the storage read that used to do it is gone.
-//
-// It was a second writer outside the serialized renderer: an unqueued `storage.local.get` whose
-// callback could land after a newer queued redraw and put the older tag back (round 15 review). The
-// queue exists precisely so that the last decision wins, and a path that skips it is the defect the
-// queue was added to prevent — the same shape this page already fixed once, on the adoption call.
-//
-// Removing it rather than queueing it is not a shortcut: `redrawInCurrentLocale` already applies the
-// language on every adoption, and the synchronous first paint above applies it before any of that.
-// The two computed the same value from the same inputs — `browserLanguage()` *is*
-// `chrome.i18n.getUILanguage()` — so the second writer added a race and nothing else.

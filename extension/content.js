@@ -20,8 +20,8 @@ const REPO_BUTTON_STYLE = `
 // the button sharply and make the header jump.
 function createRepoButton(buttonConfig, index) {
   const face = buttonFace(buttonConfig);
-  // Read now, for this drawing of the button. A language change removes and re-inserts the
-  // buttons (the renderer's redraw), so these are never older than the face beside them.
+  // Read now, for this drawing of the button, so the phases and face come from the same catalogue.
+  // Chrome fixes that catalogue for this extension context; a page reload creates the next one.
   const phases = isTextFace(face)
     ? { busy: tr('ext.button.phase.busy'), done: tr('ext.button.phase.done'), error: tr('ext.button.phase.error') }
     : { busy: '⏳', done: '✅', error: '❌' };
@@ -75,8 +75,8 @@ function createRepoButton(buttonConfig, index) {
 // what was on screen, for the page it was on screen for.
 //
 // What the fingerprint deliberately leaves out is the face and the tooltip: they are display text
-// and will be translated, so a page and a service worker that resolved different languages would
-// otherwise refuse a command neither of them changed (defaults.js).
+// and will be translated, so adjacent contexts that rendered through different catalogue
+// generations would otherwise refuse a command neither of them changed (defaults.js).
 //
 // Both are comparison keys, never sources. The command still comes from storage, and the repository,
 // number and branch still come from the tab and its DOM; these two only decide whether to refuse.
@@ -349,10 +349,6 @@ async function tryInsertRepoButtons() {
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
-  // The cached language, before anything is drawn. One local read, shared by every caller of this
-  // function (`localeReady`), and never the app's answer — see the gate for which of the two D15 is
-  // about.
-  await localeReady();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
 
@@ -396,58 +392,13 @@ function onUrlChange() {
   setTimeout(tryInsertButton, 300);
 }
 
-// The language the buttons are drawn in, and the one redraw that follows it.
-//
-// **A render waits for the cache and never for the app** (D15, stated exactly). The cache is
-// whatever the last response left in `storage.local` — a local read, microseconds — and waiting for
-// it is what stops a valid Korean cache losing the first draw to the English fallback. What a render
-// must never wait for is the app's answer: the relay launches the app on a cold start, which blocks
-// for up to 25 seconds, and a page that waited for that would show no buttons at all.
-//
-// The two were run together in one sentence here, and the broad reading is what made drawing before
-// the cache read look correct. It was not: if the app's answer then matches the cache, the reducer
-// reports no change, no notification goes out, and the page stays in the wrong language until
-// something else redraws it.
-let localeToDrawIn = TC_I18N_FALLBACK;
-
-async function refreshLocaleToDrawIn() {
-  let cached = null;
-  try {
-    const stored = await chrome.storage.local.get([TC_LOCALE_CACHE_KEY]);
-    cached = stored?.[TC_LOCALE_CACHE_KEY];
-  } catch (error) {
-    console.log('Locale cache unreadable, drawing in the browser language:', error);
-  }
-  const uiLanguage = chrome.i18n?.getUILanguage ? chrome.i18n.getUILanguage() : '';
-  // One holder for the whole context (`i18n.js`), so `defaults.js` and this file cannot end up
-  // drawing the same page in two languages
-  localeToDrawIn = setCurrentLocale(localeToRenderIn(cached, uiLanguage));
-  return localeToDrawIn;
+// Prime only an adjacent old dictionary skeleton. The current skeleton exposes
+// `installMessageBackend` and needs no locale holder; the baseline skeleton lacks it and still needs
+// its UI-language fallback when a folder swap pairs it with this consumer. The current×current path
+// therefore executes no cache selector, first-render gate, locale notification or redraw machinery.
+if (typeof installMessageBackend !== 'function') {
+  setCurrentLocale(localeToRenderIn(null, chrome.i18n?.getUILanguage?.() || ''));
 }
-
-// The redraw the service worker asks for when the app's answer changed the cache. It goes through
-// the same remove-and-insert the page already uses for a URL change, so there is one way buttons get
-// replaced rather than two.
-const localeRenderer = createLocaleRenderer({
-  subscribe(onLocaleChanged) {
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message?.action !== 'localeChanged') return;
-      onLocaleChanged();
-    });
-  },
-  async redraw() {
-    await refreshLocaleToDrawIn();
-    removeInsertedButtons();
-    await tryInsertButton();
-  },
-});
-localeRenderer.start();
-
-// Every path that draws waits on this once — the initial run below, the poll, the navigation events
-// and the MutationObserver alike. Putting the wait inside `tryInsertButton` rather than in front of
-// the first call is what makes that true of the paths nobody remembers: the observer can fire before
-// the initial run, and gating only the initial run would leave it drawing in the fallback.
-const localeReady = createFirstRenderGate(refreshLocaleToDrawIn);
 
 // Detect History API events
 const originalPushState = history.pushState;
