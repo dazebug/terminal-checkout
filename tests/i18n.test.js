@@ -49,6 +49,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
     markupSource: HTML_FILES,
     manifest: MANIFEST_FILES,
     localeCatalogue: CATALOGUE_FILES,
+    compatibilityCatalogue: COMPATIBILITY_CATALOGUE_FILES,
   })) {
     assert.ok(files.length > 0, `nothing in the extension is ${role}, so its gates read nothing`);
   }
@@ -61,12 +62,19 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
     TC_I18N_LOCALES.map(cataloguePathForLocale).sort(),
     'the catalogue paths are not the paths derived from the shipped locale mapping',
   );
+  assert.deepEqual(
+    COMPATIBILITY_CATALOGUE_FILES,
+    TC_I18N_LOCALES.map(tag => `_i18n/${tag}.js`).sort(),
+    'the compatibility catalogue paths are not derived from the shipped locales',
+  );
   assert.equal(roleOf('_locales/not-shipped/messages.json'), null, 'an unshipped catalogue path was classified');
+  assert.equal(roleOf('_i18n/not-shipped.js'), null, 'an unshipped compatibility catalogue became a consumer');
+  assert.equal(roleOf('_locales/en/probe.js'), null, 'a file under the catalogue tree became a consumer');
   // And the sets the gates use are derived from the roles, not re-filtered beside them
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
     EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
-    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES].sort(),
+    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...COMPATIBILITY_CATALOGUE_FILES].sort(),
     'a file has a role that no set takes',
   );
 });
@@ -599,9 +607,10 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
 // classification did not imply entry into the application.
 //
 // So a path gets a **role**, the roles are the only way a file enters anything, and the data roles
-// are recognised **by exact path** rather than by suffix. The catalogue paths are derived from the
-// one locale-to-Chrome mapping owned by `tools/check-locales.js`; this classifier decides only
-// whether a path is an allowed catalogue-shaped input. It does not inspect catalogue contents or
+// are recognised **by exact path** rather than by suffix. Chrome catalogue paths come from the one
+// locale-to-Chrome mapping owned by `tools/check-locales.js`, and compatibility paths come from the
+// same shipped app-tag set. Anything else under either catalogue tree is unclassified rather than
+// becoming a consumer by its `.js` suffix. This classifier does not inspect catalogue contents or
 // prove that a file's data belongs to its locale — `check-locales.js` and the Swift ownership gate
 // enforce that identity. A file with no role fails the gate below, which is what "fails closed" has
 // to mean once the classification and the entry are one operation. Same move as `auditSource`, one
@@ -612,9 +621,12 @@ const cataloguePathForLocale = tag => {
   return `_locales/${directory}/messages.json`;
 };
 const CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(cataloguePathForLocale));
+const COMPATIBILITY_CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(tag => `_i18n/${tag}.js`));
 const roleOf = (relativePath) => {
   if (relativePath === 'manifest.json') return 'manifest';
   if (CATALOGUE_PATHS.has(relativePath)) return 'localeCatalogue';
+  if (COMPATIBILITY_CATALOGUE_PATHS.has(relativePath)) return 'compatibilityCatalogue';
+  if (relativePath.startsWith('_i18n/') || relativePath.startsWith('_locales/')) return null;
   if (relativePath.endsWith('.js')) return 'speakingSource';
   if (relativePath.endsWith('.html')) return 'markupSource';
   return null;
@@ -633,20 +645,21 @@ const HTML_FILES = filesInRole('markupSource');
 const MARKUP_FILES = [...SPEAKING_FILES, ...HTML_FILES].sort();
 const MANIFEST_FILES = filesInRole('manifest');
 const CATALOGUE_FILES = filesInRole('localeCatalogue');
+const COMPATIBILITY_CATALOGUE_FILES = filesInRole('compatibilityCatalogue');
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
-// A message id can only be named by a literal (checked below), and the markup names them in an
-// attribute — so between them this is the whole set.
+// A consumer names a message through a literal call, a declared key-bearing data position, or a
+// `data-i18n` attribute. Catalogue definitions are a separate role and never witness this set.
 // The shape of a message id, in one place. The attribute gate asks whether a call names one of
 // these, and this set is what such a name is checked against — written twice, the two would
 // agree by coincidence until the day one of them was widened (round 27 review).
 const MESSAGE_KEY = 'ext\\.[A-Za-z0-9.]+';
 
-// A small lexical reader, not a comment mask. A mask keeps the contents of strings, which is the
-// wrong product for a call scanner: `const example = "tr('ext.a')"` is a string literal that the
-// reference scanner may inspect, but it is not a call, text consumer, or argument-supplying site.
-// The reader walks code, quoted strings, comments, and template interpolations separately, so each
-// consumer can ask for the lexical product it means instead of sharing one ambiguous representation.
+// One lexical event stream, with separate semantic projections. Reference discovery needs literal
+// values while call discovery must reject call-shaped strings and regular expressions; those are
+// different answers over the same grammar, not reasons to duplicate the grammar. Comments never
+// become events, static templates become literals, interpolated templates expose the code inside
+// each interpolation, and regular-expression bodies stay opaque.
 const readQuotedLiteral = (source, start) => {
   const quote = source[start];
   for (let i = start + 1; i < source.length; i += 1) {
@@ -659,109 +672,209 @@ const readQuotedLiteral = (source, start) => {
   return null;
 };
 
-function scanJavaScriptTemplate(source, start, handlers) {
-  for (let i = start; i < source.length; i += 1) {
-    if (source[i] === '\\') { i += 1; continue; }
-    if (source[i] === '`') return i + 1;
-    if (source[i] === '$' && source[i + 1] === '{') {
-      i = scanJavaScript(source, i + 2, handlers, true) - 1;
-    }
-  }
-  return source.length;
-}
-
-function scanJavaScript(source, start = 0, handlers = {}, stopAtBrace = false) {
-  let braceDepth = 0;
-  for (let i = start; i < source.length; i += 1) {
-    const character = source[i];
-    const next = source[i + 1];
-    if (character === '/' && next === '/') {
-      const newline = source.indexOf('\n', i + 2);
-      i = newline < 0 ? source.length : newline - 1;
-      continue;
-    }
-    if (character === '/' && next === '*') {
-      const close = source.indexOf('*/', i + 2);
-      i = close < 0 ? source.length : close + 1;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      const literal = readQuotedLiteral(source, i);
-      if (!literal) return source.length;
-      handlers.string?.(literal);
-      i = literal.end - 1;
-      continue;
-    }
-    if (character === '`') {
-      i = scanJavaScriptTemplate(source, i + 1, handlers) - 1;
-      continue;
-    }
-    if (stopAtBrace && character === '{') {
-      braceDepth += 1;
-      continue;
-    }
-    if (stopAtBrace && character === '}') {
-      if (braceDepth === 0) return i + 1;
-      braceDepth -= 1;
-      continue;
-    }
-    if (/[A-Za-z_$]/.test(character)) {
-      let end = i + 1;
-      while (end < source.length && /[A-Za-z0-9_$]/.test(source[end])) end += 1;
-      handlers.identifier?.({ name: source.slice(i, end), start: i, end });
-      i = end - 1;
-    }
-  }
-  return source.length;
-}
-
 const messageKey = new RegExp(`^${MESSAGE_KEY}$`);
-const messageStringKeysIn = source => {
+const REGEX_PREFIX_KEYWORDS = new Set([
+  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
+  'typeof', 'void', 'yield',
+]);
+const CONTROL_PAREN_KEYWORDS = new Set(['catch', 'for', 'if', 'switch', 'while', 'with']);
+const JAVASCRIPT_PUNCTUATORS = [
+  '>>>=', '===', '!==', '>>>', '**=', '&&=', '||=', '??=', '<<=', '>>=', '=>', '==', '!=',
+  '<=', '>=', '++', '--', '**', '&&', '||', '??', '?.', '+=', '-=', '*=', '/=', '%=', '&=',
+  '|=', '^=', '<<', '>>',
+  '(', ')', '[', ']', '{', '}', '.', ',', ';', ':', '?', '+', '-', '*', '/', '%', '&', '|', '^',
+  '!', '~', '<', '>', '=',
+];
+
+const readRegularExpression = (source, start) => {
+  let inCharacterClass = false;
+  for (let i = start + 1; i < source.length; i += 1) {
+    if (source[i] === '\\') { i += 1; continue; }
+    if (source[i] === '\n' || source[i] === '\r') return null;
+    if (source[i] === '[') { inCharacterClass = true; continue; }
+    if (source[i] === ']' && inCharacterClass) { inCharacterClass = false; continue; }
+    if (source[i] !== '/' || inCharacterClass) continue;
+    let end = i + 1;
+    while (/[A-Za-z]/.test(source[end] ?? '')) end += 1;
+    return { start, end };
+  }
+  return null;
+};
+
+const javaScriptEvents = (source) => {
+  const events = [];
+
+  const scan = (start = 0, stopAtInterpolationEnd = false, templateDepth = 0) => {
+    let braceDepth = 0;
+    let expressionCanStart = true;
+    const parens = [];
+    let previous = null;
+
+    const emit = (event) => {
+      const contextual = { ...event, templateDepth };
+      events.push(contextual);
+      previous = contextual;
+    };
+
+    const scanTemplate = (templateStart) => {
+      let dynamic = false;
+      for (let i = templateStart + 1; i < source.length; i += 1) {
+        if (source[i] === '\\') { i += 1; continue; }
+        if (source[i] === '$' && source[i + 1] === '{') {
+          dynamic = true;
+          i = scan(i + 2, true, templateDepth + 1) - 1;
+          continue;
+        }
+        if (source[i] !== '`') continue;
+        emit({
+          type: 'literal', quote: '`', static: !dynamic,
+          value: source.slice(templateStart + 1, i), start: templateStart, end: i + 1,
+        });
+        return i + 1;
+      }
+      return source.length;
+    };
+
+    for (let i = start; i < source.length;) {
+      const character = source[i];
+      const next = source[i + 1];
+      if (/\s/.test(character)) { i += 1; continue; }
+      if (character === '/' && next === '/') {
+        const newline = source.indexOf('\n', i + 2);
+        i = newline < 0 ? source.length : newline + 1;
+        continue;
+      }
+      if (character === '/' && next === '*') {
+        const close = source.indexOf('*/', i + 2);
+        i = close < 0 ? source.length : close + 2;
+        continue;
+      }
+      if (character === "'" || character === '"') {
+        const literal = readQuotedLiteral(source, i);
+        if (!literal) return source.length;
+        emit({ type: 'literal', quote: character, static: true, ...literal });
+        expressionCanStart = false;
+        i = literal.end;
+        continue;
+      }
+      if (character === '`') {
+        i = scanTemplate(i);
+        expressionCanStart = false;
+        continue;
+      }
+      if (character === '/' && next !== '=' && expressionCanStart) {
+        const literal = readRegularExpression(source, i);
+        if (literal) {
+          emit({ type: 'regex', ...literal });
+          expressionCanStart = false;
+          i = literal.end;
+          continue;
+        }
+      }
+      if (/[A-Za-z_$]/.test(character)) {
+        let end = i + 1;
+        while (end < source.length && /[A-Za-z0-9_$]/.test(source[end])) end += 1;
+        const name = source.slice(i, end);
+        emit({ type: 'identifier', name, start: i, end });
+        expressionCanStart = REGEX_PREFIX_KEYWORDS.has(name);
+        i = end;
+        continue;
+      }
+      if (/[0-9]/.test(character)) {
+        let end = i + 1;
+        while (end < source.length && /[A-Za-z0-9_.]/.test(source[end])) end += 1;
+        emit({ type: 'number', start: i, end });
+        expressionCanStart = false;
+        i = end;
+        continue;
+      }
+      const value = JAVASCRIPT_PUNCTUATORS.find(candidate => source.startsWith(candidate, i));
+      if (!value) { i += 1; continue; }
+      if (stopAtInterpolationEnd && value === '}' && braceDepth === 0) return i + 1;
+      if (stopAtInterpolationEnd && value === '{') braceDepth += 1;
+      if (stopAtInterpolationEnd && value === '}') braceDepth -= 1;
+      const before = previous;
+      emit({ type: 'punctuator', value, start: i, end: i + value.length });
+      if (value === '(') {
+        parens.push(before?.type === 'identifier' && CONTROL_PAREN_KEYWORDS.has(before.name));
+        expressionCanStart = true;
+      } else if (value === ')') {
+        expressionCanStart = parens.pop() === true;
+      } else if (value === ']' || value === '}' || value === '++' || value === '--') {
+        expressionCanStart = false;
+      } else if (value === '.' || value === '?.') {
+        expressionCanStart = false;
+      } else {
+        expressionCanStart = true;
+      }
+      i += value.length;
+    }
+    return source.length;
+  };
+
+  scan();
+  return events;
+};
+
+const messageStringKeysFrom = events => events
+  .filter(event => event.type === 'literal' && event.static && messageKey.test(event.value))
+  .map(event => event.value);
+
+const messageCallsFrom = (events) => events.flatMap((event, index) => {
+  if (event.type !== 'identifier' || !['t', 'tr', 'tHTML'].includes(event.name)) return [];
+  const open = events[index + 1];
+  const key = events[index + 2];
+  if (open?.type !== 'punctuator' || open.value !== '(') return [];
+  if (key?.type !== 'literal' || !key.static || !messageKey.test(key.value)) return [];
+  return [{ name: event.name, key: key.value, callIndex: event.start, openIndex: open.start }];
+});
+
+const messageStringKeysIn = source => messageStringKeysFrom(javaScriptEvents(source));
+const messageCallsIn = source => messageCallsFrom(javaScriptEvents(source));
+
+const declaredMessageKeysFrom = (events) => {
   const keys = [];
-  scanJavaScript(source, 0, {
-    string: ({ value }) => { if (messageKey.test(value)) keys.push(value); },
-  });
+  for (let i = 0; i < events.length - 2; i += 1) {
+    if (events[i].type !== 'identifier' || !['nameKey', 'faceKey'].includes(events[i].name)) continue;
+    if (events[i + 1].type !== 'punctuator' || events[i + 1].value !== ':') continue;
+    const literal = events[i + 2];
+    if (literal.type === 'literal' && literal.static && messageKey.test(literal.value)) keys.push(literal.value);
+  }
+  for (let i = 0; i < events.length; i += 1) {
+    if (events[i].type !== 'identifier' || events[i].name !== 'STATIC_TEXT_ARGS') continue;
+    let open = i + 1;
+    while (open < events.length && !(events[open].type === 'punctuator' && events[open].value === '{')) open += 1;
+    let depth = 0;
+    for (let j = open; j < events.length; j += 1) {
+      const event = events[j];
+      if (event.type === 'punctuator' && event.value === '{') { depth += 1; continue; }
+      if (event.type === 'punctuator' && event.value === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+        continue;
+      }
+      if (depth !== 1 || event.type !== 'literal' || !event.static || !messageKey.test(event.value)) continue;
+      if (events[j + 1]?.type === 'punctuator' && events[j + 1].value === ':') keys.push(event.value);
+    }
+    break;
+  }
   return keys;
 };
 
-const skipJavaScriptTrivia = (source, start) => {
-  let index = start;
-  for (;;) {
-    while (/\s/.test(source[index] ?? '')) index += 1;
-    if (source[index] === '/' && source[index + 1] === '/') {
-      const newline = source.indexOf('\n', index + 2);
-      index = newline < 0 ? source.length : newline + 1;
-      continue;
+const consumerReferenceKeysIn = (files, readSource) => {
+  const references = new Set();
+  for (const file of files) {
+    const events = javaScriptEvents(readSource(file));
+    const strings = new Set(messageStringKeysFrom(events));
+    const calls = messageCallsFrom(events);
+    for (const { key } of calls) {
+      assert.ok(strings.has(key), `${file}: ${key} was a call without a matching string-key event`);
+      references.add(key);
     }
-    if (source[index] === '/' && source[index + 1] === '*') {
-      const close = source.indexOf('*/', index + 2);
-      index = close < 0 ? source.length : close + 2;
-      continue;
-    }
-    return index;
+    for (const key of declaredMessageKeysFrom(events)) references.add(key);
   }
+  return references;
 };
-
-const messageCallsIn = source => {
-  const calls = [];
-  scanJavaScript(source, 0, {
-    identifier: ({ name, end }) => {
-      if (!['t', 'tr', 'tHTML'].includes(name)) return;
-      const open = skipJavaScriptTrivia(source, end);
-      if (source[open] !== '(') return;
-      const first = skipJavaScriptTrivia(source, open + 1);
-      if (source[first] !== "'" && source[first] !== '"') return;
-      const literal = readQuotedLiteral(source, first);
-      if (!literal || !messageKey.test(literal.value)) return;
-      calls.push({ name, key: literal.value, openIndex: open });
-    },
-  });
-  return calls;
-};
-
-const consumerReferenceKeysIn = (files, readSource) => new Set(
-  files.flatMap(file => messageStringKeysIn(readSource(file))),
-);
 
 const assertEveryCatalogueMessageIsReferenced = (catalogueKeys, references, exempt = []) => {
   const exemptKeys = new Set(exempt);
@@ -830,46 +943,49 @@ test('each catalogue says which one it is, and that key is metadata rather than 
   // that ask whether the extension is fully translated, and out of the gate that says every message
   // in the catalogue is asked for by the page. Nothing asks for it until A3.
   assert.ok(TC_I18N_METADATA_KEYS.includes(TC_I18N_CATALOGUE_TAG_KEY));
-  // "Nothing draws it" is asked of the sets that mean drawn — `textKeys` and `markupKeys`.
-  // `referencedKeys` would answer yes and mean nothing: it collects every `'ext.…'` literal in the
-  // scripts, and the constant naming this key is one. A gate that passes because of the declaration
-  // of the thing it is checking is the accidental pass this file has been caught by before.
+  // "Nothing draws it" is asked of the sets that mean drawn — `textKeys` and `markupKeys`. The
+  // consumer-reference projection excludes this declaration too: a definition cannot witness the
+  // property being checked, which is the accidental pass this file has been caught by before.
   assert.ok(!textKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as text');
   assert.ok(!markupKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as markup');
 });
 
-// How many arguments a call or a table entry supplies — a reader, not a parser, and one that says
-// so when it cannot read (the arrangement the attribute scan settled on). It counts commas at the
-// top level of one bracket, stepping over nested brackets, strings and line comments, and a trailing
-// comma is not an element: `[a, b, c,]` supplies three. That last rule is not a nicety — without it
+// How many arguments a call or a table entry supplies — a projection over the same lexical events,
+// and one that says when it cannot read (the arrangement the attribute scan settled on). It counts
+// commas at the top level of one bracket; punctuation inside strings, regexes, nested brackets and
+// template interpolations never becomes that bracket's comma. A trailing comma is not an element:
+// `[a, b, c,]` supplies three. That last rule is not a nicety — without it
 // the one entry in this repository written across several lines reported four arguments for a
 // three-argument message, which is a gate failing on its own reading rather than on the code.
 const CLOSING_BRACKET = { '(': ')', '[': ']', '{': '}' };
 const topLevelParts = (source, openIndex) => {
-  let depth = 0;
+  const events = javaScriptEvents(source);
+  const start = events.findIndex(event => (
+    event.start === openIndex && event.type === 'punctuator' && Object.hasOwn(CLOSING_BRACKET, event.value)
+  ));
+  if (start < 0) return null;
+  const templateDepth = events[start].templateDepth;
+  const stack = [events[start].value];
   let parts = 0;
   let seenSinceComma = false;
-  let quote = null;
-  for (let i = openIndex; i < source.length; i += 1) {
-    const character = source[i];
-    if (quote) {
-      if (character === '\\') { i += 1; continue; }
-      if (character === quote) quote = null;
+  for (let i = start + 1; i < events.length; i += 1) {
+    const event = events[i];
+    if (event.templateDepth !== templateDepth) continue;
+    if (event.type !== 'punctuator') { seenSinceComma = true; continue; }
+    if (Object.hasOwn(CLOSING_BRACKET, event.value)) {
+      stack.push(event.value);
+      seenSinceComma = true;
       continue;
     }
-    if (character === '/' && source[i + 1] === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1;
+    if (Object.values(CLOSING_BRACKET).includes(event.value)) {
+      const open = stack.pop();
+      if (CLOSING_BRACKET[open] !== event.value) return null;
+      if (stack.length === 0) return parts + (seenSinceComma ? 1 : 0);
+      seenSinceComma = true;
       continue;
     }
-    if (character === "'" || character === '"' || character === '`') { quote = character; seenSinceComma = true; continue; }
-    if (CLOSING_BRACKET[character]) { depth += 1; if (depth > 1) seenSinceComma = true; continue; }
-    if (character === ')' || character === ']' || character === '}') {
-      depth -= 1;
-      if (depth === 0) return parts + (seenSinceComma ? 1 : 0);
-      continue;
-    }
-    if (character === ',' && depth === 1) { parts += 1; seenSinceComma = false; continue; }
-    if (!/\s/.test(character)) seenSinceComma = true;
+    if (event.value === ',' && stack.length === 1) { parts += 1; seenSinceComma = false; continue; }
+    seenSinceComma = true;
   }
   return null;
 };
@@ -1286,49 +1402,50 @@ const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeho
 // the two guards in the gate below rather than here: an assembled name is left alone, a name held
 // in a variable is refused where the site can be known to be an attribute write.
 //
-// `i` because HTML does not care about case. `ASSIGNMENT_OPERATOR` covers ordinary assignment and
-// compound/logical assignment (`+=`, `??=`, `||=`, `&&=`, and their siblings); `(?!=)` keeps `===`
-// and the other equality operators out. The bracket form is ordinary JavaScript, and the space
-// before `setAttribute`'s parenthesis is ordinary formatting.
-const ASSIGNMENT_OPERATOR = '(?:\\?\\?|\\|\\||&&|\\*\\*|>>>|>>|<<|\\+|\\-|\\*|\\/|%|&|\\^)?=';
-const ATTRIBUTE_SITES = [
-  new RegExp(`(?<![\\w$-])(${TEXT_BEARING})\\s*${ASSIGNMENT_OPERATOR}(?!=)\\s*`, 'gi'),
-  new RegExp(`\\[\\s*['"\`](${TEXT_BEARING})['"\`]\\s*\\]\\s*${ASSIGNMENT_OPERATOR}(?!=)\\s*`, 'gi'),
-  new RegExp(`\\.setAttribute\\s*\\(\\s*['"\`](${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
-];
+// `i` because HTML does not care about case. Assignment is an event, not whitespace syntax: every
+// ordinary, arithmetic, bitwise and logical assignment operator is explicit in the tokenizer and
+// comments are trivia between that event and the value. Equality operators are different events,
+// so they cannot enter by sharing an `=` suffix.
+const TEXT_BEARING_NAME = new RegExp(`^(?:${TEXT_BEARING})(?![\\w-])`, 'i');
+const ASSIGNMENT_OPERATORS = new Set([
+  '=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=', '&&=', '||=', '??=',
+]);
+const isAssignment = event => event?.type === 'punctuator' && ASSIGNMENT_OPERATORS.has(event.value);
+
+const skipJavaScriptTrivia = (source, start) => {
+  let index = start;
+  for (;;) {
+    while (/\s/.test(source[index] ?? '')) index += 1;
+    if (source[index] === '/' && source[index + 1] === '/') {
+      const newline = source.indexOf('\n', index + 2);
+      index = newline < 0 ? source.length : newline + 1;
+      continue;
+    }
+    if (source[index] === '/' && source[index + 1] === '*') {
+      const close = source.indexOf('*/', index + 2);
+      index = close < 0 ? source.length : close + 2;
+      continue;
+    }
+    return index;
+  }
+};
 
 // **A call names a message when the key is there to read.** `t(dynamicKey)` is not a catalogue
 // lookup anybody can check — it is an expression whose text arrives at run time, which is the class
 // this gate calls undeclared — and accepting it because it *looks* like a lookup was the hole in the
-// acceptance added a round ago (round 27 review). The key has to be a literal of the shape
-// `keysInJs` collects, so what counts as a message here and what the catalogue gates enumerate are
-// one answer rather than two.
-const namesAMessage = expression => new RegExp(`^tr?\\(\\s*'(${MESSAGE_KEY})'`).test(expression.trim());
+// acceptance added a round ago (round 27 review). The key has to be one of the static literal calls
+// the shared event stream projects, so this lint and the catalogue gate have one answer.
+const namesAMessage = (expression) => {
+  const trimmed = expression.trim();
+  return messageCallsIn(trimmed).some(call => call.callIndex === 0);
+};
 
 // The value written at `at`, in whichever form it is in. `null` is "I cannot tell where this ends",
 // which the caller turns into a failure — the reader never guesses a boundary it cannot see.
-const readAttributeValue = (source, at) => {
-  const quote = source[at];
-  if (quote === '"' || quote === "'") {
-    for (let i = at + 1; i < source.length; i += 1) {
-      if (source[i] === '\\') { i += 1; continue; }
-      if (source[i] === quote) return { text: source.slice(at + 1, i), quoted: true };
-      if (source[i] === '\n') return null;
-    }
-    return null;
-  }
-  if (quote === '`') {
-    // A template literal ends at the backtick that is not inside one of its own interpolations
-    let depth = 0;
-    for (let i = at + 1; i < source.length; i += 1) {
-      const character = source[i];
-      if (character === '\\') { i += 1; continue; }
-      if (character === '`' && depth === 0) return { text: source.slice(at + 1, i), quoted: true };
-      if (character === '$' && source[i + 1] === '{') { depth += 1; i += 1; continue; }
-      if (character === '}' && depth > 0) depth -= 1;
-    }
-    return null;
-  }
+const readAttributeValue = (source, at, events) => {
+  const literal = events.find(event => event.type === 'literal' && event.start === at);
+  if (literal) return { text: source.slice(at + 1, literal.end - 1), quoted: true };
+  if (source[at] === '"' || source[at] === "'" || source[at] === '`') return null;
   // Unquoted: an HTML attribute value ends at whitespace or `>`, an expression at the punctuation
   // that ends the statement or the call it sits in. Taking the first of either is what makes an
   // expression with a space in it stop early — and the failure message prints what was read, so the
@@ -1338,17 +1455,81 @@ const readAttributeValue = (source, at) => {
   return { text: source.slice(at, at + stop), quoted: false };
 };
 
-// Every text-bearing attribute `source` writes, in source order — the two patterns are read
-// separately and the results put back in the order an author would find them in.
-const attributeSitesIn = source => ATTRIBUTE_SITES
-  .flatMap(pattern => [...source.matchAll(pattern)].map((match) => {
-    const at = match.index + match[0].length;
-    // The name comes back with the site: a count says how many were read, and only the names say
-    // **which** — two sites can trade places under a number that does not move (round 27 review)
-    const name = match[1].toLowerCase();
-    return { at, name, ...(readAttributeValue(source, at) ?? { unreadable: source.slice(match.index, at + 40) }) };
-  }))
-  .sort((left, right) => left.at - right.at);
+const markupAttributeSitesIn = (source) => {
+  const sites = [];
+  const pattern = new RegExp(`(?:^|\\s)(${TEXT_BEARING})\\s*=\\s*`, 'gi');
+  for (const tag of source.matchAll(/<[A-Za-z][^>]*>/gs)) {
+    for (const match of tag[0].matchAll(pattern)) {
+      const at = tag.index + match.index + match[0].length;
+      const quote = source[at];
+      let end = at;
+      if (quote === '"' || quote === "'") {
+        end = source.indexOf(quote, at + 1);
+        if (end < 0) {
+          sites.push({ at, name: match[1].toLowerCase(), unreadable: source.slice(tag.index, at + 40) });
+          continue;
+        }
+        sites.push({ at, name: match[1].toLowerCase(), text: source.slice(at + 1, end), quoted: true });
+        continue;
+      }
+      while (end < source.length && !/[\s>]/.test(source[end])) end += 1;
+      if (end === at) {
+        sites.push({ at, name: match[1].toLowerCase(), unreadable: source.slice(tag.index, at + 40) });
+        continue;
+      }
+      sites.push({ at, name: match[1].toLowerCase(), text: source.slice(at, end), quoted: false });
+    }
+  }
+  return sites;
+};
+
+// Every text-bearing attribute `source` writes, in source order. JavaScript assignments come from
+// lexical events; HTML attributes use HTML tag syntax, including tags embedded in template text.
+const attributeSitesIn = (source) => {
+  const events = javaScriptEvents(source);
+  const sites = markupAttributeSitesIn(source);
+  const add = (name, siteStart, valueStart) => {
+    const at = skipJavaScriptTrivia(source, valueStart);
+    sites.push({
+      at,
+      name: name.toLowerCase(),
+      ...(readAttributeValue(source, at, events) ?? { unreadable: source.slice(siteStart, at + 40) }),
+    });
+  };
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i];
+    if (event.type === 'identifier' && !/[\w$-]/.test(source[event.start - 1] ?? '')) {
+      const name = source.slice(event.start).match(TEXT_BEARING_NAME)?.[0];
+      if (name) {
+        let operator = i + 1;
+        while (events[operator]?.start < event.start + name.length) operator += 1;
+        if (isAssignment(events[operator])) add(name, event.start, events[operator].end);
+      }
+    }
+    if (event.type === 'punctuator' && event.value === '[') {
+      const name = events[i + 1];
+      const close = events[i + 2];
+      const operator = events[i + 3];
+      if (name?.type === 'literal' && name.static && TEXT_BEARING_NAME.test(name.value)
+          && close?.type === 'punctuator' && close.value === ']' && isAssignment(operator)) {
+        add(name.value, event.start, operator.end);
+      }
+    }
+    if (event.type === 'identifier' && event.name === 'setAttribute'
+        && events[i - 1]?.type === 'punctuator' && events[i - 1].value === '.'
+        && events[i + 1]?.type === 'punctuator' && events[i + 1].value === '(') {
+      const name = events[i + 2];
+      const comma = events[i + 3];
+      if (name?.type === 'literal' && name.static && TEXT_BEARING_NAME.test(name.value)
+          && comma?.type === 'punctuator' && comma.value === ',') {
+        add(name.value, event.start, comma.end);
+      }
+    }
+  }
+  return [...new Map(
+    sites.map(site => [`${site.at}\0${site.name}\0${site.text ?? site.unreadable}`, site]),
+  ).values()].sort((left, right) => left.at - right.at);
+};
 
 // **What a site is, for the list this gate pins.** `(file, attribute)` was the identity and it is a
 // multiset: most of these sites share that pair with another one — **how many is asserted, not
@@ -1372,37 +1553,20 @@ const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
 // pattern moved rather than the promise.
 //
 // Reading them takes knowing which bracket closes which, which a regular expression cannot do — so
-// the brackets are paired once, in a forward pass that steps over strings, template literals and
-// comments, and the receiver is then read **backwards** from the write: an identifier, a `.name`
+// the brackets are paired from the shared lexical events and the receiver is then read **backwards**
+// from the write: an identifier, a `.name`
 // before it, or a whole balanced group, as far left as those go. What it cannot read it names
 // `<unreadable receiver>` and refuses anyway: a write it cannot describe is not a write it should
 // pass, which is the arrangement the value reader already uses.
-const bracketPairs = (source) => {
+const bracketPairs = (events) => {
   const stack = [];
   const pairs = new Map();
-  let quote = null;
-  for (let i = 0; i < source.length; i += 1) {
-    const character = source[i];
-    if (quote) {
-      if (character === '\\') { i += 1; continue; }
-      if (character === quote) quote = null;
-      continue;
-    }
-    if (character === '/' && source[i + 1] === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1;
-      continue;
-    }
-    if (character === '/' && source[i + 1] === '*') {
-      const close = source.indexOf('*/', i + 2);
-      if (close < 0) break;
-      i = close + 1;
-      continue;
-    }
-    if (character === "'" || character === '"' || character === '`') { quote = character; continue; }
-    if (character === '(' || character === '[') { stack.push(i); continue; }
-    if (character === ')' || character === ']') {
+  for (const event of events) {
+    if (event.type !== 'punctuator') continue;
+    if (event.value === '(' || event.value === '[') { stack.push(event); continue; }
+    if (event.value === ')' || event.value === ']') {
       const open = stack.pop();
-      if (open !== undefined) pairs.set(i, open);
+      if (open !== undefined) pairs.set(event.start, open.start);
     }
   }
   return pairs;
@@ -1441,8 +1605,22 @@ const receiverStart = (source, bracketAt, pairs) => {
 // need a fixture to be alive at all (D154). The two are kept apart because their rules differ, and
 // unifying them would quietly give `setAttribute` the declaration escape it has never had.
 const computedNameWritesIn = source => ({
-  setAttribute: [...source.matchAll(/\.setAttribute\s*\(\s*([^'"`\s][^,)]*)/g)]
-    .map(match => `setAttribute(${match[1].trim()}, …)`),
+  setAttribute: (() => {
+    const events = javaScriptEvents(source);
+    return events.flatMap((event, index) => {
+      if (event.type !== 'identifier' || event.name !== 'setAttribute') return [];
+      if (events[index - 1]?.type !== 'punctuator' || events[index - 1].value !== '.') return [];
+      const open = events[index + 1];
+      const first = events[index + 2];
+      if (open?.type !== 'punctuator' || open.value !== '(' || first?.type === 'literal') return [];
+      const comma = events.slice(index + 2).find(candidate => (
+        candidate.templateDepth === event.templateDepth
+        && candidate.type === 'punctuator' && [',', ')'].includes(candidate.value)
+      ));
+      if (!comma) return [];
+      return [`setAttribute(${source.slice(open.end, comma.start).trim()}, …)`];
+    });
+  })(),
   bracket: (() => {
     // **The name is balanced too, and it was not** (review 38). The receiver walked backwards through
     // balanced groups while the *name* was still a character class that stops at the first `]` — so
@@ -1453,9 +1631,12 @@ const computedNameWritesIn = source => ({
     // So the assignment is found first — a `]` followed by an assignment operator and a literal —
     // and its opening `[`
     // comes from the same pair map the receiver already uses. One reader, both halves.
-    const pairs = bracketPairs(source);
-    return [...source.matchAll(new RegExp(`\\]\\s*${ASSIGNMENT_OPERATOR}\\s*['"\`]`, 'g'))].flatMap((match) => {
-      const closing = match.index;
+    const events = javaScriptEvents(source);
+    const pairs = bracketPairs(events);
+    return events.flatMap((event, index) => {
+      if (event.type !== 'punctuator' || event.value !== ']') return [];
+      if (!isAssignment(events[index + 1]) || events[index + 2]?.type !== 'literal') return [];
+      const closing = event.start;
       const opening = pairs.get(closing);
       if (opening === undefined) return [];
       const name = source.slice(opening + 1, closing).trim();
@@ -1740,8 +1921,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // whole time, one of them the same branch-name class as the single declaration this list started
   // with. So the subject is every file that can carry markup, taken from the directory.
   //
-  // **And it read one spelling of the syntax** (round 17 review): the forms `ATTRIBUTE_SITES` was
-  // widened to cover are listed there, and the four assignments this repository already writes with
+  // **And it read one spelling of the syntax** (round 17 review): the readable forms are pinned by
+  // the fixture above, and the four assignments this repository already writes with
   // spaces around the `=` had never been read by it. What that hole shows is not those four values,
   // which are fine — it is that a sentence written the same way would have been just as invisible.
   //
@@ -2382,8 +2563,8 @@ test('a translation cannot break out of an HTML attribute', () => {
   for (const file of MARKUP_FILES) {
     for (const site of attributeSitesIn(read(file))) {
       for (const expression of splitInterpolations(site.text ?? '')?.expressions ?? []) {
-        const named = expression.trim().match(/^tr?\('(ext\.[A-Za-z0-9.]+)'/);
-        if (named) attributeKeys.add(named[1]);
+        const named = messageCallsIn(expression.trim()).find(call => call.callIndex === 0);
+        if (named) attributeKeys.add(named.key);
       }
     }
   }
