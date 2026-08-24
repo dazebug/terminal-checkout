@@ -98,6 +98,12 @@ final class CatalogueOwnershipTests: XCTestCase {
         "en": "en", "ko": "ko", "ja": "ja", "zh-Hans": "zh_CN", "zh-Hant": "zh_TW",
     ]
 
+    /// The dictionary tag a `_locales` directory answers for — the inverse of the table above, and
+    /// derived from it rather than written twice.
+    private func extensionLocale(forChromeTag tag: String) -> String {
+        chromeLocaleDirectories.first { $0.value == tag }?.key ?? tag
+    }
+
     /// The `_locales/` directories, read rather than listed. A hardcoded pair is what let three of
     /// them go unchecked when D95 took this from two locales to five.
     private func chromeLocaleTags() throws -> [String] {
@@ -150,10 +156,24 @@ final class CatalogueOwnershipTests: XCTestCase {
             chromeTags.sorted(), expected.sorted(),
             "_locales holds \(chromeTags), and the languages we ship map to \(expected.sorted())"
         )
+        // **`_locales` now holds two namespaces, and that is A2's doing rather than a leak.** It
+        // carries the two manifest keys, as it always did, plus one derived name per extension
+        // message: `tools/derive-locales.js` writes `ext.header.options` there as
+        // `ext_header_options`, because a `_locales` name cannot contain a dot. So what ownership
+        // means here is that a name is either one of Chrome's two or the conversion of a key the
+        // extension store owns — an `app.` key or an invented name is still a foreign key.
+        //
+        // The conversion is spelled out rather than shared with the JavaScript side, and that is a
+        // measured limitation of this test rather than a choice: Swift cannot call
+        // `chromeMessageId`. What keeps the two spellings from drifting is that the JavaScript gate
+        // compares byte for byte against what the generator produces, so a change to the rule shows
+        // up there; here it would show up as a foreign key.
         for tag in chromeTags {
+            let owned = Set(try extensionDictionary(extensionLocale(forChromeTag: tag)).keys)
+                .map { $0.replacingOccurrences(of: ".", with: "_") }
             for key in try chromeMessages(tag).keys {
                 XCTAssertTrue(
-                    ["extName", "extDescription"].contains(key),
+                    ["extName", "extDescription"].contains(key) || owned.contains(key),
                     "_locales/\(tag) holds \(key), which belongs to another store"
                 )
             }

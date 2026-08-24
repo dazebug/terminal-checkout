@@ -8,6 +8,9 @@ const vm = require('node:vm');
 const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
+// The derivation that writes `_locales`, imported so the gate below runs the generator rather
+// than a description of it — the same reason the liveness sweep extracts its predicate.
+const { loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS } = require('../tools/derive-locales.js');
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
 // classic script, run with **no `chrome` global in sight**. That is the constraint the whole
@@ -94,9 +97,20 @@ test('the key spaces are separate, whatever is in them', () => {
   // put in them: a filled `messages.json` is the shape Chrome documents and the other two already
   // demonstrate. Leaving them out now would mean the extension's own name and description stay
   // English in three of the five languages it otherwise speaks.
+  //
+  // **And `_locales` now carries the extension's own messages too** (A2). It holds two namespaces,
+  // not one: the two keys a manifest cannot fill any other way, and one derived name per logical id.
+  // They do not overlap and cannot — every derived name begins `ext_`, which is what the dotted
+  // prefix becomes, and the two manifest keys have no dot to convert.
+  const derivedNames = Object.keys(globalThis.TC_I18N.en).map(chromeMessageId);
   for (const tag of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
     const messages = JSON.parse(read(`_locales/${tag}/messages.json`));
-    assert.deepEqual(Object.keys(messages).sort(), ['extDescription', 'extName']);
+    assert.deepEqual(
+      Object.keys(messages).filter(name => !name.startsWith('ext_')).sort(),
+      ['extDescription', 'extName'],
+      `${tag} carries something that is neither a manifest key nor a converted id`,
+    );
+    assert.deepEqual(Object.keys(messages).filter(name => name.startsWith('ext_')).sort(), [...derivedNames].sort());
     for (const key of Object.keys(messages)) {
       assert.equal(typeof messages[key].message, 'string');
       assert.ok(messages[key].message.length > 0, `${tag}/${key} is empty`);
@@ -595,6 +609,85 @@ test('each catalogue says which one it is, and that key is metadata rather than 
   // of the thing it is checking is the accidental pass this file has been caught by before.
   assert.ok(!textKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as text');
   assert.ok(!markupKeys.has(TC_I18N_CATALOGUE_TAG_KEY), 'a metadata key is drawn as markup');
+});
+
+test('_locales is what _i18n derives — every name, and the bytes as committed', () => {
+  // **A derivation, so that a wrong edit cannot be made twice.** Two stores holding the same 122
+  // values are two places to edit, and an edit made identically in both satisfies any comparison
+  // anyone would write; the answer is that only one of them is written by hand (D159). The generator
+  // is `tools/derive-locales.js`, this is the same code run as a check, and both take
+  // `chromeMessageId` out of `extension/i18n.js` rather than restating it (D171, D177).
+  const context = loadExtensionI18n();
+  for (const tag of TC_I18N_LOCALES) {
+    const { directory, messages } = deriveCatalogue(tag, context);
+    assert.equal(
+      serialize(messages), read(`_locales/${directory}/messages.json`),
+      `_locales/${directory}/messages.json is not what _i18n/${tag}.js derives — run tools/derive-locales.js`,
+    );
+    // The name set is the two Chrome-namespace keys plus every logical id, converted. Stated as a
+    // set so that a key silently dropped by the derivation is a failure and not a smaller file.
+    assert.deepEqual(
+      Object.keys(messages).sort(),
+      [...MANIFEST_KEYS, ...Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId)].sort(),
+      `${directory} does not carry one name per logical id`,
+    );
+  }
+});
+
+test('both formats render the same bytes for every argument-bearing message', () => {
+  // **Parity is not identity** (D159, P0-3 of the first design review). Five catalogues can agree on
+  // placeholder names and counts while every one of them binds those names to the wrong argument —
+  // all five saying `$ARG1$` where the source said `%2$d` passes every parity gate in this file. The
+  // only oracle that can tell is the old dictionary itself, rendered, and **this is the last commit
+  // in which it exists as one**: A3 makes `_locales` canonical and freezes `_i18n`.
+  //
+  // So: render both formats with a distinct sentinel per position and require the same bytes. Two
+  // keys reorder their arguments between locales, which is where a consistently wrong binding stops
+  // being invisible — and every locale is checked, not just those two, because a binding that is
+  // wrong in one catalogue is exactly what a hand edit would produce.
+  const { formatMessage } = vm.runInThisContext('({ formatMessage })');
+  const SENTINELS = ['<<s1>>', '<<s2>>', '<<s3>>', '<<s4>>'];
+  // Chrome's own substitution, as a double: `$NAME$` is replaced by the argument its `content`
+  // names, and `$$` is a literal dollar. It is a second implementation of somebody else's rule and
+  // therefore proves nothing about Chrome — which is why the real-Chrome load is a release gate
+  // (D179, D184). What it does prove is that the two *of ours* say the same thing.
+  const renderChromeStyle = (entry, args) => entry.message.replace(/\$([A-Za-z0-9_@]+)\$|\$\$/g, (whole, name) => {
+    if (whole === '$$') return '$';
+    const declared = entry.placeholders && entry.placeholders[name];
+    assert.ok(declared, `a message uses $${name}$ with no declaration`);
+    const position = Number(String(declared.content).slice(1));
+    return args[position - 1];
+  });
+  const context = loadExtensionI18n();
+  let compared = 0;
+  let reordering = 0;
+  for (const tag of TC_I18N_LOCALES) {
+    const { messages } = deriveCatalogue(tag, context);
+    for (const [key, value] of Object.entries(globalThis.TC_I18N[tag])) {
+      const entry = messages[chromeMessageId(key)];
+      const indices = [...value.matchAll(/%(\d+)\$[sd]/g)].map(match => Number(match[1]));
+      if (indices.length === 0) {
+        assert.ok(!entry.placeholders, `${tag}/${key} has no arguments but declares placeholders`);
+        continue;
+      }
+      // **Each declaration is pinned to its source position**, which is the half a rendering check
+      // cannot see on its own: a name bound to the wrong index renders wrongly, but a name bound to
+      // the right index by accident of ordering would still have to be read to be trusted.
+      for (const [name, declaration] of Object.entries(entry.placeholders)) {
+        assert.equal(declaration.content, `$${name.replace(/^ARG/, '')}`, `${tag}/${key}: ${name} is bound to ${declaration.content}`);
+      }
+      assert.equal(
+        renderChromeStyle(entry, SENTINELS), formatMessage(value, SENTINELS),
+        `${tag}/${key} renders differently in the two formats`,
+      );
+      if (indices.join() !== [...indices].sort().join()) reordering += 1;
+      compared += 1;
+    }
+  }
+  // The measured shape of the corpus, so that a catalogue losing its placeholders would show up
+  // here as a smaller number rather than as a quieter test: 32 argument-bearing values per locale.
+  assert.equal(compared, 32 * TC_I18N_LOCALES.length, `${compared} argument-bearing values were compared`);
+  assert.equal(reordering, 8, `${reordering} values put their arguments in a non-source order`);
 });
 
 test('the boundary conversion is legal for every key, and collides for none', () => {

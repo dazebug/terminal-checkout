@@ -6,5 +6,582 @@
   "extDescription": {
     "message": "从 GitHub 的 PR、issue 和仓库页面在你的终端（iTerm2/WezTerm/Warp）中运行命令",
     "description": "Chrome 显示在名称旁边的一行说明。"
+  },
+  "ext_banner_stale": {
+    "message": "⚠ 自本页面加载以来，设置在另一台设备上发生了更改。重新加载即可看到 — 若想保留未保存的编辑，请先导出。"
+  },
+  "ext_button_addButton": {
+    "message": "+ 添加按钮"
+  },
+  "ext_button_addInput": {
+    "message": "+ 添加输入"
+  },
+  "ext_button_addLimit": {
+    "message": "最多可以添加 $ARG1$ 个按钮。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_button_addOverride": {
+    "message": "+ 添加覆盖项"
+  },
+  "ext_button_export": {
+    "message": "导出 (JSON)"
+  },
+  "ext_button_import": {
+    "message": "导入…"
+  },
+  "ext_button_newButton": {
+    "message": "新按钮"
+  },
+  "ext_button_phase_busy": {
+    "message": "正在打开..."
+  },
+  "ext_button_phase_done": {
+    "message": "完成！"
+  },
+  "ext_button_phase_error": {
+    "message": "出错！"
+  },
+  "ext_button_remove": {
+    "message": "移除"
+  },
+  "ext_button_reset": {
+    "message": "恢复默认设置"
+  },
+  "ext_button_retry": {
+    "message": "重试"
+  },
+  "ext_button_save": {
+    "message": "保存"
+  },
+  "ext_card_delete": {
+    "message": "删除"
+  },
+  "ext_card_duplicate": {
+    "message": "复制"
+  },
+  "ext_card_duplicate_tooltip": {
+    "message": "复制这个按钮"
+  },
+  "ext_card_palette_label": {
+    "message": "添加到显示："
+  },
+  "ext_card_palette_tooltip": {
+    "message": "把 $ARG1$ 添加到显示",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_card_reorder_aria": {
+    "message": "重新排序"
+  },
+  "ext_card_reorder_tooltip": {
+    "message": "拖动或使用 ↑↓ 键重新排序"
+  },
+  "ext_confirm_presetOverwrite": {
+    "message": "按钮 $ARG1$ 将被“$ARG2$”预设覆盖。要继续吗？",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_error_backupFromFuture": {
+    "message": "该备份由更新版本的扩展程序导出。请更新扩展程序（git pull 后在 chrome://extensions 重新加载），或用 $ARG1$ 从当前预设重新开始。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_importBusy": {
+    "message": "已经在读取一个设置文件 — 请稍后再试。"
+  },
+  "ext_error_importStale": {
+    "message": "读取文件期间发生了编辑 — 未导入任何内容。请重新导入。"
+  },
+  "ext_error_loadFailed": {
+    "message": "无法读取你的设置。请重试，或重新打开本页面。"
+  },
+  "ext_error_saveBusy": {
+    "message": "正在保存 — 请稍候。"
+  },
+  "ext_error_saveConflict": {
+    "message": "你的设置未被保存：在本页面打开期间，它们在另一台设备上发生了更改。重新加载可查看已存储的内容 — 若想保留你的编辑，请先导出。"
+  },
+  "ext_error_saveLoading": {
+    "message": "正在重新读取设置 — 请稍后再按一次 $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_saveReloaded": {
+    "message": "保存进行期间本页面重新读取了设置，因此表单里已不是将要写入的内容。请检查后再按一次 $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_settingsTooLarge": {
+    "message": "这些设置太大，Chrome 无法同步。请缩短最长的那条命令后重试"
+  },
+  "ext_error_skipConsequence": {
+    "message": "保存会把它们移除 — 若需要已存储内容的副本，请先使用 $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_skipped": {
+    "message": "$ARG1$ 中跳过的不可用条目：$ARG2$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_error_storedFromFuture": {
+    "message": "你存储的设置是由更新版本的扩展程序写入的，因此本页面可以显示它们，但不能覆盖它们。请更新扩展程序（git pull 后在 chrome://extensions 重新加载）。"
+  },
+  "ext_export_excludedUnsaved": {
+    "message": "未保存的更改没有包含在导出中。"
+  },
+  "ext_export_nothingSaved": {
+    "message": "还没有保存过任何设置。请先保存，然后再导出。"
+  },
+  "ext_field_claudeInput_placeholder": {
+    "message": "!gh issue view {number}，或者：总结这个 issue"
+  },
+  "ext_field_claudeInputs": {
+    "message": "claude 输入"
+  },
+  "ext_field_claudeInputs_help": {
+    "message": "— 按顺序传送；<code>!</code> 行在 claude 的 shell 模式中运行"
+  },
+  "ext_field_claudeInputs_hint": {
+    "message": "<code>!</code> 行会被键入 claude 的 shell 模式，因此它们真的作为命令运行 — 连续的几条会以 <code>;</code> 连成一行输入，每条前面带一个横幅。在 Warp 上，这种键入需要辅助功能权限。如果列表里只有一条纯文本输入而没有别的，就完全跳过键入，直接成为 claude 的开场消息 — 这还要求命令以单独的 <code>claude</code> 结尾。"
+  },
+  "ext_field_claudeInputs_warn": {
+    "message": "⚠ 命令没有启动 claude，因此这些输入不会被传送"
+  },
+  "ext_field_command": {
+    "message": "command"
+  },
+  "ext_field_defaultMain": {
+    "message": "默认值"
+  },
+  "ext_field_face": {
+    "message": "显示"
+  },
+  "ext_field_preset": {
+    "message": "预设"
+  },
+  "ext_field_preset_placeholder": {
+    "message": "应用预设…"
+  },
+  "ext_field_preview": {
+    "message": "预览"
+  },
+  "ext_field_tooltip": {
+    "message": "工具提示"
+  },
+  "ext_field_tooltip_placeholder": {
+    "message": "按钮工具提示"
+  },
+  "ext_header_options": {
+    "message": "设置"
+  },
+  "ext_header_subtitle": {
+    "message": "PR、issue 和仓库按钮、命令、main 分支 — 终端选择、权限以及仓库基准文件夹在 Terminal Checkout 应用的设置窗口中"
+  },
+  "ext_import_fileTooLarge": {
+    "message": "设置文件太大（最大 256KB）。"
+  },
+  "ext_import_notJSON": {
+    "message": "无法把该文件读取为 JSON。"
+  },
+  "ext_import_notObject": {
+    "message": "设置文件的顶层不是一个对象。"
+  },
+  "ext_import_nothingToImport": {
+    "message": "没有可导入的内容（需要 $ARG1$ 之一）。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_import_skippedNote": {
+    "message": "已跳过：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_meta_catalogueTag": {
+    "message": "zh-Hans"
+  },
+  "ext_migration_applied": {
+    "message": "表单中已更新的命令：$ARG1$。请按 $ARG2$ 应用。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_migration_appliedWithDeclined": {
+    "message": "表单中已更新的命令：$ARG1$。自预览生成后发生变化的 $ARG2$ 条保持原样。请按 $ARG3$ 应用。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_migration_apply": {
+    "message": "应用所选项"
+  },
+  "ext_migration_badge": {
+    "message": "● 你保存的按钮早于当前预设 — 去查看"
+  },
+  "ext_migration_effect_behaviorChange": {
+    "message": "行为变更"
+  },
+  "ext_migration_gotIt": {
+    "message": "知道了"
+  },
+  "ext_migration_hint_reviewOnly": {
+    "message": "关闭它会把你的设置标记为已查看 — 之后请按 $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_hint_selected": {
+    "message": "已选择 $ARG2$ 项中的 $ARG1$ 项。应用会填充表单；请按 $ARG3$ 存储。",
+    "placeholders": {
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_migration_intro_nothingSafe": {
+    "message": "这里没有可以安全重写的内容，但下面这些命令仍在使用旧形式："
+  },
+  "ext_migration_intro_nothingToDo": {
+    "message": "没有需要更改的内容 — 你的命令已经是最新的。按 $ARG1$ 将其标记为已查看。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_keep": {
+    "message": "保留我的"
+  },
+  "ext_migration_markedReviewed": {
+    "message": "已标记为已查看。请按 $ARG1$ 让你的命令保持原样。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_noTooltip": {
+    "message": "（无工具提示）"
+  },
+  "ext_migration_v1_customNote": {
+    "message": "这条命令被编辑过，所以原样保留 — z {repo} 不是它的第一个子句，要安全地重写就得解析 shell。如果你想要同样的回退，请自行把开头的跳转换成 {cd}。"
+  },
+  "ext_migration_v1_describe": {
+    "message": "命令以 {cd} 而不是 z {repo} 开头。如果你没有在 Terminal Checkout 应用中设置仓库基准文件夹，它运行的与今天完全一样；如果设置了，z 失败时会回退到该文件夹，并在仓库不存在时克隆它。"
+  },
+  "ext_migration_v1_prefixDescribe": {
+    "message": "你的命令在跳转之后还有内容。设置了基准文件夹时，失败的 z 现在会落到它下面的仓库文件夹，或者一个新克隆的位置 — 接受之前请确认这条命令的其余部分在那里运行是安全的。"
+  },
+  "ext_override_empty": {
+    "message": "还没有覆盖项。"
+  },
+  "ext_preset_issue_open": {
+    "message": "打开 issue"
+  },
+  "ext_preset_issue_read": {
+    "message": "阅读 issue (claude)"
+  },
+  "ext_preset_issue_startWork": {
+    "message": "开始处理 issue"
+  },
+  "ext_preset_pr_checkout": {
+    "message": "检出分支"
+  },
+  "ext_preset_pr_checkoutClaude": {
+    "message": "检出 + Claude"
+  },
+  "ext_preset_pr_review": {
+    "message": "审查 PR (claude)"
+  },
+  "ext_preset_pr_worktree": {
+    "message": "工作树"
+  },
+  "ext_preset_pr_worktreeClaude": {
+    "message": "工作树 + Claude"
+  },
+  "ext_preset_repo_open": {
+    "message": "在终端中打开"
+  },
+  "ext_preset_repo_openClaude": {
+    "message": "打开 + Claude"
+  },
+  "ext_preset_repo_updateMain": {
+    "message": "更新 main"
+  },
+  "ext_preset_repo_updateMain_face": {
+    "message": "main ⤓"
+  },
+  "ext_section_backup_help1": {
+    "message": "设置（PR、issue 和仓库按钮，以及 main 分支）存储在 Chrome 的账号同步区域（<code>storage.sync</code>）。本扩展程序有固定的 ID（manifest key），因此在同步设置中启用了“扩展程序”并登录<b>同一个 Google 账号</b>的两个 Chrome 配置文件会自动共享这些设置。导出和导入用于在没有账号的情况下迁移设置，或者保留一份文件备份。"
+  },
+  "ext_section_backup_help2": {
+    "message": "导出会把<b>已保存</b>的设置下载为文件；导入只填充表单 — 在你按下 <b>$ARG1$</b> 之前不会生效。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_backup_help3": {
+    "message": "文件还会记录它是针对哪一代预设写入的。导入较旧的备份会给出与已存储设置相同的更新提示 — 由于一个文件可能只覆盖你的一部分设置，该提示会检查整个表单，而不只是文件里带有的那些键。由<b>更新</b>版本的扩展程序写入的备份会被拒绝，而不是读到一半；请先更新扩展程序。"
+  },
+  "ext_section_backup_title": {
+    "message": "backup <span class=\"section-where\">— 导出、导入、账号同步</span>"
+  },
+  "ext_section_issue_claudeHelp": {
+    "message": "以 <code>!</code> 开头的 claude 输入会被键入 claude 的 shell 模式，因此命令真的在该会话中运行 — 默认预设用 <code>gh</code> 把 issue 正文、它的评论以及提到它的 issue 摆在 claude 面前。连续的 <code>!</code> 输入会作为一行键入。"
+  },
+  "ext_section_issue_help": {
+    "message": "在 issue 页面上位于状态徽章（Open/Closed）旁边的按钮（最多 $ARG1$ 个）。它们与 PR 按钮分开配置；在 issue 页面上点击扩展程序图标会运行这里的第一个按钮。重新排序（拖动 <code>⠿</code>，或用 <code>↑</code> <code>↓</code>）和复制的方式与 PR 按钮相同。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_issue_title": {
+    "message": "issueButtons <span class=\"section-where\">— issue 页面</span>"
+  },
+  "ext_section_issue_variables": {
+    "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> <code>{main}</code> — issue 没有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
+  },
+  "ext_section_main_help": {
+    "message": "<code>{main}</code> 的解析顺序：按仓库的覆盖项 → 从页面检测 → 下面的默认值。检测在 PR 页面读取 base 分支，在仓库和 issue 页面读取仓库的默认分支 — 下面的设置是检测失败时的后备。若想始终使用 PR 实际会合并进去的分支，请用 <code>{base}</code>，它会跳过覆盖项和默认值。"
+  },
+  "ext_section_main_title": {
+    "message": "main 分支"
+  },
+  "ext_section_pr_help1": {
+    "message": "在 PR 页面上位于分支名旁边的按钮（最多 $ARG1$ 个）。<b>$ARG2$</b> 是按钮显示的内容 — 一个表情符号、几个（🌳🤖），或者一个短名称（Review、WT）。<b>$ARG3$</b> 在悬停时出现；选择一个预设会用该模板填充卡片。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_section_pr_help2": {
+    "message": "拖动卡片左侧的 <code>⠿</code> 手柄，或使用 <code>↑</code> <code>↓</code> 键重新排序 — 这就是按钮在 GitHub 上出现的顺序，点击扩展程序图标会运行第一个。<b>$ARG1$</b> 用于再做一个和现有按钮一样的按钮 — 副本的工具提示会附上诸如 <code>(1)</code> 的编号。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_pr_migrationHelp": {
+    "message": "我们随附的预设的重写会被预先勾选。你自定义过的命令会以<b>未勾选</b>的方式提供，并标为行为变更：只有开头的跳转被替换，其余部分现在会在新的进入子句落地的地方运行。每个预设都以 <code>{cd}</code> 开头。没有设置基准文件夹时它就只是 <code>z {repo}</code>；设置了的话，它会回退到该文件夹，并在仓库不存在时克隆 — 所以即便是你从未在本地打开过的仓库，按钮也能工作。"
+  },
+  "ext_section_pr_title": {
+    "message": "buttons <span class=\"section-where\">— PR 页面</span>"
+  },
+  "ext_section_pr_variables": {
+    "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 应用会从它的仓库基准文件夹设置填充，因此在每个页面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合并的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合并进去的那个分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 换成 _）</span>"
+  },
+  "ext_section_repo_help": {
+    "message": "在仓库页面（代码、issue 列表、Actions 等）的标题栏中位于仓库名旁边的按钮 — 最多 $ARG1$ 个。与 PR 和 issue 按钮不同，它们看起来像 GitHub 的绿色操作按钮，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 这样的名称比表情符号更合适。在既不是 PR 也不是 issue 的 GitHub 页面上点击扩展程序图标，会运行这里的第一个按钮。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG3": {
+        "content": "$3"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_section_repo_title": {
+    "message": "repoButtons <span class=\"section-where\">— 仓库页面</span>"
+  },
+  "ext_section_repo_variables": {
+    "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 仓库页面既没有 PR 或 issue 编号，也没有分支，因此 <code>{number}</code>、<code>{branch}</code> 系列和 <code>{base}</code> 不可用。<code>{main}</code> 由 GitHub 嵌在页面里的仓库默认分支解析得出 — 使用 <code>master</code> 的仓库无需覆盖项也能正确得出。"
+  },
+  "ext_section_update_title": {
+    "message": "update <span class=\"section-where\">— 已保存的命令与当前预设</span>"
+  },
+  "ext_status_exportFailed": {
+    "message": "无法导出：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_importFailed": {
+    "message": "无法导入：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_imported": {
+    "message": "已导入设置。请按 $ARG1$ 应用。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_importedWithNotes": {
+    "message": "已导入设置。请按 $ARG1$ 应用。（$ARG2$）",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_status_loading": {
+    "message": "仍在读取你的设置 — 请稍候。"
+  },
+  "ext_status_reset": {
+    "message": "已恢复默认设置。请按 $ARG1$ 应用。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_saveFailed": {
+    "message": "无法保存：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_saved": {
+    "message": "设置已保存。"
+  },
+  "ext_status_savedWithPendingEdits": {
+    "message": "设置已保存。此后所做的更改尚未保存。"
+  },
+  "ext_status_unsaved": {
+    "message": "● 未保存的更改"
+  },
+  "ext_table_mainBranch": {
+    "message": "main 分支"
+  },
+  "ext_table_repository": {
+    "message": "仓库"
+  },
+  "ext_validate_command": {
+    "message": "$ARG1$[$ARG2$]：请输入命令。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_face": {
+    "message": "$ARG1$[$ARG2$]：请输入显示内容。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_override_duplicate": {
+    "message": "覆盖项 $ARG1$：仓库“$ARG2$”出现了多次。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_override_incomplete": {
+    "message": "覆盖项 $ARG1$：请同时输入仓库和 main 分支。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_validate_tooltip": {
+    "message": "$ARG1$[$ARG2$]：请输入工具提示。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
   }
 }
