@@ -648,23 +648,34 @@ test('markup in a value is balanced, and the same in every locale', () => {
 // multiset).
 const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeholder|alt';
 
-// **A name can be written three ways and its value four**, and the scan this replaced read one
+// **A name can be written four ways and its value four**, and the scan this replaced read one
 // combination of them: `name="…"`, with the `=` against the name, declaring the other two quotings
 // absent by a pair of patterns that required the same thing. So `title = …` with spaces around the
 // `=` — how JavaScript assigns a property, and how all four such assignments in this repository are
 // written (two template literals, two bare expressions) — was read neither by the scan nor by the
 // guards, and neither was an uppercase name or `setAttribute` (round 17 review).
 //
-// The arrangement that replaced it is the point of the change: **a form the reader cannot read is a
-// failure, not a pass.** Naming the forbidden forms is an open list that quietly grows every time
-// somebody writes JavaScript a way nobody had yet; naming the readable ones closes it, because
-// everything else lands in the assertion below.
+// The arrangement that replaced it is the point of the change: **a form on the readable list is
+// read, and a name on the list written in a form that is not is a failure rather than a pass.**
+// Naming the forbidden forms is an open list that quietly grows every time somebody writes
+// JavaScript a way nobody had yet; naming the readable ones closes it.
+//
+// **What this gate is for, which decides where the list stops.** It is a lint against *shipping
+// untranslated prose by accident* — a sentence typed into a `placeholder`, a tooltip written at the
+// call site. It is not a boundary against someone determined to get text past it: the gate and the
+// code it reads are the same repository with the same authors, so anyone able to write
+// `setAttribute('ti' + 'tle', …)` can also delete this file. So the readable list covers **the forms
+// people write when they are not thinking about this gate at all** — four ways of naming an
+// attribute, four ways of quoting a value — and a computed name is deliberately outside it (round
+// 25 review, user scope ruling; the ledger row is D147).
 //
 // `i` because HTML does not care about case. `\+?=` because `+=` appends to the same property, and
-// `(?!=)` because `===` is a comparison and not a write.
+// `(?!=)` because `===` is a comparison and not a write. The bracket form is ordinary JavaScript,
+// and the space before `setAttribute`'s parenthesis is ordinary formatting.
 const ATTRIBUTE_SITES = [
   new RegExp(`(?<![\\w$-])(?:${TEXT_BEARING})\\s*\\+?=(?!=)\\s*`, 'gi'),
-  new RegExp(`\\.setAttribute\\(\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
+  new RegExp(`\\[\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*\\]\\s*\\+?=(?!=)\\s*`, 'gi'),
+  new RegExp(`\\.setAttribute\\s*\\(\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
 ];
 
 // The value written at `at`, in whichever form it is in. `null` is "I cannot tell where this ends",
@@ -734,12 +745,12 @@ const splitInterpolations = (text) => {
   return { statics, expressions };
 };
 
-test('the attribute scan reads every form the two languages permit', () => {
+test('the attribute scan reads every form on its list, and says so when it cannot', () => {
   // A fixture and not the corpus, because **the corpus is the ceiling on what it can prove**: four
-  // of the nine lines below are written somewhere in this extension and the other five are not, and
-  // about those five the corpus would keep saying nothing right up until somebody wrote one — which
-  // is the miss this exists to make impossible. Every line here is legal in the file it would be
-  // written in, and the scan that preceded this one read exactly the first of them.
+  // of the eleven lines below are written somewhere in this extension and the other seven are not,
+  // and about those seven the corpus would keep saying nothing right up until somebody wrote one —
+  // which is the miss this exists to make impossible. Every line here is legal in the file it would
+  // be written in, and the scan that preceded this one read exactly the first of them.
   const fixture = [
     '<input placeholder="double">',
     "<input placeholder='single'>",
@@ -748,7 +759,9 @@ test('the attribute scan reads every form the two languages permit', () => {
     '<input placeholder=unquoted>',
     'el.title = `a template literal ${t(\'ext.a\')}`;',
     'el.title = buttonConfig.label;',
+    "el['title'] = 'the bracket form, which is ordinary JavaScript';",
     "el.setAttribute('aria-label', 'through setAttribute');",
+    "el.setAttribute ('aria-label', 'a space before the parenthesis');",
     'el.title += " appended to what is already there";',
   ].join('\n');
   assert.deepEqual(attributeSitesIn(fixture).map(site => site.text), [
@@ -759,7 +772,9 @@ test('the attribute scan reads every form the two languages permit', () => {
     'unquoted',
     "a template literal ${t('ext.a')}",
     'buttonConfig.label',
+    'the bracket form, which is ordinary JavaScript',
     'through setAttribute',
+    'a space before the parenthesis',
     ' appended to what is already there',
   ]);
   // A comparison is not a write, and a name that merely ends in one of these is not one of them
@@ -801,10 +816,10 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // which are fine — it is that a sentence written the same way would have been just as invisible.
   //
   // Each value is therefore one of three things. **A message**, filled in from a dictionary at
-  // runtime. A **declared literal**, named here with the reason it is not prose — a name a command
-  // needs, or the product's own name, which is a stated non-goal of this work. Or a **declared
-  // expression**, where the words are not in front of us at all and what is declared instead is
-  // whose they are.
+  // runtime — interpolated into the value, or the whole of it. A **declared literal**, named here
+  // with the reason it is not prose — a name a command needs, or the product's own name, which is a
+  // stated non-goal of this work. Or a **declared expression**, where the words are not in front of
+  // us at all and what is declared instead is whose they are.
   const DECLARED_LITERALS = {
     main: 'the default branch name — it goes into a command, so it is not prose',
     master: 'a branch name, shown as the example that field takes — the same class as `main`',
@@ -820,10 +835,13 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   const found = [];
   for (const file of MARKUP_FILES) {
     const source = read(file);
-    // A computed attribute name would hide *which* attribute is being written, and the scan reads
-    // names. There is no such call, and this is what keeps it that way.
+    // A computed attribute name hides *which* attribute is being written, and the scan reads names.
+    // A bare identifier is the shape somebody arrives at by accident — a name held in a variable —
+    // so it is refused. **A name assembled out of pieces (`'ti' + 'tle'`) is not refused**, and that
+    // is the threat model above rather than an oversight: nobody writes that by mistake, and against
+    // somebody writing it on purpose the gate has no standing anyway (D147).
     assert.equal(
-      source.match(/\.setAttribute\(\s*[^'"`\s]/g), null,
+      source.match(/\.setAttribute\s*\(\s*[^'"`\s]/g), null,
       `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
     );
     for (const site of attributeSitesIn(source)) {
@@ -835,7 +853,12 @@ test('every text-bearing attribute in the markup is a message or a declared lite
       found.push([file, site]);
     }
   }
-  assert.ok(found.length >= 12, `the attribute scan found ${found.length} — check the pattern`);
+  // **The exact number, not a floor.** A floor of twelve against sixteen sites let four of them move
+  // into a syntax the scan does not read with nothing going red — measured: one live site rewritten
+  // as `setAttribute('ti' + 'tle', …)` left the suite green at fifteen. The count is the scan's
+  // reach, so changing this number is a reviewed edit: it means a text-bearing attribute was added
+  // or removed, and the reviewer's question is which one.
+  assert.equal(found.length, 16, `the attribute scan read ${found.length} sites, not 16`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {
@@ -843,10 +866,16 @@ test('every text-bearing attribute in the markup is a message or a declared lite
       // of it is where that text comes from. (HTML permits an unquoted value, which is text the
       // user reads; nobody writes one here, and one that appeared would land in this branch too and
       // be refused rather than passed, which is the direction to be wrong in.)
+      //
+      // A message call is the good answer to that question and is taken as one, the same as an
+      // interpolated `${t(…)}` a few lines down. Nothing in the extension writes `title = t(…)`
+      // today; refusing it would be this lint firing on the pattern it exists to encourage, which
+      // is how a lint gets switched off.
+      if (/^tr?\(/.test(site.text)) continue;
       assert.ok(
         Object.hasOwn(DECLARED_EXPRESSIONS, site.text),
         `${file} fills a text-bearing attribute from ${JSON.stringify(site.text)} — `
-          + 'declare here whose text that is, or make it a message',
+          + 'declare here whose text that is, or fill it from a message',
       );
       declared.push(site.text);
       continue;
