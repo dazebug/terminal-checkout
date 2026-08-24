@@ -22,7 +22,7 @@ import XCTest
 /// **What has to be data, and why it cannot be derived.** Two keys holding the same sentence are
 /// indistinguishable, to any rule, from a copy-paste mistake — "these two mean different things in
 /// different places" is a judgement about meaning, and no file records it. Those judgements are the
-/// exception tables below, and each one carries its reason. There are four.
+/// exception tables below, and each one carries its reason. There are three.
 ///
 /// This gate lives on the Swift side because it is the only side that can already read all three
 /// stores: `PropertyListSerialization` parses `.strings`, and the extension's dictionaries are a
