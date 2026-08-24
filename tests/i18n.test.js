@@ -1009,16 +1009,17 @@ const attributeSitesIn = source => ATTRIBUTE_SITES
   .sort((left, right) => left.at - right.at);
 
 // **What a site is, for the list this gate pins.** `(file, attribute)` was the identity and it is a
-// multiset: eleven of the sixteen sites share that pair with another site, so a trade between two of
-// them leaves the expectation untouched — remove one, leave a write the scan cannot read where it
-// stood, add one back elsewhere, and the list is the list (round 29 review; the swap is the fixture
-// below). What fills the site is the thing that moves when text moves, so it belongs to the identity.
+// multiset: most of these sites share that pair with another one — **how many is asserted, not
+// written here** — so a trade between two of them leaves the expectation untouched: remove one,
+// leave a write the scan cannot read where it stood, add one back elsewhere, and the list is the
+// list (round 29 review; the swap is the fixture below). What fills the site is the thing that moves
+// when text moves, so it belongs to the identity.
 //
 // Not the position: line numbers churn under every edit above them, and a gate that fires on
 // unrelated change is a gate somebody switches off (the criterion item 7 was written to; D145 chose
 // role over position for the same reason). What is left indistinguishable is two sites in one file
-// writing the same attribute with the **same** value — six sites in three such pairs today, and a
-// trade between two of them moves no text.
+// writing the same attribute with the **same** value, a trade that moves no text. How many of those
+// there are is asserted with the rest — this file has typed that family of numbers wrong twice.
 const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
 
 // **A receiver is any expression, not an identifier and dots.** `document.querySelector('#x')[name]`
@@ -1157,9 +1158,9 @@ test('the attribute scan reads every form on its list, and says so when it canno
 });
 
 test('two sites in one file that write the same attribute are told apart by what fills them', () => {
-  // **`(file, attribute)` is not an identity** (round 29 review). Fourteen of the sixteen sites in
-  // this extension share their pair with another site — `content.js title` twice, `options.js title`
-  // seven times, `options.js placeholder` five — and a count-preserving three-way swap moves text
+  // **`(file, attribute)` is not an identity** (round 29 review). Most of the sites in this extension
+  // share their pair with another one — the corpus test below counts them, because a number typed
+  // into a comment is one nobody re-derives — and a count-preserving three-way swap moves text
   // through the list without moving the list: take a site out, leave in its place a write whose name
   // the scan cannot read, and put a site back somewhere else. The two sources below are that swap.
   const identities = source => attributeSitesIn(source).map(site => siteIdentity('options.js', site)).sort();
@@ -1305,9 +1306,9 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // them move into unread syntax in silence; an exact count closed that and still fixed only
   // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
   // and sixteen is sixteen (round 27 review, measured: the suite stayed green through exactly that).
-  // **File and attribute name were not enough either** (round 29 review): three pairs repeat here and
-  // fourteen of these sixteen sites are in one, so a trade between two of them left this list
-  // identical — the swap the fixture above runs is exactly that trade. The identity
+  // **File and attribute name were not enough either** (round 29 review): that pair repeats, so a
+  // trade between two sites sharing one left this list identical — the swap the fixture above runs is
+  // exactly that trade, and how far the repetition goes is counted below. The identity
   // is `siteIdentity` — the same function the fixture above pins — and multiplicity stays, because a
   // set would stop noticing that one of two identical sites went away. Changing this list is a
   // reviewed edit: it says which attribute came or went, and what filled it.
@@ -1329,6 +1330,18 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
     'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
   ]);
+  // **The counts are executed, never typed.** Three sentences in this file used to carry "how many
+  // sites share a `(file, attribute)` pair"; one of them said eleven when the answer is fourteen, and
+  // it survived the standing step that recorded it as fixed (D194). A ledger row got the neighbouring
+  // number wrong the same way (D187 → D189). So the numbers live here, computed from the list above,
+  // and a change to the corpus is a red test rather than a sentence nobody re-derives.
+  const pairs = found.map(([file, site]) => `${file} ${site.name}`);
+  const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
+  assert.equal(repeated.length, 14, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(new Set(repeated).size, 3, 'the number of repeated (file, attribute) pairs moved');
+  const identities = found.map(([file, site]) => siteIdentity(file, site));
+  const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
+  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {
