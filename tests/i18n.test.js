@@ -27,6 +27,22 @@ const {
   TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
 } = vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
 
+test('every file in the extension is audited or classified, and nothing is neither', () => {
+  const everything = walkFiles(extension, () => true);
+  const unaccounted = everything.filter((name) => {
+    const suffix = name.slice(name.lastIndexOf('.'));
+    return !AUDITED_SUFFIXES.includes(suffix) && !Object.hasOwn(CLASSIFIED_SUFFIXES, suffix);
+  });
+  assert.deepEqual(
+    unaccounted, [],
+    'the extension ships a file this suite neither audits nor classifies — audit it, or record here what it is',
+  );
+  // ...and neither audited suffix is empty, so a rename cannot quietly empty the gates below
+  for (const suffix of AUDITED_SUFFIXES) {
+    assert.ok(everything.some(name => name.endsWith(suffix)), `nothing in the extension ends in ${suffix}`);
+  }
+});
+
 test('the five dictionaries register themselves, and nothing else does', () => {
   assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
   assert.deepEqual(TC_I18N_LOCALES, ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']);
@@ -520,6 +536,21 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
     ? walkFiles(path.join(dir, entry.name), keep, `${prefix}${entry.name}/`)
     : (keep(entry.name) ? [`${prefix}${entry.name}`] : [])))
   .sort();
+// **Every file in the tree is either audited or classified, and there is no third answer.** The two
+// lists below are suffix filters somebody wrote, which makes "which files even enter" an authored
+// enumeration one level under every gate here: a source Chrome would load in another form — an
+// `.mjs`, a stylesheet, a second page — sits outside all of them, and no liveness sweep that starts
+// from the file list can see the file that is not in it (review 37). So the tree is walked with no
+// filter at all, and anything that is neither audited nor named here fails **this** test rather than
+// passing silently in the ones below. Adding a form of source becomes a decision somebody records,
+// which is the cheap half of the stronger contract: it fails closed, without reconstructing Chrome's
+// load graph.
+const AUDITED_SUFFIXES = ['.js', '.html'];
+const CLASSIFIED_SUFFIXES = {
+  '.json': 'data Chrome reads directly — the manifest and the `_locales` catalogues, which the '
+    + 'catalogue gates parse as JSON rather than scan as source',
+};
+
 const SPEAKING_FILES = walkFiles(extension, name => name.endsWith('.js'));
 // Markup is written in both kinds of file — a page's own HTML and the scripts that build rows into
 // it — so a check about markup takes the union rather than the file that happened to hold the
@@ -1022,13 +1053,76 @@ const attributeSitesIn = source => ATTRIBUTE_SITES
 // there are is asserted with the rest — this file has typed that family of numbers wrong twice.
 const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
 
-// **A receiver is any expression, not an identifier and dots.** `document.querySelector('#x')[name]`
-// is a plausible accident and it was read by neither pattern (round 29 review, D169 settled the
-// scope: it is in). A chain of `.name`, `(…)` and `[…]` covers what people write to reach an element;
-// each alternative starts with a different character, so there is nothing here to backtrack over.
-// `(?<![\w$.])` is what keeps the receiver whole — without the dot, `rows[0].node[name]` was reported
-// as `node[name]`, which names a receiver that is not the one being written through.
-const COMPUTED_RECEIVER = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^()]*\)|\[[^\[\]]*\])*`;
+// **A receiver is any expression, and that sentence used to be false.** The pattern under it read a
+// chain of `.name`, `(…)` and `[…]` with nothing nested inside — so
+// `document.querySelector(selectorFor('#x'))[name]`, `(document.querySelector('#x'))[name]` and
+// `rows[indices[0]].node[name]` were all unread while the comment claimed otherwise (review 37).
+// Every one of them is a plausible accident, which is this lint's whole threat model (D147), so the
+// pattern moved rather than the promise.
+//
+// Reading them takes knowing which bracket closes which, which a regular expression cannot do — so
+// the brackets are paired once, in a forward pass that steps over strings, template literals and
+// comments, and the receiver is then read **backwards** from the write: an identifier, a `.name`
+// before it, or a whole balanced group, as far left as those go. What it cannot read it names
+// `<unreadable receiver>` and refuses anyway: a write it cannot describe is not a write it should
+// pass, which is the arrangement the value reader already uses.
+const bracketPairs = (source) => {
+  const stack = [];
+  const pairs = new Map();
+  let quote = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const character = source[i];
+    if (quote) {
+      if (character === '\\') { i += 1; continue; }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (character === '/' && source[i + 1] === '*') {
+      const close = source.indexOf('*/', i + 2);
+      if (close < 0) break;
+      i = close + 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') { quote = character; continue; }
+    if (character === '(' || character === '[') { stack.push(i); continue; }
+    if (character === ')' || character === ']') {
+      const open = stack.pop();
+      if (open !== undefined) pairs.set(i, open);
+    }
+  }
+  return pairs;
+};
+
+// Where the expression being written through starts, read right to left from its `[`.
+const receiverStart = (source, bracketAt, pairs) => {
+  let index = bracketAt - 1;
+  let start = null;
+  for (;;) {
+    while (index >= 0 && /\s/.test(source[index])) index -= 1;
+    if (index < 0) return start;
+    const character = source[index];
+    if (character === ')' || character === ']') {
+      const open = pairs.get(index);
+      if (open === undefined) return start;
+      start = open;
+      index = open - 1;
+      continue;
+    }
+    if (/[\w$]/.test(character)) {
+      while (index >= 0 && /[\w$]/.test(source[index])) index -= 1;
+      start = index + 1;
+      let before = index;
+      while (before >= 0 && /\s/.test(source[before])) before -= 1;
+      if (before >= 0 && source[before] === '.') { index = before - 1; continue; }
+      return start;
+    }
+    return start;
+  }
+};
 
 // Both shapes of "an attribute name this scan cannot read", in one function, so that what the gate
 // refuses is a value a fixture can produce rather than a `match(…)` inside a loop over the corpus —
@@ -1038,9 +1132,14 @@ const COMPUTED_RECEIVER = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^(
 const computedNameWritesIn = source => ({
   setAttribute: [...source.matchAll(/\.setAttribute\s*\(\s*([^'"`\s][^,)]*)/g)]
     .map(match => `setAttribute(${match[1].trim()}, …)`),
-  bracket: [...source.matchAll(
-    new RegExp(String.raw`(?<![\w$.])(${COMPUTED_RECEIVER})\s*\[\s*([^\]'"\`][^\]]*)\]\s*\+?=\s*['"\`]`, 'g'),
-  )].map(match => `${match[1]}[${match[2].trim()}]`),
+  bracket: (() => {
+    const pairs = bracketPairs(source);
+    return [...source.matchAll(/\[\s*([^\]'"`][^\]]*)\]\s*\+?=\s*['"`]/g)].map((match) => {
+      const start = receiverStart(source, match.index, pairs);
+      const receiver = start === null ? '<unreadable receiver>' : source.slice(start, match.index).trim();
+      return `${receiver}[${match[1].trim()}]`;
+    });
+  })(),
 });
 
 // **The refusal itself, so that removing it is red.** The predicate above can be exercised by a
@@ -1072,6 +1171,30 @@ const refuseUnreadableComputedNames = (file, source, declared) => {
         + 'out if it is an attribute, or declare here why that receiver is not an element',
     );
   }
+};
+
+// **Everything this gate reads out of one source, as one operation.** The refusal runs and the
+// readable sites come back, from the same call — because with the refusal invoked from the corpus
+// loop and the sites collected beside it, the two were merely adjacent: deleting only the loop's
+// refusal call left the site list whole and every test green (review 37, measured). Predicate alive,
+// refusal alive, **connection to the corpus dead**.
+//
+// Making them one call is the same move as `whileHeld` — a right that can only be read by executing
+// under it — and as the helper socket claimed by linking from a pin: two facts that have to imply
+// each other are made one operation rather than two that a future edit can separate. Remove the
+// audit now and the sites it returns disappear with it, so the identity list below goes red.
+const auditSource = (file, source, declared) => {
+  refuseUnreadableComputedNames(file, source, declared);
+  const sites = [];
+  for (const site of attributeSitesIn(source)) {
+    assert.ok(
+      !site.unreadable,
+      `${file} writes a text-bearing attribute in a form this scan cannot read: `
+        + `${JSON.stringify(site.unreadable)} — quote the value, or teach the reader that form`,
+    );
+    sites.push([file, site]);
+  }
+  return sites;
 };
 
 // Which parts of a value ship as text and which are computed. Brace-aware: `${count > 1 ? … : ''}`
@@ -1202,7 +1325,7 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   const refused = (source) => {
     let failure = null;
     try {
-      refuseUnreadableComputedNames('fixture.js', source, {});
+      auditSource('fixture.js', source, {});
     } catch (error) {
       // Only a refusal is an answer here. Anything else — a typo in a name, a broken regex — stays
       // an error rather than being reshaped into a message this test then matches against.
@@ -1229,6 +1352,23 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
     refused("document.querySelector('#x')[name] = 'prose';"),
     /writes a literal into document\.querySelector\('#x'\)\[name\]/,
   );
+  // **And the three review 37 named**, every one of which the previous reader missed while the
+  // comment above it said "any expression": a call inside a call, a grouped receiver, and an index
+  // inside an index.
+  assert.match(
+    refused("document.querySelector(selectorFor('#x'))[name] = 'prose';"),
+    /writes a literal into document\.querySelector\(selectorFor\('#x'\)\)\[name\]/,
+  );
+  assert.match(
+    refused("(document.querySelector('#x'))[name] = 'prose';"),
+    /writes a literal into \(document\.querySelector\('#x'\)\)\[name\]/,
+  );
+  assert.match(
+    refused("rows[indices[0]].node[name] = 'prose';"),
+    /writes a literal into rows\[indices\[0\]\]\.node\[name\]/,
+  );
+  // A receiver it cannot describe is refused too, named for what it is rather than passed
+  assert.match(refused("= 'prose';\n[name] = 'prose';"), /<unreadable receiver>\[name\]/);
   // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
   // above reads it as an ordinary site — and a computed write with no literal in it carries no text
   // to classify, which is the same line that leaves `'ti' + 'tle'` alone (D147).
@@ -1239,7 +1379,7 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   assert.equal(
     (() => {
       try {
-        refuseUnreadableComputedNames('fixture.js', "el[name] = 'prose';", { 'el[name]': 'declared' });
+        auditSource('fixture.js', "el[name] = 'prose';", { 'el[name]': 'declared' });
         return null;
       } catch (error) { return error.message; }
     })(),
@@ -1286,22 +1426,9 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // is not an element — a plain object keyed by a variable is ordinary code, and this list is where
   // that gets said rather than argued about in a review.
   const DECLARED_COMPUTED_WRITES = {};
-  const found = [];
-  for (const file of MARKUP_FILES) {
-    const source = read(file);
-    // A computed attribute name hides *which* attribute is being written, and the scan reads names.
-    // Both refusals, and the reasons they differ, are at `refuseUnreadableComputedNames` — the same
-    // call the fixture goes through, so neither the reading nor the refusing can be removed quietly.
-    refuseUnreadableComputedNames(file, source, DECLARED_COMPUTED_WRITES);
-    for (const site of attributeSitesIn(source)) {
-      assert.ok(
-        !site.unreadable,
-        `${file} writes a text-bearing attribute in a form this scan cannot read: `
-          + `${JSON.stringify(site.unreadable)} — quote the value, or teach the reader that form`,
-      );
-      found.push([file, site]);
-    }
-  }
+  // Every readable site in the tree, and the refusals that ran to produce them — one call per file,
+  // so the list below cannot outlive the checks that guard it (`auditSource`).
+  const found = MARKUP_FILES.flatMap(file => auditSource(file, read(file), DECLARED_COMPUTED_WRITES));
   // **The sites themselves, not how many there are.** A floor of twelve against sixteen let four of
   // them move into unread syntax in silence; an exact count closed that and still fixed only
   // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
