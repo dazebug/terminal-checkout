@@ -1432,7 +1432,10 @@ const computedNameWritesIn = source => ({
       const opening = pairs.get(closing);
       if (opening === undefined) return [];
       const name = source.slice(opening + 1, closing).trim();
-      // A quoted name is not computed — the site scan above reads it as an ordinary attribute write.
+      // A name beginning with a quote or backtick is deliberately outside this refusal; it can
+      // continue as an assembled expression (`'ti' + suffix` or `` `title${suffix}` ``). D147
+      // excludes assembled names from this lint's mistake model. Exact quoted names are handled by
+      // the readable-site scan separately.
       if (name.length === 0 || /^['"`]/.test(name)) return [];
       const start = receiverStart(source, opening, pairs);
       const receiver = start === null ? '<unreadable receiver>' : source.slice(start, opening).trim();
