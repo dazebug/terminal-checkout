@@ -1259,12 +1259,14 @@ const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeho
 // the two guards in the gate below rather than here: an assembled name is left alone, a name held
 // in a variable is refused where the site can be known to be an attribute write.
 //
-// `i` because HTML does not care about case. `\+?=` because `+=` appends to the same property, and
-// `(?!=)` because `===` is a comparison and not a write. The bracket form is ordinary JavaScript,
-// and the space before `setAttribute`'s parenthesis is ordinary formatting.
+// `i` because HTML does not care about case. `ASSIGNMENT_OPERATOR` covers ordinary assignment and
+// compound/logical assignment (`+=`, `??=`, `||=`, `&&=`, and their siblings); `(?!=)` keeps `===`
+// and the other equality operators out. The bracket form is ordinary JavaScript, and the space
+// before `setAttribute`'s parenthesis is ordinary formatting.
+const ASSIGNMENT_OPERATOR = '(?:\\?\\?|\\|\\||&&|\\*\\*|>>>|>>|<<|\\+|\\-|\\*|\\/|%|&|\\^)?=';
 const ATTRIBUTE_SITES = [
-  new RegExp(`(?<![\\w$-])(${TEXT_BEARING})\\s*\\+?=(?!=)\\s*`, 'gi'),
-  new RegExp(`\\[\\s*['"\`](${TEXT_BEARING})['"\`]\\s*\\]\\s*\\+?=(?!=)\\s*`, 'gi'),
+  new RegExp(`(?<![\\w$-])(${TEXT_BEARING})\\s*${ASSIGNMENT_OPERATOR}(?!=)\\s*`, 'gi'),
+  new RegExp(`\\[\\s*['"\`](${TEXT_BEARING})['"\`]\\s*\\]\\s*${ASSIGNMENT_OPERATOR}(?!=)\\s*`, 'gi'),
   new RegExp(`\\.setAttribute\\s*\\(\\s*['"\`](${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
 ];
 
@@ -1421,10 +1423,11 @@ const computedNameWritesIn = source => ({
     // the match ended inside the name and the assignment was not there to find. The nested-receiver
     // fixture proved a nested receiver and said nothing about a nested name.
     //
-    // So the assignment is found first — a `]` followed by `=` and a literal — and its opening `[`
+    // So the assignment is found first — a `]` followed by an assignment operator and a literal —
+    // and its opening `[`
     // comes from the same pair map the receiver already uses. One reader, both halves.
     const pairs = bracketPairs(source);
-    return [...source.matchAll(/\]\s*\+?=\s*['"`]/g)].flatMap((match) => {
+    return [...source.matchAll(new RegExp(`\\]\\s*${ASSIGNMENT_OPERATOR}\\s*['"\`]`, 'g'))].flatMap((match) => {
       const closing = match.index;
       const opening = pairs.get(closing);
       if (opening === undefined) return [];
@@ -1670,6 +1673,11 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
     /writes a literal into document\.querySelector\('#x'\)\[names\[index\]\]/,
   );
   assert.match(refused("el[keys.title] = 'prose';"), /writes a literal into el\[keys\.title\]/);
+  assert.match(refused("el[name] ??= 'user-facing prose';"), /writes a literal into el\[name\]/);
+  assert.deepEqual(
+    attributeSitesIn("el.title ||= 'user-facing prose';").map(site => site.text),
+    ['user-facing prose'],
+  );
   // A receiver it cannot describe is refused too, named for what it is rather than passed
   assert.match(refused("= 'prose';\n[name] = 'prose';"), /<unreadable receiver>\[name\]/);
   // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
