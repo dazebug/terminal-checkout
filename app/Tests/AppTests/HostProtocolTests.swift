@@ -47,7 +47,7 @@ final class HostProtocolTests: XCTestCase {
         let path = directory + "/s.sock"
         let canonical = CanonicalSocketOverride(path)
         let server = HostServer(socketPath: path)
-        try server.start(announcing: .nothing)
+        try server.start()
         defer {
             server.stop()
             _ = canonical
@@ -93,32 +93,4 @@ final class HostProtocolTests: XCTestCase {
         )
     }
 
-    /// **The socket server does not publish a locale.** The GUI owns publication; this request path
-    /// must not become a second writer or compose a generation into a command response.
-    ///
-    /// This is a **lint**, not a proof — it reads the source rather than the behaviour, and a
-    /// different spelling of the same mistake would slip past it. Publication's own writer tests
-    /// live with the publication machinery and are not this request-path contract.
-    /// **The subject is `serve`, not the file.** It used to read the whole of `HostServer.swift`,
-    /// and since round 17 that file also holds the launch publication — so "this file does not
-    /// publish" became false about the file while staying true about the request path, which is the
-    /// thing the claim was ever about (round 18, while narrowing the same contract).
-    func testTheServerPublishesAsAReaderOnly() throws {
-        let source = try String(
-            contentsOf: URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent().deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("Sources/App/HostServer.swift"),
-            encoding: .utf8
-        )
-        let start = try XCTUnwrap(
-            source.range(of: "private func serve(fd: Int32) {"),
-            "the request path is no longer where this lint reads it from"
-        ).upperBound
-        let serve = String(source[start...])
-        XCTAssertFalse(
-            serve.contains("LocaleState.publish("),
-            "the socket server publishes a locale instead of returning Core's response"
-        )
-    }
 }

@@ -588,17 +588,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// trigger. Queueing the restart would need the queue to outlive a delivery that may never end,
     /// which is the same self-lifetime problem this gate exists to avoid.
     ///
-    /// **Ownership is asked here and not only of the button.** `refresh()` disables this control in a
-    /// window that does not own the socket, and a disabled control is a notice rather than a rule:
-    /// the action can still arrive — from a keyboard equivalent, from a state that changed since the
-    /// last refresh, from anything that sends the selector — and it would relaunch a process whose
-    /// language setting is not its own to change (round 16 review). It is the same class as the two
-    /// P0s of this round: enforcement belongs on the action, not on what the screen is showing.
     @objc private func restartForLanguage() {
-        guard ownsPublication else {
-            languageNoteLabel.stringValue = languageNote()
-            return
-        }
         guard LocaleRestartGate.admitRestart() else {
             languageNoteLabel.stringValue = languageNote(restartBlocked: true)
             return
@@ -624,19 +614,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     /// What the card says, in the order the states exclude each other.
     ///
-    /// **Not owning the socket comes first** because it is the only one of the three that makes the
-    /// control useless: this window cannot publish a language, so offering a picker that appears to
-    /// work would be the silent divergence this project keeps closing — the preference would move,
-    /// the other window would not, and nothing on screen would say why.
-    /// **One predicate for the three that ask it** — the control's state, the note that explains it,
-    /// and the action that enforces it. Three readings of the same fact is how two of them come to
-    /// disagree, and the one that would be wrong is whichever is not the enforcement.
-    private var ownsPublication: Bool { LocalePublicationRight.current?.isHeld == true }
-
     private func languageNote(restartBlocked: Bool = false) -> String {
-        if !ownsPublication {
-            return localized("app.language.notOwner")
-        }
         if restartBlocked {
             return localized("app.language.restartDeferred")
         }
@@ -988,12 +966,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             stored: Settings.language, drawn: AppLocalization.resolvedTag(),
             entries: languagePopUp.itemArray.map { $0.representedObject as? String }
         ))
-        // A window that cannot publish does not offer the control. The guards that matter are the
-        // right `Settings.language` has to be handed and the one `restartForLanguage` asks for;
-        // this is so the user is not invited to press something inert
-        let mayPublish = ownsPublication
-        languagePopUp.isEnabled = mayPublish
-        languageRestartButton.isEnabled = mayPublish
+        // Any window may change the shared preference. Restart itself remains guarded by
+        // `LocaleRestartGate`, which protects in-flight delivery rather than socket ownership.
+        languagePopUp.isEnabled = true
+        languageRestartButton.isEnabled = true
         languageNoteLabel.stringValue = languageNote()
 
         let manifest = Installer.manifestState()

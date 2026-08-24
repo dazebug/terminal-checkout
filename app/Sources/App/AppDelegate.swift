@@ -2,17 +2,9 @@ import AppKit
 import Core
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// The language this launch resolved to, decided in `main.swift` before AppKit was touched and
-    /// carried here so that publishing it does not mean resolving it a second time.
-    private let launchLocale: SupportedLocale
     private var server: HostServer?
     private var setupWindow: SetupWindowController?
     private var languageObserver: NSObjectProtocol?
-
-    init(launchLocale: SupportedLocale) {
-        self.launchLocale = launchLocale
-        super.init()
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Takes the user somewhere that explains a rejection. The extension shows a failure as a
@@ -70,37 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server?.stop()
     }
 
-    /// **This is where publication eligibility is decided**, and the only place it is.
-    ///
-    /// `start` throws `alreadyRunning` when another instance answers on the path, and that is the
-    /// only singleton test this app has — `NSLock` is process-local and cannot see a second process
-    /// at all (round 14 review). Two GUI instances are not hypothetical: the language restart
-    /// relaunches with `open -n`, which is exactly how you get one. Publishing from a process that
-    /// does not own the socket produces two different locales under the same install id and epoch,
-    /// which the extension's ordering rule cannot separate — it keeps whichever it saw first.
-    ///
-    /// The publication moved here from `main.swift` in round 14; what stayed there is the
-    /// *resolution*, so the answer published is still the one this launch decided on before AppKit
-    /// was touched. **What round 14 got wrong was the scope of the claim**: this bound the launch
-    /// writer and the sentence here said "only the instance that owns the socket publishes", while
-    /// the picker went on publishing from anywhere (round 15 review). Round 15 gave both writers one
-    /// type to ask and left the launch writer publishing whatever it was handed, so **this ordering
-    /// was still the only thing enforcing it** (round 16 review).
-    ///
-    /// Round 17 took the last of it away from this file: publishing was still a *second statement*
-    /// here, and the accept loop had already been armed by the first, so the extension's opening
-    /// question could be answered before this launch had said anything (round 17 review). The
-    /// language is now an argument of the bind, which is why there is one statement below and no
-    /// order left to write down wrongly.
+    /// Starts the socket server after the app has adopted its stored language. Binding is the
+    /// process's ownership check; request handling is the only work the socket path performs.
     private func startServer() {
         let server = HostServer(socketPath: defaultSocketPath())
         do {
-            try server.start(announcing: .publish(launchLocale))
+            try server.start()
             self.server = server
         } catch {
-            checkoutLog(
-                "socket server failed to start, so this instance publishes no locale — \(errorMessage(error))"
-            )
+            checkoutLog("socket server failed to start — \(errorMessage(error))")
         }
     }
 

@@ -277,39 +277,20 @@ final class LocaleRestartTests: XCTestCase {
         XCTAssertLessThan(guardIndex, terminate, "the app is terminated before the gate is consulted")
     }
 
-    /// **The action asks, not the button** (round 16 review).
-    ///
-    /// `refresh()` disables this control in a window that does not own the socket, and that is a
-    /// notice: the selector can still arrive — from a key equivalent, from a state that moved since
-    /// the last refresh, from anything that sends it — and it would relaunch a process over a setting
-    /// this window is not the owner of. The same class as the two P0s of this round, and the answer
-    /// is the same: put the question on the path, not on the screen.
+    /// **A non-owning window still reaches the delivery gate.** Socket ownership used to be the
+    /// transport for this policy; it is gone, while refusing a restart during delivery remains the
+    /// policy that prevents termination from cutting off a live helper.
     ///
     /// It is driven through the selector because the method is private, and the gate is left
-    /// refusing so the case never reaches `NSApp.terminate` — which would end the test run.
-    func testTheRestartActionRefusesWithoutOwnership() throws {
+    /// refusing so the case proves that the refusal blocks `NSApp.terminate`.
+    func testTheRestartActionReachesDeliveryGateWithoutSocketOwnership() throws {
         var asked = 0
         LocaleRestartGate.admitRestart = { asked += 1; return false }
-        XCTAssertNil(LocalePublicationRight.current, "an earlier case left a publication right held")
 
         let controller = SetupWindowController()
         _ = controller.window
         controller.perform(NSSelectorFromString("restartForLanguage"))
-        XCTAssertEqual(asked, 0, "a window that does not own the socket took a restart admission")
-
-        let directory = "/tmp/tc-restart-\(UUID().uuidString.prefix(8))"
-        // The window asks `LocalePublicationRight.current`, and that answers for **the** socket —
-        // owning some socket is not owning the one the relay reaches (round 24 review)
-        let canonical = CanonicalSocketOverride(directory + "/s.sock")
-        let server = HostServer(socketPath: directory + "/s.sock")
-        try server.start(announcing: .nothing)
-        defer {
-            server.stop()
-            _ = canonical
-            try? FileManager.default.removeItem(atPath: directory)
-        }
-        controller.perform(NSSelectorFromString("restartForLanguage"))
-        XCTAssertEqual(asked, 1, "the window that owns the socket did not even ask")
+        XCTAssertEqual(asked, 1, "a non-owning window bypassed LocaleRestartGate")
     }
 
     /// And termination dismisses the helpers before it stops our own socket server: one of those is

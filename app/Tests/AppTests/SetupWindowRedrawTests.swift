@@ -9,7 +9,7 @@ import XCTest
 /// paragraph and button label keeps the language it was created in until something builds them
 /// again.
 ///
-/// **What these tests never write is `Settings.language`.** Its setter publishes and posts, and
+/// **What these tests never write is `Settings.language`.** Its setter stores and posts, and
 /// running that against `.standard` would rewrite the language of the app installed on this
 /// machine — so the notification is posted directly, which is the same thing the setter does and
 /// nothing more. The settings they *do* write — the terminal, the base directory, the tool answers
