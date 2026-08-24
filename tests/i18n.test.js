@@ -521,7 +521,13 @@ const speakingSource = SPEAKING_FILES.map(read).join('\n');
 
 // A message id can only be named by a literal (checked below), and the markup names them in an
 // attribute — so between them this is the whole set.
-const keysInJs = new Set([...speakingSource.matchAll(/'(ext\.[A-Za-z0-9.]+)'/g)].map(m => m[1]));
+// The shape of a message id, in one place. The attribute gate asks whether a call names one of
+// these, and this set is what such a name is checked against — written twice, the two would
+// agree by coincidence until the day one of them was widened (round 27 review).
+const MESSAGE_KEY = 'ext\\.[A-Za-z0-9.]+';
+const keysInJs = new Set(
+  [...speakingSource.matchAll(new RegExp(`'(${MESSAGE_KEY})'`, 'g'))].map(m => m[1]),
+);
 const keysInHtml = new Set(
   HTML_FILES.flatMap(file => [...read(file).matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])),
 );
@@ -666,17 +672,27 @@ const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeho
 // code it reads are the same repository with the same authors, so anyone able to write
 // `setAttribute('ti' + 'tle', …)` can also delete this file. So the readable list covers **the forms
 // people write when they are not thinking about this gate at all** — four ways of naming an
-// attribute, four ways of quoting a value — and a computed name is deliberately outside it (round
-// 25 review, user scope ruling; the ledger row is D147).
+// attribute, four ways of quoting a value (round 25 review, user scope ruling; the ledger row is
+// D147). A name the scan cannot read is not on the list, and what happens to those is decided at
+// the two guards in the gate below rather than here: an assembled name is left alone, a name held
+// in a variable is refused where the site can be known to be an attribute write.
 //
 // `i` because HTML does not care about case. `\+?=` because `+=` appends to the same property, and
 // `(?!=)` because `===` is a comparison and not a write. The bracket form is ordinary JavaScript,
 // and the space before `setAttribute`'s parenthesis is ordinary formatting.
 const ATTRIBUTE_SITES = [
-  new RegExp(`(?<![\\w$-])(?:${TEXT_BEARING})\\s*\\+?=(?!=)\\s*`, 'gi'),
-  new RegExp(`\\[\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*\\]\\s*\\+?=(?!=)\\s*`, 'gi'),
-  new RegExp(`\\.setAttribute\\s*\\(\\s*['"\`](?:${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
+  new RegExp(`(?<![\\w$-])(${TEXT_BEARING})\\s*\\+?=(?!=)\\s*`, 'gi'),
+  new RegExp(`\\[\\s*['"\`](${TEXT_BEARING})['"\`]\\s*\\]\\s*\\+?=(?!=)\\s*`, 'gi'),
+  new RegExp(`\\.setAttribute\\s*\\(\\s*['"\`](${TEXT_BEARING})['"\`]\\s*,\\s*`, 'gi'),
 ];
+
+// **A call names a message when the key is there to read.** `t(dynamicKey)` is not a catalogue
+// lookup anybody can check — it is an expression whose text arrives at run time, which is the class
+// this gate calls undeclared — and accepting it because it *looks* like a lookup was the hole in the
+// acceptance added a round ago (round 27 review). The key has to be a literal of the shape
+// `keysInJs` collects, so what counts as a message here and what the catalogue gates enumerate are
+// one answer rather than two.
+const namesAMessage = expression => new RegExp(`^tr?\\(\\s*'(${MESSAGE_KEY})'`).test(expression.trim());
 
 // The value written at `at`, in whichever form it is in. `null` is "I cannot tell where this ends",
 // which the caller turns into a failure — the reader never guesses a boundary it cannot see.
@@ -716,7 +732,10 @@ const readAttributeValue = (source, at) => {
 const attributeSitesIn = source => ATTRIBUTE_SITES
   .flatMap(pattern => [...source.matchAll(pattern)].map((match) => {
     const at = match.index + match[0].length;
-    return { at, ...(readAttributeValue(source, at) ?? { unreadable: source.slice(match.index, at + 40) }) };
+    // The name comes back with the site: a count says how many were read, and only the names say
+    // **which** — two sites can trade places under a number that does not move (round 27 review)
+    const name = match[1].toLowerCase();
+    return { at, name, ...(readAttributeValue(source, at) ?? { unreadable: source.slice(match.index, at + 40) }) };
   }))
   .sort((left, right) => left.at - right.at);
 
@@ -796,6 +815,11 @@ test('the attribute scan reads every form on its list, and says so when it canno
   // first `}` would cut an interpolation in half and read the rest of it as text to translate.
   assert.deepEqual(splitInterpolations('${a ? `${b}` : ""}').expressions, ['a ? `${b}` : ""']);
   assert.equal(splitInterpolations('${never closed'), null);
+
+  // And what counts as a message, which is the other half of what the readable list means: the key
+  // has to be *in* the call. A lookup whose key arrives at run time returns whatever it returns.
+  assert.ok(namesAMessage("t('ext.someKey')"), 'a call that names its key is a message');
+  assert.ok(!namesAMessage('t(dynamicKey)'), 'a key that arrives at run time is not a checkable one');
 });
 
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
@@ -832,18 +856,41 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     'buttonConfig.label': "the user's own button label, read back from their settings and shown as "
       + 'its tooltip — it is theirs, and translating it would rename the button they named',
   };
+  // The one shape of a computed name that ships text we can see: `el[name] = 'Copy to clipboard'`.
+  // Nothing writes one, and the day something does it is declared here with the reason its receiver
+  // is not an element — a plain object keyed by a variable is ordinary code, and this list is where
+  // that gets said rather than argued about in a review.
+  const DECLARED_COMPUTED_WRITES = {};
   const found = [];
   for (const file of MARKUP_FILES) {
     const source = read(file);
     // A computed attribute name hides *which* attribute is being written, and the scan reads names.
     // A bare identifier is the shape somebody arrives at by accident — a name held in a variable —
-    // so it is refused. **A name assembled out of pieces (`'ti' + 'tle'`) is not refused**, and that
-    // is the threat model above rather than an oversight: nobody writes that by mistake, and against
-    // somebody writing it on purpose the gate has no standing anyway (D147).
+    // so it is refused, and `setAttribute` is where that can be said flatly: the call itself is the
+    // evidence that an attribute is being written. **A name assembled out of pieces (`'ti' + 'tle'`)
+    // is not refused**, and that is the threat model above rather than an oversight: nobody writes
+    // that by mistake, and against somebody writing it on purpose the gate has no standing (D147).
     assert.equal(
       source.match(/\.setAttribute\s*\(\s*[^'"`\s]/g), null,
       `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
     );
+    // **The same rule, spelled with brackets** (round 27 review). `el[name] = …` was left unread
+    // while the sentence above said a name held in a variable is refused — we declined the
+    // assembled name on a principle and then did not apply it where it pointed the other way.
+    //
+    // What is refused is the part that can be established from outside: a **literal** written into
+    // a computed member, which is text shipping through a name nobody can read. With the value an
+    // expression too there is nothing here to classify — no name, no words — and that is where the
+    // same line falls that leaves `'ti' + 'tle'` alone. Deciding whether the receiver is an element
+    // would take knowing what `el` is, and a lint does not get a parser (D147).
+    for (const match of source.matchAll(/(?<![\w$])(\w+(?:\.\w+)*)\s*\[\s*([^\]'"`][^\]]*)\]\s*\+?=\s*['"`]/g)) {
+      const write = `${match[1]}[${match[2].trim()}]`;
+      assert.ok(
+        Object.hasOwn(DECLARED_COMPUTED_WRITES, write),
+        `${file} writes a literal into ${write}, whose name this scan cannot read — spell the name `
+          + 'out if it is an attribute, or declare here why that receiver is not an element',
+      );
+    }
     for (const site of attributeSitesIn(source)) {
       assert.ok(
         !site.unreadable,
@@ -853,12 +900,30 @@ test('every text-bearing attribute in the markup is a message or a declared lite
       found.push([file, site]);
     }
   }
-  // **The exact number, not a floor.** A floor of twelve against sixteen sites let four of them move
-  // into a syntax the scan does not read with nothing going red — measured: one live site rewritten
-  // as `setAttribute('ti' + 'tle', …)` left the suite green at fifteen. The count is the scan's
-  // reach, so changing this number is a reviewed edit: it means a text-bearing attribute was added
-  // or removed, and the reviewer's question is which one.
-  assert.equal(found.length, 16, `the attribute scan read ${found.length} sites, not 16`);
+  // **The sites themselves, not how many there are.** A floor of twelve against sixteen let four of
+  // them move into unread syntax in silence; an exact count closed that and still fixed only
+  // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
+  // and sixteen is sixteen (round 27 review, measured: the suite stayed green through exactly that).
+  // File and attribute name are enough to make a trade visible, and stable under any edit that does
+  // not move a site. Changing this list is a reviewed edit: it says which attribute came or went.
+  assert.deepEqual(found.map(([file, site]) => `${file} ${site.name}`).sort(), [
+    'content.js title',
+    'content.js title',
+    'options.html placeholder',
+    'options.js aria-label',
+    'options.js placeholder',
+    'options.js placeholder',
+    'options.js placeholder',
+    'options.js placeholder',
+    'options.js placeholder',
+    'options.js title',
+    'options.js title',
+    'options.js title',
+    'options.js title',
+    'options.js title',
+    'options.js title',
+    'options.js title',
+  ]);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {
@@ -870,8 +935,9 @@ test('every text-bearing attribute in the markup is a message or a declared lite
       // A message call is the good answer to that question and is taken as one, the same as an
       // interpolated `${t(…)}` a few lines down. Nothing in the extension writes `title = t(…)`
       // today; refusing it would be this lint firing on the pattern it exists to encourage, which
-      // is how a lint gets switched off.
-      if (/^tr?\(/.test(site.text)) continue;
+      // is how a lint gets switched off. **Only with the key in the call**, though — see
+      // `namesAMessage`: a lookup whose key arrives at run time is an expression like any other.
+      if (namesAMessage(site.text)) continue;
       assert.ok(
         Object.hasOwn(DECLARED_EXPRESSIONS, site.text),
         `${file} fills a text-bearing attribute from ${JSON.stringify(site.text)} — `
@@ -887,9 +953,9 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     // outside every check in this file, which is the hole the static ones were in
     for (const expression of parts.expressions) {
       assert.ok(
-        /^tr?\(/.test(expression.trim()),
+        namesAMessage(expression),
         `${file} builds a text-bearing attribute from ${JSON.stringify(expression)} — `
-          + 'interpolate a message so the escaping and parity gates can see it',
+          + 'interpolate a message named by its key so the escaping and parity gates can see it',
       );
     }
     // The text between the interpolations is what ships as written, and a value that interpolates
