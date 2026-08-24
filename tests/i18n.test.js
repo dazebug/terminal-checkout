@@ -10,8 +10,8 @@ const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
 // The derivation `_locales` came from, imported so the gate below runs it rather than a
 // description of it — the same reason the liveness sweep extracts its predicate. Since A3 it
-// only checks the compatibility baseline and live catalogue shape: the authority moved to
-// `_locales`, so a generator would be a way back.
+// checks the compatibility baseline, live catalogue shape and live argument identity: the authority
+// moved to `_locales`, so a generator would be a way back.
 const {
   loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS, CHROME_LOCALE_DIRECTORIES,
   CATALOGUE_BASELINE_HASHES, checkCompatibilityBaseline, checkLiveLocaleBaseline,
@@ -1126,23 +1126,23 @@ test('message strings and calls are separate projections of every JavaScript lex
 });
 
 const catalogueMismatchInstruction = (directory, tag) => (
-  `_locales/${directory}/messages.json differs from the committed A7 baseline pin — `
-  + "_locales is canonical, so an intentional translation edit is allowed; update the baseline pin, "
+  `_locales/${directory}/messages.json differs from the committed catalogue baseline pin — `
+  + "review whether this is an intentional translation edit or an unintended structural change before updating the pin, "
   + 'then run node tools/check-locales.js'
 );
 
 test('a catalogue mismatch points to the canonical edit direction and the read-only checker', () => {
   assert.equal(
     catalogueMismatchInstruction('zh_TW', 'zh-Hant'),
-    '_locales/zh_TW/messages.json differs from the committed A7 baseline pin — _locales is canonical, so an intentional translation edit is allowed; update the baseline pin, then run node tools/check-locales.js',
+    '_locales/zh_TW/messages.json differs from the committed catalogue baseline pin — review whether this is an intentional translation edit or an unintended structural change before updating the pin, then run node tools/check-locales.js',
   );
 });
 
 test('_locales is pinned by bytes while the compatibility checker pins _i18n separately', () => {
   // `_i18n` is the compatibility passenger and its exact bytes are the migration baseline. The
-  // live `_locales` values are canonical and may evolve, so its own exact-byte pin is the gate that
-  // asks for an intentional baseline update. The command checks the former and the test checks the
-  // latter; neither claims that two live catalogues must remain textually equal.
+  // live `_locales` values are canonical and may evolve, so its own exact-byte pin is a review
+  // prompt. The command checks the compatibility and machine-structure contracts; the test checks
+  // the live pin; neither claims that two live catalogues must remain textually equal.
   assert.deepEqual(checkCompatibilityBaseline().failures, []);
   assert.deepEqual(checkLiveLocaleBaseline().failures, []);
 
@@ -1183,8 +1183,34 @@ test('a legitimate _locales edit stays green in the compatibility checker and re
     assert.deepEqual(checkCompatibilityBaseline().failures, []);
     const liveFailures = checkLiveLocaleBaseline().failures;
     assert.equal(liveFailures.length, 1);
-    assert.match(liveFailures[0], /committed A7 baseline pin/);
-    assert.match(liveFailures[0], /intentional translation edit is allowed/);
+    assert.match(liveFailures[0], /committed catalogue baseline pin/);
+    assert.match(liveFailures[0], /intentional translation edit or an unintended structural change/);
+  } finally {
+    readOnlyFiles.read = original;
+  }
+});
+
+test('_locales rejects a placeholder binding that moves from its source position', () => {
+  const { readOnlyFiles, checkCompatibilityBaseline } = require('../tools/check-locales.js');
+  const original = readOnlyFiles.read;
+  const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
+  try {
+    readOnlyFiles.read = (file, encoding) => {
+      const originalValue = original(file, encoding);
+      if (file !== editedPath) return originalValue;
+      const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
+      const messages = JSON.parse(text);
+      messages.ext_confirm_presetOverwrite.placeholders.ARG2.content = '$1';
+      const edited = `${JSON.stringify(messages, null, 2)}\n`;
+      return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
+    };
+    const failures = checkCompatibilityBaseline().failures;
+    assert.ok(
+      failures.some(failure => failure.includes(
+        '_locales/en/messages.json: ext_confirm_presetOverwrite placeholder ARG2 is bound to $1, expected $2',
+      )),
+      failures.join('\n'),
+    );
   } finally {
     readOnlyFiles.read = original;
   }
@@ -1226,8 +1252,9 @@ test('both formats render the same bytes for every argument-bearing message', ()
   // **Parity is not identity** (D159, P0-3 of the first design review). Five catalogues can agree on
   // placeholder names and counts while every one of them binds those names to the wrong argument —
   // all five saying `$ARG1$` where the source said `%2$d` passes every parity gate in this file. The
-  // only oracle that can tell is the old dictionary itself, rendered, and **this is the last commit
-  // in which it exists as one**: A3 makes `_locales` canonical and freezes `_i18n`.
+  // only oracle that can tell is the old dictionary itself, rendered. `_i18n` remains the frozen
+  // source of argument identity, while the live `_locales` store has its own semantic gate in
+  // `checkCompatibilityBaseline`; this test keeps the source-side projection visible here too.
   //
   // So: render both formats with a distinct sentinel per position and require the same bytes. Two
   // keys reorder their arguments between locales, which is where a consistently wrong binding stops

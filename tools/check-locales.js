@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 // Checks the compatibility catalogue against its committed migration baseline. **It does not write.**
 //
-//     node tools/check-locales.js   # exit 1 if the compatibility baseline has changed
+//     node tools/check-locales.js   # exit 1 if a baseline or live machine contract has changed
 //
 // **It used to write, and A3 is where that stopped** (D167). While `_i18n` was canonical, deriving
 // the second store by program was what kept a wrong edit from being made identically in both. A3
 // moved the authority: `_locales` is what Chrome reads and what the extension draws from, so a
 // generator pointed at it would be a path for the frozen compatibility store to overwrite the live
-// one. The derivation survives only as a read-only name-and-entry-shape check — the same code, no
-// `writeFileSync`, and a test holds it to that.
+// one. The derivation survives only as a read-only name, entry-shape and argument-identity check —
+// the same code, no `writeFileSync`, and a test holds it to that.
 //
 // **What the baseline means now.** `_i18n` is pinned at the migration baseline and `_locales` is
 // canonical, so the command pins the compatibility passenger without treating a later canonical
 // translation as an illegal edit. The live `_locales` bytes have their own pin in the ownership
-// tests: an intentional correction turns that pin red and asks for its committed update (D173).
+// tests, while machine-checkable placeholder identity stays a live gate: a changed byte may be an
+// intentional translation edit or an unintended structural change, and the pin cannot decide which.
 //
 // **It loads the extension's own function rather than restating the rule** (D171, D177):
 // `chromeMessageId`, the locale list and the metadata list all come out of `extension/i18n.js` by
@@ -30,10 +31,10 @@ const extension = path.join(__dirname, '..', 'extension');
 
 // These are hashes of the exact bytes in the two catalogue surfaces at the migration boundary.
 // The compatibility hashes are the command's authority: a changed `_i18n` file is an unreviewed
-// compatibility edit. The `_locales` hashes are the live-catalogue pin used by the ownership gate;
-// it is expected to move with an intentional translation change, while the compatibility hashes do
-// not. Keeping both in one committed object makes the two meanings visible without comparing two
-// live stores and calling that proof of non-editing.
+// compatibility edit. The `_locales` hashes are the live-catalogue pin used by the ownership gate; a
+// changed file must be reviewed before its pin moves, while the compatibility hashes do not.
+// Keeping both in one committed object makes the two meanings visible without comparing two live
+// stores and calling that proof of non-editing.
 const CATALOGUE_BASELINE_HASHES = {
   compatibility: {
     en: 'cafcae916db9a88cd43673d12c184f3c0e0723d6496ff801a7aea4b1612473a9',
@@ -79,7 +80,7 @@ const loadExtensionI18n = () => {
     vm.runInContext(read(`_i18n/${tag}.js`), context);
   }
   return vm.runInContext(
-    '({ chromeMessageId, TC_I18N, TC_I18N_LOCALES, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })',
+    '({ chromeMessageId, formatMessage, TC_I18N, TC_I18N_LOCALES, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })',
     context,
   );
 };
@@ -158,6 +159,76 @@ const deriveCatalogue = (tag, context = loadExtensionI18n()) => {
   return { directory, messages: derived };
 };
 
+const SOURCE_PLACEHOLDER = /%(\d+)\$[sd]/g;
+const CATALOGUE_PLACEHOLDER = /\$([A-Za-z0-9_@]+)\$/g;
+
+const renderCatalogueMessage = (entry, substitutions) => entry.message.replace(
+  /\$([A-Za-z0-9_@]+)\$|\$\$/g,
+  (whole, name) => {
+    if (whole === '$$') return '$';
+    const declaration = entry.placeholders && entry.placeholders[name];
+    if (!declaration) return whole;
+    const position = Number(String(declaration.content).slice(1));
+    return substitutions[position - 1] ?? whole;
+  },
+);
+
+const sentinelProjection = value => [...String(value).matchAll(/<<arg-\d+>>/g)].map(match => match[0]).join('');
+
+// `_locales` is canonical, so its message text may change. The argument projection deliberately
+// discards prose and compares only the sentinel bytes: that keeps translation edits legal while
+// making a moved `$ARG2$` or a declaration bound to `$1` red against the source position.
+const checkLocaleArgumentIdentity = (tag, directory, actual, context = loadExtensionI18n()) => {
+  const failures = [];
+  for (const [logical, value] of Object.entries(context.TC_I18N[tag])) {
+    const physical = context.chromeMessageId(logical);
+    const entry = actual[physical];
+    if (!entry || typeof entry.message !== 'string') continue;
+    const sourceIndices = [...String(value).matchAll(SOURCE_PLACEHOLDER)].map(match => Number(match[1]));
+    const expectedNames = [...new Set(sourceIndices)].map(index => `ARG${index}`).sort();
+    const declarations = entry.placeholders || {};
+    const actualNames = Object.keys(declarations).sort();
+    if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+      failures.push(
+        `_locales/${directory}/messages.json: ${physical} placeholder names ${JSON.stringify(actualNames)} `
+        + `do not match source positions ${JSON.stringify(expectedNames)}`,
+      );
+      continue;
+    }
+    for (const index of new Set(sourceIndices)) {
+      const name = `ARG${index}`;
+      const expected = `$${index}`;
+      const actualContent = declarations[name] && declarations[name].content;
+      if (actualContent !== expected) {
+        failures.push(
+          `_locales/${directory}/messages.json: ${physical} placeholder ${name} is bound to `
+          + `${actualContent ?? '<missing>'}, expected ${expected}`,
+        );
+      }
+    }
+    for (const match of entry.message.matchAll(CATALOGUE_PLACEHOLDER)) {
+      if (!Object.hasOwn(declarations, match[1])) {
+        failures.push(
+          `_locales/${directory}/messages.json: ${physical} uses undeclared placeholder ${match[1]}`,
+        );
+      }
+    }
+    const maximumIndex = sourceIndices.length === 0 ? 0 : Math.max(...sourceIndices);
+    const sentinels = Array.from({ length: maximumIndex }, (_, index) => `<<arg-${index + 1}>>`);
+    const sourceRendered = context.formatMessage(value, sentinels);
+    const actualRendered = renderCatalogueMessage(entry, sentinels);
+    const expectedProjection = sentinelProjection(sourceRendered);
+    const actualProjection = sentinelProjection(actualRendered);
+    if (actualProjection !== expectedProjection) {
+      failures.push(
+        `_locales/${directory}/messages.json: ${physical} argument projection ${JSON.stringify(actualProjection)} `
+        + `does not match source ${JSON.stringify(expectedProjection)}`,
+      );
+    }
+  }
+  return failures;
+};
+
 const checkCompatibilityBaseline = () => {
   const context = loadExtensionI18n();
   const failures = [];
@@ -170,8 +241,9 @@ const checkCompatibilityBaseline = () => {
     }
 
     // `_locales` remains the live store. The command checks its name set and manifest entries so a
-    // compatibility file cannot silently lose a passenger, but deliberately does not compare its
-    // message values: a reviewed canonical translation is precisely the edit A7 permits.
+    // compatibility file cannot silently lose a passenger, and checks machine structure and
+    // argument identity without comparing translated prose: a reviewed canonical translation is
+    // precisely the edit A7 permits, but a translator cannot choose a different source position.
     const { directory, messages } = deriveCatalogue(tag, context);
     const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
     if (JSON.stringify(Object.keys(actual).sort()) !== JSON.stringify(Object.keys(messages).sort())) {
@@ -182,6 +254,7 @@ const checkCompatibilityBaseline = () => {
         failures.push(`_locales/${directory}/messages.json has an invalid entry for ${key}`);
       }
     }
+    failures.push(...checkLocaleArgumentIdentity(tag, directory, actual, context));
   }
   return { failures };
 };
@@ -195,8 +268,8 @@ const checkLiveLocaleBaseline = () => {
     const actualHash = sha256(readBytes(relativePath));
     if (actualHash !== CATALOGUE_BASELINE_HASHES.locales[tag]) {
       failures.push(
-        `${relativePath} differs from the committed A7 baseline pin — `
-        + '_locales is canonical, so an intentional translation edit is allowed; update the baseline pin',
+        `${relativePath} differs from the committed catalogue baseline pin — `
+        + 'review whether this is an intentional translation edit or an unintended structural change before updating the pin',
       );
     }
   }
@@ -212,7 +285,10 @@ const main = () => {
     process.exit(1);
   }
   const context = loadExtensionI18n();
-  process.stdout.write(`all ${context.TC_I18N_LOCALES.length} compatibility catalogues match the pinned migration baseline\n`);
+  process.stdout.write(
+    `all ${context.TC_I18N_LOCALES.length} compatibility catalogues match the pinned migration baseline `
+    + 'and live argument identities match their sources\n',
+  );
 };
 
 module.exports = {
@@ -221,6 +297,7 @@ module.exports = {
   loadExtensionI18n,
   deriveCatalogue,
   deriveMessage,
+  checkLocaleArgumentIdentity,
   serialize,
   placeholderName,
   CHROME_LOCALE_DIRECTORIES,
