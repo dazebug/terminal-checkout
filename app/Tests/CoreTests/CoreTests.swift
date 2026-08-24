@@ -1,3 +1,4 @@
+import TestSupport
 import XCTest
 @testable import Core
 
@@ -3590,7 +3591,12 @@ private func appSourceFiles() throws -> [(path: String, text: String)] {
     }
     var found: [(String, String)] = []
     for case let name as String in walk where name.hasSuffix(".swift") {
-        found.append((name, try String(contentsOf: sources.appendingPathComponent(name), encoding: .utf8)))
+        found.append((
+            name,
+            try auditSource(
+                sources.appendingPathComponent(name).path, claim: .sourceStructure
+            ).text
+        ))
     }
     // An empty walk would make every gate below pass without reading anything
     guard !found.isEmpty else { throw CocoaError(.fileReadNoSuchFile) }
@@ -4284,7 +4290,9 @@ private func repoFileContents(_ name: String) throws -> String {
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // app
         .deletingLastPathComponent() // the repository root
-    return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+    return try auditSource(
+        root.appendingPathComponent(name).path, claim: .sourceStructure
+    ).text
 }
 
 /// The Tab Config marker is a **permanent machine protocol** (D38): a language-neutral token that

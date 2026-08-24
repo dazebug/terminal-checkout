@@ -1,4 +1,5 @@
 import Core
+import TestSupport
 import XCTest
 @testable import App
 
@@ -237,5 +238,5 @@ private func repoFile(_ name: String) throws -> String {
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // app
         .deletingLastPathComponent() // the repository root
-    return try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+    return try auditSource(root.appendingPathComponent(name).path, claim: .sourceStructure).text
 }

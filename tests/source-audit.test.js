@@ -21,6 +21,145 @@ const swiftFilesUnder = directory => fs.readdirSync(directory, { withFileTypes: 
 
 const lineAt = (source, offset) => source.slice(0, offset).split('\n').length;
 
+const skipSwiftString = (source, start) => {
+  let cursor = start;
+  while (source[cursor] === '#') cursor += 1;
+  if (source[cursor] !== '"') return start + 1;
+  const hashes = cursor - start;
+  const multiline = source.startsWith('"""', cursor);
+  const opening = '"'.repeat(multiline ? 3 : 1);
+  const closing = opening + '#'.repeat(hashes);
+  const end = source.indexOf(closing, cursor + opening.length);
+  return end === -1 ? source.length : end + closing.length;
+};
+
+const swiftTokens = source => {
+  const tokens = [];
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === '/' && next === '/') {
+      const newline = source.indexOf('\n', index + 2);
+      index = newline === -1 ? source.length : newline + 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      let depth = 1;
+      index += 2;
+      while (index < source.length && depth > 0) {
+        if (source.startsWith('/*', index)) {
+          depth += 1;
+          index += 2;
+        } else if (source.startsWith('*/', index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+    if (character === '"' || (character === '#' && next === '"')) {
+      index = skipSwiftString(source, index);
+      continue;
+    }
+    if (/[A-Za-z_]/.test(character)) {
+      const start = index;
+      index += 1;
+      while (/[A-Za-z0-9_]/.test(source[index] ?? '')) index += 1;
+      tokens.push({ value: source.slice(start, index), start, end: index });
+      continue;
+    }
+    tokens.push({ value: character, start: index, end: index + 1 });
+    index += 1;
+  }
+  return tokens;
+};
+
+const endOfArgument = (source, start) => {
+  const stack = [];
+  let index = start;
+  while (index < source.length) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (character === '/' && next === '/') {
+      const newline = source.indexOf('\n', index + 2);
+      index = newline === -1 ? source.length : newline + 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      let depth = 1;
+      index += 2;
+      while (index < source.length && depth > 0) {
+        if (source.startsWith('/*', index)) {
+          depth += 1;
+          index += 2;
+        } else if (source.startsWith('*/', index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+    if (character === '"' || (character === '#' && next === '"')) {
+      index = skipSwiftString(source, index);
+      continue;
+    }
+    if ('([{'.includes(character)) {
+      stack.push(character);
+    } else if (')]}'.includes(character)) {
+      if (stack.length === 0) return index;
+      stack.pop();
+    } else if (character === ',' && stack.length === 0) {
+      return index;
+    }
+    index += 1;
+  }
+  return source.length;
+};
+
+const readTargetKind = (source, token, argumentEnd, receiver) => {
+  const functionStart = source.lastIndexOf('func ', token.start);
+  const context = functionStart === -1 ? '' : source.slice(functionStart, argumentEnd);
+  const expression = source.slice(token.end + 1, argumentEnd);
+  const evidence = `${expression}\n${context}`;
+  const dataPath = /(?:\/Resources\/|\/_locales\/|\/_i18n\/|\.strings\b|\.plist\b|\.json\b|\.toml\b|\/marker\b)/i;
+  const sourcePath = /(?:\/Sources(?:\/|\b)|\.swift\b|\.js\b|\.sh\b)/i;
+  if (dataPath.test(evidence)) return 'data';
+  if (sourcePath.test(evidence)) return 'source';
+  if (receiver === 'Data') return 'data';
+  return 'unknown';
+};
+
+const sourceReadSitesIn = (file, source) => {
+  const tokens = swiftTokens(source);
+  const sites = [];
+  tokens.forEach((token, index) => {
+    // The read family is recognized by its argument-label grammar, not by a list of API names.
+    // `contentsOfDirectory` is a directory enumeration, not a file-content read.
+    if (!token.value.startsWith('contentsOf') || token.value.endsWith('Directory')) return;
+    const colon = tokens[index + 1];
+    if (!colon || colon.value !== ':') return;
+    const argumentEnd = endOfArgument(source, colon.end);
+    const receiver = tokens[index - 2]?.value;
+    sites.push({
+      file: path.relative(repository, file),
+      line: lineAt(source, token.start),
+      label: token.value,
+      receiver,
+      kind: readTargetKind(source, token, argumentEnd, receiver),
+    });
+  });
+  return sites;
+};
+
 const endOfCall = (source, open) => {
   let depth = 0;
   let quote = null;
@@ -95,6 +234,10 @@ const sourceAuditSites = () => swiftFilesUnder(swiftTests).flatMap(file => (
   sourceAuditSitesIn(file, fs.readFileSync(file, 'utf8'))
 ));
 
+const sourceReadSites = () => swiftFilesUnder(swiftTests).flatMap(file => (
+  sourceReadSitesIn(file, fs.readFileSync(file, 'utf8'))
+));
+
 const validateSites = (sites, allowedClaims) => {
   for (const site of sites) {
     assert.equal(site.claims.length, 1, `${site.file}:${site.line} must declare exactly one claim`);
@@ -125,4 +268,20 @@ test('every derived source-audit site carries a typed claim', () => {
     /must declare exactly one claim/,
     'an unclaimed source reader must be rejected by the same derived check',
   );
+});
+
+test('every lexical program-source read goes through the typed door', () => {
+  const sites = sourceReadSites();
+  const sourceReads = sites.filter(site => site.kind === 'source');
+  // An indirect path is deliberately outside this lexical property; it is reported in the
+  // context entry as a human-review residual rather than guessed into source or data.
+  assert.deepEqual(sourceReads, [], `raw program-source reads bypass auditSource: ${JSON.stringify(sourceReads)}`);
+
+  const fixture = `
+    let source = try String(contentsOf: URL(fileURLWithPath: "app/Sources/App/Installer.swift"), encoding: .utf8)
+    let data = try Data(contentsOf: URL(fileURLWithPath: "app/Sources/App/Resources/en.lproj/Localizable.strings"))
+    let script = try String(contentsOfFile: "extension/defaults.js", encoding: .utf8)
+  `;
+  const fixtureSites = sourceReadSitesIn('synthetic.swift', fixture);
+  assert.deepEqual(fixtureSites.map(site => site.kind), ['source', 'data', 'source']);
 });

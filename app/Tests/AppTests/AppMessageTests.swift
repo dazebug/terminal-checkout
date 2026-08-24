@@ -1,4 +1,5 @@
 import Core
+import TestSupport
 import XCTest
 @testable import App
 
@@ -259,5 +260,5 @@ private func repoPath(_ name: String) -> String {
 }
 
 private func repoSource(_ name: String) throws -> String {
-    try String(contentsOf: URL(fileURLWithPath: repoPath(name)), encoding: .utf8)
+    try auditSource(repoPath(name), claim: .sourceLiteral).text
 }

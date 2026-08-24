@@ -1,4 +1,5 @@
 import Core
+import TestSupport
 import XCTest
 @testable import App
 
@@ -86,7 +87,7 @@ final class LocalizationCatalogTests: XCTestCase {
         let files = try swiftFiles(under: Self.appSources)
         XCTAssertGreaterThan(files.count, 1, "the source scan found almost nothing — check the path")
         return try files
-            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .map { try auditSource($0.path, claim: .sourceLiteral).text }
             .joined(separator: "\n")
     }
 
@@ -186,9 +187,10 @@ final class LocalizationCatalogTests: XCTestCase {
     /// A `String`-taking overload, or a call to the low-level lookup from somewhere else, would
     /// reopen the door without failing anything else in this file.
     func testAKeyCannotBeComputed() throws {
-        let localization = try String(
-            contentsOf: Self.appSources.appendingPathComponent("Localization.swift"), encoding: .utf8
-        )
+        let localization = try auditSource(
+            Self.appSources.appendingPathComponent("Localization.swift").path,
+            claim: .sourceStructure
+        ).text
         XCTAssertTrue(
             localization.contains("func localized(_ key: StaticString) -> String"),
             "the shorthand no longer takes a StaticString, so a key can be computed again"
@@ -216,7 +218,7 @@ final class LocalizationCatalogTests: XCTestCase {
         // The canonical file by its place in the tree, not by its name: excluding every file called
         // `Localization.swift` exempts one somebody adds in a subdirectory
         where pathInTree(file, under: Self.appSources) != "Localization.swift" {
-            let text = try String(contentsOf: file, encoding: .utf8)
+            let text = try auditSource(file.path, claim: .sourceLiteral).text
             // **The spelling is the language's, not this file's** (round 17 sweep): Swift permits
             // whitespace and a line break around the dot and before the parenthesis, so the exact
             // string this looked for was one of the ways to write the call rather than the way.
