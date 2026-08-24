@@ -29,7 +29,15 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const extension = path.join(__dirname, '..', 'extension');
-const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
+
+// **The only file capability this module has is reading, and it is injected.** The gate that used to
+// hold this file to being read-only listed four spellings of writing and missed `fs.writeFile`,
+// `fs.write`, `copyFileSync` and every rename-based replacement (review 39) — an authored blacklist
+// standing in for a property, which is the class this work keeps finding. So the property is
+// structural instead: everything here reads through one reader, and a test can swap it to see that
+// nothing else is reachable.
+const readOnlyFiles = { read: file => fs.readFileSync(file, 'utf8') };
+const read = name => readOnlyFiles.read(path.join(extension, name));
 
 // The extension's scripts are classic scripts that register into their global, so a context is all
 // they need — and a fresh one, so nothing here can be answered by something Node happened to define.
@@ -132,7 +140,7 @@ const main = () => {
   for (const tag of context.TC_I18N_LOCALES) {
     const { directory, messages } = deriveCatalogue(tag, context);
     const file = path.join(extension, '_locales', directory, 'messages.json');
-    if (fs.readFileSync(file, 'utf8') !== serialize(messages)) {
+    if (readOnlyFiles.read(file) !== serialize(messages)) {
       differences += 1;
       process.stderr.write(`_locales/${directory}/messages.json is not what _i18n/${tag}.js derives\n`);
     }
@@ -142,6 +150,8 @@ const main = () => {
 };
 
 module.exports = {
+  // Exported so a test can hand in its own reader and see that nothing else is reachable.
+  readOnlyFiles,
   loadExtensionI18n,
   deriveCatalogue,
   deriveMessage,

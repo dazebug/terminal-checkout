@@ -888,18 +888,36 @@ test('_locales is what _i18n derives — every name, and the bytes as committed'
   }
 });
 
-test('the derivation has no way to write, because the authority moved', () => {
+test('the derivation can only read, and that is a capability rather than a rule', () => {
   // **A3 retires the generator** (D167). While `_i18n` was canonical, deriving `_locales` by program
   // was the thing that made a wrong edit impossible to make twice; now `_locales` is what Chrome
   // reads, and a program pointing the other way would be a path for the frozen store to overwrite
-  // the live one. The name says checker and the code has to agree with the name.
-  const tool = fs.readFileSync(path.join(__dirname, '../tools/check-locales.js'), 'utf8');
-  const code = tool.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
-  for (const writer of ['writeFileSync', 'appendFileSync', 'createWriteStream', 'promises.writeFile']) {
-    assert.ok(!code.includes(writer), `the checker can still write: ${writer}`);
+  // the live one.
+  //
+  // **This used to be a blacklist of four spellings, and it was an overclaim** (review 39):
+  // `fs.writeFile`, `fs.write`, `copyFileSync` and every rename-based replacement went straight
+  // through it. An authored list of forbidden syntax standing in for a property is the class this
+  // work keeps finding, so the property is structural now — the checker takes its file access from
+  // one injected reader. Swap the reader and every read goes through it; there is nothing else it
+  // could reach.
+  const { readOnlyFiles, deriveCatalogue, loadExtensionI18n } = require('../tools/check-locales.js');
+  const original = readOnlyFiles.read;
+  const seen = [];
+  try {
+    readOnlyFiles.read = (file) => { seen.push(file); return original(file); };
+    const context = loadExtensionI18n();
+    deriveCatalogue('ko', context);
+  } finally {
+    readOnlyFiles.read = original;
   }
-  // ...and it is still the same derivation, not a second one — the gate above runs it
-  assert.ok(code.includes('deriveCatalogue'), 'the checker no longer derives anything to compare');
+  assert.ok(seen.length > 0, 'the derivation reached the filesystem some other way');
+  assert.ok(
+    seen.every(file => file.includes('/extension/')),
+    `the derivation read outside the extension: ${seen.filter(file => !file.includes('/extension/'))}`,
+  );
+  // The capability it was given has one verb. Anything it could write with would have to come from
+  // somewhere this module does not look.
+  assert.deepEqual(Object.keys(readOnlyFiles), ['read']);
 });
 
 test('both formats render the same bytes for every argument-bearing message', () => {
