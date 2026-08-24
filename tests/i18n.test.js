@@ -8,9 +8,10 @@ const vm = require('node:vm');
 const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
-// The derivation that writes `_locales`, imported so the gate below runs the generator rather
-// than a description of it — the same reason the liveness sweep extracts its predicate.
-const { loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS } = require('../tools/derive-locales.js');
+// The derivation `_locales` came from, imported so the gate below runs it rather than a
+// description of it — the same reason the liveness sweep extracts its predicate. Since A3 it
+// only compares: the authority moved to `_locales`, so a generator would be a way back.
+const { loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS } = require('../tools/check-locales.js');
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
 // classic script, run with **no `chrome` global in sight**. That is the constraint the whole
@@ -804,6 +805,20 @@ test('_locales is what _i18n derives — every name, and the bytes as committed'
       `${directory} does not carry one name per logical id`,
     );
   }
+});
+
+test('the derivation has no way to write, because the authority moved', () => {
+  // **A3 retires the generator** (D167). While `_i18n` was canonical, deriving `_locales` by program
+  // was the thing that made a wrong edit impossible to make twice; now `_locales` is what Chrome
+  // reads, and a program pointing the other way would be a path for the frozen store to overwrite
+  // the live one. The name says checker and the code has to agree with the name.
+  const tool = fs.readFileSync(path.join(__dirname, '../tools/check-locales.js'), 'utf8');
+  const code = tool.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+  for (const writer of ['writeFileSync', 'appendFileSync', 'createWriteStream', 'promises.writeFile']) {
+    assert.ok(!code.includes(writer), `the checker can still write: ${writer}`);
+  }
+  // ...and it is still the same derivation, not a second one — the gate above runs it
+  assert.ok(code.includes('deriveCatalogue'), 'the checker no longer derives anything to compare');
 });
 
 test('both formats render the same bytes for every argument-bearing message', () => {
