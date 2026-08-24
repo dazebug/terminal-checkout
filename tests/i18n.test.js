@@ -748,8 +748,30 @@ const attributeSitesIn = source => ATTRIBUTE_SITES
 // Not the position: line numbers churn under every edit above them, and a gate that fires on
 // unrelated change is a gate somebody switches off (the criterion item 7 was written to; D145 chose
 // role over position for the same reason). What is left indistinguishable is two sites in one file
-// writing the same attribute with the **same** value — and that trade moves no text.
+// writing the same attribute with the **same** value — six sites in three such pairs today, and a
+// trade between two of them moves no text.
 const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
+
+// **A receiver is any expression, not an identifier and dots.** `document.querySelector('#x')[name]`
+// is a plausible accident and it was read by neither pattern (round 29 review, D169 settled the
+// scope: it is in). A chain of `.name`, `(…)` and `[…]` covers what people write to reach an element;
+// each alternative starts with a different character, so there is nothing here to backtrack over.
+// `(?<![\w$.])` is what keeps the receiver whole — without the dot, `rows[0].node[name]` was reported
+// as `node[name]`, which names a receiver that is not the one being written through.
+const COMPUTED_RECEIVER = String.raw`[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^()]*\)|\[[^\[\]]*\])*`;
+
+// Both shapes of "an attribute name this scan cannot read", in one function, so that what the gate
+// refuses is a value a fixture can produce rather than a `match(…)` inside a loop over the corpus —
+// the corpus has none of either (measured: 0 in 13 markup files), which is precisely why the guards
+// need a fixture to be alive at all (D154). The two are kept apart because their rules differ, and
+// unifying them would quietly give `setAttribute` the declaration escape it has never had.
+const computedNameWritesIn = source => ({
+  setAttribute: [...source.matchAll(/\.setAttribute\s*\(\s*([^'"`\s][^,)]*)/g)]
+    .map(match => `setAttribute(${match[1].trim()}, …)`),
+  bracket: [...source.matchAll(
+    new RegExp(String.raw`(?<![\w$.])(${COMPUTED_RECEIVER})\s*\[\s*([^\]'"\`][^\]]*)\]\s*\+?=\s*['"\`]`, 'g'),
+  )].map(match => `${match[1]}[${match[2].trim()}]`),
+});
 
 // Which parts of a value ship as text and which are computed. Brace-aware: `${count > 1 ? … : ''}`
 // carries braces of its own, and stopping at the first `}` would read the tail of an interpolation
@@ -866,6 +888,37 @@ test('two sites in one file that write the same attribute are told apart by what
   ]);
 });
 
+test('a write whose attribute name the scan cannot read is refused, in every receiver shape', () => {
+  // **The corpus cannot keep these guards alive.** Nothing in this extension writes an attribute
+  // through a computed name — measured, 0 across the 13 markup files — so deleting either guard left
+  // the suite green: a guard nothing can fail is a dead guard, and this loop has been bitten by that
+  // class twice (D154). The fixture below is what fails without them, one line per refusal.
+  const refused = (source) => {
+    const { setAttribute, bracket } = computedNameWritesIn(source);
+    return [...setAttribute, ...bracket];
+  };
+  // `setAttribute` is the flat case: the call itself is the evidence that an attribute is written, so
+  // a name that is not a literal is refused whatever the value turns out to be.
+  assert.deepEqual(refused("el.setAttribute(name, 'prose');"), ['setAttribute(name, …)']);
+  // Brackets carry no such evidence — the receiver could be a plain object — so what is refused is
+  // the part that can be established from outside: a **literal** going into a name nobody can read
+  // (D150). All four receiver shapes, because the reader that read only the first two is the finding:
+  assert.deepEqual(refused("el[name] = 'prose';"), ['el[name]']);
+  assert.deepEqual(refused("page.form.el[name] = 'prose';"), ['page.form.el[name]']);
+  assert.deepEqual(refused("rows[0].node[name] = 'prose';"), ['rows[0].node[name]']);
+  // **The one round 29 named**, and the reason this is not a paraphrase: a receiver that ends in a
+  // call was read by neither pattern, so this exact line passed the gate.
+  assert.deepEqual(
+    refused("document.querySelector('#x')[name] = 'prose';"),
+    ["document.querySelector('#x')[name]"],
+  );
+  // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
+  // above reads it as an ordinary site — and a computed write with no literal in it carries no text
+  // to classify, which is the same line that leaves `'ti' + 'tle'` alone (D147).
+  assert.deepEqual(refused("el['title'] = 'read as a site, not as a computed name';"), []);
+  assert.deepEqual(refused('counts[key] = total;'), []);
+});
+
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
   // **The scan looked at values and at interpolations, never at the static markup** (round 15
   // review). A `placeholder`, `title`, `aria-label` or `alt` written straight into a tag is
@@ -914,8 +967,13 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     // evidence that an attribute is being written. **A name assembled out of pieces (`'ti' + 'tle'`)
     // is not refused**, and that is the threat model above rather than an oversight: nobody writes
     // that by mistake, and against somebody writing it on purpose the gate has no standing (D147).
-    assert.equal(
-      source.match(/\.setAttribute\s*\(\s*[^'"`\s]/g), null,
+    //
+    // **Both refusals are read by `computedNameWritesIn`, the same function the fixture pins.** They
+    // find nothing here and are meant to: the fixture is what makes them fail, and before it existed
+    // either guard could be deleted with the suite staying green (D154).
+    const computed = computedNameWritesIn(source);
+    assert.deepEqual(
+      computed.setAttribute, [],
       `${file} sets an attribute whose name it computes — the scan cannot see what it writes`,
     );
     // **The same rule, spelled with brackets** (round 27 review). `el[name] = …` was left unread
@@ -927,8 +985,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     // expression too there is nothing here to classify — no name, no words — and that is where the
     // same line falls that leaves `'ti' + 'tle'` alone. Deciding whether the receiver is an element
     // would take knowing what `el` is, and a lint does not get a parser (D147).
-    for (const match of source.matchAll(/(?<![\w$])(\w+(?:\.\w+)*)\s*\[\s*([^\]'"`][^\]]*)\]\s*\+?=\s*['"`]/g)) {
-      const write = `${match[1]}[${match[2].trim()}]`;
+    for (const write of computed.bracket) {
       assert.ok(
         Object.hasOwn(DECLARED_COMPUTED_WRITES, write),
         `${file} writes a literal into ${write}, whose name this scan cannot read — spell the name `
