@@ -34,6 +34,15 @@ const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('
 const domElement = (id = '') => {
   const element = {
     id,
+    // Nodes this one handed out, memoised, so an insertion through an ancestor is observable.
+    relatives: new Map(),
+    // A parent, because the page adjusts the row it inserted into. Lazy so the graph is not built
+    // eagerly — and a test must read fields rather than serialise this: walking it builds ancestors
+    // until the stack ends (measured, `Maximum call stack size exceeded`).
+    get parentElement() {
+      if (!element.relatives.has('parent')) element.relatives.set('parent', domElement(`${id}<parent`));
+      return element.relatives.get('parent');
+    },
     dataset: {},
     style: {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -55,10 +64,21 @@ const domElement = (id = '') => {
     cloneNode() { return domElement(id); },
     remove() {},
     insertBefore(child) { element.children.push(child); return child; },
+    // The page inserts relative to a node it found, so this has to land somewhere a test can see.
+    insertAdjacentElement(_where, child) { element.children.push(child); return child; },
+    insertAdjacentHTML(_where, html) { element.children.push({ html }); },
     querySelector: () => domElement(),
-    querySelectorAll: () => [],
-    closest: () => null,
-    getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+    querySelectorAll: selector => [domElement(String(selector))],
+    // `closest` answers with a node of its own rather than null: null sent every insertion down the
+    // legacy branch and then into a sibling nobody could see.
+    closest: (selector) => {
+      const key = `closest(${selector})`;
+      if (!element.relatives.has(key)) element.relatives.set(key, domElement(key));
+      return element.relatives.get(key);
+    },
+    // A visible box, because the content script picks the link that is on screen: a zero rect made
+    // every candidate invisible and left the insertion path unreachable.
+    getBoundingClientRect: () => ({ top: 100, left: 0, width: 120, height: 20, bottom: 120, right: 120 }),
     setAttribute() {},
     getAttribute: () => null,
     removeAttribute() {},
@@ -69,16 +89,44 @@ const domElement = (id = '') => {
   return element;
 };
 
-const domDocument = () => {
+// **Whether our own buttons are already on the page is a mode, not a constant.** The double answered
+// every `querySelector`, so the content script always saw a button of ours and never took the path
+// that inserts one — which is the *normal* first-render condition and the one the mixed generations
+// have to survive (review 39). `ourButtonsPresent: false` makes the selectors we use for our own
+// nodes answer null while the page's own structure still answers.
+// Read out of `content.js` rather than guessed: the first version of this pattern matched none of
+// the classes this extension actually uses, so every run still answered "a button of mine is
+// already here" and the insertion path — the normal first render — stayed unexercised.
+const OUR_SELECTORS = /terminal-open-btn|terminal-cmd-btn|terminal-issue-btn/;
+
+const domDocument = ({ ourButtonsPresent = true } = {}) => {
+  // **The same selector answers with the same node.** A fresh element per query is not a page: an
+  // insertion into the node a script just found would be unobservable, which is how the first-render
+  // assertion came to look in the wrong place. Memoising is closer to a document and is what lets a
+  // test see what was inserted.
+  const nodes = new Map();
+  const answer = (selector) => {
+    const key = String(selector);
+    if (!ourButtonsPresent && OUR_SELECTORS.test(key)) return null;
+    if (!nodes.has(key)) nodes.set(key, domElement(key));
+    return nodes.get(key);
+  };
   const document = {
+    // Everything the page was handed, so a test can ask what ended up in it.
+    inspectNodes: () => [...nodes.values()].flatMap(node => [node, ...node.relatives.values()]),
     documentElement: domElement('html'),
     body: domElement('body'),
     head: domElement('head'),
     title: '',
     readyState: 'complete',
-    getElementById: id => domElement(id),
-    querySelector: () => domElement(),
-    querySelectorAll: () => [],
+    getElementById: id => answer(id),
+    querySelector: selector => answer(selector),
+    // One node per selector rather than none: a page with no matches at all leaves every insertion
+    // path unreachable, which is what made the absent-buttons mode prove nothing.
+    querySelectorAll: (selector) => {
+      const node = answer(`all(${selector})`);
+      return node ? [node] : [];
+    },
     createElement: tag => domElement(tag),
     createTextNode: text => ({ text }),
     addEventListener() {},
@@ -157,11 +205,20 @@ const generationRealm = ({ skeleton = 'current', consumers = 'current', platform
   const { chrome, listeners, calls, local, sync } = chromeStub(platform);
   const fed = {};
   const context = vm.createContext({});
-  const feed = (name) => {
+  // **Every byte that goes into a decision is recorded, not only the ones that go into the VM.**
+  // `manifest.json` and `options.html` decide the load *order*, and the caller was reading them
+  // directly — so their recorded hashes sat unused while a changed script order or a stray space
+  // would have altered the fixture silently (review 39). D186 is about the bytes that were used;
+  // consulting a file is using it.
+  const readFed = (name) => {
     const file = resolve(name);
     const source = fs.readFileSync(file, 'utf8');
-    // The hash is of this string — the one about to be executed — and not of a re-read of the file.
     fed[path.relative(repository, file)] = sha256(source);
+    return { file, source };
+  };
+  const feed = (name) => {
+    const { file, source } = readFed(name);
+    // The hash is of this string — the one about to be executed — and not of a re-read of the file.
     vm.runInContext(source, context, { filename: file });
   };
   Object.assign(context, {
@@ -175,13 +232,19 @@ const generationRealm = ({ skeleton = 'current', consumers = 'current', platform
     MutationObserver: class { observe() {} disconnect() {} },
     importScripts: (...names) => names.forEach(feed),
     fetch: async () => ({ ok: true, json: async () => ({}) }),
+    // Platform globals the scripts parse and measure with. Without `URL`, `pageTargetOfUrl` answered
+    // null for every page, so the content script had nothing to insert into — a harness gap that read
+    // as "the page drew nothing".
+    URL,
+    URLSearchParams,
+    getComputedStyle: () => ({ overflowX: 'visible', display: 'block' }),
     // The page's own event surface, and the two element constructors this page builds by hand.
     addEventListener() {},
     removeEventListener() {},
     Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     Image: class {},
   });
-  const document = domDocument();
+  const document = domDocument(platform);
   Object.assign(context, {
     document,
     location: document.location,
@@ -201,6 +264,8 @@ const generationRealm = ({ skeleton = 'current', consumers = 'current', platform
     sync,
     fed,
     feed,
+    // For the inputs that are consulted rather than executed: same recording, no evaluation.
+    read: name => readFed(name).source,
     run: expression => vm.runInContext(expression, context),
   };
 };

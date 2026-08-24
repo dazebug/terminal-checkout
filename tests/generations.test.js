@@ -34,19 +34,22 @@ const BASELINE_HASHES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture
 // own list with `importScripts`, the content script's list is the manifest's, and the options page's
 // is the script tags in its markup — so a consumer that starts loading something new is loaded that
 // way here too, rather than against a list in a test that would go stale silently.
-const loadOrder = (consumer, side) => {
-  const directory = side === 'baseline' ? path.join(__dirname, 'fixtures', 'baseline') : path.join(__dirname, '..', 'extension');
+// **Read through the realm, so the inputs that decide the order are pinned like the ones that run.**
+// These two were being read straight off the disk, which left their recorded hashes unused — a
+// changed script order or a stray space would have altered the fixture with nothing to say so
+// (review 39). `realm.read` records the same way `realm.feed` does; it just does not evaluate.
+const loadOrder = (realm, consumer) => {
   if (consumer === 'background.js') return ['background.js'];  // it imports its own dependencies
   if (consumer === 'content.js') {
-    const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
+    const manifest = JSON.parse(realm.read('manifest.json'));
     return manifest.content_scripts.flatMap(entry => entry.js);
   }
-  const markup = fs.readFileSync(path.join(directory, 'options.html'), 'utf8');
+  const markup = realm.read('options.html');
   return [...markup.matchAll(/<script src="([^"]+)"><\/script>/g)].map(match => match[1]);
 };
 
-const load = (realm, consumer, side) => {
-  for (const file of loadOrder(consumer, side)) realm.feed(file);
+const load = (realm, consumer) => {
+  for (const file of loadOrder(realm, consumer)) realm.feed(file);
 };
 
 const CONSUMERS = ['background.js', 'content.js', 'options.js'];
@@ -77,7 +80,7 @@ test('every generation pairing loads, and the baseline it loads is the pinned ar
   for (const { skeleton, consumers, what } of PAIRINGS) {
     for (const consumer of CONSUMERS) {
       const realm = generationRealm({ skeleton, consumers, platform: platformFor() });
-      load(realm, consumer, consumers);
+      load(realm, consumer);
       // Nothing here asserts a file list. What is asserted is that the combination ran: a symbol the
       // other generation does not provide would have thrown by now.
       assert.ok(Object.keys(realm.fed).length > 0, `${what}: ${consumer} loaded nothing`);
@@ -90,9 +93,18 @@ test('every generation pairing loads, and the baseline it loads is the pinned ar
       }
     }
   }
-  // ...and the pin covers every baseline file, not only the ones some pairing happened to load
-  const missing = Object.keys(BASELINE_HASHES).filter(file => !fs.existsSync(path.join(__dirname, '..', file)));
-  assert.deepEqual(missing, [], 'the pin names a baseline artifact that is not in the tree');
+  // ...and every pinned artifact was **verified**, not merely present. Existence was the old check and
+  // says nothing about the bytes (review 39): a fixture could drift while its hash sat unread. So the
+  // pin is walked and each entry compared against what a realm hands out.
+  const auditor = generationRealm({ skeleton: 'baseline', consumers: 'baseline', platform: platformFor() });
+  for (const [file, hash] of Object.entries(BASELINE_HASHES)) {
+    auditor.read(file.replace('tests/fixtures/baseline/', ''));
+    assert.equal(auditor.fed[file], hash, `${file} is not the baseline artifact it was pinned as`);
+  }
+  assert.equal(
+    Object.keys(auditor.fed).length, Object.keys(BASELINE_HASHES).length,
+    'the pin and the fixture directory disagree about how many artifacts there are',
+  );
 });
 
 test('a native response settles while its bookkeeping is deliberately unfinished', async () => {
@@ -115,7 +127,7 @@ test('a native response settles while its bookkeeping is deliberately unfinished
       nativeResponse: () => ({ success: true, locale: 'ja', locale_install_id: 'install-a', locale_epoch: 3 }),
     },
   });
-  load(realm, 'background.js', 'current');
+  load(realm, 'background.js');
   const outcome = realm.run('sendToNativeHost({ command_template: "z {repo}", variables: {} })');
   const settled = await outcome;
   assert.equal(settled.success, true, 'the command result waited for the bookkeeping');
@@ -137,7 +149,7 @@ test('a refused command stays exactly that refusal, whatever the bookkeeping doe
       nativeResponse: () => ({ success: false, error: 'Variable {repo} not provided' }),
     },
   });
-  load(realm, 'background.js', 'current');
+  load(realm, 'background.js');
   await assert.rejects(
     realm.run('sendToNativeHost({ command_template: "z {repo}", variables: {} })'),
     /Variable \{repo\} not provided/,
@@ -159,7 +171,7 @@ test('bookkeeping that fails, synchronously or asynchronously, changes and delay
         nativeResponse: () => ({ success: true, locale: 'ko', locale_install_id: 'install-b', locale_epoch: 1 }),
       },
     });
-    load(realm, 'background.js', 'current');
+    load(realm, 'background.js');
     const settled = await realm.run('sendToNativeHost({ command_template: "z {repo}", variables: {} })');
     assert.equal(settled.success, true, `bookkeeping failing ${how} changed the command result`);
     await drained();
@@ -172,7 +184,7 @@ test('the deferred boundaries run: a locale notification and a storage notificat
     // The content script's locale notification — the message listener is registered at load and the
     // work behind it is deferred, which is exactly where an initialization-only matrix sees nothing.
     const content = generationRealm({ skeleton, consumers, platform: platformFor() });
-    load(content, 'content.js', consumers);
+    load(content, 'content.js');
     assert.ok(content.listeners.message.length > 0, `${what}: content.js registered no message listener`);
     for (const listener of content.listeners.message) {
       listener({ action: 'localeChanged', locale: 'ja' }, {}, () => {});
@@ -181,7 +193,7 @@ test('the deferred boundaries run: a locale notification and a storage notificat
 
     // The options page's storage notification, likewise.
     const options = generationRealm({ skeleton, consumers, platform: platformFor() });
-    load(options, 'options.js', consumers);
+    load(options, 'options.js');
     assert.ok(options.listeners.storageChanged.length > 0, `${what}: options.js registered no storage listener`);
     for (const listener of options.listeners.storageChanged) {
       listener({ buttons: { newValue: [] } }, 'sync');
@@ -205,7 +217,7 @@ test('what the page drew and what the document says are the same catalogue, in e
   for (const { skeleton, consumers, what } of PAIRINGS) {
     for (const directory of ['en', 'ja', 'zh_TW']) {
       const realm = generationRealm({ skeleton, consumers, platform: platformFor(directory) });
-      load(realm, 'options.js', consumers);
+      load(realm, 'options.js');
       await drained();
       const tag = realm.context.document.documentElement.lang;
       const title = realm.context.document.title;
@@ -221,6 +233,47 @@ test('what the page drew and what the document says are the same catalogue, in e
         `${what} (${directory}): the page drew ${JSON.stringify(drawn)} while calling itself ${tag}`,
       );
       assert.ok(!drawn.startsWith('ext'), `${what} (${directory}): a raw key reached the title`);
+    }
+  }
+});
+
+test('with our buttons absent, a failing cache read still draws one in the chosen catalogue', async () => {
+  // **Documenting the swallow was not enough** (review 39, answering our own residual). The
+  // first-render gate turns every preparation failure into success, so "driven and nothing escaped"
+  // proves neither compatibility nor rendering — and the DOM double compounded it by answering every
+  // query, so the content script always saw a button of ours and never took the insertion path at
+  // all. That path is the *normal* first render.
+  //
+  // So: our buttons absent, the cache read failing, and the assertion is about what reached the page.
+  for (const { skeleton, consumers, what } of PAIRINGS) {
+    const realm = generationRealm({
+      skeleton,
+      consumers,
+      platform: {
+        ...platformFor('ja'),
+        ourButtonsPresent: false,
+        holdLocalGet: () => Promise.reject(new Error('the cache could not be read')),
+      },
+    });
+    load(realm, 'content.js');
+    await drained();
+    await drained();
+    const inserted = [
+      ...realm.context.document.inspectNodes(),
+      realm.context.document.body,
+    ].flatMap(node => node.children);
+    assert.ok(
+      inserted.length > 0,
+      `${what}: nothing was inserted when the cache read failed and no button of ours was present`,
+    );
+    // Read the fields rather than serialising the graph: the double's `parentElement` is lazy, so a
+    // deep walk builds ancestors forever (measured — `Maximum call stack size exceeded`).
+    const words = inserted
+      .flatMap(node => [node.title, node.textContent, node.getAttribute && node.getAttribute('aria-label')])
+      .filter(text => typeof text === 'string' && text.length > 0);
+    assert.ok(words.length > 0, `${what}: what was inserted carries no readable text`);
+    for (const text of words) {
+      assert.ok(!/^ext[._]/i.test(text), `${what}: a raw message id reached the page: ${text}`);
     }
   }
 });
