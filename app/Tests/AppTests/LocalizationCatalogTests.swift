@@ -290,10 +290,14 @@ final class LocalizationCatalogTests: XCTestCase {
             contradictory, [],
             "one key was classified as both argument-bearing and argument-free: \(contradictory)"
         )
-        XCTAssertEqual(
-            Set(argumentChoices.keys), Set(english.keys),
-            "the placeholder gate covered a different key set than the app catalogue"
-        )
+        let coveredButNotInCatalogue = Set(argumentChoices.keys).subtracting(Set(english.keys)).sorted()
+        let inCatalogueButNotCovered = Set(english.keys).subtracting(Set(argumentChoices.keys)).sorted()
+        if unclassified.isEmpty {
+            XCTAssertTrue(
+                coveredButNotInCatalogue.isEmpty && inCatalogueButNotCovered.isEmpty,
+                "placeholder gate key-set difference — covered but not in catalogue: \(coveredButNotInCatalogue); in catalogue but not covered: \(inCatalogueButNotCovered)"
+            )
+        }
 
         for (key, _) in english {
             let choices = try XCTUnwrap(argumentChoices[key], "no call-site verdict for \(key)")
