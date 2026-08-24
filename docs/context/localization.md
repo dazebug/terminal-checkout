@@ -19,7 +19,8 @@ That choice forces `exclude: ["Resources"]` in `Package.swift`. SwiftPM demands 
 ## The app owns the language, and it flows one way to the extension
 
 **Type:** decision
-**Status:** active
+**Status:** superseded — see "Each surface follows its own platform" below
+**Superseded by:** user decision, 2026-08-24; ledger D152 in `docs/plans/i18n-five-locales.md`
 **Evidence:** confirmed
 **Source:** issue #24; ledger D8, D9 and D17 in `docs/plans/i18n-five-locales.md`; the picker in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** the setup window stops being the first screen a user sees, or the extension gains a way to answer before the app can
@@ -34,7 +35,25 @@ The requirement is one language across the app and the extension, chosen by the 
 
 `chrome.i18n` still has exactly two keys to itself, `name` and `description` in `manifest.json`, because nothing else can localize those.
 
-**State today:** both halves ship — the picker, the resolved locale and the published snapshot in the app, and the protocol that carries it plus the cache that consumes it in the extension.
+**State when this was reversed:** both halves shipped — the picker, the resolved locale and the published snapshot in the app, and the protocol that carried it plus the cache that consumed it in the extension. Eight rounds of review went into that machinery, including the fence and the single-writer envelope. It is being removed rather than fixed, and the entry below says why that is not a loss of the reasoning.
+
+## Each surface follows its own platform: macOS answers for the app, Chrome for the extension
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured — `chrome.i18n` has no per-extension language setting; the display language is `chrome://settings/languages`, checked on Chrome 151.0.7922.172)
+**Source:** user decision, 2026-08-24; ledger D152, D162, D163, D171, D172 in `docs/plans/i18n-five-locales.md`; `extension/i18n.js`, `extension/_locales/`
+**Revisit when:** Chrome gains a per-extension language setting, or the product decides that one language across both surfaces is worth a synchronization protocol again
+
+The extension asks `chrome.i18n` and the app asks macOS. Neither tells the other, and the two can differ — that is not a defect, it is what two platforms answer.
+
+**What that costs, stated plainly:** a user on Japanese macOS with English Chrome sees the app in Japanese and the buttons in English, with no single place to change both. That is the exact cost the previous decision existed to avoid.
+
+**What it buys** is the removal of everything the previous answer required: a locale query on the native socket, a cache with a generation and an install identity, a per-worker sequence fence, a serialized cache writer, a redraw queue, and a restart to move the app's own AppKit chrome. The property that machinery could never quite reach — one language, always, on both surfaces — was eventually-consistent by construction, and the interval where the two disagreed was documented rather than eliminated. Two platform answers disagree in the same places, without the machinery.
+
+**How the extension's own document language is decided.** Not by Chrome's configured UI language: Chrome may report a language we do not ship and then serve the English catalogue, and writing that language onto `<html lang>` declares English text as something else. Every catalogue carries one non-user-facing message whose value is its own tag, so the catalogue that answered names itself and `<html lang>` is that answer.
+
+**The two Chrome-namespace keys are unchanged** — `name` and `description` in `manifest.json` still come from `_locales`, as they always had to.
 
 ## The boundary for `AppleLanguages` is the first localization lookup, not the existence of AppKit
 

@@ -94,14 +94,30 @@ test('lookup happens when it is called, not when the file loads', () => {
   assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
 });
 
-test('the document language attribute is the resolved tag, not a translation', () => {
-  const doc = { documentElement: { lang: 'en' } };
-  assert.equal(applyDocumentLanguage('zh-Hant', doc), 'zh-Hant');
-  assert.equal(doc.documentElement.lang, 'zh-Hant');
-  // An unshipped tag lands where every unanswerable question lands
-  assert.equal(applyDocumentLanguage('fr', doc), 'en');
-  assert.equal(doc.documentElement.lang, 'en');
-  assert.equal(applyDocumentLanguage('ko', undefined), null, 'it reached for a document that is not there');
+test('the document language names the catalogue that answered, not the language Chrome is set to', () => {
+  // **Attack step 4**, and the reason `<html lang>` moves in the same commit as the lookup. Chrome
+  // may be set to a language we do not ship and still serve the English catalogue; writing what
+  // Chrome is set to would then declare English text as French. So the tag is asked of the
+  // catalogue that answered (D172).
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('ja'));
+  try {
+    const doc = { documentElement: { lang: 'en' } };
+    // The options page's other half of the same question: an app cache saying `ko` no longer has any
+    // say, because there is no extension-side locale left for it to move.
+    assert.equal(applyDocumentLanguage(doc), 'ja');
+    assert.equal(doc.documentElement.lang, 'ja');
+    assert.match(tr('ext.header.options'), /[ぁ-んァ-ン一-龥]/, 'the text drawn is not the catalogue that named itself');
+    // Chrome set to a language we do not ship: the English catalogue answers and says so, so the
+    // document says `en` — not `fr`, which is the accessibility defect in reverse.
+    installMessageBackend(catalogueBackend('en'));
+    assert.equal(applyDocumentLanguage(doc), 'en');
+    assert.equal(doc.documentElement.lang, 'en');
+  } finally {
+    installMessageBackend(previous);
+  }
+  // No document, nothing to say
+  assert.equal(applyDocumentLanguage(undefined), null, 'it reached for a document that is not there');
 });
 
 test('the key spaces are separate, whatever is in them', () => {

@@ -179,18 +179,22 @@ function tr(key, ...args) {
   return messageFor(chromeMessageId(key), args.map(String));
 }
 
-// The document's own language attribute — the one string here that is not a translation but the
-// resolved tag itself, which is why it is applied rather than looked up. Screen readers and
-// hyphenation read it, and a page that says `lang="en"` while rendering Korean is telling assistive
-// technology something false.
+// The document's own language attribute — **the catalogue Chrome actually served, asked rather than
+// computed** (D172).
 //
-// The locale is a parameter rather than something looked up here, so that every caller applies the
-// answer its own renderer just settled on — which is what lets the options page keep all of this
-// inside one serialized queue. `options.html` still ships `lang="en"` as the value before the first
-// paint decides.
-function applyDocumentLanguage(locale, documentRef = globalThis.document) {
+// The obvious source is Chrome's configured UI language, and it is wrong. Chrome may report `fr`
+// while `getMessage` falls back to the English catalogue, and `lang="fr"` over English text tells a
+// screen reader something false — the same defect this work exists to remove, pointing the other
+// way. Reimplementing Chrome's fallback here would be a second copy of somebody else's algorithm,
+// the shape this project has lost to before, so the answer comes from **a message every catalogue
+// carries whose value is its own tag**: whichever catalogue answered is the one that names itself.
+//
+// It takes no locale. The caller has nothing left to pass — there is no extension-side locale to
+// resolve — and a parameter would invite one back.
+function applyDocumentLanguage(documentRef = globalThis.document) {
   if (!documentRef || !documentRef.documentElement) return null;
-  const tag = TC_I18N_LOCALES.includes(locale) ? locale : TC_I18N_FALLBACK;
+  const tag = tr(TC_I18N_CATALOGUE_TAG_KEY);
+  if (!tag) return null;
   documentRef.documentElement.lang = tag;
   return tag;
 }
