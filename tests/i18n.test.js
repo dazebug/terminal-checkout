@@ -739,6 +739,18 @@ const attributeSitesIn = source => ATTRIBUTE_SITES
   }))
   .sort((left, right) => left.at - right.at);
 
+// **What a site is, for the list this gate pins.** `(file, attribute)` was the identity and it is a
+// multiset: eleven of the sixteen sites share that pair with another site, so a trade between two of
+// them leaves the expectation untouched — remove one, leave a write the scan cannot read where it
+// stood, add one back elsewhere, and the list is the list (round 29 review; the swap is the fixture
+// below). What fills the site is the thing that moves when text moves, so it belongs to the identity.
+//
+// Not the position: line numbers churn under every edit above them, and a gate that fires on
+// unrelated change is a gate somebody switches off (the criterion item 7 was written to; D145 chose
+// role over position for the same reason). What is left indistinguishable is two sites in one file
+// writing the same attribute with the **same** value — and that trade moves no text.
+const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
+
 // Which parts of a value ship as text and which are computed. Brace-aware: `${count > 1 ? … : ''}`
 // carries braces of its own, and stopping at the first `}` would read the tail of an interpolation
 // as text somebody forgot to translate. `null` is an interpolation that never closes.
@@ -820,6 +832,38 @@ test('the attribute scan reads every form on its list, and says so when it canno
   // has to be *in* the call. A lookup whose key arrives at run time returns whatever it returns.
   assert.ok(namesAMessage("t('ext.someKey')"), 'a call that names its key is a message');
   assert.ok(!namesAMessage('t(dynamicKey)'), 'a key that arrives at run time is not a checkable one');
+});
+
+test('two sites in one file that write the same attribute are told apart by what fills them', () => {
+  // **`(file, attribute)` is not an identity** (round 29 review). Fourteen of the sixteen sites in
+  // this extension share their pair with another site — `content.js title` twice, `options.js title`
+  // seven times, `options.js placeholder` five — and a count-preserving three-way swap moves text
+  // through the list without moving the list: take a site out, leave in its place a write whose name
+  // the scan cannot read, and put a site back somewhere else. The two sources below are that swap.
+  const identities = source => attributeSitesIn(source).map(site => siteIdentity('options.js', site)).sort();
+  const before = [
+    "row.placeholder = 'master';",
+    "field.placeholder = `${t('ext.field.claudeInput.placeholder')}`;",
+  ].join('\n');
+  const after = [
+    "document.querySelector('#row')[name] = 'Type a branch name';",
+    "field.placeholder = `${t('ext.field.claudeInput.placeholder')}`;",
+    "extra.placeholder = `${t('ext.field.tooltip.placeholder')}`;",
+  ].join('\n');
+  // This line is what keeps the fixture a *count-preserving* swap: by file and attribute name alone —
+  // the identity this replaces — the two sources are indistinguishable, which is the defect.
+  const byFileAndName = source => attributeSitesIn(source).map(site => `options.js ${site.name}`).sort();
+  assert.deepEqual(byFileAndName(before), byFileAndName(after));
+  // And by what fills each site they are not, in both directions: the literal that left is named, and
+  // the message that arrived is named.
+  assert.deepEqual(identities(before), [
+    "options.js placeholder = ${t('ext.field.claudeInput.placeholder')}",
+    'options.js placeholder = master',
+  ]);
+  assert.deepEqual(identities(after), [
+    "options.js placeholder = ${t('ext.field.claudeInput.placeholder')}",
+    "options.js placeholder = ${t('ext.field.tooltip.placeholder')}",
+  ]);
 });
 
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
@@ -904,25 +948,29 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // them move into unread syntax in silence; an exact count closed that and still fixed only
   // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
   // and sixteen is sixteen (round 27 review, measured: the suite stayed green through exactly that).
-  // File and attribute name are enough to make a trade visible, and stable under any edit that does
-  // not move a site. Changing this list is a reviewed edit: it says which attribute came or went.
-  assert.deepEqual(found.map(([file, site]) => `${file} ${site.name}`).sort(), [
-    'content.js title',
-    'content.js title',
-    'options.html placeholder',
-    'options.js aria-label',
-    'options.js placeholder',
-    'options.js placeholder',
-    'options.js placeholder',
-    'options.js placeholder',
-    'options.js placeholder',
-    'options.js title',
-    'options.js title',
-    'options.js title',
-    'options.js title',
-    'options.js title',
-    'options.js title',
-    'options.js title',
+  // **File and attribute name were not enough either** (round 29 review): three pairs repeat here and
+  // fourteen of these sixteen sites are in one, so a trade between two of them left this list
+  // identical — the swap the fixture above runs is exactly that trade. The identity
+  // is `siteIdentity` — the same function the fixture above pins — and multiplicity stays, because a
+  // set would stop noticing that one of two identical sites went away. Changing this list is a
+  // reviewed edit: it says which attribute came or went, and what filled it.
+  assert.deepEqual(found.map(([file, site]) => siteIdentity(file, site)).sort(), [
+    'content.js title = buttonConfig.label',
+    'content.js title = buttonConfig.label',
+    'options.html placeholder = main',
+    "options.js aria-label = ${t('ext.card.reorder.aria')}",
+    "options.js placeholder = ${t('ext.field.claudeInput.placeholder')}",
+    "options.js placeholder = ${t('ext.field.tooltip.placeholder')}",
+    'options.js placeholder = master',
+    'options.js placeholder = remy-worker',
+    'options.js placeholder = {cd} && claude',
+    "options.js title = ${t('ext.button.remove')}",
+    "options.js title = ${t('ext.button.remove')}",
+    "options.js title = ${t('ext.card.duplicate.tooltip')}",
+    "options.js title = ${t('ext.card.palette.tooltip', e)}",
+    "options.js title = ${t('ext.card.reorder.tooltip')}",
+    'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
+    'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
   ]);
   const declared = [];
   for (const [file, site] of found) {
