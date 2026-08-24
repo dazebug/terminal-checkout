@@ -1079,6 +1079,47 @@ test('a call-shaped string is not a reference, text consumer, or argument-supply
   assert.equal(refuseArgumentMismatches('fixture.js', source, { 'ext.a': 'takes nothing' }), 0);
 });
 
+test('a compatibility catalogue cannot witness its own keys as consumer references', () => {
+  const sources = new Map([
+    ['consumer.js', "tr('ext.used');"],
+    ['_i18n/en.js', 'const messages = { "ext.used": "used", "ext.orphan": "orphan" };'],
+  ]);
+  const consumers = [...sources.keys()].filter(file => roleOf(file) === 'speakingSource');
+  assert.deepEqual(consumers, ['consumer.js']);
+  const references = consumerReferenceKeysIn(consumers, file => sources.get(file));
+  assert.throws(
+    () => assertEveryCatalogueMessageIsReferenced(['ext.used', 'ext.orphan'], references),
+    /catalogue carries a message nothing asks for/,
+  );
+});
+
+test('message strings and calls are separate projections of every JavaScript lexical state', () => {
+  const source = [
+    "t('ext.single');",
+    'tr("ext.double");',
+    'tHTML(`ext.staticTemplate`);',
+    "// tr('ext.lineComment');",
+    '/* tr("ext.blockComment"); */',
+    "const ordinary = \"tr('ext.ordinaryString')\";",
+    "const pattern = /tr('ext.a')/;",
+    'const rendered = `${tr(\'ext.interpolation\')}`;',
+    'tr(`ext.${suffix}`);',
+  ].join('\n');
+  const expected = ['ext.single', 'ext.double', 'ext.staticTemplate', 'ext.interpolation'];
+  const strings = messageStringKeysIn(source);
+  const calls = messageCallsIn(source).map(({ name, key }) => `${name}:${key}`);
+  assert.deepEqual(strings, expected);
+  assert.deepEqual(calls, [
+    't:ext.single',
+    'tr:ext.double',
+    'tHTML:ext.staticTemplate',
+    'tr:ext.interpolation',
+  ]);
+  for (const { key } of messageCallsIn(source)) {
+    assert.ok(strings.includes(key), `${key} was a call without a string event`);
+  }
+});
+
 test('_locales is what _i18n derives — every name, and the bytes as committed', () => {
   // **A derivation, so that a wrong edit cannot be made twice.** Two stores holding the same 122
   // values are two places to edit, and an edit made identically in both satisfies any comparison
@@ -1885,9 +1926,15 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   );
   assert.match(refused("el[keys.title] = 'prose';"), /writes a literal into el\[keys\.title\]/);
   assert.match(refused("el[name] ??= 'user-facing prose';"), /writes a literal into el\[name\]/);
+  assert.match(refused("el[name] ??= /* fallback */ 'prose';"), /writes a literal into el\[name\]/);
+  assert.match(refused("el[name] |= 'prose';"), /writes a literal into el\[name\]/);
   assert.deepEqual(
     attributeSitesIn("el.title ||= 'user-facing prose';").map(site => site.text),
     ['user-facing prose'],
+  );
+  assert.deepEqual(
+    attributeSitesIn("el.title ||= /* fallback */ 'prose';").map(site => site.text),
+    ['prose'],
   );
   // A receiver it cannot describe is refused too, named for what it is rather than passed
   assert.match(refused("= 'prose';\n[name] = 'prose';"), /<unreadable receiver>\[name\]/);
