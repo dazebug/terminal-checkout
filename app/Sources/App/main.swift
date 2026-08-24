@@ -16,9 +16,9 @@ if CommandLine.arguments.contains("--headless-server") {
     exit(0)
 }
 
-// Capture the external system language order and apply AppKit's choice before `NSApplication.shared`.
-// The method must read that order before writing an explicit app override; `auto` later reads the
-// argument/global domains directly so this app's own value cannot become its system-language input.
+// Apply AppKit's choice before `NSApplication.shared`. When an explicit override is needed, the
+// method reads the external system order before writing it; `auto` later reads the argument/global
+// domains directly so this app's own value cannot become its system-language input.
 // Measured (D14), a write after AppKit's first localization lookup leaves that process in the old
 // language and only shows up on the next launch. The headless server above never reaches here on
 // purpose — it draws nothing, and a process with no window has no business rewriting defaults.
