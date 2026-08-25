@@ -198,6 +198,10 @@ test('the options page never finds a preset by its display name', () => {
     source.match(nameEquality) ?? [], [],
     'options.js contains an equality relation involving a preset display name',
   );
+  // Proves the assertion above is not vacuous before trusting it green. The pattern used to match
+  // only `.name ===`, so a lookup with the operands the other way round passed a check named for
+  // the class it was letting through; appending one to the real source and requiring a hit is how
+  // this oracle shows it can still fail.
   const reversedOperand = `${source}\nconst accidentalLookup = presets.find(p => name === p.name);`;
   assert.ok(
     (reversedOperand.match(nameEquality) ?? []).length > 0,

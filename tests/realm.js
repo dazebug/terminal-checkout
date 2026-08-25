@@ -188,6 +188,10 @@ const chromeStub = (options = {}) => {
     action: { onClicked: { addListener: fn => listeners.action.push(fn) } },
     i18n: {
       getUILanguage: () => options.uiLanguage || 'en',
+      // The empty string is Chrome's answer for an unknown id, not a stub that forgot to
+      // return something. Returning `id` here would be the convenient lie: a missing message
+      // would render as its own key, which looks like a label, so a consumer that never
+      // handles the empty case would pass every test here and draw `ext_button_add` at users.
       getMessage: (id, subs) => (options.getMessage ? options.getMessage(id, subs) : ''),
     },
   };

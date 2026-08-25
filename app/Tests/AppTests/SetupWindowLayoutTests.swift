@@ -64,6 +64,13 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// A screen with room to spare, for the tests whose subject is "the window tracks its
     /// content". Tall enough that no layout in this window reaches the clamp — the clamp has its
     /// own test, and mixing the two makes a pass depend on the display the suite runs on.
+    ///
+    /// **What makes it take effect is `visibleFrameOverride`'s setter, not this value.** These
+    /// tests assign it after the controller has already laid out, so on a clean tree the assignment
+    /// alone changes nothing and the window keeps measuring the real display — which is tall enough
+    /// here and short enough on CI that the difference only surfaced there. Assigning it now dirties
+    /// the stack, so an assignment cannot silently do nothing; if that setter ever becomes a plain
+    /// stored property again, every case in this file starts measuring whichever monitor ran it.
     private let roomyScreen = NSRect(x: 0, y: 0, width: 1600, height: 2000)
 
     /// **The window has to fit its content in every language it can be drawn in.** This is the only
