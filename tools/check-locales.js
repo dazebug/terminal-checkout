@@ -34,7 +34,7 @@ const extension = path.join(__dirname, '..', 'extension');
 // stores and calling that proof of non-editing.
 const CATALOGUE_BASELINE_HASHES = {
   compatibility: {
-    en: 'cafcae916db9a88cd43673d12c184f3c0e0723d6496ff801a7aea4b1612473a9',
+    en: '6a5b5914ccac14c75fd496f9014105a764d6b401aa719685aa06dc5404556924',
     ja: 'ac0ec5a45fba39fe645846387c44b9d4cde86b5b73dde5c32e9a6e89430bb530',
     ko: 'a7b23e0870c211dba0f4dd10dbd002c68cbc93782cd1e8603685ecea4a3f1f00',
     'zh-Hans': 'd0f503621e69e20e59cd2bdbff591e22bb6fb7c341cb6aeee6d80a0b1b7ae0f3',
