@@ -16,7 +16,11 @@ struct FittedContentLayoutPass {
     let fittingSize: NSSize
     let targetSize: NSSize
     let lastRequestedSize: NSSize?
-    let appliedContentSize: NSSize
+    /// The window content size at the measurement point, before the deferred application runs.
+    let contentSizeBeforeApplication: NSSize
+    let clipBounds: NSRect
+    /// Nil when the measured window content is not an NSScrollView.
+    let documentFrame: NSRect?
     let requestedSize: Bool
 }
 
@@ -44,6 +48,11 @@ final class FittedContentStackView: NSStackView {
     /// The size we last asked the window for. Without it, a clamped request (content taller than
     /// the screen) would be re-issued on every pass and layout would never settle.
     private var lastRequestedSize: NSSize?
+    private var lastVisibleFrame: NSRect?
+    private var windowUpdateScheduled = false
+    private var deferredWindowUpdateAllowed = true
+    private var centerAfterFirstWindowUpdate = true
+    private var afterWindowUpdate: (() -> Void)?
     /// Test-only observation. It is nil in the application, and never participates in layout.
     static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
     /// Stands in for the screen so a test can exercise the clamp without depending on whichever
@@ -53,6 +62,11 @@ final class FittedContentStackView: NSStackView {
     var visibleFrameOverride: NSRect? {
         didSet { needsLayout = true }
     }
+
+    /// Geometry can be unchanged while the main-queue update or a rebuild's restore callback is
+    /// still waiting. The shared test settle reads both parts before declaring a fixed point.
+    var deferredWindowUpdatePendingForTesting: Bool { windowUpdateScheduled }
+    var deferredWindowCompletionPendingForTesting: Bool { afterWindowUpdate != nil }
 
     override func layout() {
         super.layout()
@@ -67,22 +81,91 @@ final class FittedContentStackView: NSStackView {
             return
         }
         lastRequestedSize = target
-        window.setContentSize(target)
-        if let visible { Self.moveInside(visible, window) }
+        lastVisibleFrame = visible
+        scheduleWindowUpdate()
         reportLayoutPass(
             fittingSize: fittingSize, targetSize: target, requestedSize: true, window: window
         )
+    }
+
+    /// Apply the measured size after this layout pass has returned. At the point where `layout()`
+    /// runs, the scroll view has already laid itself out against the old window size; applying a
+    /// 155pt shrink there produced `win=702` with `clip=547`. `enclosingScrollView?.tile()` and
+    /// `needsLayout = true` were both measured and left that stale clip unchanged, so the window
+    /// update has to happen on the next main-queue turn instead.
+    private func scheduleWindowUpdate() {
+        guard !windowUpdateScheduled else { return }
+        windowUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.windowUpdateScheduled = false
+            guard self.deferredWindowUpdateAllowed,
+                  let window = self.window,
+                  window.contentView != nil,
+                  let target = self.lastRequestedSize
+            else {
+                self.afterWindowUpdate = nil
+                return
+            }
+
+            window.setContentSize(target)
+            if self.centerAfterFirstWindowUpdate {
+                window.center()
+                self.centerAfterFirstWindowUpdate = false
+            }
+            if let visible = self.lastVisibleFrame { Self.moveInside(visible, window) }
+
+            let completion = self.afterWindowUpdate
+            self.afterWindowUpdate = nil
+            if let completion {
+                // The replacement scroll view must answer to its new clip size before the
+                // language-change anchor and first responder are restored.
+                window.contentView?.layoutSubtreeIfNeeded()
+                completion()
+            }
+        }
+    }
+
+    /// A closed window may still be retained by its controller while a queued update is waiting.
+    /// Drop that update's state so reopening the same controller measures a fresh window.
+    func suspendDeferredWindowUpdates() {
+        deferredWindowUpdateAllowed = false
+        lastRequestedSize = nil
+        lastVisibleFrame = nil
+        afterWindowUpdate = nil
+    }
+
+    func resumeDeferredWindowUpdates() {
+        deferredWindowUpdateAllowed = true
+        lastRequestedSize = nil
+        lastVisibleFrame = nil
+        needsLayout = true
+    }
+
+    /// The caller uses this only after rebuilding the content, when `layout()` has already measured
+    /// the new stack. A queued size request defers the callback until that request and its clip
+    /// layout finish; if no request is queued, no window geometry is waiting to change, so restoring
+    /// immediately is safe and prevents a completion from depending on a future layout pass.
+    func afterNextWindowUpdate(_ completion: @escaping () -> Void) {
+        if windowUpdateScheduled {
+            afterWindowUpdate = completion
+        } else {
+            completion()
+        }
     }
 
     private func reportLayoutPass(
         fittingSize: NSSize, targetSize: NSSize, requestedSize: Bool, window: NSWindow
     ) {
         guard let probe = Self.layoutProbeForTesting else { return }
+        let scroll = window.contentView as? NSScrollView
         probe(FittedContentLayoutPass(
             fittingSize: fittingSize,
             targetSize: targetSize,
             lastRequestedSize: lastRequestedSize,
-            appliedContentSize: window.contentRect(forFrameRect: window.frame).size,
+            contentSizeBeforeApplication: window.contentRect(forFrameRect: window.frame).size,
+            clipBounds: scroll?.contentView.bounds ?? .zero,
+            documentFrame: scroll?.documentView?.frame,
             requestedSize: requestedSize
         ))
     }
@@ -174,6 +257,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var languageRestartButton: NSButton!
     private var languageNoteLabel: NSTextField!
     private var languageObserver: NSObjectProtocol?
+    private var windowHasClosed = false
     /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
     /// (`windowWillClose`), so the next time the window opens the state decides again.
     private var forceShowInstall = false
@@ -239,10 +323,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
-        // Settle the layout before centring: the window is sized from inside the layout pass, so
-        // centring the initial 600x640 frame would leave it off-centre once the real height lands.
+        // Let the stack measure once so its deferred update has a target. The first real content
+        // size centers the window; centring this placeholder 600x640 frame would be wrong after
+        // the measured height arrives on the next main-queue turn.
         window.contentView?.layoutSubtreeIfNeeded()
-        window.center()
         cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
@@ -264,11 +348,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        if windowHasClosed {
+            windowHasClosed = false
+            rootStack?.resumeDeferredWindowUpdates()
+        }
         cursor.start()
         refresh()
     }
 
     func windowWillClose(_ notification: Notification) {
+        windowHasClosed = true
+        rootStack?.suspendDeferredWindowUpdates()
         cursor.stop()
         forceShowInstall = false
         guideBlock.isHidden = true
@@ -310,7 +400,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // wraps onto a second line moves every card below it. Measuring against a document that is
         // about to change height would put the user a status line away from where they were.
         window.contentView?.layoutSubtreeIfNeeded()
-        restore(place, in: window)
+        rootStack?.afterNextWindowUpdate { [weak self, weak window] in
+            guard let self, let window, let currentWindow = self.window,
+                  currentWindow === window else { return }
+            self.restore(place, in: window)
+        }
     }
 
     /// Where the user was, in terms that outlive the views that held it: **a role and a card**,

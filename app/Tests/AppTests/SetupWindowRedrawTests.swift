@@ -62,23 +62,39 @@ final class SetupWindowRedrawTests: XCTestCase {
     private func makeScrollingController() throws -> (SetupWindowController, NSWindow, NSScrollView) {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
-        window.contentView?.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let expectedContentHeight = controller.rootStack.fittingSize.height / 2
         controller.rootStack.visibleFrameOverride =
-            NSRect(x: 0, y: 0, width: 1600, height: controller.rootStack.fittingSize.height / 2)
-        controller.rootStack.needsLayout = true
-        window.contentView?.layoutSubtreeIfNeeded()
+            NSRect(x: 0, y: 0, width: 1600, height: expectedContentHeight)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let document = try XCTUnwrap(scroll.documentView)
+        let actualWindowContentHeight = window.contentRect(forFrameRect: window.frame).height
+        let actualClipHeight = scroll.contentView.bounds.height
+        print(
+            "SETUP_REDRAW_FIXTURE windowContentHeight=\(actualWindowContentHeight) "
+                + "clipHeight=\(actualClipHeight) documentHeight=\(document.frame.height) "
+                + "expectedContentHeight=\(expectedContentHeight)"
+        )
+        XCTAssertEqual(
+            actualWindowContentHeight, expectedContentHeight, accuracy: 0.5,
+            "the fixture window did not apply the requested half-height"
+        )
+        XCTAssertEqual(
+            actualClipHeight, actualWindowContentHeight, accuracy: 0.5,
+            "the fixture clip did not follow the applied window height"
+        )
         XCTAssertGreaterThan(
-            try XCTUnwrap(scroll.documentView).frame.height, scroll.contentView.bounds.height,
+            document.frame.height, actualClipHeight,
             "the fixture does not scroll, so it cannot lose a scroll position"
         )
         return (controller, window, scroll)
     }
 
-    private func post(_ name: Notification.Name) {
+    private func post(_ name: Notification.Name, in window: NSWindow) {
         NotificationCenter.default.post(name: name, object: nil)
-        // The observers are registered on `.main`, so the block runs on the next turn of the loop
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        // The observer and the deferred window-size application both settle on the main loop.
+        _ = SetupWindowTestSupport.settle(window)
     }
 
     /// A language change replaces the content, which is what makes the strings created inside the
@@ -88,7 +104,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         let before = try XCTUnwrap(window.contentView)
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = try XCTUnwrap(window.contentView)
         XCTAssertFalse(before === after, "the content view was not rebuilt, so nothing re-read a string")
@@ -103,8 +119,8 @@ final class SetupWindowRedrawTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         let before = try XCTUnwrap(window.contentView)
 
-        post(.terminalCheckoutRequestHandled)
-        post(.terminalCheckoutToolsChecked)
+        post(.terminalCheckoutRequestHandled, in: window)
+        post(.terminalCheckoutToolsChecked, in: window)
 
         XCTAssertTrue(before === window.contentView, "an ordinary refresh replaced the view tree")
     }
@@ -115,11 +131,12 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// cleared before filling.
     func testRebuildingDoesNotDoubleTheRefillableSections() throws {
         let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
         let before = controller.refillableSectionsForTesting.map(\.arrangedSubviews.count)
         XCTAssertFalse(before.contains(0), "the fixture is empty — this would pass without checking anything")
 
-        post(.terminalCheckoutLanguageChanged)
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         XCTAssertEqual(controller.refillableSectionsForTesting.map(\.arrangedSubviews.count), before)
     }
@@ -146,7 +163,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         XCTAssertGreaterThan(editor.string.count, 4, "the fixture has no text to put a cursor into")
         editor.selectedRange = NSRange(location: 4, length: 0)
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
         XCTAssertTrue(field === after, "the field was recreated, so anything it held is gone")
@@ -182,7 +199,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         XCTAssertEqual(field.stringValue, "not a path", "the fixture never left a draft in the field")
         XCTAssertNotEqual(Settings.baseDirectory, "not a path", "the fixture stored it, so nothing is at risk")
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         XCTAssertEqual(
             field.stringValue, "not a path",
@@ -213,7 +230,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         XCTAssertNotEqual(end.location, editor.string.count, "the fixture has no character that counts twice")
         editor.selectedRange = end
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         XCTAssertEqual(
             field.currentEditor()?.selectedRange, end,
@@ -240,7 +257,7 @@ final class SetupWindowRedrawTests: XCTestCase {
 
         // A request arrives, so the card this position is anchored to collapses during `refresh()`
         Settings.lastRequestAt = Date()
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = try XCTUnwrap(window.contentView as? NSScrollView)
         XCTAssertTrue(
@@ -266,7 +283,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         XCTAssertTrue(window.makeFirstResponder(picker))
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = try XCTUnwrap(window.contentView?.firstDescendant(role: "control.languageChanged"))
         XCTAssertFalse(picker === after, "the fixture stopped rebuilding this control")
@@ -284,7 +301,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         scroll.reflectScrolledClipView(scroll.contentView)
         XCTAssertEqual(scroll.documentVisibleRect.origin.y, 120, accuracy: 0.5, "the fixture did not scroll")
 
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = try XCTUnwrap(window.contentView as? NSScrollView)
         XCTAssertFalse(scroll === after, "the fixture stopped rebuilding the content")
@@ -313,7 +330,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         XCTAssertEqual(offsetBefore, 30, accuracy: 0.5, "the fixture did not land where it meant to")
 
         AppLocalization.tagOverrideForTesting = "en"
-        post(.terminalCheckoutLanguageChanged)
+        post(.terminalCheckoutLanguageChanged, in: window)
 
         let after = try XCTUnwrap(window.contentView as? NSScrollView)
         let cardAfter = try XCTUnwrap(controller.rootStack.firstDescendant(role: "card.terminal"))
