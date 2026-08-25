@@ -66,7 +66,7 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | `moveButton`을 `moveItem`으로 일반화하고 카드 이동의 기존 index 보정·원본 불변성 tests를 유지하면서 문자열 `claudeInputs`의 앞·뒤 이동과 원본 불변성 cases를 같은 promotion에 추가한다 | 순수 자료구조 계약 | — | `extension/defaults.js`, `tests/buttons.test.js` | — | todo | `nl -ba extension/defaults.js \| sed -n '653,661p'` → 필드를 읽지 않는 slice/splice; 기준선 `node --test` → moveButton 4건 통과 | — |
+| 1 | `moveButton`을 `moveItem`으로 일반화하고 카드 이동의 기존 index 보정·원본 불변성 tests를 유지하면서 문자열 `claudeInputs`의 앞·뒤 이동과 원본 불변성 cases를 같은 promotion에 추가한다 | 순수 자료구조 계약 | — | `extension/defaults.js`, `tests/buttons.test.js` | — | claimed | red: `node --test` exit 1, 218/217/1, 새 test의 `ReferenceError: moveItem is not defined`; green: exit 0, 218/218/0 | — |
 | 2 | 0·1개에는 숨기고 2개 이상 행에만 `.ci-drag-handle`, 행 번호별 접근성 이름·툴팁, drop 표시선과 handle layout을 렌더링한다. `.claude-row`를 positioned container로 만들고 기존 tooltip key를 `ext.reorder.tooltip`으로 rename해 공유하며 새 aria key 하나를 다섯 catalogue에 추가한다. exact source-site·argument count와 live byte pin을 갱신한다 | UI·로컬라이제이션 | — | `extension/options.js`, `extension/options.html`, `extension/i18n.js`(검토; 로직 변경 없음), `extension/_locales/{en,ja,ko,zh_CN,zh_TW}/messages.json`, `tests/i18n.test.js`, `tools/check-locales.js` | — | todo | `nl -ba extension/options.js \| sed -n '281,377p'` → 행은 marker/input/remove만 렌더; `nl -ba extension/options.html \| sed -n '208,239p'` → row에 handle·positioned indicator 규칙 없음 | — |
 | 3 | 카드와 행의 native drag listener를 discriminated `drag` 상태와 selector-scoped `dropIndex`·`markDropTarget`·`clearDropMarks`·`endDrag`로 연결한다. 카드 listener는 claude drag를 무시하고 행 listener는 시작 카드의 `.claude-rows` 안에서만 `preventDefault`하며, card/row의 mousedown·dragstart·dragend가 서로의 state를 정리하지 않게 한다 | DOM drag 상호작용 | — | `extension/options.js`, `extension/options.html` | 1, 2 | todo | `nl -ba extension/options.js \| sed -n '1300,1406p'` → section delegation, kind-only guard, 무조건 card `dragend`; 중첩 전용 타입 판정이 없음 | — |
 | 4 | 행의 ↑↓ 경계 동작, 같은 카드 전용 `reorderClaudeInputs`, `edit` 선행, 이동 후 새 행 손잡이 focus를 구현한다. 행과 카드의 mouse-drop path는 focus를 조작하지 않고, 기존 card drop의 focus loss는 선행 동작으로 기록한다 | 키보드·상태·접근성 | — | `extension/options.js` | 1, 3 | todo | `nl -ba extension/options.js \| sed -n '1339,1419p'` → 카드 keyboard만 있고 row path 없음; `renderButtons`가 `innerHTML`을 비움 | — |
@@ -97,7 +97,7 @@
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 `파일:행` |
 |:--|:--|:--|
 | `extension/defaults.js:32-110`, `228-230`, `417-463`, `623-629`; `extension/options.js:1218-1297`; `extension/i18n.js`; `tests/source-audit.test.js`; `extension/options.js`의 load/save; `extension/migrations.js`; storage keys/version; `extension/content.js`; `extension/background.js`; `app/**`; `docs/new-terminal-checklist.md` | 안전 | |
-| `extension/defaults.js:653-661`의 `moveButton` | 변경 대상(항목 1) | second copy of the move arithmetic를 만들지 않고 card/row 양쪽이 같은 plain-array function과 원본 불변성 cases를 사용 |
+| `extension/defaults.js:653-661`의 `moveItem` | 변경 대상(항목 1) | second copy of the move arithmetic를 만들지 않고 card/row 양쪽이 같은 plain-array function과 원본 불변성 cases를 사용 |
 | `extension/options.js:281-377` `renderButtons` | 변경 대상(항목 2) | row markup에 2개 이상 조건부 handle, row 번호를 포함한 localized aria/title, drag marker class를 추가 |
 | `extension/options.js:1300-1420` reorder section | 변경 대상(항목 3·4) | 현재는 `.btn-card`와 card-only state만 알고, nested row drag·row keyboard branch·drop-zone 제한이 없다 |
 | `extension/options.html:79-116`, `208-239` | 변경 대상(항목 2) | `.claude-row`의 positioned anchor, row handle, row dragging, row before/after indicator를 추가 |

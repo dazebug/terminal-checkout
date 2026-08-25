@@ -1340,7 +1340,7 @@ function endDrag(container) {
 function reorderButtons(kind, from, insertBefore) {
   if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
   const moved = edit(() => {
-    state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
+    state.buttons[kind] = moveItem(state.buttons[kind], from, insertBefore);
     renderButtons(kind);
   });
   if (!moved) return from; // refused: nothing moved, so the handle stays where it was
