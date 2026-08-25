@@ -11,11 +11,53 @@ import XCTest
 final class SetupWindowLayoutTests: XCTestCase {
     private var savedTerminal: Terminal!
 
+    private struct LayoutSnapshot: CustomStringConvertible {
+        let contentSize: NSSize
+        let fittingSize: NSSize
+        let rootFrame: NSRect
+        let contentBounds: NSRect
+        let documentVisibleRect: NSRect
+        let rootMaxY: CGFloat
+
+        var description: String {
+            "contentSize=\(contentSize) fittingSize=\(fittingSize) rootFrame=\(rootFrame) "
+                + "contentBounds=\(contentBounds) documentVisibleRect=\(documentVisibleRect) "
+                + "rootMaxY=\(rootMaxY)"
+        }
+
+        func isStable(with other: LayoutSnapshot, accuracy: CGFloat = 0.01) -> Bool {
+            func close(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+                abs(lhs - rhs) <= accuracy
+            }
+
+            func close(_ lhs: NSSize, _ rhs: NSSize) -> Bool {
+                close(lhs.width, rhs.width) && close(lhs.height, rhs.height)
+            }
+
+            func close(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+                close(lhs.origin.x, rhs.origin.x)
+                    && close(lhs.origin.y, rhs.origin.y)
+                    && close(lhs.size.width, rhs.size.width)
+                    && close(lhs.size.height, rhs.size.height)
+            }
+
+            return close(contentSize, other.contentSize)
+                && close(fittingSize, other.fittingSize)
+                && close(rootFrame, other.rootFrame)
+                && close(contentBounds, other.contentBounds)
+                && close(documentVisibleRect, other.documentVisibleRect)
+                && close(rootMaxY, other.rootMaxY)
+        }
+    }
+
+    private let maximumLayoutPasses = 20
+
     private var savedResources: String?
 
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
+        PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         // Without this the window draws **raw keys**, and a key is shorter than every sentence it
         // stands for — a layout test that passed on keys would be silent about the case it exists
         // for. `swift test` has no app bundle, so the source tree is where the catalogues are
@@ -25,6 +67,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     override func tearDown() {
         Settings.terminal = savedTerminal
+        PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         AppLocalization.resourcesPath = savedResources
         super.tearDown()
     }
@@ -53,12 +96,108 @@ final class SetupWindowLayoutTests: XCTestCase {
         return SetupWindowController()
     }
 
-    private func settle(_ window: NSWindow) {
-        window.contentView?.layoutSubtreeIfNeeded()
+    @discardableResult
+    private func settle(
+        _ window: NSWindow, file: StaticString = #filePath, line: UInt = #line
+    ) -> LayoutSnapshot? {
+        var previous: LayoutSnapshot?
+        for _ in 0..<maximumLayoutPasses {
+            window.contentView?.layoutSubtreeIfNeeded()
+            guard let current = layoutSnapshot(in: window) else {
+                XCTFail("the window has no scroll/document layout to settle", file: file, line: line)
+                return nil
+            }
+            if let previous, current.isStable(with: previous) { return current }
+            previous = current
+        }
+        XCTFail(
+            "layout did not reach a fixed point in \(maximumLayoutPasses) passes; last snapshot: \(String(describing: previous))",
+            file: file, line: line
+        )
+        return previous
+    }
+
+    private func layoutSnapshot(in window: NSWindow) -> LayoutSnapshot? {
+        guard let scroll = window.contentView as? NSScrollView,
+              let document = scroll.documentView as? FittedContentStackView
+        else { return nil }
+        return LayoutSnapshot(
+            contentSize: window.contentRect(forFrameRect: window.frame).size,
+            fittingSize: document.fittingSize,
+            rootFrame: document.frame,
+            contentBounds: scroll.contentView.bounds,
+            documentVisibleRect: scroll.documentVisibleRect,
+            rootMaxY: document.frame.maxY
+        )
     }
 
     private func contentHeight(_ window: NSWindow) -> CGFloat {
         window.contentRect(forFrameRect: window.frame).height
+    }
+
+    private func printLayoutTrace(_ label: String, _ passes: [FittedContentLayoutPass]) {
+        func height(_ size: NSSize?) -> String {
+            guard let size else { return "nil" }
+            return String(describing: size.height)
+        }
+
+        print("SETUP_LAYOUT_TRACE[\(label)] layoutPasses=\(passes.count)")
+        for (index, pass) in passes.enumerated() {
+            print(
+                "SETUP_LAYOUT_TRACE[\(label)] pass=\(index + 1) "
+                    + "fittingHeight=\(pass.fittingSize.height) "
+                    + "targetHeight=\(pass.targetSize.height) "
+                    + "lastRequestedHeight=\(height(pass.lastRequestedSize)) "
+                    + "appliedContentHeight=\(pass.appliedContentSize.height) "
+                    + "requested=\(pass.requestedSize)"
+            )
+        }
+    }
+
+    private func printSnapshot(_ label: String, _ snapshot: LayoutSnapshot) {
+        print("SETUP_LAYOUT_SNAPSHOT[\(label)] \(snapshot)")
+    }
+
+    private func assertFittedPlacement(
+        _ controller: SetupWindowController, in window: NSWindow, label: String
+    ) throws {
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let document = try XCTUnwrap(scroll.documentView)
+        let header = try XCTUnwrap(
+            controller.rootStack.arrangedSubviews.first {
+                $0.identifier?.rawValue == "card.header"
+            }
+        )
+        let visible = scroll.documentVisibleRect
+
+        XCTAssertEqual(
+            contentHeight(window), controller.rootStack.fittingSize.height, accuracy: 0.5,
+            "\(label): window content height did not equal fittingSize"
+        )
+        XCTAssertEqual(
+            controller.rootStack.frame.height, controller.rootStack.fittingSize.height, accuracy: 0.5,
+            "\(label): root stack was squeezed"
+        )
+        XCTAssertEqual(
+            visible.maxY, document.frame.maxY, accuracy: 0.5,
+            "\(label): the viewport top extends above the document"
+        )
+        // Only a document that fits inside the clip can meet the lower edge as well. A taller
+        // document legitimately extends beyond the viewport, so its lower edge is not an oracle.
+        if document.frame.height <= scroll.contentView.bounds.height + 0.5 {
+            XCTAssertEqual(
+                visible.minY, document.frame.minY, accuracy: 0.5,
+                "\(label): the viewport has a blank region below the document"
+            )
+        }
+        XCTAssertGreaterThanOrEqual(
+            header.frame.maxY, visible.minY - 0.5,
+            "\(label): the first card is below the viewport"
+        )
+        XCTAssertLessThanOrEqual(
+            header.frame.maxY, visible.maxY + 0.5,
+            "\(label): the first card is above the viewport"
+        )
     }
 
     /// A screen with room to spare, for the tests whose subject is "the window tracks its
@@ -200,16 +339,56 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 
-    /// A permission flipping while the window is open is the other trigger for the same resize,
-    /// and it does not go through `select(terminal:)`.
-    func testPermissionRefreshKeepsTheWindowFitted() throws {
+    /// The key-window callback is the boundary after returning from System Settings. The provider
+    /// is deliberately false while the controller is built and true only for that callback, so
+    /// this case tests a transition rather than whatever TCC state the test machine happens to
+    /// have.
+    func testAccessibilityGrantRefreshConvergesWithFittedPlacement() throws {
+        var granted = false
+        PermissionChecker.accessibilityStatusProvider = { granted }
         let controller = makeController(.warp)
         let window = try XCTUnwrap(controller.window)
+        let accessibilitySection = try XCTUnwrap(controller.refillableSectionsForTesting.last)
+        XCTAssertFalse(
+            accessibilitySection.isHidden,
+            "the false provider did not leave the Accessibility section visible"
+        )
+        let previousProbe = FittedContentStackView.layoutProbeForTesting
+        var passes: [FittedContentLayoutPass] = []
+        FittedContentStackView.layoutProbeForTesting = { passes.append($0) }
+        defer { FittedContentStackView.layoutProbeForTesting = previousProbe }
+
         controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
+        let deniedSnapshot = try XCTUnwrap(settle(window))
+        let deniedPasses = passes
+        passes.removeAll()
+        printSnapshot("accessibility-denied", deniedSnapshot)
+        printLayoutTrace("accessibility-denied", deniedPasses)
+        XCTAssertEqual(
+            deniedSnapshot.contentSize.height, deniedSnapshot.fittingSize.height, accuracy: 0.5,
+            "the denied baseline did not fit before the transition"
+        )
+
+        granted = true
         controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
-        settle(window)
-        XCTAssertGreaterThanOrEqual(
-            contentHeight(window), controller.rootStack.fittingSize.height - 0.5
+        XCTAssertTrue(
+            accessibilitySection.isHidden,
+            "the true provider did not hide the Accessibility section during refresh"
+        )
+        let grantedSnapshot = try XCTUnwrap(settle(window))
+        let grantedPasses = passes
+        passes.removeAll()
+        printSnapshot("accessibility-granted", grantedSnapshot)
+        printLayoutTrace("accessibility-granted", grantedPasses)
+        try assertFittedPlacement(controller, in: window, label: "accessibility-granted")
+
+        let repeatedSnapshot = try XCTUnwrap(settle(window))
+        let repeatedPasses = passes
+        printSnapshot("accessibility-granted-repeat", repeatedSnapshot)
+        printLayoutTrace("accessibility-granted-repeat", repeatedPasses)
+        XCTAssertTrue(
+            grantedSnapshot.isStable(with: repeatedSnapshot),
+            "a second settle changed the fixed point:\nfirst: \(grantedSnapshot)\nsecond: \(repeatedSnapshot)"
         )
     }
 

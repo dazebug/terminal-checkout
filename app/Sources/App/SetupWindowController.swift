@@ -12,6 +12,14 @@ let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
 let setupTextWidth: CGFloat = setupContentWidth - 28
 
+struct FittedContentLayoutPass {
+    let fittingSize: NSSize
+    let targetSize: NSSize
+    let lastRequestedSize: NSSize?
+    let appliedContentSize: NSSize
+    let requestedSize: Bool
+}
+
 /// The settings stack, which sizes its window to itself.
 ///
 /// Why the stack and not the window controller: the size has three preconditions a caller has to
@@ -36,6 +44,8 @@ final class FittedContentStackView: NSStackView {
     /// The size we last asked the window for. Without it, a clamped request (content taller than
     /// the screen) would be re-issued on every pass and layout would never settle.
     private var lastRequestedSize: NSSize?
+    /// Test-only observation. It is nil in the application, and never participates in layout.
+    static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
     /// Stands in for the screen so a test can exercise the clamp without depending on whichever
     /// display it happens to run on.
     /// Setting the stand-in after the first layout must schedule the pass that consumes it; a plain
@@ -50,10 +60,31 @@ final class FittedContentStackView: NSStackView {
         var target = fittingSize
         let visible = visibleFrameOverride ?? (window.screen ?? NSScreen.main)?.visibleFrame
         if let visible { target.height = min(target.height, visible.height) }
-        guard lastRequestedSize != target else { return }
+        guard lastRequestedSize != target else {
+            reportLayoutPass(
+                fittingSize: fittingSize, targetSize: target, requestedSize: false, window: window
+            )
+            return
+        }
         lastRequestedSize = target
         window.setContentSize(target)
         if let visible { Self.moveInside(visible, window) }
+        reportLayoutPass(
+            fittingSize: fittingSize, targetSize: target, requestedSize: true, window: window
+        )
+    }
+
+    private func reportLayoutPass(
+        fittingSize: NSSize, targetSize: NSSize, requestedSize: Bool, window: NSWindow
+    ) {
+        guard let probe = Self.layoutProbeForTesting else { return }
+        probe(FittedContentLayoutPass(
+            fittingSize: fittingSize,
+            targetSize: targetSize,
+            lastRequestedSize: lastRequestedSize,
+            appliedContentSize: window.contentRect(forFrameRect: window.frame).size,
+            requestedSize: requestedSize
+        ))
     }
 
     /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
