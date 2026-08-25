@@ -67,7 +67,7 @@ These rows are self-contained. They keep the numbers they were given in a longer
 **Type:** incident
 **Type:** constraint
 **Status:** active
-**Evidence:** confirmed — six setup-window cases were green while the shipped window was visibly clipped; removing one forced traversal turned eight of them red at the sizes measured on the device, and the pending-work signal fires between 0 and 4 times per run
+**Evidence:** confirmed — six setup-window cases were green while the shipped window was visibly clipped; removing one forced traversal produced eight failures across seven cases at the sizes measured on the device, and the pending-work signal fires between 0 and 4 times per run
 **Source:** issue #34; commits `37887c7`, `5645d14`; `app/Tests/AppTests/SetupWindowTestSupport.swift`
 **Revisit when:** these tests gain a way to observe an AppKit display cycle without pumping wall-clock time, or the window stops changing its own size from inside a layout pass
 
@@ -79,7 +79,7 @@ The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. Th
 
 **There is exactly one settle.** Two divergent copies existed and only one of them could see the defect. A second copy of a contract is the same failure as the frozen fixture above, one file later.
 
-**A test's admission class depends on the harness being faithful.** Twice a new assertion was classified as "passes on the old code, admissible only as an invariant" and became a genuine red once the forced traversal was gone. Classification therefore cannot be settled before the harness is trusted, and a classification made earlier has to be re-run rather than carried forward.
+**A test's admission class depends on the harness being faithful, and it moves in both directions.** One assertion classified as "passes on the old code, admissible only as an invariant" became a genuine red once the forced traversal was gone. Two others, classified as genuine reds while the harness was still returning early, turned out to be invariants once the pending-work signal removed the flakiness — they had been failing for a harness reason, not for the reason they were credited with. Classification therefore cannot be settled before the harness is trusted, and one made earlier has to be re-run rather than carried forward.
 
 **Failures here were flaky, not deterministic.** The pending-work signal fires 0–4 times in otherwise identical runs. Before it existed, one of five locales failed — which reads like a deterministic red for that locale and was not. A layout gate that has passed once has not been shown to pass.
 
