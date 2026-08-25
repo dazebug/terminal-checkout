@@ -231,20 +231,18 @@ Adding locale files meant the extension copy had to be replaced rather than edit
 
 ## Closure follow-up seeds
 
-These are the seven issue seeds carried out of PR #41; the issues are intentionally not opened until cold review can add any further findings to the same list.
+The seeds carried out of PR #41 are filed as issues **#42–#52** and are no longer listed here; each issue states the sequence that produces the wrong outcome, which a summary line cannot.
 
-1. `HostServer.start()` still unlinks a stale socket path by name after a failed connection probe, so a replacement owner can be deleted before this instance binds; the fix must make pathname cleanup identity-safe.
-2. `HostServer.tearDown()` still has a stat-to-unlink race in which a same-uid process can replace the socket path after identity verification; the fix must close that check-and-remove window.
-3. The Warp helper can still be born after farewell or outlive the app until its idle and lifetime caps; the follow-up must close the late-launch and helper-lifetime residuals without weakening the uid trust boundary.
-4. The `_i18n` compatibility passengers and their `background.js` and manifest load entries can be retired only after generation-consistent deployment proves that a previous-release reader can execute against the new tree's ABI.
-5. Q12 remains a device release-gate question: D14 says not to fight the TCC prompt, but a device measurement is needed before deciding whether the setup window should pre-state the same permission sentence in the chosen language.
-6. Q13 remains a test-isolation issue: A5 removed the locale-query aggravation from e2e, but running the gate still updates the installed app's `lastRequestAt` and can show “extension connection confirmed” in the user's setup window.
-7. Q14 remains a deliberate UX residual: `app.language.restartDeferred` already explains why to wait and what to do, but delivery can take minutes while the window shows no progress indication and may look half-translated.
+Two things about that list are worth keeping, because the issues themselves cannot say them:
+
+**It closed at eleven, not at the seven the loop had reached.** Four arrived after the implementation rounds were over — three from reviews with no history of the change (#42's sibling residuals, the `AppleLanguages` collision, the effective-versus-global order) and one from comparing two independently kept lists of what was outstanding. A seed that exists in only one participant's notes dies with those notes, which is why the lists were compared rather than merged on trust.
+
+**Two of them are device-only** (#46, #50) and cannot become tests. They are release gates. A gate that no suite can execute has to be written where a release is prepared, not where tests live, or it is not a gate at all.
 
 ## Closure dispositions preserved from PR #41
 
 - **D291:** `languageNote(restartBlocked: Bool, restartFailed: Bool)` made a mutually exclusive three-state UI represent an impossible combined state; `LanguageNoteState` makes that state unrepresentable.
-- **D293:** Q12 stays on the device release-gate list with D14's “do not fight the prompt” decision and an open pre-statement choice; Q13 becomes a follow-up for the installed-settings side effect after A5 removed the locale-query aggravation; Q14 becomes a follow-up for missing progress feedback while the already-shipped deferred-restart explanation remains deliberate.
+- **D293:** Q12 stays on the device release-gate list with D14's “do not fight the prompt” decision and an open pre-statement choice (now #46); Q13 becomes a follow-up for the installed-settings side effect after A5 removed the locale-query aggravation (now #47); Q14 becomes a follow-up for missing progress feedback while the already-shipped deferred-restart explanation remains deliberate (now #48).
 - **D301:** `AppleLanguages` is shared with System Settings, so automatic mode records the exact array this app writes and removes it only while the effective value still matches that record; unconditional removal and comparison with a value the app merely intended to write were rejected because neither proves ownership.
 - **D302:** automatic app strings resolve from an effective unowned `AppleLanguages` value or from the external argument/global domains when the value matches this app's record; clearing the key during a switch and hoping `Locale.preferredLanguages` refreshes was rejected because the process may retain the old answer.
 - **D303:** the `Locale.preferredLanguages` default argument became an optional injected test value, with the production path reading the external source inside the function before any explicit write; the unit suite cannot observe AppKit's first-lookup consequence, so the device release gate remains required.
