@@ -446,6 +446,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay // no gutter, so the stack keeps its full width
+        // This full-size-content window already clears the title bar with the stack's 38pt top
+        // edge inset. AppKit's automatic title-bar inset adds another 32pt (measured: with auto
+        // insets on, shrink left the same 32pt origin; off kept the origin at 0), so it is
+        // redundant here and turns a resize into a blank band above the document.
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.documentView = stack
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),

@@ -200,6 +200,26 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 
+    private func assertFirstCardVisible(
+        _ controller: SetupWindowController, in window: NSWindow, label: String
+    ) throws {
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let header = try XCTUnwrap(
+            controller.rootStack.arrangedSubviews.first {
+                $0.identifier?.rawValue == "card.header"
+            }
+        )
+        let visible = scroll.documentVisibleRect
+        XCTAssertGreaterThanOrEqual(
+            header.frame.maxY, visible.minY - 0.5,
+            "\(label): the first card is below the viewport"
+        )
+        XCTAssertLessThanOrEqual(
+            header.frame.minY, visible.maxY + 0.5,
+            "\(label): the first card is above the viewport"
+        )
+    }
+
     /// A screen with room to spare, for the tests whose subject is "the window tracks its
     /// content". Tall enough that no layout in this window reaches the clamp — the clamp has its
     /// own test, and mixing the two makes a pass depend on the display the suite runs on.
@@ -292,6 +312,7 @@ final class SetupWindowLayoutTests: XCTestCase {
                 controller.rootStack.frame.height, controller.rootStack.fittingSize.height,
                 accuracy: 0.5, "\(terminal) squeezed the stack"
             )
+            try assertFittedPlacement(controller, in: window, label: "terminal-\(terminal)")
         }
     }
 
@@ -314,6 +335,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(
             contentHeight(window), controller.rootStack.fittingSize.height - 0.5
         )
+        try assertFittedPlacement(controller, in: window, label: "terminal-growth")
     }
 
     /// When the content genuinely cannot fit the screen the window is clamped — but the stack
@@ -337,6 +359,7 @@ final class SetupWindowLayoutTests: XCTestCase {
             controller.rootStack.frame.height, scroll.contentView.bounds.height,
             "nothing to scroll — the document should exceed the clip"
         )
+        try assertFirstCardVisible(controller, in: window, label: "tall-document-rest")
     }
 
     /// The key-window callback is the boundary after returning from System Settings. The provider
@@ -390,6 +413,15 @@ final class SetupWindowLayoutTests: XCTestCase {
             grantedSnapshot.isStable(with: repeatedSnapshot),
             "a second settle changed the fixed point:\nfirst: \(grantedSnapshot)\nsecond: \(repeatedSnapshot)"
         )
+
+        granted = false
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
+        XCTAssertFalse(
+            accessibilitySection.isHidden,
+            "the false provider did not restore the Accessibility section during refresh"
+        )
+        _ = try XCTUnwrap(settle(window))
+        try assertFittedPlacement(controller, in: window, label: "accessibility-denied-again")
     }
 
     /// **Every sentence in the pipeline strip comes from the catalogue**.
