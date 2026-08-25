@@ -454,7 +454,9 @@ const messageCallsIn = source => messageCallsFrom(javaScriptEvents(source));
 const declaredMessageKeysFrom = (events) => {
   const keys = [];
   for (let i = 0; i < events.length - 2; i += 1) {
-    if (events[i].type !== 'identifier' || !['nameKey', 'faceKey'].includes(events[i].name)) continue;
+    // `nameKey` and nothing else: a preset's face is a literal, so a `faceKey: 'ext.…'` is not a
+    // reference this audit should absolve — it should surface as a catalogue key nobody reads.
+    if (events[i].type !== 'identifier' || events[i].name !== 'nameKey') continue;
     if (events[i + 1].type !== 'punctuator' || events[i + 1].value !== ':') continue;
     const literal = events[i + 2];
     if (literal.type === 'literal' && literal.static && messageKey.test(literal.value)) keys.push(literal.value);
