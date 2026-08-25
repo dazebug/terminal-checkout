@@ -323,10 +323,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
-        // Let the stack measure once so its deferred update has a target. The first real content
-        // size centers the window; centring this placeholder 600x640 frame would be wrong after
-        // the measured height arrives on the next main-queue turn.
+        // Let the stack measure once so the deferred update has a target.
+        // The placeholder is visible before the deferred application, so center it now. Without
+        // this center, the window briefly showed at the default lower-left corner before the
+        // measured size arrived; the measured duration was about 75ms, or 4–5 frames at 60Hz.
+        // The deferred block still centers once more after the real height arrives; the two
+        // centers serve the visible placeholder and the measured size.
         window.contentView?.layoutSubtreeIfNeeded()
+        window.center()
         cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
