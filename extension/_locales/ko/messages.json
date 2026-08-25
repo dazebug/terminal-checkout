@@ -80,8 +80,13 @@
   "ext_card_reorder_aria": {
     "message": "순서 바꾸기"
   },
-  "ext_card_reorder_tooltip": {
-    "message": "끌거나 ↑↓ 키로 순서를 바꿉니다"
+  "ext_claudeInput_reorder_aria": {
+    "message": "입력 $ARG1$ 순서 바꾸기",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_confirm_presetOverwrite": {
     "message": "$ARG1$번 버튼을 \"$ARG2$\" 프리셋으로 덮어씁니다. 계속할까요?",
@@ -365,6 +370,9 @@
   },
   "ext_preset_repo_updateMain": {
     "message": "main 갱신"
+  },
+  "ext_reorder_tooltip": {
+    "message": "끌거나 ↑↓ 키로 순서를 바꿉니다"
   },
   "ext_section_backup_help1": {
     "message": "설정(PR·이슈·저장소 버튼과 main 브랜치)은 Chrome의 계정 동기화 영역(<code>storage.sync</code>)에 저장됩니다. 이 확장은 고정된 ID(manifest key)를 가지므로, 동기화 설정에서 \"확장 프로그램\"을 켠 채 <b>같은 Google 계정</b>으로 로그인한 두 Chrome 프로필은 이 설정을 자동으로 공유합니다. 내보내기와 가져오기는 계정 없이 설정을 옮기거나 파일 백업을 남길 때 씁니다."

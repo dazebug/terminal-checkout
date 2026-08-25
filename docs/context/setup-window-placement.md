@@ -8,7 +8,7 @@ This file holds the forks behind how the setup window arrives at its size and it
 **Type:** incident
 **Status:** active
 **Evidence:** confirmed — reverting only the deferral turns 12 assertions red in the measured shapes; a 155pt shrink applied inside the pass left the window at 702 points with a 547-point clip, and the fixture clip read 0 against a 437-point window
-**Source:** issue #34; commits `37887c7`, `31fc333`; `FittedContentStackView` in `app/Sources/App/SetupWindowController.swift`
+**Source:** issue #34; PR #54 (commits `37887c7`, `31fc333`); `FittedContentStackView` in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** AppKit gives the document view a way to re-dirty its enclosing scroll view from inside a layout pass, or the window stops being sized from its content
 
 The window is sized from its content, so the stack that knows the content measures it. Measuring has to happen inside `layout()` — that is the one moment the value is valid. **Applying it there does not work.** By the time the document view's `layout()` runs, the enclosing scroll view has already laid itself out against the old window size, and changing the window size at that point leaves nothing to re-dirty it: the clip view stays short by the delta and never self-heals. So the pass keeps the measurement and the application moves to the next main-queue turn.
@@ -27,7 +27,7 @@ A separate, smaller cause was found in the same investigation and fixed first: `
 **Type:** incident
 **Status:** active
 **Evidence:** confirmed — on a portrait plus landscape pair the window finished launch flush against the left edge at X=0 where centred on that display is X=420, and the final origin was exactly `visible.minX` for a window centred on the other screen; after the fix the window stays at the centre of one display while it grows
-**Source:** issue #34; commits `56baa0d`, `7b39ea9`, `5645d14`; `centerInside`, `moveInside` and `buildContent` in `app/Sources/App/SetupWindowController.swift`
+**Source:** issue #34; PR #54 (commits `56baa0d`, `7b39ea9`, `5645d14`); `centerInside`, `moveInside` and `buildContent` in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** the window stops being `isMovableByWindowBackground`, or the launch display becomes something the user can choose
 
 Growth is paired with sliding the window back inside the visible frame, because `setContentSize` keeps the top-left corner fixed and a window that grows past the screen edge gets its height clamped by AppKit. Centring and that slide-back must consume **the same** visible rect: `layout()` captures one, and both operations read it.

@@ -68,7 +68,7 @@ These rows are self-contained. They keep the numbers they were given in a longer
 **Type:** constraint
 **Status:** active
 **Evidence:** confirmed — six setup-window cases were green while the shipped window was visibly clipped; removing one forced traversal produced eight failures across seven cases at the sizes measured on the device, and the pending-work signal fires between 0 and 4 times per run
-**Source:** issue #34; commits `37887c7`, `5645d14`; `app/Tests/AppTests/SetupWindowTestSupport.swift`
+**Source:** issue #34; PR #54 (commits `37887c7`, `5645d14`); `app/Tests/AppTests/SetupWindowTestSupport.swift`
 **Revisit when:** these tests gain a way to observe an AppKit display cycle without pumping wall-clock time, or the window stops changing its own size from inside a layout pass
 
 The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. That is exactly what hid the defect they existed to catch. A forced traversal continues past the window resize the layout pass performs, so the enclosing scroll view lays out a second time and the stale clip never appears; the real display cycle has already finished with the scroll view by then. Measured against the same subject, forced traversal reported a 702-point clip where the display cycle produced 547.
@@ -90,7 +90,7 @@ The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. Th
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed — the two-display failure needs two attached screens whose visible frames disagree, which the suite cannot construct; the arithmetic it reduces to is pinned directly
-**Source:** issue #34; commit `56baa0d`; `docs/new-terminal-checklist.md`
+**Source:** issue #34; PR #54 (commit `56baa0d`); `docs/new-terminal-checklist.md`
 **Revisit when:** the suite gains a way to present more than one screen geometry to `NSScreen`, or the placement logic stops depending on the attached displays
 
 The window-placement defect only appears when two displays are attached and two independent reads pick different ones. A test-only stand-in for "which screen" would have tested the stand-in, not the choice.
@@ -100,3 +100,17 @@ So the property was split. The arithmetic the invariant names — centring then 
 **Rejected — inventing a seam to manufacture a red.** It would have produced a green gate whose subject was a fixture, which is the failure the frozen-store entry above describes.
 
 The same split applies to a step this work could *not* perform: whether a language change leaves the window where the user put it is pinned by a test, but was never confirmed on a device, because the language picker is not reachable through the accessibility tree — enumerating pop-up buttons and radio buttons in that window both return empty, since the controls are custom. Driving it means clicking coordinates and guessing at a menu, which is not evidence. It is on the checklist as a step to perform, recorded as unperformed.
+
+## An out-of-tree DOM harness needs its own red toggles
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured)
+**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed
+**Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
+
+The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.
+
+The harness's checks need toggles just as the committed suite's checks do. The cross-card check passed when its guard was removed, and a toggle intended to disable the keyboard branch matched an identical `if` a hundred lines earlier and reddened the drag checks instead. Both looked like evidence while proving the wrong thing. An out-of-tree harness receives less scrutiny than the suite, so a check never shown to fail is worth less than no check.
+
+**Rejected alternative — promote the harness or trust green-only checks.** A fake browser or an extracted arithmetic seam would manufacture a unit boundary the production code does not have, while an un-toggled scratchpad check can mistake a missed filter for a working guard. Keep the harness disposable, and require each check to redden only when its named protection is toggled.

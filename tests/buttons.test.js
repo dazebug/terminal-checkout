@@ -16,7 +16,7 @@ const vm = require('node:vm');
 const readExtension = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
 vm.runInThisContext(readExtension('i18n.js'));
 vm.runInThisContext(readExtension('defaults.js'));
-const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
+const { moveItem, duplicateButton } = vm.runInThisContext('({ moveItem, duplicateButton })');
 const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =
   vm.runInThisContext('({ BUTTON_KINDS, pageTypeOf, APP_VARIABLES })');
 const { adoptStoredButtons } = vm.runInThisContext('({ adoptStoredButtons })');
@@ -38,25 +38,37 @@ const sample = () => [
   { face: 'c', label: 'C', command: 'cc', claudeInputs: [] },
 ];
 
-test('moveButton: moving later lands in the slot pulled back by the removal', () => {
-  assert.deepEqual(faces(moveButton(sample(), 0, 3)), ['b', 'c', 'a']); // to the very end
-  assert.deepEqual(faces(moveButton(sample(), 0, 2)), ['b', 'a', 'c']); // before c
+test('moveItem: moving later lands in the slot pulled back by the removal', () => {
+  assert.deepEqual(faces(moveItem(sample(), 0, 3)), ['b', 'c', 'a']); // to the very end
+  assert.deepEqual(faces(moveItem(sample(), 0, 2)), ['b', 'a', 'c']); // before c
 });
 
-test('moveButton: moving earlier lands exactly in that slot', () => {
-  assert.deepEqual(faces(moveButton(sample(), 2, 0)), ['c', 'a', 'b']);
-  assert.deepEqual(faces(moveButton(sample(), 2, 1)), ['a', 'c', 'b']);
+test('moveItem: moving earlier lands exactly in that slot', () => {
+  assert.deepEqual(faces(moveItem(sample(), 2, 0)), ['c', 'a', 'b']);
+  assert.deepEqual(faces(moveItem(sample(), 2, 1)), ['a', 'c', 'b']);
 });
 
-test('moveButton: dropping in place does not change the order', () => {
-  assert.deepEqual(faces(moveButton(sample(), 1, 1)), ['a', 'b', 'c']); // just before itself
-  assert.deepEqual(faces(moveButton(sample(), 1, 2)), ['a', 'b', 'c']); // just after itself
+test('moveItem: dropping in place does not change the order', () => {
+  assert.deepEqual(faces(moveItem(sample(), 1, 1)), ['a', 'b', 'c']); // just before itself
+  assert.deepEqual(faces(moveItem(sample(), 1, 2)), ['a', 'b', 'c']); // just after itself
 });
 
-test('moveButton: leaves the original array untouched', () => {
+test('moveItem: leaves the original array untouched', () => {
   const original = sample();
-  moveButton(original, 0, 3);
+  moveItem(original, 0, 3);
   assert.deepEqual(faces(original), ['a', 'b', 'c']);
+});
+
+test('moveItem: one shared move works for strings and leaves the source alone', () => {
+  const original = ['first', 'second', 'third'];
+  assert.deepEqual(moveItem(original, 0, 3), ['second', 'third', 'first']);
+  assert.deepEqual(original, ['first', 'second', 'third']);
+});
+
+test('moveItem: an out-of-range source leaves the list unchanged', () => {
+  const original = ['first', 'second'];
+  assert.deepEqual(moveItem(original, 2, 0), ['first', 'second']);
+  assert.deepEqual(original, ['first', 'second']);
 });
 
 test('duplicateButton: the copy lands right after the original', () => {

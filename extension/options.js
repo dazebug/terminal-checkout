@@ -281,6 +281,9 @@ function editStateSnapshot() {
 function renderButtons(kind) {
   const { container: containerId, addButton, addHint } = section(kind);
   const container = document.getElementById(containerId);
+  // Redrawing replaces every node a drag captured and invalidates its indices, so cancel the drag
+  // before clearing this section. The shared state may belong to another section, so clean its source.
+  if (drag) endDrag(document.getElementById(section(drag.kind).container));
   container.innerHTML = '';
 
   const count = state.buttons[kind].length;
@@ -294,7 +297,7 @@ function renderButtons(kind) {
     card.innerHTML = `
       <div class="btn-card-header">
         <span class="btn-number">
-          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.card.reorder.tooltip')}">⠿</button>` : ''}
+          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
           <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
         </span>
         <span class="card-actions">
@@ -355,7 +358,10 @@ function renderButtons(kind) {
       const row = document.createElement('div');
       row.className = 'claude-row';
       row.dataset.ci = j;
+      // Keep this class separate from .drag-handle: the card mousedown listener matches that class
+      // and would make the whole card draggable from a row's handle.
       row.innerHTML = `
+        ${btn.claudeInputs.length > 1 ? `<button class="ci-drag-handle" aria-label="${t('ext.claudeInput.reorder.aria', j + 1)}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
         <span class="ci-marker">⏎${j + 1}</span>
         <input class="ci-input" placeholder="${t('ext.field.claudeInput.placeholder')}">
         <button class="ci-remove" title="${t('ext.button.remove')}">×</button>
@@ -1300,31 +1306,45 @@ function onCardClick(e) {
 // --- Reordering (drag, ↑↓) ---
 // The button order is the order they appear in on a GitHub page, and it decides which button (the
 // first) the extension icon runs.
+// A row's order decides what claude is told: inputs are typed in list order, and a run of consecutive
+// `!` bodies is merged onto one shell line joined with `;`, so moving a row can change which commands
+// share shell state and whether the run merges at all.
 
-// The card being dragged. The sections share handlers, so this also carries which section the drag
+// The item being dragged. The sections share handlers, so this also carries which section the drag
 // started in (so a drop over another section is not accepted).
 let drag = null;
 
-function clearDropMarks(container) {
-  container.querySelectorAll('.drop-before, .drop-after')
+function clearDropMarks(container, itemSelector) {
+  container.querySelectorAll(itemSelector)
     .forEach(el => el.classList.remove('drop-before', 'drop-after'));
 }
 
-// Which half of the hovered card the pointer is over decides "before which card" it goes (past the end, that's the count).
-function dropIndex(container, y) {
-  const cards = [...container.querySelectorAll('.btn-card')];
-  const hit = cards.findIndex(card => {
-    const rect = card.getBoundingClientRect();
+// Which half of the hovered item the pointer is over decides "before which item" it goes (past the
+// end, that's the count).
+function dropIndex(container, itemSelector, y) {
+  const items = [...container.querySelectorAll(itemSelector)];
+  const hit = items.findIndex(item => {
+    const rect = item.getBoundingClientRect();
     return y < rect.top + rect.height / 2;
   });
-  return hit === -1 ? cards.length : hit;
+  return hit === -1 ? items.length : hit;
 }
 
-function markDropTarget(container, index) {
-  clearDropMarks(container);
-  const cards = container.querySelectorAll('.btn-card');
-  if (index < cards.length) cards[index].classList.add('drop-before');
-  else cards[cards.length - 1].classList.add('drop-after');
+function markDropTarget(container, itemSelector, index) {
+  clearDropMarks(container, itemSelector);
+  const items = container.querySelectorAll(itemSelector);
+  if (index < items.length) items[index].classList.add('drop-before');
+  else if (items.length) items[items.length - 1].classList.add('drop-after');
+}
+
+function claudeDropZone(kind, target) {
+  if (drag?.type !== 'claude') return null;
+  const rows = target.closest?.('.claude-rows');
+  const card = rows?.closest('.btn-card');
+  if (drag.kind !== kind
+    || card?.dataset.kind !== kind
+    || Number(card.dataset.index) !== drag.cardIndex) return null;
+  return rows;
 }
 
 function endDrag(container) {
@@ -1332,7 +1352,12 @@ function endDrag(container) {
     card.draggable = false;
     card.classList.remove('dragging');
   });
-  clearDropMarks(container);
+  container.querySelectorAll('.claude-row').forEach(row => {
+    row.draggable = false;
+    row.classList.remove('dragging');
+  });
+  clearDropMarks(container, '.btn-card');
+  clearDropMarks(container, '.claude-row');
   drag = null;
 }
 
@@ -1340,7 +1365,20 @@ function endDrag(container) {
 function reorderButtons(kind, from, insertBefore) {
   if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
   const moved = edit(() => {
-    state.buttons[kind] = moveButton(state.buttons[kind], from, insertBefore);
+    state.buttons[kind] = moveItem(state.buttons[kind], from, insertBefore);
+    renderButtons(kind);
+  });
+  if (!moved) return from; // refused: nothing moved, so the handle stays where it was
+  return insertBefore > from ? insertBefore - 1 : insertBefore;
+}
+
+// The row path has a nested state path and a different focus target, so it stays a sibling rather
+// than becoming a flag-heavy version of reorderButtons.
+function reorderClaudeInputs(kind, cardIndex, from, insertBefore) {
+  if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
+  const moved = edit(() => {
+    const button = state.buttons[kind][cardIndex];
+    button.claudeInputs = moveItem(button.claudeInputs, from, insertBefore);
     renderButtons(kind);
   });
   if (!moved) return from; // refused: nothing moved, so the handle stays where it was
@@ -1361,41 +1399,99 @@ for (const { kind, container, addButton } of SECTIONS) {
   // collision itself hasn't been confirmed — Chrome may well give the input priority. Either way,
   // the handle approach prevents dragging a card by accident).
   element.addEventListener('mousedown', (e) => {
+    // The lost-release sequence is hold a handle, switch applications, and release there; it leaves
+    // a card or row armed, so a later body pull can start a drag. Clear on mousedown because every
+    // new gesture gets one, while focus may move during a legitimate native drag.
+    element.querySelectorAll('.btn-card, .claude-row').forEach(item => { item.draggable = false; });
+    if (e.target.classList.contains('ci-drag-handle')) {
+      const row = e.target.closest('.claude-row');
+      if (!row) return;
+      row.draggable = true;
+      // Releasing without dragging never fires dragend, so undo it here
+      document.addEventListener('mouseup', () => { row.draggable = false; }, { once: true });
+      return;
+    }
     if (!e.target.classList.contains('drag-handle')) return;
     const card = e.target.closest('.btn-card');
+    // Keep symmetry with the row branch; a handle outside a card is not a known path today, but
+    // the guard should remain if the markup changes.
+    if (!card) return;
     card.draggable = true;
     // Releasing without dragging never fires dragend, so undo it here
     document.addEventListener('mouseup', () => { card.draggable = false; }, { once: true });
   });
 
   element.addEventListener('dragstart', (e) => {
+    const row = e.target.closest?.('.claude-row');
+    if (row?.draggable) {
+      const card = row.closest('.btn-card');
+      if (!card) return;
+      drag = {
+        type: 'claude',
+        kind,
+        cardIndex: Number(card.dataset.index),
+        from: Number(row.dataset.ci),
+      };
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      return;
+    }
     const card = e.target.closest?.('.btn-card');
     if (!card?.draggable) return; // leave the native drag for selecting text inside an input alone
     // Remember the card to move here — nothing is put into dataTransfer. It is data we never read,
     // and carrying it as text/plain would let it be pasted outside (another input, another app),
     // while Chrome carries the drag through fine with an empty data store (measured — dragover and
     // dropEffect behave normally)
-    drag = { kind, from: Number(card.dataset.index) };
+    drag = { type: 'button', kind, from: Number(card.dataset.index) };
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
 
   element.addEventListener('dragover', (e) => {
-    if (drag?.kind !== kind) return; // don't accept a drag that came from another section
+    if (drag?.type === 'claude') {
+      const rows = claudeDropZone(kind, e.target);
+      const origin = document.getElementById(section(drag.kind).container);
+      if (!rows) {
+        clearDropMarks(origin, '.claude-row');
+        return;
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      markDropTarget(rows, '.claude-row', dropIndex(rows, '.claude-row', e.clientY));
+      return;
+    }
+    if (drag?.type !== 'button' || drag.kind !== kind) return; // don't accept a drag that came from another section
     e.preventDefault(); // the default is "can't drop", so preventing it is what opens the drop
     e.dataTransfer.dropEffect = 'move';
-    markDropTarget(element, dropIndex(element, e.clientY));
+    markDropTarget(element, '.btn-card', dropIndex(element, '.btn-card', e.clientY));
   });
 
   element.addEventListener('dragleave', (e) => {
-    if (!element.contains(e.relatedTarget)) clearDropMarks(element);
+    if (!element.contains(e.relatedTarget)) {
+      clearDropMarks(element, '.btn-card');
+      clearDropMarks(element, '.claude-row');
+    }
   });
 
   element.addEventListener('drop', (e) => {
-    if (drag?.kind !== kind) return;
+    if (drag?.type === 'claude') {
+      const rows = claudeDropZone(kind, e.target);
+      const origin = document.getElementById(section(drag.kind).container);
+      if (!rows) {
+        clearDropMarks(origin, '.claude-row');
+        return;
+      }
+      e.preventDefault();
+      const { cardIndex, from } = drag;
+      const to = dropIndex(rows, '.claude-row', e.clientY);
+      endDrag(element);
+      reorderClaudeInputs(kind, cardIndex, from, to);
+      return;
+    }
+    if (drag?.type !== 'button' || drag.kind !== kind) return;
     e.preventDefault();
     const { from } = drag;
-    const to = dropIndex(element, e.clientY);
+    const to = dropIndex(element, '.btn-card', e.clientY);
     // Finish the cleanup here — the redraw that follows immediately removes the original card from
     // the document, so don't rely on the dragend that would reach that node (if dragend does
     // arrive, it just runs the same cleanup once more)
@@ -1406,10 +1502,23 @@ for (const { kind, container, addButton } of SECTIONS) {
   element.addEventListener('dragend', () => endDrag(element)); // cancelled, or dropped outside
 
   element.addEventListener('keydown', (e) => {
-    if (!e.target.classList.contains('drag-handle')) return;
+    if (!e.target.classList.contains('drag-handle') && !e.target.classList.contains('ci-drag-handle')) return;
     const step = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
     if (!step) return;
     e.preventDefault(); // block the arrow keys' default behavior (scrolling)
+
+    if (e.target.classList.contains('ci-drag-handle')) {
+      const { index } = cardOf(e.target);
+      const row = Number(e.target.closest('.claude-row').dataset.ci);
+      const inputs = state.buttons[kind][index].claudeInputs;
+      const to = row + step;
+      if (to < 0 || to >= inputs.length) return;
+      const moved = reorderClaudeInputs(kind, index, row, step < 0 ? to : to + 1);
+      cardElement(kind, index, `.claude-row[data-ci="${moved}"] .ci-drag-handle`).focus();
+      return;
+    }
+
+    if (!e.target.classList.contains('drag-handle')) return; // a row handle must never reach the card branch
     const { index } = cardOf(e.target);
     const to = index + step;
     if (to < 0 || to >= state.buttons[kind].length) return;

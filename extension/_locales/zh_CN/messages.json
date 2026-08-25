@@ -80,8 +80,13 @@
   "ext_card_reorder_aria": {
     "message": "重新排序"
   },
-  "ext_card_reorder_tooltip": {
-    "message": "拖动或使用 ↑↓ 键重新排序"
+  "ext_claudeInput_reorder_aria": {
+    "message": "重新排序输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_confirm_presetOverwrite": {
     "message": "按钮 $ARG1$ 将被“$ARG2$”预设覆盖。要继续吗？",
@@ -365,6 +370,9 @@
   },
   "ext_preset_repo_updateMain": {
     "message": "更新 main"
+  },
+  "ext_reorder_tooltip": {
+    "message": "拖动或使用 ↑↓ 键重新排序"
   },
   "ext_section_backup_help1": {
     "message": "设置（PR、issue 和仓库按钮，以及 main 分支）存储在 Chrome 的账号同步区域（<code>storage.sync</code>）。本扩展程序有固定的 ID（manifest key），因此在同步设置中启用了“扩展程序”并登录<b>同一个 Google 账号</b>的两个 Chrome 配置文件会自动共享这些设置。导出和导入用于在没有账号的情况下迁移设置，或者保留一份文件备份。"

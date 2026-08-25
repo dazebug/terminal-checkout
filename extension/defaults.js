@@ -650,12 +650,14 @@ function appendButton(buttons, { presets, defaults }) {
   return [...buttons, adoptButton({ face, label: tr('ext.button.newButton'), command: '' })];
 }
 
-// A new array with button `from` moved "before" card `insertBefore`, indexed against the original.
+// A new array with item `from` moved "before" position `insertBefore`, indexed against the original.
 // The item is removed before it is spliced back in, so moving it later pulls the destination one
 // slot closer — miss that adjustment and everything lands one slot off.
-function moveButton(buttons, from, insertBefore) {
-  const next = buttons.slice();
+function moveItem(items, from, insertBefore) {
+  if (!Number.isInteger(from) || from < 0 || from >= items.length) return items;
+  const next = items.slice();
   const [moved] = next.splice(from, 1);
+  // `insertBefore` needs no equivalent guard: splice clamps an out-of-range destination to append.
   next.splice(insertBefore > from ? insertBefore - 1 : insertBefore, 0, moved);
   return next;
 }

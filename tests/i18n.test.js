@@ -659,13 +659,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **100 sites are expected after the options page's second title write was removed.** The count is
+  // **102 sites are expected after the two claude row handle attributes are added.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 100, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 102, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1584,6 +1584,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     'content.js title = buttonConfig.label',
     'options.html placeholder = main',
     "options.js aria-label = ${t('ext.card.reorder.aria')}",
+    "options.js aria-label = ${t('ext.claudeInput.reorder.aria', j + 1)}",
     "options.js placeholder = ${t('ext.field.claudeInput.placeholder')}",
     "options.js placeholder = ${t('ext.field.tooltip.placeholder')}",
     'options.js placeholder = master',
@@ -1593,7 +1594,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     "options.js title = ${t('ext.button.remove')}",
     "options.js title = ${t('ext.card.duplicate.tooltip')}",
     "options.js title = ${t('ext.card.palette.tooltip', e)}",
-    "options.js title = ${t('ext.card.reorder.tooltip')}",
+    "options.js title = ${t('ext.reorder.tooltip')}",
+    "options.js title = ${t('ext.reorder.tooltip')}",
     'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
   ]);
   // **The counts are executed, never typed.** Three sentences in this file used to carry "how many
@@ -1603,11 +1605,11 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 13, `${repeated.length} sites share a (file, attribute) pair`);
-  assert.equal(new Set(repeated).size, 3, 'the number of repeated (file, attribute) pairs moved');
+  assert.equal(repeated.length, 16, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(new Set(repeated).size, 4, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
-  assert.equal(sameValueToo.length, 4, `${sameValueToo.length} sites are indistinguishable even by value`);
+  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {

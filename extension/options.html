@@ -85,10 +85,13 @@
       padding: 16px;
       margin-bottom: 12px;
     }
-    .btn-card.dragging { opacity: 0.4; }
-    /* Shows where a dropped card would land, as a line in the 12px gap between cards */
+    .btn-card.dragging,
+    .claude-row.dragging { opacity: 0.4; }
+    /* Shows where a dropped item would land, as a line in the 12px gap between cards */
     .btn-card.drop-before::before,
-    .btn-card.drop-after::after {
+    .btn-card.drop-after::after,
+    .claude-row.drop-before::before,
+    .claude-row.drop-after::after {
       content: "";
       position: absolute;
       left: 0;
@@ -99,10 +102,14 @@
     }
     .btn-card.drop-before::before { top: -7px; }
     .btn-card.drop-after::after { bottom: -7px; }
+    /* The row indicator sits in the 7px gap between rows, so its offsets are smaller. */
+    .claude-row.drop-before::before { top: -4px; }
+    .claude-row.drop-after::after { bottom: -4px; }
 
     .btn-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
     .btn-number { display: inline-flex; align-items: center; gap: 5px; font: 600 12.5px var(--mono); }
-    .drag-handle {
+    .drag-handle,
+    .ci-drag-handle {
       background: transparent;
       border: none;
       color: var(--faint);
@@ -112,8 +119,11 @@
       border-radius: 4px;
       cursor: grab;
     }
-    .drag-handle:hover { color: var(--text); background: var(--chip); }
-    .drag-handle:active { cursor: grabbing; }
+    .drag-handle:hover,
+    .ci-drag-handle:hover { color: var(--text); background: var(--chip); }
+    .drag-handle:active,
+    .ci-drag-handle:active { cursor: grabbing; }
+    .ci-drag-handle { font-size: 11px; }
 
     .card-actions { display: flex; align-items: center; gap: 2px; }
     .remove-btn, .duplicate-btn {
@@ -212,7 +222,13 @@
     .help-inline { font: 400 11px var(--ui); color: var(--faint); }
     .claude-hint { font: 11px/1.6 var(--ui); color: var(--faint); margin: 0 0 9px 32px; }
     .claude-warn { font: 11px var(--ui); color: var(--warn); margin: 0 0 9px 32px; }
-    .claude-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+    .claude-row {
+      position: relative; /* anchor for the row drop indicator line */
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
     .ci-marker { font: 11px var(--mono); color: var(--faint); width: 24px; text-align: right; flex: none; }
     .ci-input { flex: 1; }
     .ci-remove {

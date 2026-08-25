@@ -80,8 +80,13 @@
   "ext_card_reorder_aria": {
     "message": "重新排序"
   },
-  "ext_card_reorder_tooltip": {
-    "message": "拖曳或使用 ↑↓ 鍵重新排序"
+  "ext_claudeInput_reorder_aria": {
+    "message": "重新排序輸入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_confirm_presetOverwrite": {
     "message": "按鈕 $ARG1$ 將被「$ARG2$」預設覆寫。要繼續嗎？",
@@ -365,6 +370,9 @@
   },
   "ext_preset_repo_updateMain": {
     "message": "更新 main"
+  },
+  "ext_reorder_tooltip": {
+    "message": "拖曳或使用 ↑↓ 鍵重新排序"
   },
   "ext_section_backup_help1": {
     "message": "設定（PR、issue 與儲存庫按鈕，以及 main 分支）儲存在 Chrome 的帳號同步區域（<code>storage.sync</code>）。本擴充功能有固定的 ID（manifest key），因此在同步設定中啟用了「擴充功能」並登入<b>同一個 Google 帳號</b>的兩個 Chrome 設定檔會自動共享這些設定。匯出與匯入用於在沒有帳號的情況下搬移設定，或者保留一份檔案備份。"
