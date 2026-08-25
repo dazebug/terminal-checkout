@@ -743,8 +743,8 @@ test('an http:// GitHub page is not a page of ours', () => {
 // --- The origin has to survive being observed, not just being parsed ---
 // The origin is closed on the way *in* (`pageTargetOfUrl`). Every observation the gate
 // makes went a different way: `location.pathname` through `pageTargetOf`, which by construction has
-// no origin to check. Two functions answering "which page is this" is the same defect this loop
-// keeps closing elsewhere — one judgment, one function.
+// no origin to check. Two functions answering "which page is this" duplicate the same decision:
+// one question, one function.
 
 test('an observation that dropped the origin folds a look-alike into the clicked page', () => {
   // The tab moved to a non-standard port mid-flight; the branch was

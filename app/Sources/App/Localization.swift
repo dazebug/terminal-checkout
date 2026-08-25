@@ -214,7 +214,7 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
 /// It is enforced by the type rather than by remembering: the only initialiser takes a
 /// `StaticString`, so a value can be written as a literal in this source and **cannot** be built
 /// from a `String` computed at runtime. `localized(…)` returns a `String`, so it does not compile
-/// here — which is the point.
+/// here, so the compiler enforces the boundary.
 struct ShellPayload: ExpressibleByStringLiteral, CustomStringConvertible {
     let command: String
 

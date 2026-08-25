@@ -249,9 +249,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// **The window is built once, and `refresh()` rewrites only the status lines.** Everything
     /// else — card titles, section headings, help paragraphs, button and radio titles, the picker's
     /// `auto` entry — is created in `buildContent()` and never touched again, so a language change
-    /// would leave the whole window in the old language while three labels moved. That is the shape
-    /// A lookup function alone does not switch anything: the lookup has to be
-    /// *reached* again, and nothing reaches it.
+    /// would leave the whole window in the old language while three labels moved. A lookup function
+    /// alone does not switch anything: the lookup has to be reached again, and nothing reaches it.
     ///
     /// Rebuilding the content is the mechanism, rather than a second pass that re-sets each string:
     /// a re-set pass has to name every string, so it is wrong the moment a new string is added,

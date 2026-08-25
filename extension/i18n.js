@@ -18,8 +18,7 @@ const TC_I18N_FALLBACK = 'en';
 // A catalogue that names itself is how the document language stops being a guess. Chrome
 // picks which catalogue answers, including when its UI language is one we do not ship and it falls
 // back; asking the catalogue rather than asking Chrome means the answer is the language actually on
-// screen. Reimplementing Chrome's fallback here would be a second copy of somebody else's
-// algorithm — the shape this project has lost to before.
+// screen. Reimplementing Chrome's fallback here would create a second fallback algorithm.
 //
 // Metadata, not one of the strings a person reads: it stays out of "is this locale fully
 // translated" counts and out of the gate that every message in the catalogue is drawn somewhere.

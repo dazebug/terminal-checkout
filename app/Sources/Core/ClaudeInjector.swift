@@ -945,7 +945,8 @@ public func deliverClaudeInputs(
     timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
     checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
     // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know.
-    // **The advice comes from the same value that made the answer no.** It used to be spelled out here and justified by "Warp is currently the only terminal whose confirmation can fail" — true today, and a sentence that would have gone on naming a permission for a terminal that had none. A reason that cannot name itself gets the first half of the line and no advice.
+    // **The advice comes from the same value that made the answer no.** A reason that cannot name
+    // itself gets the first half of the line and no advice; the delivery path does not invent one.
     // One branch and not two: "cannot confirm" and "here is why" are now the same value, so there
     // is no state where the first is true and the second unavailable
     if sent < inputs.count, let blocker = io.screenConfirmation() {
