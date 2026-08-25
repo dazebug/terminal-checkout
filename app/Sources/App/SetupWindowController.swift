@@ -51,7 +51,11 @@ final class FittedContentStackView: NSStackView {
     private var lastVisibleFrame: NSRect?
     private var windowUpdateScheduled = false
     private var deferredWindowUpdateAllowed = true
-    private var centerAfterFirstWindowUpdate = true
+    /// The window controller owns this decision because rebuilding the document creates a new
+    /// stack without creating a new window. The callbacks are configured by `buildContent()` and
+    /// keep the stack from mistaking its first update for the window's first measured placement.
+    var shouldCenterAfterFirstWindowUpdate: (() -> Bool)?
+    var didCenterAfterFirstWindowUpdate: (() -> Void)?
     private var afterWindowUpdate: (() -> Void)?
     /// Test-only observation. It is nil in the application, and never participates in layout.
     static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
@@ -74,10 +78,10 @@ final class FittedContentStackView: NSStackView {
         guard let window, window.contentView != nil else { return }
         var target = fittingSize
         // Do not read NSScreen.main here. init uses it once to put the window on its launch
-        // screen; after that, a nil window.screen means AppKit has not resolved this window to a
-        // display (for example while it is not ordered or in a headless test). There is no physical
-        // visible rect to clamp against then, and choosing another main screen would reintroduce
-        // the split-screen decision this path is designed to remove.
+        // screen; after that, a nil window.screen means the window is not currently on any
+        // display. There is no cycle-owned visible rect to capture in this pass, and choosing
+        // another main screen here would reintroduce the split-screen decision this path removes.
+        // The deferred application has a separate recovery fallback for that transient state.
         let visible = visibleFrameOverride ?? window.screen?.visibleFrame
         if let visible { target.height = min(target.height, visible.height) }
         // A screen can change without changing the clamped size; placement still has to consume
@@ -111,18 +115,44 @@ final class FittedContentStackView: NSStackView {
             guard self.deferredWindowUpdateAllowed,
                   let window = self.window,
                   window.contentView != nil,
-                  let target = self.lastRequestedSize
+                  let requestedTarget = self.lastRequestedSize
             else {
                 self.afterWindowUpdate = nil
                 return
             }
 
-            window.setContentSize(target)
-            if self.centerAfterFirstWindowUpdate, let visible = self.lastVisibleFrame {
-                Self.centerInside(visible, window)
-                self.centerAfterFirstWindowUpdate = false
+            let visible: NSRect?
+            if let override = self.visibleFrameOverride {
+                visible = override
+            } else if let screen = window.screen {
+                let currentVisibleFrame = screen.visibleFrame
+                if let captured = self.lastVisibleFrame, captured != currentVisibleFrame {
+                    // A display can disappear after measurement and before this block runs. Do
+                    // not apply a rect that no longer describes the window's screen; the screen
+                    // parameter observer has already made the next layout responsible for a new
+                    // cycle, and this guard covers the interval before that layout is delivered.
+                    self.lastVisibleFrame = nil
+                    self.needsLayout = true
+                    return
+                }
+                if self.lastVisibleFrame == nil { self.lastVisibleFrame = currentVisibleFrame }
+                visible = currentVisibleFrame
+            } else {
+                // A window can be between displays while the screen-parameter notification is
+                // being delivered. Recover it using the current main screen only at application
+                // time; init's launch-screen choice remains a one-time decision.
+                self.lastVisibleFrame = nil
+                visible = NSScreen.main?.visibleFrame
             }
-            if let visible = self.lastVisibleFrame { Self.moveInside(visible, window) }
+
+            var target = requestedTarget
+            if let visible { target.height = min(target.height, visible.height) }
+            window.setContentSize(target)
+            if self.shouldCenterAfterFirstWindowUpdate?() == true, let visible {
+                Self.centerInside(visible, window)
+                self.didCenterAfterFirstWindowUpdate?()
+            }
+            if let visible { Self.moveInside(visible, window) }
 
             let completion = self.afterWindowUpdate
             self.afterWindowUpdate = nil
@@ -147,6 +177,14 @@ final class FittedContentStackView: NSStackView {
     func resumeDeferredWindowUpdates() {
         deferredWindowUpdateAllowed = true
         lastRequestedSize = nil
+        lastVisibleFrame = nil
+        needsLayout = true
+    }
+
+    /// A screen-parameter change invalidates the visible rect captured by the previous layout
+    /// cycle. The next cycle must ask `window.screen` again instead of applying coordinates from a
+    /// display that may no longer exist.
+    func invalidateVisibleFrame() {
         lastVisibleFrame = nil
         needsLayout = true
     }
@@ -276,7 +314,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var languageRestartButton: NSButton!
     private var languageNoteLabel: NSTextField!
     private var languageObserver: NSObjectProtocol?
+    private var screenParametersObserver: NSObjectProtocol?
     private var windowHasClosed = false
+    /// This belongs to the window's lifetime, not to a document stack that language changes replace.
+    private var hasCenteredMeasuredWindow = false
     /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
     /// (`windowWillClose`), so the next time the window opens the state decides again.
     private var forceShowInstall = false
@@ -351,6 +392,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
+        observeScreenParameters()
         // Let the stack measure once so the deferred update has a target.
         window.contentView?.layoutSubtreeIfNeeded()
         cursor.start()
@@ -368,14 +410,35 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     deinit {
+        stopObservingScreenParameters()
         for observer in [requestObserver, toolsObserver, languageObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func observeScreenParameters() {
+        guard screenParametersObserver == nil else { return }
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.windowHasClosed else { return }
+            self.rootStack?.invalidateVisibleFrame()
+        }
+    }
+
+    private func stopObservingScreenParameters() {
+        if let observer = screenParametersObserver {
+            NotificationCenter.default.removeObserver(observer)
+            screenParametersObserver = nil
         }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
         if windowHasClosed {
             windowHasClosed = false
+            observeScreenParameters()
             rootStack?.resumeDeferredWindowUpdates()
         }
         cursor.start()
@@ -384,6 +447,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         windowHasClosed = true
+        stopObservingScreenParameters()
         rootStack?.suspendDeferredWindowUpdates()
         cursor.stop()
         forceShowInstall = false
@@ -525,6 +589,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildContent() -> NSView {
         let stack = FittedContentStackView()
+        // The first measured center belongs to this window, not this stack: language rebuilds make
+        // a new stack but must preserve the position the user chose for the existing window.
+        stack.shouldCenterAfterFirstWindowUpdate = { [weak self] in
+            guard let self else { return false }
+            return !self.hasCenteredMeasuredWindow
+        }
+        stack.didCenterAfterFirstWindowUpdate = { [weak self] in
+            self?.hasCenteredMeasuredWindow = true
+        }
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12

@@ -311,6 +311,32 @@ final class SetupWindowRedrawTests: XCTestCase {
         )
     }
 
+    /// The window is movable by its background, so replacing the document for a language change
+    /// must not spend the new stack's first update re-centering a window the user already placed.
+    func testALanguageChangeKeepsTheWindowOrigin() throws {
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        let visible = NSRect(x: 0, y: 0, width: 1600, height: 2000)
+        controller.rootStack.visibleFrameOverride = visible
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let placedOrigin = NSPoint(x: visible.minX + 40, y: visible.minY + 40)
+        window.setFrameOrigin(placedOrigin)
+        XCTAssertEqual(window.frame.origin.x, placedOrigin.x, accuracy: 0.5)
+        XCTAssertEqual(window.frame.origin.y, placedOrigin.y, accuracy: 0.5)
+
+        post(.terminalCheckoutLanguageChanged, in: window)
+
+        XCTAssertEqual(
+            window.frame.origin.x, placedOrigin.x, accuracy: 0.5,
+            "the language change re-centered a window the user had moved"
+        )
+        XCTAssertEqual(
+            window.frame.origin.y, placedOrigin.y, accuracy: 0.5,
+            "the language change re-centered a window the user had moved"
+        )
+    }
+
     /// **What "the same place" means when the text reflows.** A translation is longer or shorter
     /// than the sentence it replaces, so the document is a different height afterwards and no
     /// absolute offset can mean the same thing. What is kept is **a card's top edge and the
