@@ -2779,7 +2779,7 @@ test('a dictionary file is one JSON object, so the ownership gate can read it', 
 });
 
 // ---------------------------------------------------------------------------------------------
-// What only becomes checkable once five locales exist (items 23/24).
+// What only becomes checkable once five locales exist.
 // ---------------------------------------------------------------------------------------------
 
 // A command literal: something the user is meant to type or that names a variable the app

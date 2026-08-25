@@ -127,7 +127,7 @@ test('the default repository button only moves to the repo', () => {
 });
 
 // --- A preset is named by its id, shown by its name ---
-// `name` and `face` are display text and will be translated (i18n items 21-22). Anything that has
+// `name` and `face` are display text and will be translated. Anything that has
 // to *find* a preset — the dropdown's value, the default buttons' origin — therefore cannot use
 // them: the same preset answers to a different string in every language, so a lookup written
 // against one of them stops finding it the moment the page is drawn in another.

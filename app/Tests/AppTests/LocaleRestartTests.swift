@@ -91,7 +91,7 @@ private func admitted(
 /// delivery ends".
 ///
 /// **What can and cannot be driven from here.** Standing up a real delivery would need a terminal, a
-/// claude process and a helper, so what is tested is the shape items 15 and 16 used for the same
+/// claude process and a helper, so what is tested is the shape used for the same
 /// problem: the verdict is a pure function of a registry, the registry is exercised directly, and
 /// the one line that consumes the verdict is pinned by reading it. The socket farewell itself is the
 /// piece no test here takes — it needs a helper on the other end.
