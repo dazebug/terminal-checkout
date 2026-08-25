@@ -80,7 +80,15 @@
   "ext_card_reorder_aria": {
     "message": "重新排序"
   },
-  "ext_card_reorder_tooltip": {
+  "ext_claudeInput_reorder_aria": {
+    "message": "重新排序输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_reorder_tooltip": {
     "message": "拖动或使用 ↑↓ 键重新排序"
   },
   "ext_confirm_presetOverwrite": {

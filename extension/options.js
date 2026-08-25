@@ -294,7 +294,7 @@ function renderButtons(kind) {
     card.innerHTML = `
       <div class="btn-card-header">
         <span class="btn-number">
-          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.card.reorder.tooltip')}">⠿</button>` : ''}
+          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
           <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
         </span>
         <span class="card-actions">
@@ -355,7 +355,10 @@ function renderButtons(kind) {
       const row = document.createElement('div');
       row.className = 'claude-row';
       row.dataset.ci = j;
+      // Keep this class separate from .drag-handle: the card mousedown listener matches that class
+      // and would make the whole card draggable from a row's handle.
       row.innerHTML = `
+        ${btn.claudeInputs.length > 1 ? `<button class="ci-drag-handle" aria-label="${t('ext.claudeInput.reorder.aria', j + 1)}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
         <span class="ci-marker">⏎${j + 1}</span>
         <input class="ci-input" placeholder="${t('ext.field.claudeInput.placeholder')}">
         <button class="ci-remove" title="${t('ext.button.remove')}">×</button>

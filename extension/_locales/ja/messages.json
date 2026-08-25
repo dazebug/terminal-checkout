@@ -80,7 +80,15 @@
   "ext_card_reorder_aria": {
     "message": "並べ替え"
   },
-  "ext_card_reorder_tooltip": {
+  "ext_claudeInput_reorder_aria": {
+    "message": "入力 $ARG1$ を並べ替え",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_reorder_tooltip": {
     "message": "ドラッグするか ↑↓ キーで並べ替えます"
   },
   "ext_confirm_presetOverwrite": {

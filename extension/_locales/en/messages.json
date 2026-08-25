@@ -80,7 +80,15 @@
   "ext_card_reorder_aria": {
     "message": "Reorder"
   },
-  "ext_card_reorder_tooltip": {
+  "ext_claudeInput_reorder_aria": {
+    "message": "Reorder input $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_reorder_tooltip": {
     "message": "Drag, or use the ↑↓ keys, to reorder"
   },
   "ext_confirm_presetOverwrite": {
