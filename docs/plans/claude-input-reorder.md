@@ -42,10 +42,12 @@
 - 행 drag의 drop zone은 시작 카드의 `.claude-rows` container 하나뿐이다. `dragover`의 `preventDefault`와 target index 계산은 그 container 안에서만 수행하며, 카드 header·command textarea·카드의 나머지 영역·다른 카드에서는 Chrome이 no-drop을 표시하고 행을 옮기지 않는다.
 - 카드와 행은 하나의 `drag` 상태 안에서 `type: 'button'`과 `type: 'claude'`로 구분한다. 행 손잡이는 카드의 `.drag-handle`과 다른 `.ci-drag-handle`을 써서 기존 `mousedown` 경로가 카드를 draggable로 만들지 않게 한다. 카드의 `card.draggable` 확인은 유지하고, 카드의 `dragover`·`drop`·`dragend`는 버튼 타입만, 행의 같은 이벤트는 claude 타입과 같은 카드만 처리한다.
 - `moveButton`의 본문은 요소의 필드를 보지 않고 복사·splice의 index arithmetic만 한다. 이름을 `moveItem`으로 일반화해 카드 배열과 문자열 `claudeInputs` 배열 양쪽에서 같은 “원본 기준 insert-before, 뒤로 이동할 때 한 칸 보정” 계약과 원본 불변성을 사용한다. `reorderButtons`는 카드 state/render/focus를 묶는 래퍼로 남기고, `reorderClaudeInputs`는 중첩된 카드 state 경로와 행 focus를 묶는 별도 래퍼로 두되 둘 다 이동 산술을 복제하지 않는다.
+- `moveItem`은 `from`이 현재 배열의 유효한 정수 index가 아니면 원본 배열을 그대로 반환해 `undefined`를 삽입하지 않는다. `insertBefore`는 `splice`가 범위를 clamp해 끝에 append하므로 같은 guard를 두지 않는다.
 - `dropIndex`는 카드라는 의미를 갖지 않는 위치 계산으로 일반화하고, `markDropTarget`·`clearDropMarks`·`endDrag`는 item selector 또는 item collection을 받아 그 범위만 처리한다. 섹션 안에 `.claude-row`가 중첩되어 있으므로 카드 정리가 행 표시를 우연히 지우거나 행 dragend가 카드 상태를 끝내지 않도록 selector와 drag type을 함께 제한한다.
 - 기존 카드처럼 `dataTransfer`에는 명령·행 값·인덱스를 싣지 않는다. DOM과 타입이 같은 문서 안에서 상태를 확인하고, 외부에 붙여 넣을 수 있는 문자열 payload를 만들지 않는다.
 - 행 손잡이는 `claudeInputs.length > 1`일 때만 렌더링한다. 0개와 1개에는 순서 변경 affordance가 없고, 두 개 이상일 때 끝에서의 `ArrowUp`·`ArrowDown`은 `preventDefault`만 하고 목록·포커스를 그대로 둔다.
 - `renderButtons`가 섹션 전체 `innerHTML`을 비우므로 이동 전 DOM 노드를 다시 포커스하지 않는다. ↑↓ 이동 후에는 반환된 새 행 인덱스로 새 `.ci-drag-handle`을 조회해 포커스를 복원한다. 행과 카드의 두 mouse-drop 경로는 포커스를 조작하지 않으며, 기존 card drop의 포커스 손실은 선행 동작이고 이번 범위 밖이다.
+- `renderButtons`는 drag 상태가 있는 동안 captured node/index를 무효화하므로 section `innerHTML`을 비우기 전에 drag의 source section container에 `endDrag`를 호출한다. 이후 drop은 state가 없어서 no-op이고 card/row 모두 같은 cleanup을 통과한다.
 - `.claude-row`에는 `position: relative`를 둬 `::before`·`::after` drop indicator가 카드가 아니라 행을 기준으로 그려지게 한다. indicator offset은 `margin-bottom: 7px`인 행 gap의 중간에 오도록 `top: -4px`·`bottom: -4px`를 사용하며, 이는 12px gap에 `-7px`를 쓰는 카드 규칙에 대응한다.
 - 모든 이동은 `edit`를 통해 `touch`의 loaded 선행 검사를 통과한 뒤에만 상태를 바꾼다. 이벤트를 직접 dispatch하거나 페이지가 아직 load 중이어도 guard 앞에 변이가 놓이지 않는다.
 - 새 `aria-label`·`title`은 `options.js`의 `t` 호출로만 만들고, 새 `ext.claudeInput.reorder.aria`는 `$ARG1$`와 sibling `placeholders` block으로 1-based row number를 받으며 en·ja·ko·zh_CN·zh_TW에 모두 둔다. `ext.reorder.tooltip`은 카드와 행이 공유하도록 기존 tooltip key를 rename한 것이므로 각 locale의 기존 value를 verbatim copy한다. 다섯 파일의 byte pin은 구조 변경과 함께 `tools/check-locales.js`의 `CATALOGUE_BASELINE_HASHES.locales`에서 갱신한다.
@@ -71,11 +73,13 @@
 | 3 | 카드와 행의 native drag listener를 discriminated `drag` 상태와 selector-scoped `dropIndex`·`markDropTarget`·`clearDropMarks`·`endDrag`로 연결한다. 카드 listener는 claude drag를 무시하고 행 listener는 시작 카드의 `.claude-rows` 안에서만 `preventDefault`하며, card/row의 mousedown·dragstart·dragend가 서로의 state를 정리하지 않게 한다 | DOM drag 상호작용 | — | `extension/options.js`, `extension/options.html` | 1, 2 | claimed | 구현 완료; 항목 5의 hands-on/browser scenarios에서 section listener nesting, origin `.claude-rows` zone, card 밖·다른 card no-drop을 확인하며, D7에 따라 committed DOM test 없음 | — |
 | 4 | 행의 ↑↓ 경계 동작, 같은 카드 전용 `reorderClaudeInputs`, `edit` 선행, 이동 후 새 행 손잡이 focus를 구현한다. 행과 카드의 mouse-drop path는 focus를 조작하지 않고, 기존 card drop의 focus loss는 선행 동작으로 기록한다 | 키보드·상태·접근성 | — | `extension/options.js` | 1, 3 | claimed | 구현 완료; 항목 5의 hands-on/browser scenarios에서 ↑↓ 끝 no-op, 같은 카드 배열 이동, redraw 뒤 row-handle focus를 확인하며, D7에 따라 committed DOM test 없음 | — |
 | 5 | 실제 옵션 페이지에서 0·1·2·5행, 위·아래·중간 이동, 카드 밖·다른 카드 drop, card/row 동시 nesting, Save/reload, 다섯 locale을 확인하고 세 최종 gate를 종료 상태로 기록한다 | 브라우저·릴리스 검증 | — | 옵션 페이지와 Chrome automation 수기 시나리오; 최종 diff의 1∼4 파일 집합 | 2, 3, 4 | verified | `<scratchpad>/ci-harness/verify.js`에서 `node verify.js <tree>` → `24 checks, 0 failed, exit 0`; toggles: `cross-card guard`, `zone requirement`, `keyboard branch`, `mousedown branch`, `> 1 handle condition`, `focus restore`. Coverage: no native drop, no real geometry, five-locale rendering not exercised; the i18n gate covers binding parity, and a real Chrome load remains the release gate for catalogue selection | — |
+| 6 | redraw로 무효화된 drag의 captured index를 즉시 취소하고, `moveItem`의 범위를 벗어난 source가 `undefined`를 새 원소로 만들지 않게 방어한다. 카드·행 공통 cleanup은 `renderButtons`에서 실행하고, 유효하지 않은 source는 원본 배열을 그대로 반환한다 | 자료구조·DOM 상태 방어 | redraw 뒤 stale `{cardIndex, from}`가 빈 section을 만들고, out-of-range `from`이 `undefined`를 삽입하는 확정 결함 | `extension/defaults.js`, `extension/options.js`, `tests/buttons.test.js`, `docs/plans/claude-input-reorder.md` | 1, 3, 4 | claimed | red: 새 test를 먼저 둔 `node --test` exit 1, 219 tests / 218 pass / 1 fail, actual `[undefined, 'first', 'second']`; green: exit 0, 219/219/0; driver repro `<scratchpad>/ci-harness/repro-redraw.js`는 row drop 뒤 `cards=0`, pre-change `<scratchpad>/ci-harness/repro-card.js`도 `cards=0` | — |
 
 - 항목 하나는 한 승격에 들어갈 크기다. 1은 `defaults.js` 순수 계약과 그 테스트, 2는 렌더·CSS·catalogue와 그 i18n 테스트, 3∼4는 `options.js` 상호작용이므로 1·2를 먼저 통과시킨 뒤 3·4를 묶어 구현한다.
 - 항목 1의 `moveItem` 문자열·뒤 이동·앞 이동·원본 불변성 cases는 **(ii) 불변 원칙 계약**이며 `moveItem` 구현과 같은 promotion에 들어간다. 항목 2의 i18n key/placeholder/catalogue/pin cases는 **(ii) 다국어 불변 원칙 계약**이며 key와 렌더 code와 같은 promotion에 들어간다. 둘 다 UI listener가 실제로 drop했는지를 주장하지 않는다.
+- 항목 6의 out-of-range `from` case는 **(i) 이 loop의 6b를 되돌리면 실패하는 회귀 테스트**다. 6a의 redraw cancellation은 DOM 상태라 committed test를 만들지 않고 driver harness의 repro로 확인한다.
 - 5의 브라우저 확인은 **새 committed test가 아니다**. CDP synthetic drag는 `dragstart`∼`dragend`까지만 재현하고 native `drop`을 끝내지 못한다는 측정이 있으므로, 실제 pointer drag와 post-drop synthetic `DragEvent`를 구분해 기록한다. DOM 경로를 인위적인 fake로 덮어쓰지 않는다.
-- `확정 결함` 열은 R0 설계 리뷰에서 새로 확정된 결함이 없으므로 모두 `—`다. 검증자가 구현 후 결함을 확정하면 기존 행을 고치지 않고 prime 또는 letter 개정 항목으로 이어 붙인다.
+- `확정 결함` 열은 R0 설계 리뷰의 항목 1∼5에는 새 결함이 없어서 `—`다. 항목 6에는 cold review가 재현한 stale drag와 `undefined` 삽입을 기록하고, 이처럼 구현 후 확정된 결함은 기존 행을 고치지 않고 새 항목으로 이어 붙인다.
 
 ## 결정 원장
 
@@ -91,6 +95,7 @@
 | D7 | 드라이버 | DOM code를 Node unit test로 억지로 덮을 것인가 | pure array와 i18n contract만 committed test로 두고, native drag·nested bubbling·focus는 브라우저 시나리오로 검증한다 | R0 설계 리뷰; `docs/context/testing.md:88-100`과 기준선 Node suite에 `options.js` DOM 실행 harness가 없음 | 수기/automation 환경에서 실제 pointer drop 가능 여부 |
 | D8 | 드라이버 | 기존 `ext.field.claudeInputs.help`를 늘릴 것인가 | **늘리지 않는다**. 이미 “delivered in order”를 말하고 section-level help가 `⠿` 의미를 가르치며 handle의 `title`이 affordance를 전달한다. 기존 문장에 다섯 언어로 한 clause를 더하는 대안은 marginal discoverability에 비해 실제 번역 검토 비용이 크다 | R0 설계 리뷰 | 없음 |
 | D9 | 드라이버 | 카드와 행이 공유하는 tooltip key의 이름을 무엇으로 할 것인가 | `ext.card.reorder.tooltip`을 `ext.reorder.tooltip`으로 rename해 카드 handle과 row handle이 공유한다. 각 locale의 기존 value는 verbatim copy하고, `ext.card.reorder.aria`는 그대로 두며 `ext.claudeInput.reorder.aria`만 새로 만든다 | R0 설계 리뷰; `ext.card.reorder.tooltip`을 row에도 그대로 재사용하는 대안은 diff가 작지만 call site 하나의 이름으로 둘을 섬기게 하는 작은 거짓말이며, 번역된 `face`가 그 비용을 치른 것과 같은 부류다 | 없음 |
+| D10 | 드라이버 | redraw가 drag 중 captured index를 무효화할 때와 `moveItem`의 잘못된 source를 어떻게 처리할 것인가 | `renderButtons`가 기존 `endDrag`를 source section에 먼저 호출해 card/row drag를 함께 취소하고, `moveItem`은 유효하지 않은 `from`이면 원본을 반환한다. `insertBefore`는 splice의 clamp에 맡겨 out-of-range destination을 append한다 | cold review; `<scratchpad>/ci-harness/repro-redraw.js`에서 row `cards=0`, `<scratchpad>/ci-harness/repro-card.js`에서 pre-change card `cards=0`; 새 case red 219/218/1 → guard 후 green 219/219/0 | 실제 Chrome에서 native drag가 redraw 직후 어떻게 이어지는지는 driver가 harness로 재실행 |
 
 ## 전수 소탕 표
 
@@ -100,6 +105,12 @@
 | `extension/defaults.js:653-661`의 `moveItem` | 변경 대상(항목 1) | second copy of the move arithmetic를 만들지 않고 card/row 양쪽이 같은 plain-array function과 원본 불변성 cases를 사용 |
 | `extension/options.js:281-377` `renderButtons` | 변경 대상(항목 2) | row markup에 2개 이상 조건부 handle, row 번호를 포함한 localized aria/title, drag marker class를 추가 |
 | `extension/options.js:1300-1513` section delegated listeners and reorder helpers | 변경 대상(항목 3·4) | claude drag 중 `input`은 handle에서 발생하지 않고 기존 field edit만 유지; `click`은 `.ci-drag-handle`이 `onCardClick`의 class chain 어디에도 맞지 않아 no-op; `change`는 preset-select만 처리; `mousedown`은 row를 draggable로 만들고 return해 card branch를 막음; `dragstart`는 row를 먼저 claude type으로 기록하고 return; `dragover`는 origin `.claude-rows`만 accept하고 밖에서는 row marks만 지우며 no `preventDefault`; section-level `dragleave`는 section 밖에서 양쪽 marks를 지우고 rows 안팎은 `dragover` clearing이 담당; `drop`은 type·origin card를 확인해 valid row만 move; `dragend`는 card·row draggable/dragging과 두 selector marks를 정리; `keydown`은 row handle branch와 card handle branch를 분리한다 |
+| `extension/options.js:281-377`와 모든 `renderButtons` 호출부 | 변경 대상(항목 6) | section redraw가 시작되기 전에 source container의 `endDrag`를 호출해 captured DOM/index를 무효화하고 card·row의 flags와 marks를 함께 정리한다 |
+| `extension/options.js:589-670`, `241-252`, `1624-1650`의 load·deferred adoption | 변경 대상(항목 6) | `await` 뒤 snapshot 적용과 `state.deferredChange`의 adopt가 `loadSettings`를 거쳐 redraw를 일으키는 reachable path라서 stale drag를 render cancellation으로 닫는다 |
+| `extension/options.js:681-840` save/settle | 안전 | save는 `planSave`의 live snapshot·`appliedGeneration`·`changedDuringSave` guard와 `nothingHappenedSince`를 통과할 때만 await 뒤 index를 사용하고, 그 사이 adoption/load는 deferred라 state와 DOM index가 바뀌지 않는다 |
+| `extension/options.js:1084-1203` export/import | 안전 | export는 await 뒤 index를 읽지 않고, import는 `revisionAtStart`와 `loadGeneration`을 `planImport`에서 다시 확인한 뒤에만 현재 edit state에 적용한다 |
+| `extension/migrations.js:205-296`, `extension/options.js:888-1003`, `1583-1597` migration candidates | 안전 | candidate의 `item.id`는 모든 read/apply에서 runtime `uid`이고 `item.index`는 표시용 `where`뿐이며, apply는 `findIndex(button.uid === item.id)`로 현재 위치를 다시 찾는다 |
+| `extension/options.js:1224-1302`, `1496-1522`, `1534-1552`의 dataset index/ci handlers | 안전 | 이 handlers는 같은 synchronous event 안에서 dataset을 읽고 즉시 `edit`하거나 redraw하며 await/event 사이에 index를 보관하지 않는다. drag의 `dragstart`→`drop`만 예외인 cross-event capture이고 항목 6에서 취소한다 |
 | `extension/options.html:79-116`, `208-239` | 변경 대상(항목 2) | `.claude-row`의 positioned anchor, row handle, row dragging, row before/after indicator를 추가 |
 | 다섯 `_locales/*/messages.json`과 `tools/check-locales.js:28-35` | 변경 대상(항목 2) | a user-visible string introduced without all five catalogues and their pin을 막고, tooltip key rename과 새 `$ARG1$`/`placeholders` binding을 같은 승격에서 반영 |
 | `tests/buttons.test.js`의 `moveButton`·`MAX_CLAUDE_INPUTS` 관련 cases | 변경 대상(항목 1) | move test를 `moveItem`으로 바꾸고 문자열 row case를 추가하며 `MAX_CLAUDE_INPUTS` stored-entry reject contract는 유지 |
@@ -115,6 +126,14 @@
 - 처리: 반영 — 기준 트리와 write_codex thread id를 수정하고, 테스트를 항목 1·2에 접어 항목을 1∼5로 정리했으며, D5를 keyboard-only focus restore로 고쳤다. same-card `.claude-rows` drop zone, `.claude-row` `position: relative`, D6a aria placeholder, D8 help 비확장을 명시하고 안전 행을 압축했다.
 - 실측: `node --test` exit 0, tests 217/pass 217/fail 0; `node tools/check-locales.js` exit 0, `all 5 live catalogues carry the same names and argument bindings as en`; `cd app && swift test` exit 1, `/Users/choongjaelee/.cache/clang/ModuleCache` 쓰기 거부로 manifest 단계 실패.
 - 판정: "R0 방향 승인" → 계획만 승격 가능, 항목 1∼5 `todo`
+
+### cold review / item 6
+
+#### stale drag 재현 및 수정 — 구현 승격 대기 · 왕복 1 · 원문 있음
+
+- 발견: remote save adoption이 native drag 중 `renderButtons`를 실행하면 captured `{cardIndex, from}`가 새 배열과 DOM에 더 이상 대응하지 않는다. row path는 `moveItem(['!only'], 2, 0)`에서 `undefined`를 삽입해 section 전체를 비웠고, 같은 class가 pre-change card path에도 있었다.
+- 처리: 새 source-range test를 red-first로 추가하고 `moveItem`의 invalid `from` guard를 넣은 뒤, redraw 전에 source `endDrag`를 호출해 card/row drag를 함께 취소했다. DOM cancellation은 항목 5 harness에 남기고 committed DOM test는 만들지 않았다.
+- 실측: 새 test red `node --test` exit 1, 219 tests / 218 pass / 1 fail; guard 후 green exit 0, 219/219/0. 나머지 async/index sweep에서 추가 hole 없음.
 
 ## 열린 질문
 

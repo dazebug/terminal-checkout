@@ -654,8 +654,10 @@ function appendButton(buttons, { presets, defaults }) {
 // The item is removed before it is spliced back in, so moving it later pulls the destination one
 // slot closer — miss that adjustment and everything lands one slot off.
 function moveItem(items, from, insertBefore) {
+  if (!Number.isInteger(from) || from < 0 || from >= items.length) return items;
   const next = items.slice();
   const [moved] = next.splice(from, 1);
+  // `insertBefore` needs no equivalent guard: splice clamps an out-of-range destination to append.
   next.splice(insertBefore > from ? insertBefore - 1 : insertBefore, 0, moved);
   return next;
 }

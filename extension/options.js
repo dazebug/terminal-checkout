@@ -281,6 +281,9 @@ function editStateSnapshot() {
 function renderButtons(kind) {
   const { container: containerId, addButton, addHint } = section(kind);
   const container = document.getElementById(containerId);
+  // Redrawing replaces every node a drag captured and invalidates its indices, so cancel the drag
+  // before clearing this section. The shared state may belong to another section, so clean its source.
+  if (drag) endDrag(document.getElementById(section(drag.kind).container));
   container.innerHTML = '';
 
   const count = state.buttons[kind].length;

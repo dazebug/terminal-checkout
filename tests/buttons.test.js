@@ -65,6 +65,12 @@ test('moveItem: one shared move works for strings and leaves the source alone', 
   assert.deepEqual(original, ['first', 'second', 'third']);
 });
 
+test('moveItem: an out-of-range source leaves the list unchanged', () => {
+  const original = ['first', 'second'];
+  assert.deepEqual(moveItem(original, 2, 0), ['first', 'second']);
+  assert.deepEqual(original, ['first', 'second']);
+});
+
 test('duplicateButton: the copy lands right after the original', () => {
   const next = duplicateButton(sample(), 0);
   assert.deepEqual(faces(next), ['a', 'a', 'b', 'c']);
