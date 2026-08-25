@@ -3,16 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-// The rule this enforces is already written down, in the "Note on sources" of
-// docs/context/knowledge-capture.md: this repository squash-merges, so a branch hash recorded
-// before the merge stops resolving afterwards. Every entry that ignored it left a pointer that
-// looks followable and is not — measured on PR #54's five cited hashes, none of which is an
-// ancestor of main, while PR #36's `da37339` is, because that one *is* the squash commit.
-// A PR number is the pointer that survives either way, so a hash may ride along but never alone.
+// A hash may ride along for precision but never alone: this repository squash-merges, so a branch
+// commit never lands on main and the hash stops resolving. The "Note on sources" in
+// docs/context/knowledge-capture.md owns that rule and the measurement behind it.
 const contextDirectory = path.join(path.resolve(import.meta.dirname, '..'), 'docs', 'context');
 
 // Backticked lowercase hex, 7-40 long, with at least one digit — the digit is what keeps English
-// words that happen to be hex ("deadbeef", "faced") from being read as commits.
+// words long enough to qualify and made only of hex letters ("deadbeef", "defaced") out.
 const commitCitation = /`(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}`/g;
 const prReference = /\bPR #\d+/;
 

@@ -1319,7 +1319,8 @@ function clearDropMarks(container, itemSelector) {
     .forEach(el => el.classList.remove('drop-before', 'drop-after'));
 }
 
-// Which half of the hovered item the pointer is over decides "before which item" it goes (past the end, that's the count).
+// Which half of the hovered item the pointer is over decides "before which item" it goes (past the
+// end, that's the count).
 function dropIndex(container, itemSelector, y) {
   const items = [...container.querySelectorAll(itemSelector)];
   const hit = items.findIndex(item => {
@@ -1398,8 +1399,9 @@ for (const { kind, container, addButton } of SECTIONS) {
   // collision itself hasn't been confirmed — Chrome may well give the input priority. Either way,
   // the handle approach prevents dragging a card by accident).
   element.addEventListener('mousedown', (e) => {
-    // The lost-release sequence is hold a handle, switch applications, and release there; it leaves a card or row armed, so a later body pull can start a drag.
-    // Clear on mousedown because every new gesture gets one, while focus may move during a legitimate native drag.
+    // The lost-release sequence is hold a handle, switch applications, and release there; it leaves
+    // a card or row armed, so a later body pull can start a drag. Clear on mousedown because every
+    // new gesture gets one, while focus may move during a legitimate native drag.
     element.querySelectorAll('.btn-card, .claude-row').forEach(item => { item.draggable = false; });
     if (e.target.classList.contains('ci-drag-handle')) {
       const row = e.target.closest('.claude-row');
