@@ -1304,7 +1304,8 @@ function onCardClick(e) {
 // The button order is the order they appear in on a GitHub page, and it decides which button (the
 // first) the extension icon runs.
 // A row's order decides what claude is told: inputs are typed in list order, and a run of consecutive
-// `!` bodies is merged onto one shell line joined with `;`, so moving a row can change which commands share shell state and whether the run merges at all.
+// `!` bodies is merged onto one shell line joined with `;`, so moving a row can change which commands
+// share shell state and whether the run merges at all.
 
 // The item being dragged. The sections share handlers, so this also carries which section the drag
 // started in (so a drop over another section is not accepted).
@@ -1506,6 +1507,7 @@ for (const { kind, container, addButton } of SECTIONS) {
       return;
     }
 
+    if (!e.target.classList.contains('drag-handle')) return; // a row handle must never reach the card branch
     const { index } = cardOf(e.target);
     const to = index + step;
     if (to < 0 || to >= state.buttons[kind].length) return;
