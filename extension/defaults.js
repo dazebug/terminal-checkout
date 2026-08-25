@@ -18,22 +18,21 @@
 // snapshot of the preset's fields (`toStoredButton`), and putting a persistent id into the stored
 // schema would be a SETTINGS_VERSION bump, which is a different piece of work entirely.
 //
-// A preset. Its `id` and `command` are fixed; its display text is resolved **when it is read**
+// A preset. Its `id`, `command` and `face` are fixed; its `name` is resolved **when it is read**
 // rather than when this file loads.
 //
-// `name` and `face` are accessors over the dictionaries. A value read at load time would freeze the
-// language the context started in, so presets are built here and never spread: object spread
-// evaluates accessors and would store their current values.
+// `name` is an accessor over the dictionaries. A value read at load time would freeze the language
+// the context started in, so presets are built here and never spread: object spread evaluates
+// accessors and would store their current values.
 //
-// The face is a key only when it is **text on the page**. The PR and issue presets show an emoji,
-// which no language rewrites, so those keep a literal — and a literal is also what keeps `isTextFace`
-// answering the same way in every language for them.
-function definePreset({ id, nameKey, faceKey, face, command, claudeInputs }) {
-  const preset = { id, command };
+// **A face is a literal, never a translated string.** `isTextFace` gives a face with letters or
+// digits a different shape from an emoji-only one, so a translated face can change the shape of a
+// button from one language to the next while the code that draws it is unchanged. A face that has
+// to say a word says it in `name`, which is where the options page reads it.
+function definePreset({ id, nameKey, face, command, claudeInputs }) {
+  const preset = { id, command, face };
   if (claudeInputs) preset.claudeInputs = claudeInputs;
   Object.defineProperty(preset, 'name', { get: () => tr(nameKey), enumerable: true });
-  if (faceKey) Object.defineProperty(preset, 'face', { get: () => tr(faceKey), enumerable: true });
-  else preset.face = face;
   return preset;
 }
 
@@ -89,20 +88,23 @@ const ISSUE_PRESETS = [
   }),
 ];
 
-// Repository pages: buttons next to the repository name in the header. Unlike PR and issue buttons
-// these look like GitHub's green action button, so a name reads more naturally than a short emoji
-// as the face
+// Repository pages: buttons next to the repository name in the header. All three faces are emoji
+// literals, and that is a row-level decision rather than three independent ones: they sit on one
+// line, `isTextFace` gives a face with letters or digits a different shape from an emoji-only one,
+// and one text pill among two icons makes the row ragged. A literal also keeps `isTextFace`
+// answering the same way in every language, which a translated face cannot promise — the previous
+// faces were message keys, so `main ⤓` stayed an icon while `Open in Terminal` became a pill.
 const REPO_PRESETS = [
   definePreset({
-    id: 'repo.open', nameKey: 'ext.preset.repo.open', faceKey: 'ext.preset.repo.open',
+    id: 'repo.open', nameKey: 'ext.preset.repo.open', face: '📂',
     command: '{cd}',
   }),
   definePreset({
-    id: 'repo.openClaude', nameKey: 'ext.preset.repo.openClaude', faceKey: 'ext.preset.repo.openClaude',
+    id: 'repo.openClaude', nameKey: 'ext.preset.repo.openClaude', face: '📂🤖',
     command: '{cd} && claude',
   }),
   definePreset({
-    id: 'repo.updateMain', nameKey: 'ext.preset.repo.updateMain', faceKey: 'ext.preset.repo.updateMain.face',
+    id: 'repo.updateMain', nameKey: 'ext.preset.repo.updateMain', face: '⤓',
     command: '{cd} && git checkout {main} && git pull --ff-only',
   }),
 ];
