@@ -38,6 +38,8 @@ Retiring `_i18n` (#45) is the same move again, so this entry is the precondition
 
 ## Closure decisions preserved from PR #41
 
+These rows are self-contained. They keep the numbers they were given in a longer working ledger whose earlier rows were **not** carried over — the numbering starts at D288 for that reason, and nothing here refers to a row that is not below it. That ledger was a Korean working document and was deleted with the migration plan; where one of its decisions still mattered, it became an entry above rather than a citation.
+
 - **D288:** the test audit classified every added declaration and used a cross-file pass for duplicate boundaries; a sweep row did not replace a test, and no new test gap was invented to make the audit look complete.
 - **D289:** the audit's `new gaps: 0` summary was not a durable control for the source-lint property; 13 source-reading sites and four prose label shapes were the trigger for this typed, derived gate.
 - **D290:** deleting the migration plan is safe only after its durable context is moved; every Source field that survives the loop must resolve for a reader without the plan file.
