@@ -60,6 +60,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 
 - [ ] Setup window [Run in Terminal] → echo runs in a new tab
 - [ ] With two displays and another app focused on the other display, the setup window stays centered on its chosen display after its measured resize rather than ending at a screen edge
+- [ ] After changing the app language, the setup window stays at its original position (not verified on the device; the custom language picker is not exposed in the Accessibility tree)
 - [ ] Disconnect the chosen display while a measured resize is pending → the setup window is recovered onto an available display and clamped there
 - [ ] Repository-page button → the new tab's working directory is that repo (`{repo}` `{owner}` `{main}` substituted)
 - [ ] PR button → new tab + `{repo}` `{branch}` `{base}` `{branch_underbar}` substituted
