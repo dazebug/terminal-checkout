@@ -38,7 +38,11 @@ final class FittedContentStackView: NSStackView {
     private var lastRequestedSize: NSSize?
     /// Stands in for the screen so a test can exercise the clamp without depending on whichever
     /// display it happens to run on.
-    var visibleFrameOverride: NSRect?
+    /// Setting the stand-in after the first layout must schedule the pass that consumes it; a plain
+    /// stored property would leave a clean tree measuring the real display until another change.
+    var visibleFrameOverride: NSRect? {
+        didSet { needsLayout = true }
+    }
 
     override func layout() {
         super.layout()

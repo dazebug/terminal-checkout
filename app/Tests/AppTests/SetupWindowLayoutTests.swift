@@ -182,7 +182,6 @@ final class SetupWindowLayoutTests: XCTestCase {
         let needed = controller.rootStack.fittingSize.height
 
         controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: needed / 2)
-        controller.rootStack.needsLayout = true
         settle(window)
 
         XCTAssertEqual(contentHeight(window), needed / 2, accuracy: 1, "clamp did not apply")
