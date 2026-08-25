@@ -150,7 +150,7 @@ test('lookup happens when it is called, not when the file loads', () => {
 });
 
 test('the document language names the catalogue that answered, not the language Chrome is set to', () => {
-  // **Attack step 4**, and the reason `<html lang>` moves in the same commit as the lookup. Chrome
+  // Why `<html lang>` moves in the same commit as the lookup: Chrome
   // may be set to a language we do not ship and still serve the English catalogue; writing what
   // Chrome is set to would then declare English text as French. So the tag is asked of the
   // catalogue that answered.
@@ -631,7 +631,7 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
 // filters that decided what each pipeline actually *read*. Two ways through the gap: put
 // `.mjs` on the audited list with a real `.mjs` file — accounted for, read by nothing — or drop any
 // `probe.json` into the tree and have it classified as manifest-or-catalogue data on the strength of
-// a suffix, with no gate owning it. The verifier's words for the shape: the authored input
+// a suffix, with no gate owning it. The shape in one sentence: the authored input
 // classification did not imply entry into the application.
 //
 // So a path gets a **role**, the roles are the only way a file enters anything, and the data roles
@@ -1343,10 +1343,9 @@ test('the frozen compatibility formats render the same bytes for every argument-
 });
 
 test('the seam: nothing answers without a backend, and both paths get the same preprocessing', () => {
-  // **Attack step 1** (the verifier's order, taken as the order of these cases). Three realms,
-  // built here rather than reused, because the hazard the lazy default carries is not in production
-  // — it is Node global pollution: a `chrome` another test left behind would answer for code that
-  // forgot to inject, and "forgetting throws" would be quietly false.
+  // Three realms, built here rather than reused, because the hazard the lazy default carries is
+  // not in production — it is Node global pollution: a `chrome` another test left behind would
+  // answer for code that forgot to inject, and "forgetting throws" would be quietly false.
   const load = (globals) => {
     const realm = vm.createContext(globals);
     vm.runInContext(read('i18n.js'), realm);
@@ -1376,7 +1375,7 @@ test('the seam: nothing answers without a backend, and both paths get the same p
 });
 
 test('a message whose arguments reorder puts them where its own language wants them', () => {
-  // **Attack step 2.** Three numeric sentinels through the one key whose order differs from English
+  // Three numeric sentinels through the one key whose order differs from English
   // in every other catalogue — the case where a binding that is wrong in the same way everywhere
   // would still read plausibly, which is why the compatibility oracle compares the formats and this compares the
   // rendered text a user would see.
@@ -1396,7 +1395,7 @@ test('a message whose arguments reorder puts them where its own language wants t
 });
 
 test('a key the catalogue does not have comes back blank, and nothing shipped can be one', () => {
-  // **Attack step 3.** `chrome.i18n.getMessage` answers an unknown name with an empty string, which
+  // `chrome.i18n.getMessage` answers an unknown name with an empty string, which
   // is a blank on screen rather than a raw key — quieter than what it replaces, so the gate that
   // keeps it from happening has to be about the shipped set rather than about the runtime.
   const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
