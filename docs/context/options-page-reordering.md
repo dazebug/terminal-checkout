@@ -7,7 +7,7 @@ The implementation and invariants live in `CLAUDE.md`; this file preserves the f
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** commit `9ac05d6`; the item-5 scratchpad cross-card reproduction
+**Source:** commit `9ac05d6`; measured with a disposable out-of-tree jsdom harness, not committed — see the testing entry for its shape and limits
 **Revisit when:** cross-card row moves become an explicit product requirement
 
 A row belongs to one button, so a row drag is confined to the card where it started. Moving it into another card would change two buttons' execution payloads at once and would need a destination `MAX_CLAUDE_INPUTS` check.
@@ -19,10 +19,9 @@ The same-card guard does not protect what its name might suggest. `reorderClaude
 ## A redraw cancels an in-flight drag
 
 **Type:** decision
-**Type:** incident
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** commit `933fc68`; `repro-redraw.js`, `repro-samelen.js`, and the pre-change `repro-card.js` scratchpad reproductions
+**Source:** commit `933fc68`; measured with a disposable out-of-tree jsdom harness, not committed — see the testing entry for its shape and limits
 **Revisit when:** the options page gains another redraw path or the drag state no longer shares one render lifecycle
 
 Both item-6 protections stay. In the short-list reproduction, reverting only the `renderButtons` cancellation did not reproduce because the range guard caught the stale source; reverting only the `moveItem` range guard did not reproduce because cancellation removed the drag; reverting both reproduced the `TypeError` on `undefined.trim()`. Those protections overlap on that path, but not in what they cover.

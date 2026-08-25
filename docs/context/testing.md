@@ -106,7 +106,7 @@ The same split applies to a step this work could *not* perform: whether a langua
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** commit `933fc68`; the session scratchpad `ci-harness/verify.js`; the native-drop constraint in `CLAUDE.md`
+**Source:** commit `933fc68`; `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed
 **Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
 
 The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.
