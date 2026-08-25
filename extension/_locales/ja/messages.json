@@ -366,9 +366,6 @@
   "ext_preset_repo_updateMain": {
     "message": "main を更新"
   },
-  "ext_preset_repo_updateMain_face": {
-    "message": "main ⤓"
-  },
   "ext_section_backup_help1": {
     "message": "設定 (PR・issue・リポジトリのボタンと main ブランチ) は Chrome のアカウント同期領域 (<code>storage.sync</code>) に保存されます。この拡張機能は固定の ID (manifest key) を持つため、同期設定で「拡張機能」を有効にした<b>同じ Google アカウント</b>でサインインした 2 つの Chrome プロファイルは、この設定を自動的に共有します。エクスポートとインポートは、アカウントを使わずに設定を移すため、またはファイルとしてバックアップを残すためのものです。"
   },

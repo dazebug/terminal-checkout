@@ -23,6 +23,7 @@ const { adoptStoredButtons } = vm.runInThisContext('({ adoptStoredButtons })');
 const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
   vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
 const { presetById, presetOptions } = vm.runInThisContext('({ presetById, presetOptions })');
+const { isTextFace } = vm.runInThisContext('({ isTextFace })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
 // Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
@@ -156,6 +157,31 @@ test('the default buttons name their preset by id, not by its display name', () 
     assert.ok(preset, `${kind}: the default names no preset`);
     assert.equal(defaults[0].command, preset.command);
     assert.deepEqual(defaults[0].claudeInputs, [...(preset.claudeInputs || [])]);
+  }
+});
+
+test('every repository preset draws as an emoji pill, in every language', () => {
+  // The three repository buttons sit on one row next to the repository name, and `isTextFace`
+  // decides the shape of each: a face with letters or digits becomes `gh-btn-text`, anything else
+  // `gh-btn-emoji`. Mixing the two on that row gives the buttons different heights and padding, so
+  // the row is only consistent while *all three* answer the same way.
+  //
+  // Asserted per locale rather than once, because a face that is a translated string can be an
+  // emoji in one catalogue and a word in another — which is exactly the shape this row used to have.
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
+  try {
+    for (const tag of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
+      installMessageBackend(catalogueBackend(tag));
+      for (const preset of REPO_PRESETS) {
+        assert.equal(
+          isTextFace(preset.face), false,
+          `${tag}: ${preset.id} draws as a text pill (face ${JSON.stringify(preset.face)})`,
+        );
+      }
+    }
+  } finally {
+    installMessageBackend(previous);
   }
 });
 

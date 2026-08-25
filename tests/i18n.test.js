@@ -1792,17 +1792,23 @@ test('a preset says its name when it is read, not the one it loaded with', () =>
   // time. The backend moves instead, which is the same question one layer down: is
   // the name being resolved now, or was it frozen when this file loaded?
   const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
-  const { PR_PRESETS, REPO_PRESETS } = vm.runInThisContext('({ PR_PRESETS, REPO_PRESETS })');
+  const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
+    vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
   const previous = installMessageBackend(catalogueBackend('en'));
   try {
     const english = PR_PRESETS[0].name;
-    const englishFace = REPO_PRESETS[0].face;
     const command = PR_PRESETS[0].command;
+    const faces = [...PR_PRESETS, ...ISSUE_PRESETS, ...REPO_PRESETS].map(preset => preset.face);
     installMessageBackend(catalogueBackend('ko'));
     assert.notEqual(PR_PRESETS[0].name, english, 'the preset name froze at load');
-    assert.notEqual(REPO_PRESETS[0].face, englishFace, 'the preset face froze at load');
-    // ...and what it runs does not move, which is the half that must not
+    // The other two halves must *not* move. The command is obvious; the face is the one that used
+    // to be a message key, and a translated face changes the button's shape through `isTextFace`
+    // rather than just its wording.
     assert.equal(PR_PRESETS[0].command, command);
+    assert.deepEqual(
+      [...PR_PRESETS, ...ISSUE_PRESETS, ...REPO_PRESETS].map(preset => preset.face), faces,
+      'a preset face followed the language',
+    );
     installMessageBackend(catalogueBackend('en'));
     assert.equal(PR_PRESETS[0].name, english, 'it did not come back');
   } finally {
@@ -1815,12 +1821,16 @@ test('the button drawn when nothing is stored is resolved when it is read too', 
   const { BUTTON_KINDS } = vm.runInThisContext('({ BUTTON_KINDS })');
   const previous = installMessageBackend(catalogueBackend('en'));
   try {
-    const english = BUTTON_KINDS.repo.defaults[0].face;
+    // The label, not the face: the default button reads both through to its preset, and only the
+    // label is a translation now.
+    const english = BUTTON_KINDS.repo.defaults[0].label;
     const command = BUTTON_KINDS.repo.defaults[0].command;
+    const face = BUTTON_KINDS.repo.defaults[0].face;
     installMessageBackend(catalogueBackend('ko'));
-    assert.notEqual(BUTTON_KINDS.repo.defaults[0].face, english);
+    assert.notEqual(BUTTON_KINDS.repo.defaults[0].label, english);
     // ...and what it runs does not, which is the half that must not move
     assert.equal(BUTTON_KINDS.repo.defaults[0].command, command);
+    assert.equal(BUTTON_KINDS.repo.defaults[0].face, face, 'the default button face followed the language');
   } finally {
     installMessageBackend(previous);
   }
