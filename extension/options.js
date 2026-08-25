@@ -1398,6 +1398,9 @@ for (const { kind, container, addButton } of SECTIONS) {
   // collision itself hasn't been confirmed — Chrome may well give the input priority. Either way,
   // the handle approach prevents dragging a card by accident).
   element.addEventListener('mousedown', (e) => {
+    // The lost-release sequence is hold a handle, switch applications, and release there; it leaves a card or row armed, so a later body pull can start a drag.
+    // Clear on mousedown because every new gesture gets one, while focus may move during a legitimate native drag.
+    element.querySelectorAll('.btn-card, .claude-row').forEach(item => { item.draggable = false; });
     if (e.target.classList.contains('ci-drag-handle')) {
       const row = e.target.closest('.claude-row');
       if (!row) return;
@@ -1408,6 +1411,9 @@ for (const { kind, container, addButton } of SECTIONS) {
     }
     if (!e.target.classList.contains('drag-handle')) return;
     const card = e.target.closest('.btn-card');
+    // Keep symmetry with the row branch; a handle outside a card is not a known path today, but
+    // the guard should remain if the markup changes.
+    if (!card) return;
     card.draggable = true;
     // Releasing without dragging never fires dragend, so undo it here
     document.addEventListener('mouseup', () => { card.draggable = false; }, { once: true });
