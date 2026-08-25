@@ -55,13 +55,35 @@ The extension asks `chrome.i18n` and the app asks macOS. Neither tells the other
 
 **The two Chrome-namespace keys are unchanged** — `name` and `description` in `manifest.json` still come from `_locales`, as they always had to.
 
-## Three stores, three verdicts
+## The compatibility passenger protected a state Chrome refuses to construct
 
+**Type:** incident
 **Type:** decision
 **Status:** active
+**Evidence:** confirmed — Chrome refused to load the unpacked extension with "Cannot load extension with file or directory name _i18n. Filenames starting with \"_\" are reserved for use by the system", on the first real load after PR #41 shipped
+**Source:** issue #45; `tests/i18n.test.js` (the extension-root reserved-name gate); PR #41 for what was retired
+**Revisit when:** a future release removes or renames a file that the previous release's manifest or `importScripts` list names
+
+PR #41 shipped `extension/_i18n/*.js` pinned byte-for-byte as a compatibility passenger, so that a service worker of the adjacent generation — the one whose `importScripts` names those files — would survive a folder swap. Every VM-based gate loaded that folder happily. Chrome's real loader refused the entire folder: any extension-root name starting with `_` is reserved for the system (`_locales`, `_metadata`), and only the real loader enforces this. The failure surfaced on a user machine at first load, exactly the class PR #41's "needs a device" list existed for.
+
+**The refusal falsified the passenger's premise.** The only generation whose consumers import `_i18n` files also *contains* `_i18n` at its root — so Chrome never loaded it, on any machine, at any point. A service worker that was never resident cannot be aborted by a missing import. The retirement precondition issue #45 asked for ("no installed profile can still be loading the old generation") was answered by the refusal itself, and stronger than any version floor could: the profile in question cannot exist.
+
+**So the retirement is a delete, not a deployment.** The passenger files, their load entries in `manifest.json`, `background.js` and `options.html`, the extension-side locale cache and its per-worker fence, the renderer and requester compositions kept as adjacent-generation ABI, the mixed-generation execution matrix and its pinned baseline fixture all lost their subject at once — each existed only to keep that unloadable generation alive. `_locales/en` replaced `_i18n` as the argument-identity source for the other four locales; `en` itself has no external oracle and is reviewed through its byte pin.
+
+**What survives the retirement, because it is not about `_i18n`:**
+
+- The mixed-read window is real (measured, one in ∼10,200 — see "What the atomic extension-folder swap does not buy"). What was wrong was pairing it with a generation that could not be resident. The forward rule the window still imposes: **a release may not remove or rename a file that the previous release's manifest or import list names**, or a worker that loads across the swap aborts once. This release removes `_i18n` files that no previous *loaded* release names, which is why it may.
+- The loader's reserved-name rule now has a gate (`tests/i18n.test.js`): no extension-root name may start with `_` unless Chrome owns it. It is a lint for a rule only the real loader enforces — the one kind of contract the VM gates structurally cannot see, which is the same class as the device gates in #46/#49/#50.
+
+## Three stores, three verdicts
+
+> Superseded 2026-08-25: the compatibility passenger was retired — Chrome refuses any extension root name starting with `_` other than its own, so no Chrome ever loaded a generation containing `_i18n` and the passenger protected a state that cannot exist. See "The compatibility passenger protected a state Chrome refuses to construct" below. Two stores remain: `.lproj` for the app, `_locales` for the extension, with `en` the argument-identity source for the other locales.
+
+**Type:** decision
+**Status:** superseded
 **Evidence:** confirmed — the ownership gate checks the app catalogues, the live Chrome catalogues and the compatibility passengers separately; the live argument-identity gate reads `_locales` itself
-**Source:** PR #41; `app/Tests/AppTests/CatalogueOwnershipTests.swift`, `tools/check-locales.js`, `extension/_locales/`, `extension/_i18n/`
-**Revisit when:** the compatibility passengers are retired under a generation-consistent deployment, or either platform changes its catalogue format
+**Source:** PR #41; `app/Tests/AppTests/CatalogueOwnershipTests.swift`, `tools/check-locales.js`, `extension/_locales/`
+**Revisit when:** —
 
 The app `.lproj` catalogues are canonical for AppKit, `_locales` is canonical for the extension and is the store Chrome reads, and `_i18n` is a non-canonical compatibility artifact retained for adjacent-generation consumers. `_i18n` is pinned to the migration baseline; it is not a second live catalogue that must track every reviewed translation edit in `_locales`.
 
@@ -205,11 +227,13 @@ The language card has three outcomes: the ordinary note, a restart blocked becau
 
 ## Residual: the compatibility cache's fence is per worker, not per account
 
+> Superseded 2026-08-25: the cache and its fence were removed with the compatibility passenger — the adjacent generation that would have called the preserved writer was never loadable by Chrome (see the incident entry above), so the residual left with its subject.
+
 **Type:** constraint
-**Status:** active
+**Status:** superseded
 **Evidence:** unknown — the interleaving is a reviewer's scenario and was not reproduced
 **Source:** PR #41
-**Revisit when:** generation-consistent deployment lets the adjacent-generation cache ABI be removed, a browser API can prove at most one service-worker realm writes it, or the cache moves somewhere with a compare-and-set
+**Revisit when:** —
 
 **What this limits is the retained compatibility implementation, not the current consumer path.** A4 removed cache reads and writes from current consumers, but an adjacent old service worker can still open the new `i18n.js` after a folder swap and call its preserved writer. Removing that implementation now would abort the old worker; generation-consistent deployment is the point at which this residual can leave with its passenger.
 

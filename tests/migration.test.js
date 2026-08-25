@@ -9,12 +9,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
-// The options page's order, dictionaries first: both files resolve their sentences when they are
-// read, so both need `tr` — running them without it was testing a load order that never happens.
+// The options page's order: both files resolve their sentences when they are read, so both need
+// `tr` — running them without it was testing a load order that never happens.
 vm.runInThisContext(read('i18n.js'));
-for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
-  vm.runInThisContext(read(`_i18n/${tag}.js`));
-}
 vm.runInThisContext(read('defaults.js'));
 vm.runInThisContext(read('migrations.js'));
 
@@ -1251,18 +1248,16 @@ test('the save-conflict refusal is not the stale banner reworded', () => {
   // These two are one symbol and one word apart. The ownership gate only refuses
   // *exact* duplicates, so a pair like that passes the gate while reading to a user as a slip —
   // they are said at different moments and now say different things.
-  const { setCurrentLocale, currentLocale, i18nText } =
-    vm.runInThisContext('({ setCurrentLocale, currentLocale, i18nText })');
-  const before = currentLocale();
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
   try {
-    setCurrentLocale('en');
-    const banner = i18nText('ext.banner.stale', 'en');
+    const banner = vm.runInThisContext("tr('ext.banner.stale')");
     const refusal = SAVE_CONFLICT_MESSAGE();
     assert.notEqual(banner, refusal);
     // and not merely different by a character — the refusal has to report that nothing was saved
     assert.match(refusal, /not saved/i, 'the refusal no longer says the save did not happen');
     assert.doesNotMatch(banner, /not saved/i, 'the banner started reporting a refusal it does not know about');
   } finally {
-    setCurrentLocale(before);
+    installMessageBackend(previous);
   }
 });

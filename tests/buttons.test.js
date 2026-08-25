@@ -10,14 +10,11 @@ const vm = require('node:vm');
 // second evaluation). It runs in this context rather than a separate one — objects created inside a
 // vm context have a different prototype, so deepStrictEqual fails even on structurally equal values.
 //
-// **In the manifest's order**, dictionaries first: a preset's `name` and `face` are looked up when
-// they are read, so defaults.js needs `tr` — exactly as it does in the three places that load it for
-// real. Running it alone was testing a load order the extension never uses.
+// **In the manifest's order**: a preset's `name` and `face` are looked up when they are read, so
+// defaults.js needs `tr` — exactly as it does in the three places that load it for real. Running it
+// alone was testing a load order the extension never uses.
 const readExtension = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
 vm.runInThisContext(readExtension('i18n.js'));
-for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
-  vm.runInThisContext(readExtension(`_i18n/${tag}.js`));
-}
 vm.runInThisContext(readExtension('defaults.js'));
 const { moveButton, duplicateButton } = vm.runInThisContext('({ moveButton, duplicateButton })');
 const { BUTTON_KINDS, pageTypeOf, APP_VARIABLES } =

@@ -34,7 +34,7 @@ The consequence was not theoretical. The gate named *"a command literal reads th
 - A gate whose claim is about *what a user sees* must read the store the product reads, and which store that is should be derivable rather than repeated in each fixture. Duplicating every assertion across both stores was rejected: a later move strands one copy again, which is this defect with an extra file.
 - Repairing one instance of this is not repairing it. The instance that surfaced first was a single argument-identity oracle; the family was every content gate in the file. **The question a found instance obliges you to ask is which other gates read the store that stopped being canonical**, and the answer that time was "all of them."
 
-Retiring `_i18n` (#45) is the same move again, so this entry is the precondition for that work rather than a record of a closed episode.
+Retiring `_i18n` (#45) was the same move again, executed 2026-08-25 with this entry as its checklist: every gate that read the frozen store was retargeted to the live one or deleted with its subject. See `localization.md`, "The compatibility passenger protected a state Chrome refuses to construct".
 
 ## Closure decisions preserved from PR #41
 

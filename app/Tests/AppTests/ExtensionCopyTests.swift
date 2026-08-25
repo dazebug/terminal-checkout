@@ -8,7 +8,7 @@ import XCTest
 /// Chrome reads the installed extension off disk whenever it likes. The old code deleted that folder
 /// and copied into the hole, so for the length of a recursive copy there was no manifest there at
 /// all, and then a partially populated directory — and five locales made that copy longer by adding
-/// `_locales/` and `_i18n/` to it.
+/// `_locales/` to it.
 ///
 /// What replaced it builds the new copy beside the old one and swaps. These tests hold the two
 /// properties that buys — the destination is complete at every instant, and a failure leaves the

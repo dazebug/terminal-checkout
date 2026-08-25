@@ -15,12 +15,7 @@ const SECTIONS = [
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
 // This page stores message ids in `data-i18n`, not prose, and resolves them synchronously through
-// `chrome.i18n` before drawing. The compatibility holder in `i18n.js` serves adjacent-generation
-// consumers; current lookup does not consult it.
-
-function browserLanguage() {
-  return chrome.i18n?.getUILanguage?.() || '';
-}
+// `chrome.i18n` before drawing.
 
 // A message as **text**. Everything that lands in `textContent`, a `title`, a placeholder or
 // `confirm()` comes through here, and no value it returns carries markup.
@@ -72,14 +67,7 @@ function applyStaticText(root = document) {
   }
 }
 
-// Prime only an adjacent old dictionary skeleton. The current skeleton exposes
-// `installMessageBackend` and ignores the legacy locale argument; the baseline skeleton lacks that
-// backend and still needs its UI-language fallback. Keeping the old argument shape preserves both
-// sides of the mixed-generation call without executing retired machinery in current×current.
-const compatibilityLocale = typeof installMessageBackend === 'function'
-  ? TC_I18N_FALLBACK
-  : setCurrentLocale(localeToRenderIn(null, browserLanguage()));
-applyDocumentLanguage(compatibilityLocale);
+applyDocumentLanguage();
 document.title = `Terminal Checkout — ${t('ext.header.options')}`;
 applyStaticText();
 
