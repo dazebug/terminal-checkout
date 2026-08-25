@@ -85,10 +85,13 @@
       padding: 16px;
       margin-bottom: 12px;
     }
-    .btn-card.dragging { opacity: 0.4; }
+    .btn-card.dragging,
+    .claude-row.dragging { opacity: 0.4; }
     /* Shows where a dropped card would land, as a line in the 12px gap between cards */
     .btn-card.drop-before::before,
-    .btn-card.drop-after::after {
+    .btn-card.drop-after::after,
+    .claude-row.drop-before::before,
+    .claude-row.drop-after::after {
       content: "";
       position: absolute;
       left: 0;
@@ -99,6 +102,9 @@
     }
     .btn-card.drop-before::before { top: -7px; }
     .btn-card.drop-after::after { bottom: -7px; }
+    /* The row indicator sits in the 7px gap between rows, so its offsets are smaller. */
+    .claude-row.drop-before::before { top: -4px; }
+    .claude-row.drop-after::after { bottom: -4px; }
 
     .btn-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
     .btn-number { display: inline-flex; align-items: center; gap: 5px; font: 600 12.5px var(--mono); }
@@ -223,20 +229,6 @@
       gap: 8px;
       margin-bottom: 7px;
     }
-    .claude-row.dragging { opacity: 0.4; }
-    /* Shows where a dropped row would land, as a line in the 7px gap between rows */
-    .claude-row.drop-before::before,
-    .claude-row.drop-after::after {
-      content: "";
-      position: absolute;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: var(--accent);
-      border-radius: 2px;
-    }
-    .claude-row.drop-before::before { top: -4px; }
-    .claude-row.drop-after::after { bottom: -4px; }
     .ci-marker { font: 11px var(--mono); color: var(--faint); width: 24px; text-align: right; flex: none; }
     .ci-input { flex: 1; }
     .ci-remove {

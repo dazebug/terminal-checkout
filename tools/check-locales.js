@@ -27,11 +27,11 @@ const extension = path.join(__dirname, '..', 'extension');
 // the pin and this command keeps judging structure.
 const CATALOGUE_BASELINE_HASHES = {
   locales: {
-    en: 'b375cfac313b5ad9a4a55d94f5e3a956b31c4570b20d34e0bcf7b51582a5741d',
-    ja: '78f45f44f04131befeed0ae672b3e22b5658e04610040bbe4df1bd3038a24b2e',
-    ko: '7b02be0765e22f50e0fe04669d95c04006e4bb19f743ef63ea7abee24d236933',
-    'zh-Hans': '2b775d5ddb2578d0453b0fbd579da2473e8d2d6b87545cae9f5e6105993d6df9',
-    'zh-Hant': 'c16fe635e510a1d1832765e0f2e8b420e733bf873d080cad19f78480fba9a8d0',
+    en: '94c812b4044ed9bca945c6507362f921c09a2a349dae20d1e47dbbcb40e34a06',
+    ja: '3557ede78174963c9810acfd756e6e9b6378420f8e254f3760f595d1bc04496e',
+    ko: '0c946198730057e312d63c59fb600b0953907546f453f69dcff16600587ca870',
+    'zh-Hans': '681b08a017ba701eb9f4499be87ea7ce979d62f1f690bc4cadb9b1bbfba5de3a',
+    'zh-Hant': '4e1ff013857b0c9accaba41a16e76ac4696a8bf293a860cd468c1f9f195aad27',
   },
 };
 

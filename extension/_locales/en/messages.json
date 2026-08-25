@@ -88,9 +88,6 @@
       }
     }
   },
-  "ext_reorder_tooltip": {
-    "message": "Drag, or use the ↑↓ keys, to reorder"
-  },
   "ext_confirm_presetOverwrite": {
     "message": "Button $ARG1$ will be overwritten with the \"$ARG2$\" preset. Continue?",
     "placeholders": {
@@ -373,6 +370,9 @@
   },
   "ext_preset_repo_updateMain": {
     "message": "Update main"
+  },
+  "ext_reorder_tooltip": {
+    "message": "Drag, or use the ↑↓ keys, to reorder"
   },
   "ext_section_backup_help1": {
     "message": "Settings (PR, issue, and repository buttons, and the main branch) are stored in Chrome's account-synced area (<code>storage.sync</code>). This extension has a fixed ID (the manifest key), so any two Chrome profiles signed in to the <b>same Google account</b> with \"Extensions\" enabled in sync settings share these settings automatically. Export and import are for moving settings without an account, or for keeping a file backup."
