@@ -156,7 +156,7 @@ A single `Bool` gave "another process group was observed" and "the lookup failed
 ## Non-ASCII text changes normalization when it crosses `Process.arguments`
 
 **Type:** constraint
-**Status:** superseded — the delivery paths no longer cross this boundary (commit `682b6c7`); the platform behaviour it describes is unchanged
+**Status:** superseded — the delivery paths no longer cross this boundary (PR #41, commit `682b6c7`); the platform behaviour it describes is unchanged
 **Evidence:** confirmed (measured)
 **Source:** PR #41; `ProcessArgumentBoundaryTests` in `app/Tests/CoreTests/CoreTests.swift`
 **Revisit when:** a delivery path has to put a value that is not a path into `Process.arguments` or the environment again

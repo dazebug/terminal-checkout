@@ -68,7 +68,7 @@ These rows are self-contained. They keep the numbers they were given in a longer
 **Type:** constraint
 **Status:** active
 **Evidence:** confirmed — six setup-window cases were green while the shipped window was visibly clipped; removing one forced traversal produced eight failures across seven cases at the sizes measured on the device, and the pending-work signal fires between 0 and 4 times per run
-**Source:** issue #34; commits `37887c7`, `5645d14`; `app/Tests/AppTests/SetupWindowTestSupport.swift`
+**Source:** issue #34; PR #54 (commits `37887c7`, `5645d14`); `app/Tests/AppTests/SetupWindowTestSupport.swift`
 **Revisit when:** these tests gain a way to observe an AppKit display cycle without pumping wall-clock time, or the window stops changing its own size from inside a layout pass
 
 The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. That is exactly what hid the defect they existed to catch. A forced traversal continues past the window resize the layout pass performs, so the enclosing scroll view lays out a second time and the stale clip never appears; the real display cycle has already finished with the scroll view by then. Measured against the same subject, forced traversal reported a 702-point clip where the display cycle produced 547.
@@ -90,7 +90,7 @@ The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. Th
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed — the two-display failure needs two attached screens whose visible frames disagree, which the suite cannot construct; the arithmetic it reduces to is pinned directly
-**Source:** issue #34; commit `56baa0d`; `docs/new-terminal-checklist.md`
+**Source:** issue #34; PR #54 (commit `56baa0d`); `docs/new-terminal-checklist.md`
 **Revisit when:** the suite gains a way to present more than one screen geometry to `NSScreen`, or the placement logic stops depending on the attached displays
 
 The window-placement defect only appears when two displays are attached and two independent reads pick different ones. A test-only stand-in for "which screen" would have tested the stand-in, not the choice.
@@ -106,7 +106,7 @@ The same split applies to a step this work could *not* perform: whether a langua
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** commit `933fc68`; `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed
+**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed
 **Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
 
 The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.

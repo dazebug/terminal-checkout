@@ -2,7 +2,7 @@
 
 Why this repository keeps a `docs/context/` at all, and how the tooling around it is installed.
 
-**Note on sources:** an entry cites ledger ids and `file:line` while the work it describes is still on a branch, and PR numbers once that work is merged — this repository squash-merges, so a branch hash recorded before the merge stops resolving afterwards.
+**Note on sources:** an entry cites ledger ids and `file:line` while the work it describes is still on a branch, and PR numbers once that work is merged — this repository squash-merges, so a branch hash recorded before the merge stops resolving afterwards. A hash may ride along for precision, but never alone, and `tests/context-sources.test.js` fails a `Source` or `Status` line that carries one without a PR number. That gate exists because this note alone did not hold: nine lines across four entries cited hashes that are not ancestors of main, while the one hash that is — `da37339` — is a squash commit rather than a branch one.
 
 ## The skill is vendored into the repository
 
