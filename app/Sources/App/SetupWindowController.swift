@@ -55,8 +55,9 @@ final class FittedContentStackView: NSStackView {
     private var afterWindowUpdate: (() -> Void)?
     /// Test-only observation. It is nil in the application, and never participates in layout.
     static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
-    /// Stands in for the screen so a test can exercise the clamp without depending on whichever
-    /// display it happens to run on.
+    /// Stands in for the visible frame used for both clamp measurement and window placement, so a
+    /// test can exercise one complete layout cycle without depending on whichever display it runs
+    /// on. The value captured by `layout()` is the rect passed to both center and clamp.
     /// Setting the stand-in after the first layout must schedule the pass that consumes it; a plain
     /// stored property would leave a clean tree measuring the real display until another change.
     var visibleFrameOverride: NSRect? {
@@ -72,9 +73,17 @@ final class FittedContentStackView: NSStackView {
         super.layout()
         guard let window, window.contentView != nil else { return }
         var target = fittingSize
-        let visible = visibleFrameOverride ?? (window.screen ?? NSScreen.main)?.visibleFrame
+        // Do not read NSScreen.main here. init uses it once to put the window on its launch
+        // screen; after that, a nil window.screen means AppKit has not resolved this window to a
+        // display (for example while it is not ordered or in a headless test). There is no physical
+        // visible rect to clamp against then, and choosing another main screen would reintroduce
+        // the split-screen decision this path is designed to remove.
+        let visible = visibleFrameOverride ?? window.screen?.visibleFrame
         if let visible { target.height = min(target.height, visible.height) }
-        guard lastRequestedSize != target else {
+        // A screen can change without changing the clamped size; placement still has to consume
+        // the new visible rect rather than letting the size early return discard it.
+        let visibleFrameChanged = lastVisibleFrame != visible
+        guard lastRequestedSize != target || visibleFrameChanged else {
             reportLayoutPass(
                 fittingSize: fittingSize, targetSize: target, requestedSize: false, window: window
             )
@@ -109,8 +118,8 @@ final class FittedContentStackView: NSStackView {
             }
 
             window.setContentSize(target)
-            if self.centerAfterFirstWindowUpdate {
-                window.center()
+            if self.centerAfterFirstWindowUpdate, let visible = self.lastVisibleFrame {
+                Self.centerInside(visible, window)
                 self.centerAfterFirstWindowUpdate = false
             }
             if let visible = self.lastVisibleFrame { Self.moveInside(visible, window) }
@@ -172,7 +181,17 @@ final class FittedContentStackView: NSStackView {
 
     /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
     /// and off the screen. Slide the window back rather than letting AppKit clamp the height.
-    private static func moveInside(_ visible: NSRect, _ window: NSWindow) {
+    /// Centering and clamping both consume the visible rect captured by the same layout pass.
+    /// Calling `NSWindow.center()` here would choose `NSScreen.main` again and could place the
+    /// window on a different display before `moveInside` reads the captured rect.
+    static func centerInside(_ visible: NSRect, _ window: NSWindow) {
+        var frame = window.frame
+        frame.origin.x = visible.midX - frame.width / 2
+        frame.origin.y = visible.midY - frame.height / 2
+        if frame.origin != window.frame.origin { window.setFrameOrigin(frame.origin) }
+    }
+
+    static func moveInside(_ visible: NSRect, _ window: NSWindow) {
         var frame = window.frame
         frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - frame.height))
         frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.width))
@@ -309,6 +328,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
+        // The initial content rect starts at (0,0), so asking window.screen before placement can
+        // select whichever display happens to own that point. Read NSScreen.main once as the
+        // launch placement policy, put the placeholder inside that screen before measuring, and
+        // let later layout passes use window.screen rather than independently reading main again.
+        let launchVisibleFrame = NSScreen.main?.visibleFrame
         window.title = localized("app.window.title")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -320,17 +344,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         self.init(window: window)
         window.delegate = self
+        if let launchVisibleFrame {
+            FittedContentStackView.centerInside(launchVisibleFrame, window)
+            FittedContentStackView.moveInside(launchVisibleFrame, window)
+        }
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
         // Let the stack measure once so the deferred update has a target.
-        // The placeholder is visible before the deferred application, so center it now. Without
-        // this center, the window briefly showed at the default lower-left corner before the
-        // measured size arrived; the measured duration was about 75ms, or 4–5 frames at 60Hz.
-        // The deferred block still centers once more after the real height arrives; the two
-        // centers serve the visible placeholder and the measured size.
         window.contentView?.layoutSubtreeIfNeeded()
-        window.center()
         cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main

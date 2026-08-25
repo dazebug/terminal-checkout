@@ -265,6 +265,28 @@ final class SetupWindowLayoutTests: XCTestCase {
         try assertFittedPlacement(controller, in: window, label: "terminal-growth")
     }
 
+    /// The placement contract is pure geometry: a window that fits stays centered when both
+    /// operations consume the same rect, while a different rect can only clamp it to an edge.
+    /// The two-screen choice is intentionally left to device acceptance rather than manufactured
+    /// through a test seam.
+    func testCenteringAndClampingConsumeTheSameVisibleFrame() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: .borderless, backing: .buffered, defer: false
+        )
+
+        let visible = NSRect(x: 100, y: 200, width: 600, height: 600)
+        FittedContentStackView.centerInside(visible, window)
+        FittedContentStackView.moveInside(visible, window)
+        XCTAssertEqual(window.frame.midX, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(window.frame.midY, visible.midY, accuracy: 0.5)
+
+        let otherVisible = NSRect(x: 1000, y: 1200, width: 600, height: 600)
+        FittedContentStackView.moveInside(otherVisible, window)
+        XCTAssertEqual(window.frame.minX, otherVisible.minX, accuracy: 0.5)
+        XCTAssertEqual(window.frame.minY, otherVisible.minY, accuracy: 0.5)
+    }
+
     /// When the content genuinely cannot fit the screen the window is clamped — but the stack
     /// keeps its full height and scrolls, rather than being squeezed into an overlapping mess.
     func testContentTallerThanTheScreenScrollsInsteadOfBeingSqueezed() throws {
