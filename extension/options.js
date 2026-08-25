@@ -1303,6 +1303,8 @@ function onCardClick(e) {
 // --- Reordering (drag, ↑↓) ---
 // The button order is the order they appear in on a GitHub page, and it decides which button (the
 // first) the extension icon runs.
+// A row's order decides what claude is told: inputs are typed in list order, and a run of consecutive
+// `!` bodies is merged onto one shell line joined with `;`, so moving a row can change which commands share shell state and whether the run merges at all.
 
 // The item being dragged. The sections share handlers, so this also carries which section the drag
 // started in (so a drop over another section is not accepted).
@@ -1328,6 +1330,16 @@ function markDropTarget(container, itemSelector, index) {
   const items = container.querySelectorAll(itemSelector);
   if (index < items.length) items[index].classList.add('drop-before');
   else if (items.length) items[items.length - 1].classList.add('drop-after');
+}
+
+function claudeDropZone(kind, target) {
+  if (drag?.type !== 'claude') return null;
+  const rows = target.closest?.('.claude-rows');
+  const card = rows?.closest('.btn-card');
+  if (drag.kind !== kind
+    || card?.dataset.kind !== kind
+    || Number(card.dataset.index) !== drag.cardIndex) return null;
+  return rows;
 }
 
 function endDrag(container) {
@@ -1425,13 +1437,9 @@ for (const { kind, container, addButton } of SECTIONS) {
 
   element.addEventListener('dragover', (e) => {
     if (drag?.type === 'claude') {
-      const rows = e.target.closest?.('.claude-rows');
-      const card = rows?.closest('.btn-card');
-      const valid = drag.kind === kind
-        && card?.dataset.kind === kind
-        && Number(card.dataset.index) === drag.cardIndex;
+      const rows = claudeDropZone(kind, e.target);
       const origin = document.getElementById(section(drag.kind).container);
-      if (!valid) {
+      if (!rows) {
         clearDropMarks(origin, '.claude-row');
         return;
       }
@@ -1455,13 +1463,9 @@ for (const { kind, container, addButton } of SECTIONS) {
 
   element.addEventListener('drop', (e) => {
     if (drag?.type === 'claude') {
-      const rows = e.target.closest?.('.claude-rows');
-      const card = rows?.closest('.btn-card');
-      const valid = drag.kind === kind
-        && card?.dataset.kind === kind
-        && Number(card.dataset.index) === drag.cardIndex;
+      const rows = claudeDropZone(kind, e.target);
       const origin = document.getElementById(section(drag.kind).container);
-      if (!valid) {
+      if (!rows) {
         clearDropMarks(origin, '.claude-row');
         return;
       }
