@@ -100,3 +100,17 @@ So the property was split. The arithmetic the invariant names — centring then 
 **Rejected — inventing a seam to manufacture a red.** It would have produced a green gate whose subject was a fixture, which is the failure the frozen-store entry above describes.
 
 The same split applies to a step this work could *not* perform: whether a language change leaves the window where the user put it is pinned by a test, but was never confirmed on a device, because the language picker is not reachable through the accessibility tree — enumerating pop-up buttons and radio buttons in that window both return empty, since the controls are custom. Driving it means clicking coordinates and guessing at a menu, which is not evidence. It is on the checklist as a step to perform, recorded as unperformed.
+
+## An out-of-tree DOM harness needs its own red toggles
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured)
+**Source:** commit `933fc68`; the session scratchpad `ci-harness/verify.js`; the native-drop constraint in `CLAUDE.md`
+**Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
+
+The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.
+
+The harness's checks need toggles just as the committed suite's checks do. The cross-card check passed when its guard was removed, and a toggle intended to disable the keyboard branch matched an identical `if` a hundred lines earlier and reddened the drag checks instead. Both looked like evidence while proving the wrong thing. An out-of-tree harness receives less scrutiny than the suite, so a check never shown to fail is worth less than no check.
+
+**Rejected alternative — promote the harness or trust green-only checks.** A fake browser or an extracted arithmetic seam would manufacture a unit boundary the production code does not have, while an un-toggled scratchpad check can mistake a missed filter for a working guard. Keep the harness disposable, and require each check to redden only when its named protection is toggled.

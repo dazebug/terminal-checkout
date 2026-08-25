@@ -73,7 +73,7 @@
 | 3 | 카드와 행의 native drag listener를 discriminated `drag` 상태와 selector-scoped `dropIndex`·`markDropTarget`·`clearDropMarks`·`endDrag`로 연결한다. 카드 listener는 claude drag를 무시하고 행 listener는 시작 카드의 `.claude-rows` 안에서만 `preventDefault`하며, card/row의 mousedown·dragstart·dragend가 서로의 state를 정리하지 않게 한다 | DOM drag 상호작용 | — | `extension/options.js`, `extension/options.html` | 1, 2 | claimed | 구현 완료; 항목 5의 hands-on/browser scenarios에서 section listener nesting, origin `.claude-rows` zone, card 밖·다른 card no-drop을 확인하며, D7에 따라 committed DOM test 없음 | — |
 | 4 | 행의 ↑↓ 경계 동작, 같은 카드 전용 `reorderClaudeInputs`, `edit` 선행, 이동 후 새 행 손잡이 focus를 구현한다. 행과 카드의 mouse-drop path는 focus를 조작하지 않고, 기존 card drop의 focus loss는 선행 동작으로 기록한다 | 키보드·상태·접근성 | — | `extension/options.js` | 1, 3 | claimed | 구현 완료; 항목 5의 hands-on/browser scenarios에서 ↑↓ 끝 no-op, 같은 카드 배열 이동, redraw 뒤 row-handle focus를 확인하며, D7에 따라 committed DOM test 없음 | — |
 | 5 | 실제 옵션 페이지에서 0·1·2·5행, 위·아래·중간 이동, 카드 밖·다른 카드 drop, card/row 동시 nesting, Save/reload, 다섯 locale을 확인하고 세 최종 gate를 종료 상태로 기록한다 | 브라우저·릴리스 검증 | — | 옵션 페이지와 Chrome automation 수기 시나리오; 최종 diff의 1∼4 파일 집합 | 2, 3, 4 | verified | `<scratchpad>/ci-harness/verify.js`에서 `node verify.js <tree>` → `24 checks, 0 failed, exit 0`; toggles: `cross-card guard`, `zone requirement`, `keyboard branch`, `mousedown branch`, `> 1 handle condition`, `focus restore`. Coverage: no native drop, no real geometry, five-locale rendering not exercised; the i18n gate covers binding parity, and a real Chrome load remains the release gate for catalogue selection | — |
-| 6 | redraw로 무효화된 drag의 captured index를 즉시 취소하고, `moveItem`의 범위를 벗어난 source가 `undefined`를 새 원소로 만들지 않게 방어한다. 카드·행 공통 cleanup은 `renderButtons`에서 실행하고, 유효하지 않은 source는 원본 배열을 그대로 반환한다 | 자료구조·DOM 상태 방어 | redraw 뒤 stale `{cardIndex, from}`가 빈 section을 만들고, out-of-range `from`이 `undefined`를 삽입하는 확정 결함 | `extension/defaults.js`, `extension/options.js`, `tests/buttons.test.js`, `docs/plans/claude-input-reorder.md` | 1, 3, 4 | claimed | red: 새 test를 먼저 둔 `node --test` exit 1, 219 tests / 218 pass / 1 fail, actual `[undefined, 'first', 'second']`; green: exit 0, 219/219/0; driver repro `<scratchpad>/ci-harness/repro-redraw.js`는 row drop 뒤 `cards=0`, pre-change `<scratchpad>/ci-harness/repro-card.js`도 `cards=0` | — |
+| 6 | redraw로 무효화된 drag의 captured index를 즉시 취소하고, `moveItem`의 범위를 벗어난 source가 `undefined`를 새 원소로 만들지 않게 방어한다. 카드·행 공통 cleanup은 `renderButtons`에서 실행하고, 유효하지 않은 source는 원본 배열을 그대로 반환한다 | 자료구조·DOM 상태 방어 | redraw 뒤 stale `{cardIndex, from}`가 빈 section을 만들고, out-of-range `from`이 `undefined`를 삽입하는 확정 결함 | `extension/defaults.js`, `extension/options.js`, `tests/buttons.test.js`, `docs/plans/claude-input-reorder.md` | 1, 3, 4 | verified | 드라이버 실측 — repro-redraw.js(범위 밖 from) 재현 → 수정 후 미재현; repro-samelen.js(같은 길이 교체) 재현 → 수정 후 미재현; 토글: 두 가드를 다 되돌려야 첫 재현이 red, 취소만 되돌리면 두 번째가 red | — |
 
 - 항목 하나는 한 승격에 들어갈 크기다. 1은 `defaults.js` 순수 계약과 그 테스트, 2는 렌더·CSS·catalogue와 그 i18n 테스트, 3∼4는 `options.js` 상호작용이므로 1·2를 먼저 통과시킨 뒤 3·4를 묶어 구현한다.
 - 항목 1의 `moveItem` 문자열·뒤 이동·앞 이동·원본 불변성 cases는 **(ii) 불변 원칙 계약**이며 `moveItem` 구현과 같은 promotion에 들어간다. 항목 2의 i18n key/placeholder/catalogue/pin cases는 **(ii) 다국어 불변 원칙 계약**이며 key와 렌더 code와 같은 promotion에 들어간다. 둘 다 UI listener가 실제로 drop했는지를 주장하지 않는다.
@@ -95,7 +95,7 @@
 | D7 | 드라이버 | DOM code를 Node unit test로 억지로 덮을 것인가 | pure array와 i18n contract만 committed test로 두고, native drag·nested bubbling·focus는 브라우저 시나리오로 검증한다 | R0 설계 리뷰; `docs/context/testing.md:88-100`과 기준선 Node suite에 `options.js` DOM 실행 harness가 없음 | 수기/automation 환경에서 실제 pointer drop 가능 여부 |
 | D8 | 드라이버 | 기존 `ext.field.claudeInputs.help`를 늘릴 것인가 | **늘리지 않는다**. 이미 “delivered in order”를 말하고 section-level help가 `⠿` 의미를 가르치며 handle의 `title`이 affordance를 전달한다. 기존 문장에 다섯 언어로 한 clause를 더하는 대안은 marginal discoverability에 비해 실제 번역 검토 비용이 크다 | R0 설계 리뷰 | 없음 |
 | D9 | 드라이버 | 카드와 행이 공유하는 tooltip key의 이름을 무엇으로 할 것인가 | `ext.card.reorder.tooltip`을 `ext.reorder.tooltip`으로 rename해 카드 handle과 row handle이 공유한다. 각 locale의 기존 value는 verbatim copy하고, `ext.card.reorder.aria`는 그대로 두며 `ext.claudeInput.reorder.aria`만 새로 만든다 | R0 설계 리뷰; `ext.card.reorder.tooltip`을 row에도 그대로 재사용하는 대안은 diff가 작지만 call site 하나의 이름으로 둘을 섬기게 하는 작은 거짓말이며, 번역된 `face`가 그 비용을 치른 것과 같은 부류다 | 없음 |
-| D10 | 드라이버 | redraw가 drag 중 captured index를 무효화할 때와 `moveItem`의 잘못된 source를 어떻게 처리할 것인가 | `renderButtons`가 기존 `endDrag`를 source section에 먼저 호출해 card/row drag를 함께 취소하고, `moveItem`은 유효하지 않은 `from`이면 원본을 반환한다. `insertBefore`는 splice의 clamp에 맡겨 out-of-range destination을 append한다 | cold review; `<scratchpad>/ci-harness/repro-redraw.js`에서 row `cards=0`, `<scratchpad>/ci-harness/repro-card.js`에서 pre-change card `cards=0`; 새 case red 219/218/1 → guard 후 green 219/219/0 | 실제 Chrome에서 native drag가 redraw 직후 어떻게 이어지는지는 driver가 harness로 재실행 |
+| D10 | 드라이버 | item 6의 두 guard는 redundant한가 | 첫 repro에서는 각 guard가 다른 guard 없이도 짧은 replacement를 막지만, 같은 길이 교체에서는 cancellation만 stale row를 막는다. 따라서 두 guard를 유지한다 | repro-redraw.js와 repro-samelen.js; cancellation만 되돌림 → 첫 repro는 range guard로 미재현, range guard만 되돌림 → cancellation으로 미재현, 두 guard 모두 되돌림 → `undefined.trim()` 재현; cancellation만 되돌림 → 같은 길이 목록이 `!x,!y,!z`에서 `!y,!z,!x`로 이동 | 실제 Chrome의 adopted redraw와 `dragend` ordering은 아직 측정하지 않음 |
 
 ## 전수 소탕 표
 
@@ -134,6 +134,15 @@
 - 발견: remote save adoption이 native drag 중 `renderButtons`를 실행하면 captured `{cardIndex, from}`가 새 배열과 DOM에 더 이상 대응하지 않는다. row path는 `moveItem(['!only'], 2, 0)`에서 `undefined`를 삽입해 section 전체를 비웠고, 같은 class가 pre-change card path에도 있었다.
 - 처리: 새 source-range test를 red-first로 추가하고 `moveItem`의 invalid `from` guard를 넣은 뒤, redraw 전에 source `endDrag`를 호출해 card/row drag를 함께 취소했다. DOM cancellation은 항목 5 harness에 남기고 committed DOM test는 만들지 않았다.
 - 실측: 새 test red `node --test` exit 1, 219 tests / 218 pass / 1 fail; guard 후 green exit 0, 219/219/0. 나머지 async/index sweep에서 추가 hole 없음.
+
+### R2
+
+#### cold review — redraw race · item 6 재검토 · 왕복 1 · 원문 있음
+
+- 반박: redraw race는 **(A)**로 분류됐다. native drag가 `renderButtons`의 redraw를 가로질러 captured index를 계속 들고 있을 수 있다.
+- 처리: item 6을 추가해 `renderButtons`에서 card/row drag를 함께 취소하고, `moveItem`에 source 범위 guard를 유지했다. 이 두 guard는 같은 짧은 목록 repro에서 겹치지만 같은 길이 교체에서는 서로 대체되지 않는다.
+- 실측: `repro-redraw.js`는 두 guard를 모두 되돌릴 때만 `undefined.trim()`으로 재현됐고, `repro-samelen.js`는 cancellation만 되돌리면 `!x,!y,!z`가 `!y,!z,!x`로 이동했다. cancellation만 되돌리면 첫 repro는 range guard로 막혔고, range guard만 되돌리면 첫 repro는 cancellation으로 막혔다.
+- 판정: `"No." The stable-DOM keyboard and drag paths satisfy the goal, but the redraw race violates the one-card pin and permutation-only invariants` → item 6 added, items 3–4 reopened through it.
 
 ## 열린 질문
 
