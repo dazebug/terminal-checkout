@@ -817,7 +817,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// an action does nothing for anyone to focus. The qualifier is for the one case where a single
     /// action serves several controls — the terminal radios, told apart by a product name, which no
     /// language rewrites either. A control with no action is not one this window owns, and
-    /// `testEveryControlTheWindowOwnsCarriesADistinctRole` is the enumeration of the ones it does.
+    /// `testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames` is the enumeration of the ones
+    /// it does.
     private func role(_ action: Selector, _ qualifier: String? = nil) -> NSUserInterfaceItemIdentifier {
         NSUserInterfaceItemIdentifier((["control", "\(action)"] + [qualifier].compactMap { $0 }).joined(separator: "."))
     }

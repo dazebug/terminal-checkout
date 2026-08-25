@@ -120,7 +120,7 @@ enum Installer {
     /// manifest at all, or dictionaries without the code that reads them.
     ///
     /// `replaceItemAt` is Foundation's replacement primitive and the reason this is possible at all.
-    /// Measured on a populated directory (`<scratchpad>/probe_replace.swift`): plain `rename(2)`
+    /// Measured on a populated directory with a throwaway probe kept nowhere: plain `rename(2)`
     /// refuses with `ENOTEMPTY` (errno 66), while `replaceItemAt` succeeds, consumes the staged
     /// directory, and left the destination **present on every one of ~10,200 reads** from a thread
     /// doing nothing but opening files inside it across four runs.

@@ -266,8 +266,8 @@ public func warpHelperSocketPath(token: String) -> String? {
 // when the helper is registered rather than when the app is leaving, which is what keeps
 // termination-time pressure out of the path (`warpHelperPinPath`).
 //
-// Measured (`<scratchpad>/r22_pin_probe.swift`, and `r18_claim_probe.swift`, `r18_link_probe2.swift`,
-// `r20_mkdir_probe.swift` before it):
+// Measured with throwaway probes that are not in the repository — the findings below are the whole
+// record of them, so nothing here is a pointer to go and read:
 //  - `link` onto a name that already exists is refused with `EEXIST`, either way round, and a
 //    *listening* socket reached through a hard link accepts connections normally — so the helper can
 //    bind privately, listen, and only then put itself where the app is looking;

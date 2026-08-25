@@ -302,6 +302,14 @@ function localeGenerationOf(response, seq, scope) {
 
 // The whole cache decision, as one pure function: what to keep, and whether anything changed.
 //
+// **Whose path this is.** No consumer shipping today reaches it: the app publishes no locale, and
+// this extension resolves its language from `chrome.i18n` alone. What keeps it here is the adjacent
+// generation — a service worker from the previous release, left running by a folder swap, still
+// calls this. So the rules below describe an ABI held for that consumer, not behaviour the current
+// one exercises; read them as a contract that must not change, rather than as a description of what
+// happens when you press a button. Its per-worker limit is recorded as a residual in
+// `docs/context/localization.md`, and it retires with the `_i18n` passengers.
+//
 // Three rules, in this order, and the order is the point.
 //
 // **1. Our own sequence fence, and only within the worker that minted it** (D50). Every request this
