@@ -16,6 +16,7 @@ final class SetupWindowLayoutTests: XCTestCase {
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
+        PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         // Without this the window draws **raw keys**, and a key is shorter than every sentence it
         // stands for — a layout test that passed on keys would be silent about the case it exists
         // for. `swift test` has no app bundle, so the source tree is where the catalogues are
@@ -25,6 +26,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     override func tearDown() {
         Settings.terminal = savedTerminal
+        PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         AppLocalization.resourcesPath = savedResources
         super.tearDown()
     }
@@ -53,12 +55,96 @@ final class SetupWindowLayoutTests: XCTestCase {
         return SetupWindowController()
     }
 
-    private func settle(_ window: NSWindow) {
-        window.contentView?.layoutSubtreeIfNeeded()
-    }
-
     private func contentHeight(_ window: NSWindow) -> CGFloat {
         window.contentRect(forFrameRect: window.frame).height
+    }
+
+    private func printLayoutTrace(_ label: String, _ passes: [FittedContentLayoutPass]) {
+        func height(_ size: NSSize?) -> String {
+            guard let size else { return "nil" }
+            return String(describing: size.height)
+        }
+
+        print("SETUP_LAYOUT_TRACE[\(label)] layoutPasses=\(passes.count)")
+        for (index, pass) in passes.enumerated() {
+            let documentFrame = pass.documentFrame.map { String(describing: $0) } ?? "nil"
+            print(
+                "SETUP_LAYOUT_TRACE[\(label)] pass=\(index + 1) "
+                    + "fittingHeight=\(pass.fittingSize.height) "
+                    + "targetHeight=\(pass.targetSize.height) "
+                    + "lastRequestedHeight=\(height(pass.lastRequestedSize)) "
+                    + "contentSizeBeforeApplicationHeight=\(pass.contentSizeBeforeApplication.height) "
+                    + "clipBounds=\(pass.clipBounds) "
+                    + "documentFrame=\(documentFrame) "
+                    + "requested=\(pass.requestedSize)"
+            )
+        }
+    }
+
+    private func printSnapshot(_ label: String, _ snapshot: SetupWindowLayoutSnapshot) {
+        print("SETUP_LAYOUT_SNAPSHOT[\(label)] \(snapshot)")
+    }
+
+    private func assertFittedPlacement(
+        _ controller: SetupWindowController, in window: NSWindow, label: String
+    ) throws {
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let document = try XCTUnwrap(scroll.documentView)
+        let header = try XCTUnwrap(
+            controller.rootStack.arrangedSubviews.first {
+                $0.identifier?.rawValue == "card.header"
+            }
+        )
+        let visible = scroll.documentVisibleRect
+
+        XCTAssertEqual(
+            contentHeight(window), controller.rootStack.fittingSize.height, accuracy: 0.5,
+            "\(label): window content height did not equal fittingSize"
+        )
+        XCTAssertEqual(
+            controller.rootStack.frame.height, controller.rootStack.fittingSize.height, accuracy: 0.5,
+            "\(label): root stack was squeezed"
+        )
+        XCTAssertEqual(
+            visible.maxY, document.frame.maxY, accuracy: 0.5,
+            "\(label): the viewport top extends above the document"
+        )
+        // Only a document that fits inside the clip can meet the lower edge as well. A taller
+        // document legitimately extends beyond the viewport, so its lower edge is not an oracle.
+        if document.frame.height <= scroll.contentView.bounds.height + 0.5 {
+            XCTAssertEqual(
+                visible.minY, document.frame.minY, accuracy: 0.5,
+                "\(label): the viewport has a blank region below the document"
+            )
+        }
+        XCTAssertGreaterThanOrEqual(
+            header.frame.maxY, visible.minY - 0.5,
+            "\(label): the first card is below the viewport"
+        )
+        XCTAssertLessThanOrEqual(
+            header.frame.maxY, visible.maxY + 0.5,
+            "\(label): the first card is above the viewport"
+        )
+    }
+
+    private func assertFirstCardVisible(
+        _ controller: SetupWindowController, in window: NSWindow, label: String
+    ) throws {
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let header = try XCTUnwrap(
+            controller.rootStack.arrangedSubviews.first {
+                $0.identifier?.rawValue == "card.header"
+            }
+        )
+        let visible = scroll.documentVisibleRect
+        XCTAssertGreaterThanOrEqual(
+            header.frame.maxY, visible.minY - 0.5,
+            "\(label): the first card is below the viewport"
+        )
+        XCTAssertLessThanOrEqual(
+            header.frame.minY, visible.maxY + 0.5,
+            "\(label): the first card is above the viewport"
+        )
     }
 
     /// A screen with room to spare, for the tests whose subject is "the window tracks its
@@ -91,7 +177,7 @@ final class SetupWindowLayoutTests: XCTestCase {
             // A roomy screen because the property only holds while the content fits — past that
             // the clamp is deliberate and has its own test
             controller.rootStack.visibleFrameOverride = roomyScreen
-            settle(window)
+            SetupWindowTestSupport.settle(window)
 
             let needed = controller.rootStack.fittingSize.height
             XCTAssertGreaterThan(needed, 0, "\(tag) measured nothing")
@@ -144,7 +230,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         controller.rootStack.visibleFrameOverride = roomyScreen
         for terminal in [Terminal.warp, .wezterm, .warp, .iterm, .warp] {
             controller.select(terminal: terminal)
-            settle(window)
+            SetupWindowTestSupport.settle(window)
             XCTAssertGreaterThanOrEqual(
                 contentHeight(window), controller.rootStack.fittingSize.height - 0.5,
                 "\(terminal) left the window shorter than its content"
@@ -153,6 +239,7 @@ final class SetupWindowLayoutTests: XCTestCase {
                 controller.rootStack.frame.height, controller.rootStack.fittingSize.height,
                 accuracy: 0.5, "\(terminal) squeezed the stack"
             )
+            try assertFittedPlacement(controller, in: window, label: "terminal-\(terminal)")
         }
     }
 
@@ -163,18 +250,41 @@ final class SetupWindowLayoutTests: XCTestCase {
         let controller = makeController(.wezterm) // shortest layout, so switching grows it
         let window = try XCTUnwrap(controller.window)
         controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
-        settle(window)
+        SetupWindowTestSupport.settle(window)
         let visible = roomyScreen
         window.setFrameOrigin(NSPoint(x: visible.minX + 20, y: visible.minY + 4))
 
         controller.select(terminal: .warp)
-        settle(window)
+        SetupWindowTestSupport.settle(window)
 
         XCTAssertGreaterThanOrEqual(window.frame.minY, visible.minY - 0.5, "bottom went off screen")
         XCTAssertLessThanOrEqual(window.frame.maxY, visible.maxY + 0.5, "top went off screen")
         XCTAssertGreaterThanOrEqual(
             contentHeight(window), controller.rootStack.fittingSize.height - 0.5
         )
+        try assertFittedPlacement(controller, in: window, label: "terminal-growth")
+    }
+
+    /// The placement contract is pure geometry: a window that fits stays centered when both
+    /// operations consume the same rect, while a different rect can only clamp it to an edge.
+    /// The two-screen choice is intentionally left to device acceptance rather than manufactured
+    /// through a test seam.
+    func testCenteringAndClampingConsumeTheSameVisibleFrame() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: .borderless, backing: .buffered, defer: false
+        )
+
+        let visible = NSRect(x: 100, y: 200, width: 600, height: 600)
+        FittedContentStackView.centerInside(visible, window)
+        FittedContentStackView.moveInside(visible, window)
+        XCTAssertEqual(window.frame.midX, visible.midX, accuracy: 0.5)
+        XCTAssertEqual(window.frame.midY, visible.midY, accuracy: 0.5)
+
+        let otherVisible = NSRect(x: 1000, y: 1200, width: 600, height: 600)
+        FittedContentStackView.moveInside(otherVisible, window)
+        XCTAssertEqual(window.frame.minX, otherVisible.minX, accuracy: 0.5)
+        XCTAssertEqual(window.frame.minY, otherVisible.minY, accuracy: 0.5)
     }
 
     /// When the content genuinely cannot fit the screen the window is clamped — but the stack
@@ -183,11 +293,11 @@ final class SetupWindowLayoutTests: XCTestCase {
         let controller = makeController(.warp)
         let window = try XCTUnwrap(controller.window)
         let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
-        settle(window)
+        SetupWindowTestSupport.settle(window)
         let needed = controller.rootStack.fittingSize.height
 
         controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: needed / 2)
-        settle(window)
+        SetupWindowTestSupport.settle(window)
 
         XCTAssertEqual(contentHeight(window), needed / 2, accuracy: 1, "clamp did not apply")
         XCTAssertEqual(
@@ -198,19 +308,69 @@ final class SetupWindowLayoutTests: XCTestCase {
             controller.rootStack.frame.height, scroll.contentView.bounds.height,
             "nothing to scroll — the document should exceed the clip"
         )
+        try assertFirstCardVisible(controller, in: window, label: "tall-document-rest")
     }
 
-    /// A permission flipping while the window is open is the other trigger for the same resize,
-    /// and it does not go through `select(terminal:)`.
-    func testPermissionRefreshKeepsTheWindowFitted() throws {
+    /// The key-window callback is the boundary after returning from System Settings. The provider
+    /// is deliberately false while the controller is built and true only for that callback, so
+    /// this case tests a transition rather than whatever TCC state the test machine happens to
+    /// have.
+    func testAccessibilityGrantRefreshConvergesWithFittedPlacement() throws {
+        var granted = false
+        PermissionChecker.accessibilityStatusProvider = { granted }
         let controller = makeController(.warp)
         let window = try XCTUnwrap(controller.window)
-        controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
-        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
-        settle(window)
-        XCTAssertGreaterThanOrEqual(
-            contentHeight(window), controller.rootStack.fittingSize.height - 0.5
+        let accessibilitySection = try XCTUnwrap(controller.refillableSectionsForTesting.last)
+        XCTAssertFalse(
+            accessibilitySection.isHidden,
+            "the false provider did not leave the Accessibility section visible"
         )
+        let previousProbe = FittedContentStackView.layoutProbeForTesting
+        var passes: [FittedContentLayoutPass] = []
+        FittedContentStackView.layoutProbeForTesting = { passes.append($0) }
+        defer { FittedContentStackView.layoutProbeForTesting = previousProbe }
+
+        controller.rootStack.visibleFrameOverride = roomyScreen // see the transition test
+        let deniedSnapshot = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let deniedPasses = passes
+        passes.removeAll()
+        printSnapshot("accessibility-denied", deniedSnapshot)
+        printLayoutTrace("accessibility-denied", deniedPasses)
+        XCTAssertEqual(
+            deniedSnapshot.contentSize.height, deniedSnapshot.fittingSize.height, accuracy: 0.5,
+            "the denied baseline did not fit before the transition"
+        )
+
+        granted = true
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
+        XCTAssertTrue(
+            accessibilitySection.isHidden,
+            "the true provider did not hide the Accessibility section during refresh"
+        )
+        let grantedSnapshot = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let grantedPasses = passes
+        passes.removeAll()
+        printSnapshot("accessibility-granted", grantedSnapshot)
+        printLayoutTrace("accessibility-granted", grantedPasses)
+        try assertFittedPlacement(controller, in: window, label: "accessibility-granted")
+
+        let repeatedSnapshot = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let repeatedPasses = passes
+        printSnapshot("accessibility-granted-repeat", repeatedSnapshot)
+        printLayoutTrace("accessibility-granted-repeat", repeatedPasses)
+        XCTAssertTrue(
+            grantedSnapshot.isStable(with: repeatedSnapshot),
+            "a second settle changed the fixed point:\nfirst: \(grantedSnapshot)\nsecond: \(repeatedSnapshot)"
+        )
+
+        granted = false
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
+        XCTAssertFalse(
+            accessibilitySection.isHidden,
+            "the false provider did not restore the Accessibility section during refresh"
+        )
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        try assertFittedPlacement(controller, in: window, label: "accessibility-denied-again")
     }
 
     /// **Every sentence in the pipeline strip comes from the catalogue**.

@@ -32,6 +32,10 @@ enum AutomationStatus {
 }
 
 enum PermissionChecker {
+    /// The live TCC query is the default. Tests replace this function briefly to model the state
+    /// transition that System Settings produces when the window becomes key again.
+    static var accessibilityStatusProvider: () -> Bool = { accessibilityIsTrusted() }
+
     static var isITermInstalled: Bool {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: iTermBundleID) != nil
     }
@@ -51,7 +55,7 @@ enum PermissionChecker {
     /// input, and a CR sent without that check submits an empty line while the input claude
     /// discarded is recorded as "delivered" (measured). Running a command needs none of this.
     static var isAccessibilityGranted: Bool {
-        accessibilityIsTrusted()
+        accessibilityStatusProvider()
     }
 
     /// Raises the prompt. Unlike the automation permission this one is not granted here — it only

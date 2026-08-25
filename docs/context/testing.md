@@ -61,3 +61,42 @@ These rows are self-contained. They keep the numbers they were given in a longer
 - **D321:** collection-valued assertions report directional differences rather than two complete sets, and the key-set cross-check is suppressed when the preceding unclassified-set assertion already names the same missing call-site shape; this keeps one cause to one readable red while still reporting both coverage directions when classification itself is complete.
 - **D322:** a test-only screen stand-in must invalidate its owning layout view when assigned, because these tests set it after controller construction; requiring every caller to remember a separate `needsLayout` write recreates the inert-double class at the next call site. `visibleFrameOverride` now dirties `FittedContentStackView` in its setter, and the one redundant caller-side invalidation is gone.
 - **D323:** measured, because "set after construction" does not by itself mean inert: shrinking the stand-in to 200 points left `testTheWindowFitsItsContentInEveryPopulatedLocale` **passing** before the fix, while the terminal-transition, bottom-edge and permission-refresh tests all failed — the interaction each of those performs next dirties the tree as a side effect, so their stand-ins were live by accident rather than by design. Exactly one of the five sites was inert, and it was the one CI caught on a display shorter than this project's. After the fix all four stand-in users fail the same probe. A layout gate that has only ever run on one machine has not been shown to measure anything.
+
+## A layout gate that drives its own layout is not measuring the window that ships
+
+**Type:** incident
+**Type:** constraint
+**Status:** active
+**Evidence:** confirmed — six setup-window cases were green while the shipped window was visibly clipped; removing one forced traversal produced eight failures across seven cases at the sizes measured on the device, and the pending-work signal fires between 0 and 4 times per run
+**Source:** issue #34; commits `37887c7`, `5645d14`; `app/Tests/AppTests/SetupWindowTestSupport.swift`
+**Revisit when:** these tests gain a way to observe an AppKit display cycle without pumping wall-clock time, or the window stops changing its own size from inside a layout pass
+
+The setup-window tests settled the tree by calling `layoutSubtreeIfNeeded()`. That is exactly what hid the defect they existed to catch. A forced traversal continues past the window resize the layout pass performs, so the enclosing scroll view lays out a second time and the stale clip never appears; the real display cycle has already finished with the scroll view by then. Measured against the same subject, forced traversal reported a 702-point clip where the display cycle produced 547.
+
+**Rejected — keeping the forced call for determinism.** Four configurations were compared: window shown, window not shown, forced traversal, and no `NSApplication.run()` at all. Only the forced one hid the defect. The decision variable is *who drives layout*, not whether the window is on screen — so the settle helper pumps the main run loop and forces nothing, and terminates on a fixed point rather than on elapsed time, failing at a named cap. Wall-clock pumping is the cost; the cap keeps it bounded.
+
+**Geometry unchanged is not the same as work done.** A queued main-queue update, a registered restore callback, and an unserviced `needsLayout` all leave the geometry identical while the work is still owed, so two matching snapshots read as settled. All three are part of the fixed point. This was got wrong three times in a row, once per signal, which is the argument for asking "what else is pending" rather than adding the signal that just bit.
+
+**There is exactly one settle.** Two divergent copies existed and only one of them could see the defect. A second copy of a contract is the same failure as the frozen fixture above, one file later.
+
+**A test's admission class depends on the harness being faithful, and it moves in both directions.** One assertion classified as "passes on the old code, admissible only as an invariant" became a genuine red once the forced traversal was gone. Two others, classified as genuine reds while the harness was still returning early, turned out to be invariants once the pending-work signal removed the flakiness — they had been failing for a harness reason, not for the reason they were credited with. Classification therefore cannot be settled before the harness is trusted, and one made earlier has to be re-run rather than carried forward.
+
+**Failures here were flaky, not deterministic.** The pending-work signal fires 0–4 times in otherwise identical runs. Before it existed, one of five locales failed — which reads like a deterministic red for that locale and was not. A layout gate that has passed once has not been shown to pass.
+
+**A crash is not a red, and it disables everything after it.** `defer { window.close() }` in a test aborts the whole suite with SIGSEGV: `isReleasedWhenClosed` defaults to true, so the close releases the window and XCTest's autorelease-pool pop releases it again. Every test after that point simply does not run, and a search for failing assertions finds none. The same code outside XCTest does not crash, so a standalone harness will not reproduce it. **Rejected — `isReleasedWhenClosed = false`;** the rest of the file never closes the windows it creates, so the inconsistency was the defect and not a missing rule.
+
+## Some defects cannot be a red here, and saying so beats building a seam
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the two-display failure needs two attached screens whose visible frames disagree, which the suite cannot construct; the arithmetic it reduces to is pinned directly
+**Source:** issue #34; commit `56baa0d`; `docs/new-terminal-checklist.md`
+**Revisit when:** the suite gains a way to present more than one screen geometry to `NSScreen`, or the placement logic stops depending on the attached displays
+
+The window-placement defect only appears when two displays are attached and two independent reads pick different ones. A test-only stand-in for "which screen" would have tested the stand-in, not the choice.
+
+So the property was split. The arithmetic the invariant names — centring then clamping with one rect leaves the window centred, and clamping with a different rect is what drags it to an edge — is pinned as a direct, screen-free test, admissible as an invariant rather than as a red. The display-dependent half is a step on the hands-on checklist, verified by measuring a real launch.
+
+**Rejected — inventing a seam to manufacture a red.** It would have produced a green gate whose subject was a fixture, which is the failure the frozen-store entry above describes.
+
+The same split applies to a step this work could *not* perform: whether a language change leaves the window where the user put it is pinned by a test, but was never confirmed on a device, because the language picker is not reachable through the accessibility tree — enumerating pop-up buttons and radio buttons in that window both return empty, since the controls are custom. Driving it means clicking coordinates and guessing at a menu, which is not evidence. It is on the checklist as a step to perform, recorded as unperformed.

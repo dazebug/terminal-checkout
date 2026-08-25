@@ -12,6 +12,18 @@ let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
 let setupTextWidth: CGFloat = setupContentWidth - 28
 
+struct FittedContentLayoutPass {
+    let fittingSize: NSSize
+    let targetSize: NSSize
+    let lastRequestedSize: NSSize?
+    /// The window content size at the measurement point, before the deferred application runs.
+    let contentSizeBeforeApplication: NSSize
+    let clipBounds: NSRect
+    /// Nil when the measured window content is not an NSScrollView.
+    let documentFrame: NSRect?
+    let requestedSize: Bool
+}
+
 /// The settings stack, which sizes its window to itself.
 ///
 /// Why the stack and not the window controller: the size has three preconditions a caller has to
@@ -36,29 +48,190 @@ final class FittedContentStackView: NSStackView {
     /// The size we last asked the window for. Without it, a clamped request (content taller than
     /// the screen) would be re-issued on every pass and layout would never settle.
     private var lastRequestedSize: NSSize?
-    /// Stands in for the screen so a test can exercise the clamp without depending on whichever
-    /// display it happens to run on.
+    private var lastVisibleFrame: NSRect?
+    private var windowUpdateScheduled = false
+    private var deferredWindowUpdateAllowed = true
+    /// The window controller owns this decision because rebuilding the document creates a new
+    /// stack without creating a new window. The callbacks are configured by `buildContent()` and
+    /// keep the stack from mistaking its first update for the window's first measured placement.
+    var shouldCenterAfterFirstWindowUpdate: (() -> Bool)?
+    var didCenterAfterFirstWindowUpdate: (() -> Void)?
+    private var afterWindowUpdate: (() -> Void)?
+    /// Test-only observation. It is nil in the application, and never participates in layout.
+    static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
+    /// Stands in for the visible frame used for both clamp measurement and window placement, so a
+    /// test can exercise one complete layout cycle without depending on whichever display it runs
+    /// on. The value captured by `layout()` is the rect passed to both center and clamp.
     /// Setting the stand-in after the first layout must schedule the pass that consumes it; a plain
     /// stored property would leave a clean tree measuring the real display until another change.
     var visibleFrameOverride: NSRect? {
         didSet { needsLayout = true }
     }
 
+    /// Geometry can be unchanged while the main-queue update or a rebuild's restore callback is
+    /// still waiting. The shared test settle reads these two and the view's own `needsLayout`
+    /// before declaring a fixed point — a new deferred mechanism has to join that set, because
+    /// unchanged geometry has already been mistaken for a settled tree once per signal.
+    var deferredWindowUpdatePendingForTesting: Bool { windowUpdateScheduled }
+    var deferredWindowCompletionPendingForTesting: Bool { afterWindowUpdate != nil }
+
     override func layout() {
         super.layout()
         guard let window, window.contentView != nil else { return }
         var target = fittingSize
-        let visible = visibleFrameOverride ?? (window.screen ?? NSScreen.main)?.visibleFrame
+        // Do not read NSScreen.main here. init uses it once to put the window on its launch
+        // screen; after that, a nil window.screen means the window is not currently on any
+        // display. There is no cycle-owned visible rect to capture in this pass, and choosing
+        // another main screen here would reintroduce the split-screen decision this path removes.
+        // The deferred application has a separate recovery fallback for that transient state.
+        let visible = visibleFrameOverride ?? window.screen?.visibleFrame
         if let visible { target.height = min(target.height, visible.height) }
-        guard lastRequestedSize != target else { return }
+        // A screen can change without changing the clamped size; placement still has to consume
+        // the new visible rect rather than letting the size early return discard it.
+        let visibleFrameChanged = lastVisibleFrame != visible
+        guard lastRequestedSize != target || visibleFrameChanged else {
+            reportLayoutPass(
+                fittingSize: fittingSize, targetSize: target, requestedSize: false, window: window
+            )
+            return
+        }
         lastRequestedSize = target
-        window.setContentSize(target)
-        if let visible { Self.moveInside(visible, window) }
+        lastVisibleFrame = visible
+        scheduleWindowUpdate()
+        reportLayoutPass(
+            fittingSize: fittingSize, targetSize: target, requestedSize: true, window: window
+        )
+    }
+
+    /// Apply the measured size after this layout pass has returned. At the point where `layout()`
+    /// runs, the scroll view has already laid itself out against the old window size; applying a
+    /// 155pt shrink there produced `win=702` with `clip=547`. `enclosingScrollView?.tile()` and
+    /// `needsLayout = true` were both measured and left that stale clip unchanged, so the window
+    /// update has to happen on the next main-queue turn instead.
+    private func scheduleWindowUpdate() {
+        guard !windowUpdateScheduled else { return }
+        windowUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.windowUpdateScheduled = false
+            guard self.deferredWindowUpdateAllowed,
+                  let window = self.window,
+                  window.contentView != nil,
+                  let requestedTarget = self.lastRequestedSize
+            else {
+                self.afterWindowUpdate = nil
+                return
+            }
+
+            let visible: NSRect?
+            if let override = self.visibleFrameOverride {
+                visible = override
+            } else if let screen = window.screen {
+                let currentVisibleFrame = screen.visibleFrame
+                if let captured = self.lastVisibleFrame, captured != currentVisibleFrame {
+                    // A display can disappear after measurement and before this block runs. Do
+                    // not apply a rect that no longer describes the window's screen; the screen
+                    // parameter observer has already made the next layout responsible for a new
+                    // cycle, and this guard covers the interval before that layout is delivered.
+                    self.lastVisibleFrame = nil
+                    self.needsLayout = true
+                    return
+                }
+                if self.lastVisibleFrame == nil { self.lastVisibleFrame = currentVisibleFrame }
+                visible = currentVisibleFrame
+            } else {
+                // A window can be between displays while the screen-parameter notification is
+                // being delivered. Recover it using the current main screen only at application
+                // time; init's launch-screen choice remains a one-time decision.
+                self.lastVisibleFrame = nil
+                visible = NSScreen.main?.visibleFrame
+            }
+
+            var target = requestedTarget
+            if let visible { target.height = min(target.height, visible.height) }
+            window.setContentSize(target)
+            if self.shouldCenterAfterFirstWindowUpdate?() == true, let visible {
+                Self.centerInside(visible, window)
+                self.didCenterAfterFirstWindowUpdate?()
+            }
+            if let visible { Self.moveInside(visible, window) }
+
+            let completion = self.afterWindowUpdate
+            self.afterWindowUpdate = nil
+            if let completion {
+                // The replacement scroll view must answer to its new clip size before the
+                // language-change anchor and first responder are restored.
+                window.contentView?.layoutSubtreeIfNeeded()
+                completion()
+            }
+        }
+    }
+
+    /// A closed window may still be retained by its controller while a queued update is waiting.
+    /// Drop that update's state so reopening the same controller measures a fresh window.
+    func suspendDeferredWindowUpdates() {
+        deferredWindowUpdateAllowed = false
+        lastRequestedSize = nil
+        lastVisibleFrame = nil
+        afterWindowUpdate = nil
+    }
+
+    func resumeDeferredWindowUpdates() {
+        deferredWindowUpdateAllowed = true
+        lastRequestedSize = nil
+        lastVisibleFrame = nil
+        needsLayout = true
+    }
+
+    /// A screen-parameter change invalidates the visible rect captured by the previous layout
+    /// cycle. The next cycle must ask `window.screen` again instead of applying coordinates from a
+    /// display that may no longer exist.
+    func invalidateVisibleFrame() {
+        lastVisibleFrame = nil
+        needsLayout = true
+    }
+
+    /// The caller uses this only after rebuilding the content, when `layout()` has already measured
+    /// the new stack. A queued size request defers the callback until that request and its clip
+    /// layout finish; if no request is queued, no window geometry is waiting to change, so restoring
+    /// immediately is safe and prevents a completion from depending on a future layout pass.
+    func afterNextWindowUpdate(_ completion: @escaping () -> Void) {
+        if windowUpdateScheduled {
+            afterWindowUpdate = completion
+        } else {
+            completion()
+        }
+    }
+
+    private func reportLayoutPass(
+        fittingSize: NSSize, targetSize: NSSize, requestedSize: Bool, window: NSWindow
+    ) {
+        guard let probe = Self.layoutProbeForTesting else { return }
+        let scroll = window.contentView as? NSScrollView
+        probe(FittedContentLayoutPass(
+            fittingSize: fittingSize,
+            targetSize: targetSize,
+            lastRequestedSize: lastRequestedSize,
+            contentSizeBeforeApplication: window.contentRect(forFrameRect: window.frame).size,
+            clipBounds: scroll?.contentView.bounds ?? .zero,
+            documentFrame: scroll?.documentView?.frame,
+            requestedSize: requestedSize
+        ))
     }
 
     /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
     /// and off the screen. Slide the window back rather than letting AppKit clamp the height.
-    private static func moveInside(_ visible: NSRect, _ window: NSWindow) {
+    /// Centering and clamping both consume the visible rect captured by the same layout pass.
+    /// Calling `NSWindow.center()` here would choose `NSScreen.main` again and could place the
+    /// window on a different display before `moveInside` reads the captured rect.
+    static func centerInside(_ visible: NSRect, _ window: NSWindow) {
+        var frame = window.frame
+        frame.origin.x = visible.midX - frame.width / 2
+        frame.origin.y = visible.midY - frame.height / 2
+        if frame.origin != window.frame.origin { window.setFrameOrigin(frame.origin) }
+    }
+
+    static func moveInside(_ visible: NSRect, _ window: NSWindow) {
         var frame = window.frame
         frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - frame.height))
         frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.width))
@@ -143,6 +316,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var languageRestartButton: NSButton!
     private var languageNoteLabel: NSTextField!
     private var languageObserver: NSObjectProtocol?
+    private var screenParametersObserver: NSObjectProtocol?
+    private var windowHasClosed = false
+    /// This belongs to the window's lifetime, not to a document stack that language changes replace.
+    private var hasCenteredMeasuredWindow = false
     /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
     /// (`windowWillClose`), so the next time the window opens the state decides again.
     private var forceShowInstall = false
@@ -194,6 +371,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
+        // The initial content rect starts at (0,0), so asking window.screen before placement can
+        // select whichever display happens to own that point. Read NSScreen.main once as the
+        // launch placement policy, put the placeholder inside that screen before measuring, and
+        // let later layout passes use window.screen rather than independently reading main again.
+        let launchVisibleFrame = NSScreen.main?.visibleFrame
         window.title = localized("app.window.title")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -205,13 +387,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         self.init(window: window)
         window.delegate = self
+        if let launchVisibleFrame {
+            FittedContentStackView.centerInside(launchVisibleFrame, window)
+            FittedContentStackView.moveInside(launchVisibleFrame, window)
+        }
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
-        // Settle the layout before centring: the window is sized from inside the layout pass, so
-        // centring the initial 600x640 frame would leave it off-centre once the real height lands.
+        observeScreenParameters()
+        // Let the stack measure once so the deferred update has a target.
         window.contentView?.layoutSubtreeIfNeeded()
-        window.center()
         cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
@@ -227,17 +412,45 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     deinit {
+        stopObservingScreenParameters()
         for observer in [requestObserver, toolsObserver, languageObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
     }
 
+    private func observeScreenParameters() {
+        guard screenParametersObserver == nil else { return }
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.windowHasClosed else { return }
+            self.rootStack?.invalidateVisibleFrame()
+        }
+    }
+
+    private func stopObservingScreenParameters() {
+        if let observer = screenParametersObserver {
+            NotificationCenter.default.removeObserver(observer)
+            screenParametersObserver = nil
+        }
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
+        if windowHasClosed {
+            windowHasClosed = false
+            observeScreenParameters()
+            rootStack?.resumeDeferredWindowUpdates()
+        }
         cursor.start()
         refresh()
     }
 
     func windowWillClose(_ notification: Notification) {
+        windowHasClosed = true
+        stopObservingScreenParameters()
+        rootStack?.suspendDeferredWindowUpdates()
         cursor.stop()
         forceShowInstall = false
         guideBlock.isHidden = true
@@ -279,7 +492,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // wraps onto a second line moves every card below it. Measuring against a document that is
         // about to change height would put the user a status line away from where they were.
         window.contentView?.layoutSubtreeIfNeeded()
-        restore(place, in: window)
+        rootStack?.afterNextWindowUpdate { [weak self, weak window] in
+            guard let self, let window, let currentWindow = self.window,
+                  currentWindow === window else { return }
+            self.restore(place, in: window)
+        }
     }
 
     /// Where the user was, in terms that outlive the views that held it: **a role and a card**,
@@ -374,6 +591,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildContent() -> NSView {
         let stack = FittedContentStackView()
+        // The first measured center belongs to this window, not this stack: language rebuilds make
+        // a new stack but must preserve the position the user chose for the existing window.
+        stack.shouldCenterAfterFirstWindowUpdate = { [weak self] in
+            guard let self else { return false }
+            return !self.hasCenteredMeasuredWindow
+        }
+        stack.didCenterAfterFirstWindowUpdate = { [weak self] in
+            self?.hasCenteredMeasuredWindow = true
+        }
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -415,6 +641,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay // no gutter, so the stack keeps its full width
+        // This full-size-content window already clears the title bar with the stack's 38pt top
+        // edge inset. AppKit's automatic title-bar inset adds another 32pt (measured: with auto
+        // insets on, shrink left the same 32pt origin; off kept the origin at 0), so it is
+        // redundant here and turns a resize into a blank band above the document.
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.documentView = stack
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
