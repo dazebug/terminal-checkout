@@ -1,10 +1,43 @@
 import Foundation
 
-/// iTerm2 번들 ID. AppleScript 타게팅은 이름이 아닌 이 ID로 한다 —
-/// 앱 파일명이 iTerm.app이거나 복사본으로 LaunchServices 이름 해석이 꼬여도 동작 (-1728 방지).
+/// The iTerm2 bundle ID. AppleScript targets this ID rather than the name — that keeps working when the app file is called iTerm.app, or when a copy has confused LaunchServices' name resolution (this is what avoids -1728).
 public let iTermBundleID = "com.googlecode.iterm2"
 
-/// AppleScript 문자열 리터럴 안에 안전하게 들어가도록 이스케이프한다.
+/// **The only door AppleScript goes out through**, and the delivery is stdin rather than `-e`.
+///
+/// **Why not `-e`.** Foundation re-encodes `Process.arguments` to NFD on Darwin
+/// (`ProcessArgumentBoundaryTests`), so a script handed over as an argument reaches the interpreter
+/// decomposed — measured for `설계`: `-e` gives it `1109 1165 11AF 1100 1168`, stdin and a script
+/// file both give `C124 ACC4`. That is the user's own sentence to claude, in whichever of the five
+/// languages they wrote it, and when the input is a `!` one it is the **shell** that receives the
+/// decomposed bytes — the failure mode this repository has already met once, where a Korean pattern
+/// stopped matching the NFC bytes on disk with no error anywhere.
+///
+/// **Why the carrier and not a normalisation of ours.** Composing to NFC would equally change what
+/// a user who typed NFD wrote. The promise is the bytes they wrote, so the fix is to stop passing
+/// them through something that rewrites them.
+///
+/// **Why stdin and not a script file**, which measures the same: a file has to be created, secured
+/// and deleted on a path taken several times per input (marker, clear, body, CR, cleanup), and a
+/// deletion that fails leaves residue this repository would then have to reclaim — it already
+/// carries two such reclaimers. Measured alongside: stdin reports the **same status and the same
+/// stderr** as `-e` for both a syntax error and a missing target, and a 200 KB script goes through
+/// without the write blocking.
+///
+/// **What is not measured**: the last hop. Whether iTerm2's `write text` puts these bytes on the tty
+/// unchanged needs iTerm2 running. What is established is that the bytes leave AppleScript itself
+/// intact — measured through two independent sinks, `do shell script` and AppleScript's own UTF-8
+/// writer.
+///
+/// There is no default timeout on purpose: the four call sites want 10s (twice), 180s and 300s, and
+/// a default none of them used would be a value no test ever exercises.
+public func runAppleScript(
+    _ script: String, timeout: TimeInterval
+) throws -> (status: Int32, stdout: String, stderr: String) {
+    try runProcess("/usr/bin/osascript", ["-"], input: script, timeout: timeout)
+}
+
+/// Escapes text so it can sit safely inside an AppleScript string literal.
 public func escapeForAppleScript(_ text: String) -> String {
     var s = text.replacingOccurrences(of: "\\", with: "\\\\")
     s = s.replacingOccurrences(of: "\"", with: "\\\"")
@@ -15,9 +48,9 @@ public func escapeForAppleScript(_ text: String) -> String {
     return s
 }
 
-/// iTerm2에서 새 탭을 열고 명령을 실행하는 AppleScript.
-/// 창이 하나도 없을 때(create tab 불가)를 대비해 분기한다.
-/// 마지막에 "세션id|tty"를 돌려준다 — claude 입력 전달이 이 핸들로 세션을 다시 찾는다.
+/// The AppleScript that opens a new tab in iTerm2 and runs a command.
+/// It branches to cover the case where there is no window at all (where `create tab` is not possible).
+/// At the end it returns "session id|tty" — claude input delivery uses that handle to find the session again.
 public func iTermScript(for command: String) -> String {
     let escaped = escapeForAppleScript(command)
     return """
@@ -35,10 +68,9 @@ public func iTermScript(for command: String) -> String {
     """
 }
 
-/// 이미 열린 세션에 텍스트를 타이핑하는 AppleScript (claude 입력 전달용).
-/// submit=false면 개행 없이 타이핑만 한다 — claude TUI는 LF를 제출로 인식하지 않고,
-/// 초기화 중 도착한 입력은 버리므로, 화면 반영을 확인한 뒤 제출(개행)을 따로 보내야 한다.
-/// 세션을 못 찾으면(탭 닫힘) "gone"을 돌려줘 호출자가 남은 전달을 중단하게 한다.
+/// The AppleScript that types text into an already-open session (used for claude input delivery).
+/// With submit=false it only types, without a newline — the claude TUI does not recognise LF as a submission, and it discards input that arrives during initialisation, so the submission (the newline) has to be sent separately once the screen has been confirmed to reflect the text.
+/// When the session cannot be found (the tab was closed) it returns "gone", which is how the caller learns to stop the remaining delivery.
 public func iTermWriteToSessionScript(sessionID: String, text: String, submit: Bool) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     let escapedText = escapeForAppleScript(text)
@@ -95,7 +127,7 @@ public func iTermClearInputScript(sessionID: String) -> String {
     """
 }
 
-/// 세션의 현재 화면 텍스트를 돌려주는 AppleScript — 타이핑이 실제로 반영됐는지 확인용.
+/// The AppleScript that returns a session's current screen text — used to check whether typing actually landed.
 public func iTermSessionContentsScript(sessionID: String) -> String {
     let escapedID = escapeForAppleScript(sessionID)
     return """

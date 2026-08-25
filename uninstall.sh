@@ -30,8 +30,19 @@ fi
 # The `/` before the glob is explicit: `$TMPDIR` carries a trailing slash on macOS but nothing
 # guarantees it, and without one the pattern would silently match nothing
 # (write the conditions as if statements — under set -e, a false AND list would end the whole script)
-for sock in "${TMPDIR:-/tmp}"/tcw-*.sock /tmp/tcw-*.sock; do
-    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.sock$ ]]; then
+# Two suffixes, because a helper has two names: the staging one it binds and the advertised one it
+# takes with `link` once it is listening. A helper killed in between leaves the first, and a sweep
+# that only knew the second would leave it here for good.
+# `-S` is also what keeps this sweep away from an address the app has **taken back**: when it goes
+# away while a helper is still on its way up, it links its own file onto that helper's advertised
+# name, and a helper born afterwards is stopped by finding the name occupied. Removing it here would
+# hand the name back — `pkill` above reaches only helpers that already exist, so an uninstall cannot
+# otherwise stop one that is still coming. What it leaves is a regular file (and the `.pin` it was
+# linked from), neither of which is `-S`, so both stay; the running app collects them once no helper
+# can still claim (`warpHelperOccupationLifetime`), which is the bound an uninstall does not need to
+# reproduce
+for sock in "${TMPDIR:-/tmp}"/tcw-* /tmp/tcw-*; do
+    if [ -S "$sock" ] && [ ! -L "$sock" ] && [[ "${sock##*/}" =~ ^tcw-[0-9a-f]{8}\.(sock|pre)$ ]]; then
         rm -f "$sock"
     fi
 done
@@ -57,10 +68,17 @@ for dir in "${TMPDIR:-/tmp}"/tc-prompt-* /tmp/tc-prompt-*; do
         fi
     fi
 done
-# The header below must equal `warpTabConfigHeader` in app/Sources/Core/WarpControl.swift —
-# UninstallScriptSyncTests enforces the match (the app still writes this header in Korean)
+# The two headers below must equal `warpTabConfigHeader` and `warpTabConfigLegacyHeader` in
+# app/Sources/Core/WarpControl.swift — UninstallScriptSyncTests enforces both matches.
+# The first is a permanent machine protocol and will not change again; the second is what earlier
+# builds wrote and is kept so their files are still collected here.
+# The first alternative is anchored at **both** ends: unanchored, a file whose first line merely
+# starts with the token — `…/v10`, or a user's own line — reads as ours and gets deleted. The
+# second cannot be: earlier builds put the explanation on that same line, so only its start is
+# fixed. `warpTabConfigIsOurs` splits the two the same way, and UninstallScriptSweepTests runs this
+# block against real files to check the boundary rather than the spelling.
 for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_configs/terminal-checkout-*.toml; do
-    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -q '^# Terminal Checkout이 자동 생성합니다'; then
+    if [ -f "$toml" ] && [ ! -L "$toml" ] && head -1 "$toml" | grep -qE '^#!terminal-checkout/tab-config/v1$|^# Terminal Checkout이 자동 생성합니다'; then
         rm -f "$toml"
     fi
 done

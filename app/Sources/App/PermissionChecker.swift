@@ -9,13 +9,19 @@ enum AutomationStatus {
     case targetNotRunning
     case unknown(Int32)
 
+    /// Read where it is drawn, never stored: a value kept in a property would hold the language it
+    /// was built in. The two cases that point at a button take its label from the catalogue as `%@`
+    /// rather than spelling it out, so renaming the button cannot leave the sentence quoting a
+    /// button that is no longer there.
     var label: String {
         switch self {
-        case .granted: return "허용됨"
-        case .denied: return "거부됨 — 시스템 설정 → 개인정보 보호 → 자동화에서 허용하세요"
-        case .notDetermined: return "아직 요청 안 됨 — [권한 요청]을 누르세요"
-        case .targetNotRunning: return "iTerm2가 실행 중이 아니라 확인 불가 — [권한 요청]을 누르면 실행됩니다"
-        case .unknown(let code): return "상태 확인 실패 (OSStatus \(code))"
+        case .granted: return localized("app.automation.granted")
+        case .denied: return localized("app.automation.denied")
+        case .notDetermined:
+            return localized("app.automation.notDetermined", localized("app.button.requestItermPermission"))
+        case .targetNotRunning:
+            return localized("app.automation.targetNotRunning", localized("app.button.requestItermPermission"))
+        case .unknown(let code): return localized("app.automation.unknown", code)
         }
     }
 
@@ -34,22 +40,23 @@ enum PermissionChecker {
         findWezTermCLI() != nil
     }
 
-    /// Core의 실행 파일 탐색과 같은 함수를 쓴다 — 설치 감지와 실행이 갈리면
-    /// "설정에는 설치됨, 실행은 못 찾음"이 된다
+    /// Uses the same executable lookup Core uses — if detection and execution disagree, the result
+    /// is "installed according to the settings, not found when run".
     static var isWarpInstalled: Bool {
         findWarpExecutable() != nil
     }
 
-    /// 손쉬운 사용(접근성) 권한. Warp에서 claude 입력을 예약한 버튼의 필수 조건이다 —
-    /// 화면을 읽지 못하면 claude가 입력을 받았는지 확인할 수 없고, 확인 없이 CR을 보내면
-    /// claude가 버린 입력이 "전달됨"으로 기록된 채 빈 줄이 제출된다(실측).
-    /// 명령 실행 자체에는 필요 없다.
+    /// The Accessibility permission. It is a hard requirement for buttons that schedule claude input
+    /// on Warp: without reading the screen there is no way to tell whether claude received the
+    /// input, and a CR sent without that check submits an empty line while the input claude
+    /// discarded is recorded as "delivered" (measured). Running a command needs none of this.
     static var isAccessibilityGranted: Bool {
         accessibilityIsTrusted()
     }
 
-    /// 프롬프트를 띄운다. 자동화 권한과 달리 여기서 바로 허용되지 않고 시스템 설정으로
-    /// 안내만 되므로, 성공/실패 콜백 없이 상태 재조회로 확인한다.
+    /// Raises the prompt. Unlike the automation permission this one is not granted here — it only
+    /// points at System Settings — so there is no success/failure callback and the result is read
+    /// back by asking for the status again.
     static func requestAccessibility() {
         requestAccessibilityPrompt()
     }
@@ -60,7 +67,7 @@ enum PermissionChecker {
         }
     }
 
-    /// iTerm2 자동화(Apple Events) 권한 상태 — 프롬프트를 띄우지 않고 조회만 한다.
+    /// The state of the iTerm2 automation (Apple Events) permission — a query only, raising no prompt.
     static func iTermAutomationStatus() -> AutomationStatus {
         let target = NSAppleEventDescriptor(bundleIdentifier: iTermBundleID)
         let status = AEDeterminePermissionToAutomateTarget(target.aeDesc, typeWildCard, typeWildCard, false)
@@ -73,12 +80,13 @@ enum PermissionChecker {
         }
     }
 
-    /// iTerm2를 먼저 실행해 두고, 무해한 Apple Event를 보내 권한 프롬프트를 유도한다.
-    /// 타게팅은 번들 ID로 한다 — 이름 해석 실패(-1728)를 피하고 대상 앱을 확정하기 위해.
+    /// Launches iTerm2 first, then sends a harmless Apple Event to draw the permission prompt.
+    /// The target is addressed by bundle id — it avoids the name-resolution failure (-1728) and
+    /// leaves no doubt about which app is being asked for.
     static func requestITermAutomation(completion: @escaping (Result<Void, Error>) -> Void) {
         launchITerm { _ in
             DispatchQueue.global().async {
-                // 실행될 때까지 대기 (최대 10초; 실패해도 osascript의 자동 실행이 백업)
+                // Wait for it to come up (10s at most; osascript launching it itself is the backstop)
                 for _ in 0..<50 {
                     if !NSRunningApplication.runningApplications(withBundleIdentifier: iTermBundleID).isEmpty {
                         break
@@ -86,12 +94,11 @@ enum PermissionChecker {
                     usleep(200_000)
                 }
                 do {
-                    // count windows: 반드시 Apple Event를 전송하는 무해한 조회 —
-                    // version/name은 로컬에서 응답될 수 있어 동의 프롬프트를 유발하지 못한다
-                    let result = try runProcess(
-                        "/usr/bin/osascript",
-                        ["-e", "tell application id \"\(iTermBundleID)\" to count windows"],
-                        timeout: 300 // 사용자가 프롬프트에 응답할 때까지 기다린다
+                    // `count windows`: a harmless query that is guaranteed to send an Apple Event —
+                    // `version` and `name` can be answered locally and so raise no consent prompt
+                    let result = try runAppleScript(
+                        "tell application id \"\(iTermBundleID)\" to count windows",
+                        timeout: 300 // waits for the user to answer the prompt
                     )
                     DispatchQueue.main.async {
                         if result.status == 0 {

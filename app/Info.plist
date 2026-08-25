@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>ko</string>
+	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>Terminal Checkout</string>
 	<key>CFBundleExecutable</key>
@@ -27,7 +27,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>GitHub에서 요청한 checkout 명령을 iTerm2 새 탭에서 실행하기 위해 자동화 권한이 필요합니다.</string>
+	<string>Automation permission is needed to run the checkout command requested from GitHub in a new iTerm2 tab.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

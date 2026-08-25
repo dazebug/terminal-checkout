@@ -1,0 +1,587 @@
+{
+  "extName": {
+    "message": "Terminal Checkout",
+    "description": "製品名なので翻訳しない。"
+  },
+  "extDescription": {
+    "message": "GitHub の PR・issue・リポジトリのページから、ターミナル (iTerm2/WezTerm/Warp) でコマンドを実行します",
+    "description": "Chrome が名前の横に表示する 1 行の説明。"
+  },
+  "ext_banner_stale": {
+    "message": "⚠ このページを開いたあと、別のデバイスで設定が変更されました。再読み込みすると表示されます — 保存していない編集を残したい場合は、先にエクスポートしてください。"
+  },
+  "ext_button_addButton": {
+    "message": "+ ボタンを追加"
+  },
+  "ext_button_addInput": {
+    "message": "+ 入力を追加"
+  },
+  "ext_button_addLimit": {
+    "message": "ボタンは最大 $ARG1$ 個まで追加できます。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_button_addOverride": {
+    "message": "+ 個別設定を追加"
+  },
+  "ext_button_export": {
+    "message": "エクスポート (JSON)"
+  },
+  "ext_button_import": {
+    "message": "インポート…"
+  },
+  "ext_button_newButton": {
+    "message": "新しいボタン"
+  },
+  "ext_button_phase_busy": {
+    "message": "開いています..."
+  },
+  "ext_button_phase_done": {
+    "message": "完了!"
+  },
+  "ext_button_phase_error": {
+    "message": "エラー!"
+  },
+  "ext_button_remove": {
+    "message": "削除"
+  },
+  "ext_button_reset": {
+    "message": "既定値に戻す"
+  },
+  "ext_button_retry": {
+    "message": "再試行"
+  },
+  "ext_button_save": {
+    "message": "保存"
+  },
+  "ext_card_delete": {
+    "message": "削除"
+  },
+  "ext_card_duplicate": {
+    "message": "複製"
+  },
+  "ext_card_duplicate_tooltip": {
+    "message": "このボタンを複製します"
+  },
+  "ext_card_palette_label": {
+    "message": "表示に追加:"
+  },
+  "ext_card_palette_tooltip": {
+    "message": "$ARG1$ を表示に追加",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_card_reorder_aria": {
+    "message": "並べ替え"
+  },
+  "ext_card_reorder_tooltip": {
+    "message": "ドラッグするか ↑↓ キーで並べ替えます"
+  },
+  "ext_confirm_presetOverwrite": {
+    "message": "ボタン $ARG1$ を「$ARG2$」プリセットで上書きします。続けますか?",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_error_backupFromFuture": {
+    "message": "このバックアップは、より新しいバージョンの拡張機能でエクスポートされました。拡張機能を更新するか(git pull のあと chrome://extensions で再読み込み)、$ARG1$ で現在のプリセットから始めてください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_importBusy": {
+    "message": "すでに設定ファイルを読み込み中です — 少し待ってからやり直してください。"
+  },
+  "ext_error_importStale": {
+    "message": "ファイルの読み込み中に編集がありました — 何もインポートしていません。もう一度インポートしてください。"
+  },
+  "ext_error_loadFailed": {
+    "message": "設定を読み込めませんでした。再試行するか、このページを開き直してください。"
+  },
+  "ext_error_saveBusy": {
+    "message": "すでに保存中です — 少しお待ちください。"
+  },
+  "ext_error_saveConflict": {
+    "message": "設定を保存できませんでした: このページを開いている間に、別のデバイスで変更されました。保存されている内容を見るには再読み込みしてください — 編集を残したい場合は、先にエクスポートしてください。"
+  },
+  "ext_error_saveLoading": {
+    "message": "設定を読み直しています — 少し待ってから $ARG1$ をもう一度押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_saveReloaded": {
+    "message": "保存の実行中にこのページが設定を再読み込みしたため、フォームには書き込もうとしていた内容が残っていません。確認して $ARG1$ をもう一度押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_settingsTooLarge": {
+    "message": "この設定は Chrome が同期するには大きすぎます。いちばん長いコマンドを短くして、もう一度お試しください"
+  },
+  "ext_error_skipConsequence": {
+    "message": "保存すると削除されます — 保存されている内容の控えが必要なら、先に $ARG1$ を使ってください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_error_skipped": {
+    "message": "$ARG1$ でスキップした使用できない項目: $ARG2$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_error_storedFromFuture": {
+    "message": "保存されている設定は、より新しいバージョンの拡張機能が書き込んだものです。このページは表示はできますが、上書きしてはいけません。拡張機能を更新してください (git pull のあと chrome://extensions で再読み込み)。"
+  },
+  "ext_export_excludedUnsaved": {
+    "message": "保存していない変更はエクスポートに含まれていません。"
+  },
+  "ext_export_nothingSaved": {
+    "message": "まだ設定が保存されていません。先に保存してからエクスポートしてください。"
+  },
+  "ext_field_claudeInput_placeholder": {
+    "message": "!gh issue view {number} または: この issue を要約して"
+  },
+  "ext_field_claudeInputs": {
+    "message": "claude 入力"
+  },
+  "ext_field_claudeInputs_help": {
+    "message": "— 順番に配信されます。<code>!</code> 行は claude のシェルモードで実行されます"
+  },
+  "ext_field_claudeInputs_hint": {
+    "message": "<code>!</code> 行は claude のシェルモードに入力されるので、実際にコマンドとして実行されます — 連続するものは <code>;</code> でつないだ 1 行として入力され、それぞれの前にバナーが付きます。Warp ではこの入力にアクセシビリティ権限が必要です。リストに他が何もないプレーンな入力 1 つだけの場合は入力を完全に省略し、claude の最初のメッセージになります — その場合はコマンドが <code>claude</code> で終わっている必要もあります。"
+  },
+  "ext_field_claudeInputs_warn": {
+    "message": "⚠ コマンドが claude を起動しないため、これらの入力は配信されません"
+  },
+  "ext_field_command": {
+    "message": "command"
+  },
+  "ext_field_defaultMain": {
+    "message": "既定値"
+  },
+  "ext_field_face": {
+    "message": "表示"
+  },
+  "ext_field_preset": {
+    "message": "プリセット"
+  },
+  "ext_field_preset_placeholder": {
+    "message": "プリセットを適用…"
+  },
+  "ext_field_preview": {
+    "message": "プレビュー"
+  },
+  "ext_field_tooltip": {
+    "message": "ツールチップ"
+  },
+  "ext_field_tooltip_placeholder": {
+    "message": "ボタンのツールチップ"
+  },
+  "ext_header_options": {
+    "message": "設定"
+  },
+  "ext_header_subtitle": {
+    "message": "PR・issue・リポジトリのボタン、コマンド、main ブランチ — ターミナルの選択、権限、リポジトリのベースフォルダは Terminal Checkout アプリの設定ウインドウにあります"
+  },
+  "ext_import_fileTooLarge": {
+    "message": "設定ファイルが大きすぎます (最大 256KB)。"
+  },
+  "ext_import_notJSON": {
+    "message": "このファイルは JSON として読み込めませんでした。"
+  },
+  "ext_import_notObject": {
+    "message": "設定ファイルの最上位がオブジェクトではありません。"
+  },
+  "ext_import_nothingToImport": {
+    "message": "インポートするものがありません ($ARG1$ のいずれかが必要です)。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_import_skippedNote": {
+    "message": "スキップ: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_meta_catalogueTag": {
+    "message": "ja"
+  },
+  "ext_migration_applied": {
+    "message": "フォームで更新したコマンド: $ARG1$。適用するには $ARG2$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_migration_appliedWithDeclined": {
+    "message": "フォームで更新したコマンド: $ARG1$。プレビューを作成したあとに変更された $ARG2$ 件はそのままにしました。適用するには $ARG3$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_migration_apply": {
+    "message": "選択項目を適用"
+  },
+  "ext_migration_badge": {
+    "message": "● 保存されたボタンが現在のプリセットより古いです — 確認する"
+  },
+  "ext_migration_effect_behaviorChange": {
+    "message": "動作の変更"
+  },
+  "ext_migration_gotIt": {
+    "message": "了解"
+  },
+  "ext_migration_hint_reviewOnly": {
+    "message": "これを閉じると設定は確認済みになります — そのあと $ARG1$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_hint_selected": {
+    "message": "$ARG2$ 件中 $ARG1$ 件を選択中。適用するとフォームが埋まります。保存するには $ARG3$ を押してください。",
+    "placeholders": {
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_migration_intro_nothingSafe": {
+    "message": "ここに安全に書き換えられるものはありませんが、次のコマンドはまだ古い形式です:"
+  },
+  "ext_migration_intro_nothingToDo": {
+    "message": "変更するものはありません — コマンドはすでに最新です。$ARG1$ を押すと確認済みになります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_keep": {
+    "message": "今のままにする"
+  },
+  "ext_migration_markedReviewed": {
+    "message": "確認済みにしました。コマンドを今のままにするには $ARG1$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_migration_noTooltip": {
+    "message": "(ツールチップなし)"
+  },
+  "ext_migration_v1_customNote": {
+    "message": "このコマンドは編集されているため、そのままにしてあります — z {repo} が最初の節ではなく、安全に書き換えるにはシェルを解析する必要があります。同じフォールバックが必要なら、先頭の移動を {cd} にご自身で置き換えてください。"
+  },
+  "ext_migration_v1_describe": {
+    "message": "コマンドが z {repo} ではなく {cd} で始まります。Terminal Checkout アプリでリポジトリのベースフォルダを設定していなければ、今と同じものが実行されます。設定している場合は、z が失敗したときにそのフォルダへフォールバックし、リポジトリがなければ clone します。"
+  },
+  "ext_migration_v1_prefixDescribe": {
+    "message": "このコマンドは移動のあとも続きます。ベースフォルダを設定していると、z が失敗したときの着地点はその下のリポジトリのフォルダか、新しく clone した場所になります — 受け入れる前に、残りのコマンドがそこで実行されても安全か確認してください。"
+  },
+  "ext_override_empty": {
+    "message": "個別設定はまだありません。"
+  },
+  "ext_preset_issue_open": {
+    "message": "issue を開く"
+  },
+  "ext_preset_issue_read": {
+    "message": "issue を読む (claude)"
+  },
+  "ext_preset_issue_startWork": {
+    "message": "issue の作業を開始"
+  },
+  "ext_preset_pr_checkout": {
+    "message": "ブランチをチェックアウト"
+  },
+  "ext_preset_pr_checkoutClaude": {
+    "message": "チェックアウト + Claude"
+  },
+  "ext_preset_pr_review": {
+    "message": "PR をレビュー (claude)"
+  },
+  "ext_preset_pr_worktree": {
+    "message": "ワークツリー"
+  },
+  "ext_preset_pr_worktreeClaude": {
+    "message": "ワークツリー + Claude"
+  },
+  "ext_preset_repo_open": {
+    "message": "ターミナルで開く"
+  },
+  "ext_preset_repo_openClaude": {
+    "message": "開く + Claude"
+  },
+  "ext_preset_repo_updateMain": {
+    "message": "main を更新"
+  },
+  "ext_preset_repo_updateMain_face": {
+    "message": "main ⤓"
+  },
+  "ext_section_backup_help1": {
+    "message": "設定 (PR・issue・リポジトリのボタンと main ブランチ) は Chrome のアカウント同期領域 (<code>storage.sync</code>) に保存されます。この拡張機能は固定の ID (manifest key) を持つため、同期設定で「拡張機能」を有効にした<b>同じ Google アカウント</b>でサインインした 2 つの Chrome プロファイルは、この設定を自動的に共有します。エクスポートとインポートは、アカウントを使わずに設定を移すため、またはファイルとしてバックアップを残すためのものです。"
+  },
+  "ext_section_backup_help2": {
+    "message": "エクスポートは<b>保存済み</b>の設定をファイルとしてダウンロードします。インポートはフォームを埋めるだけで、<b>$ARG1$</b> を押すまで何も反映されません。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_backup_help3": {
+    "message": "ファイルには、どの世代のプリセットを基準に書かれたかも記録されます。古いバックアップをインポートすると、保存された設定と同じ更新のお知らせが出ます — ファイルは設定の一部しか含まないことがあるため、そのお知らせはファイルが持っていたキーだけでなくフォーム全体を確認します。<b>より新しい</b>拡張機能が書いたバックアップは、途中まで読むのではなく拒否されます。先に拡張機能を更新してください。"
+  },
+  "ext_section_backup_title": {
+    "message": "backup <span class=\"section-where\">— エクスポート、インポート、アカウント同期</span>"
+  },
+  "ext_section_issue_claudeHelp": {
+    "message": "<code>!</code> で始まる claude 入力は claude のシェルモードに入力されるので、コマンドはそのセッションで実際に実行されます — 既定のプリセットは <code>gh</code> を使って、issue の本文とコメント、そしてその issue に言及している issue を claude の前に置きます。連続する <code>!</code> 入力は 1 行として入力されます。"
+  },
+  "ext_section_issue_help": {
+    "message": "issue ページでステータスバッジ (Open/Closed) の横に置かれるボタンです (最大 $ARG1$ 個)。PR ボタンとは別に設定し、issue ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。並べ替え (<code>⠿</code> をドラッグ、または <code>↑</code> <code>↓</code>) と複製は PR ボタンと同じです。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_issue_title": {
+    "message": "issueButtons <span class=\"section-where\">— issue ページ</span>"
+  },
+  "ext_section_issue_variables": {
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> <code>{main}</code> — issue には PR のブランチがないため、<code>{branch}</code> 系と <code>{base}</code> は使えません。"
+  },
+  "ext_section_main_help": {
+    "message": "<code>{main}</code> が決まる順序: リポジトリごとの個別設定 → ページから検出 → 下の既定値。検出は PR ページでは base ブランチを、リポジトリと issue のページではリポジトリの既定ブランチを読みます — 下の設定は検出に失敗したときの備えです。PR が実際にマージされるブランチを常に使うには <code>{base}</code> を使ってください。個別設定と既定値の両方を飛ばします。"
+  },
+  "ext_section_main_title": {
+    "message": "main ブランチ"
+  },
+  "ext_section_pr_help1": {
+    "message": "PR ページでブランチ名の横に置かれるボタンです (最大 $ARG1$ 個)。<b>$ARG2$</b> はボタンに表示されるもので、絵文字 1 つ、複数 (🌳🤖)、または短い名前 (Review, WT) です。<b>$ARG3$</b> はホバーしたときに出ます。プリセットを選ぶと、そのテンプレートでカードが埋まります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      },
+      "ARG3": {
+        "content": "$3"
+      }
+    }
+  },
+  "ext_section_pr_help2": {
+    "message": "カード左側の <code>⠿</code> ハンドルをドラッグするか、<code>↑</code> <code>↓</code> キーで並べ替えます — これが GitHub 上でボタンが並ぶ順序で、拡張機能のアイコンを押すと最初のものが実行されます。<b>$ARG1$</b> は既存のボタンと同じものをもう 1 つ作るためのもので、複製のツールチップには <code>(1)</code> のような番号が付きます。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_pr_migrationHelp": {
+    "message": "私たちが配布したプリセットの書き換えは、あらかじめ選択されています。ご自身で変更したコマンドは<b>選択なし</b>で提示され、動作の変更として印が付きます: 先頭の移動だけが置き換わり、残りは新しい進入節が着地した場所で実行されます。すべてのプリセットは <code>{cd}</code> で始まります。ベースフォルダを設定していなければ、それは単に <code>z {repo}</code> です。設定していれば、そのフォルダへフォールバックし、リポジトリがなければ clone します — そのため、ローカルで一度も開いたことのないリポジトリでもボタンが動きます。"
+  },
+  "ext_section_pr_title": {
+    "message": "buttons <span class=\"section-where\">— PR ページ</span>"
+  },
+  "ext_section_pr_variables": {
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリがリポジトリのベースフォルダ設定から埋めるので、どのページでも動きます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> <code>{branch}</code> <span class=\"faint\">(head — マージされるブランチ)</span> <code>{base}</code> <span class=\"faint\">(base — マージ先のブランチ)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">(ブランチの / を _ に置き換えたもの)</span>"
+  },
+  "ext_section_repo_help": {
+    "message": "リポジトリページ (コード、issue 一覧、Actions など) のヘッダーで、リポジトリ名の横に置かれるボタンです — 最大 $ARG1$ 個。PR・issue のボタンと違って GitHub の緑のアクションボタンのように見えるので、<b>$ARG3$</b> には絵文字より <code>$ARG2$</code> のような名前が向いています。PR でも issue でもない GitHub ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG3": {
+        "content": "$3"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_section_repo_title": {
+    "message": "repoButtons <span class=\"section-where\">— リポジトリページ</span>"
+  },
+  "ext_section_repo_variables": {
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — リポジトリページには PR や issue の番号もブランチもないため、<code>{number}</code>、<code>{branch}</code> 系、<code>{base}</code> は使えません。<code>{main}</code> は GitHub がページに埋め込んでいるリポジトリの既定ブランチから決まります — <code>master</code> のリポジトリも個別設定なしで正しく出ます。"
+  },
+  "ext_section_update_title": {
+    "message": "update <span class=\"section-where\">— 保存されたコマンドと現在のプリセット</span>"
+  },
+  "ext_status_exportFailed": {
+    "message": "エクスポートできませんでした: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_importFailed": {
+    "message": "インポートできませんでした: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_imported": {
+    "message": "設定をインポートしました。適用するには $ARG1$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_importedWithNotes": {
+    "message": "設定をインポートしました。適用するには $ARG1$ を押してください。($ARG2$)",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_status_loading": {
+    "message": "設定をまだ読み込んでいます — 少しお待ちください。"
+  },
+  "ext_status_reset": {
+    "message": "既定値に戻しました。適用するには $ARG1$ を押してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_saveFailed": {
+    "message": "保存できませんでした: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_status_saved": {
+    "message": "設定を保存しました。"
+  },
+  "ext_status_savedWithPendingEdits": {
+    "message": "設定を保存しました。そのあとの変更はまだ保存されていません。"
+  },
+  "ext_status_unsaved": {
+    "message": "● 保存していない変更"
+  },
+  "ext_table_mainBranch": {
+    "message": "main ブランチ"
+  },
+  "ext_table_repository": {
+    "message": "リポジトリ"
+  },
+  "ext_validate_command": {
+    "message": "$ARG1$[$ARG2$]: コマンドを入力してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_face": {
+    "message": "$ARG1$[$ARG2$]: 表示を入力してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_override_duplicate": {
+    "message": "個別設定 $ARG1$: リポジトリ「$ARG2$」が複数回あります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_validate_override_incomplete": {
+    "message": "個別設定 $ARG1$: リポジトリと main ブランチの両方を入力してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_validate_tooltip": {
+    "message": "$ARG1$[$ARG2$]: ツールチップを入力してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  }
+}

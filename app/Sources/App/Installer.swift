@@ -16,16 +16,18 @@ enum SetupState {
 enum InstallerError: Error, CustomStringConvertible {
     case bundledExtensionMissing
 
+    /// Shown to the user (`showError`'s informative text), so it comes from the catalogue rather
+    /// than being written here.
     var description: String {
         switch self {
-        case .bundledExtensionMissing: return "앱 번들 안에 extension 리소스가 없습니다. 앱을 다시 빌드하세요."
+        case .bundledExtensionMissing: return localized("app.error.bundledExtensionMissing")
         }
     }
 }
 
-/// Native Host manifest 등록과 확장 프로그램 폴더 설치를 담당한다.
+/// Registers the Native Host manifest and installs the extension folder.
 enum Installer {
-    /// 현재 실행 중인 앱 번들 안의 relay 절대경로 (manifest의 path로 쓰인다)
+    /// The absolute path of the relay inside the running app bundle (the manifest's `path`)
     static var relayPath: String {
         Bundle.main.bundlePath + "/Contents/MacOS/terminal-checkout-relay"
     }
@@ -34,11 +36,12 @@ enum Installer {
         Bundle.main.resourcePath.map { $0 + "/extension" }
     }
 
-    /// Chrome에 로드할 확장 폴더 — App Support 고정 경로 단일 위치.
+    /// The extension folder Chrome loads — one fixed location under App Support.
     static var extensionDirectory: String { defaultExtensionInstallPath() }
 
-    /// 번들 확장 manifest의 "key" — 확장 ID를 컴퓨터·경로와 무관하게 고정하는 공개키.
-    /// (같은 ID여야 storage.sync 설정이 같은 Google 계정의 Chrome끼리 동기화된다)
+    /// The bundled extension manifest's `key` — the public key that pins the extension ID
+    /// independently of machine and path. (The ID has to be identical for `storage.sync` settings to
+    /// sync between Chromes on the same Google account.)
     static var bundledManifestKey: String? {
         guard let dir = bundledExtensionPath,
               let data = FileManager.default.contents(atPath: dir + "/manifest.json"),
@@ -53,8 +56,9 @@ enum Installer {
             ?? extensionID(forPath: extensionDirectory)
     }
 
-    /// Native Host가 허용할 확장 ID 목록. Web Store 전환 시 store ID를 여기에 추가하면 된다.
-    /// 경로 기반 ID는 key 도입 전에 로드된 확장(제거·재설치 전까지 옛 ID로 동작)을 위해 남긴다.
+    /// The extension IDs the Native Host accepts. Moving to the Web Store means adding the store ID
+    /// here. The path-based ID stays for an extension that was loaded before the key existed — it
+    /// keeps running under the old ID until it is removed and loaded again.
     static var allowedExtensionIDs: [String] {
         var ids = [currentExtensionID]
         let pathID = extensionID(forPath: extensionDirectory)
@@ -74,30 +78,60 @@ enum Installer {
         )
         let data = nativeHostManifestJSON(relayPath: relayPath, extensionIDs: allowedExtensionIDs)
         try data.write(to: URL(fileURLWithPath: nativeHostManifestPath()), options: .atomic)
-        // iTerm Checkout 시절 레거시 manifest 정리
+        // Clean up the legacy manifest from the iTerm Checkout days
         try? FileManager.default.removeItem(atPath: legacyManifestPath())
     }
 
+    /// The three sentences that point at a button take its label from the catalogue as `%@`,
+    /// and every one of them is read at the moment the window draws it.
     static func manifestState() -> SetupState {
         guard let data = FileManager.default.contents(atPath: nativeHostManifestPath()),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return .error("등록되지 않음 — [등록/업데이트]를 누르세요")
+            return .error(
+                localized("app.status.manifest.notRegistered", localized("app.button.registerUpdate"))
+            )
         }
         let pathOK = obj["path"] as? String == relayPath
-        // 순서 무관 집합 비교 (ID 목록이 늘어나도 안정적)
+        // Compared as sets, so the order of the ID list does not matter as it grows
         let expected = Set(allowedExtensionIDs.map(extensionOrigin))
         let originOK = Set(obj["allowed_origins"] as? [String] ?? []) == expected
         switch (pathOK, originOK) {
-        case (true, true): return .ok("등록됨")
-        case (false, _): return .warning("다른 위치의 앱을 가리킴 — [등록/업데이트]로 갱신하세요")
-        case (_, false): return .warning("확장 ID가 현재 설정과 다름 — [등록/업데이트]로 갱신하세요")
+        case (true, true): return .ok(localized("app.status.manifest.registered"))
+        case (false, _):
+            return .warning(
+                localized("app.status.manifest.wrongPath", localized("app.button.registerUpdate"))
+            )
+        case (_, false):
+            return .warning(
+                localized("app.status.manifest.wrongExtensionID", localized("app.button.registerUpdate"))
+            )
         }
     }
 
-    // MARK: 확장 프로그램 폴더
+    // MARK: The extension folder
 
-    /// 번들에 내장된 확장 프로그램을 App Support 아래 고정 경로로 복사한다.
-    /// (앱을 옮기거나 재빌드해도 확장 경로·ID가 유지되도록)
+    /// Copies the extension bundled inside the app to a fixed path under App Support, so that moving
+    /// or rebuilding the app leaves the extension's path and ID unchanged.
+    ///
+    /// **Built beside the old copy, then swapped.** The folder Chrome reads stays present and
+    /// complete while the staged directory is built, so Chrome never observes a missing or
+    /// partially copied extension.
+    ///
+    /// `replaceItemAt` is Foundation's replacement primitive and the reason this is possible at all.
+    /// Measured on a populated directory with a throwaway probe kept nowhere: plain `rename(2)`
+    /// refuses with `ENOTEMPTY` (errno 66), while `replaceItemAt` succeeds, consumes the staged
+    /// directory, and left the destination **present on every one of ~10,200 reads** from a thread
+    /// doing nothing but opening files inside it across four runs.
+    ///
+    /// **What that does not buy**, and the probe showed this too: a reader that opens two files in
+    /// sequence can still take one from each generation, because its first `open` happened before
+    /// the swap and its second after. No filesystem primitive prevents that — only a reader that
+    /// snapshots. The claim here is that the directory is never absent and never half-built, not
+    /// that a reader mid-flight sees one generation.
+    ///
+    /// The staged copy is removed on the way out. On success there is nothing left to remove —
+    /// `replaceItemAt` consumes it — so the cleanup matters on the failure path, which is the one
+    /// that would otherwise leave a full copy of the extension lying beside it.
     static func installExtensionCopy() throws {
         guard let source = bundledExtensionPath,
               FileManager.default.fileExists(atPath: source) else {
@@ -108,21 +142,44 @@ enum Installer {
             atPath: appSupportDirectory(), withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        let staging = extensionStagingPath()
+        try? FileManager.default.removeItem(atPath: staging)
+        defer { try? FileManager.default.removeItem(atPath: staging) }
+        try FileManager.default.copyItem(atPath: source, toPath: staging)
+
         if FileManager.default.fileExists(atPath: dest) {
-            try FileManager.default.removeItem(atPath: dest)
+            _ = try FileManager.default.replaceItemAt(
+                URL(fileURLWithPath: dest), withItemAt: URL(fileURLWithPath: staging)
+            )
+        } else {
+            // Nothing to replace on a first install, and `replaceItemAt` wants something there. A
+            // rename onto an absent path is atomic on its own.
+            try FileManager.default.moveItem(atPath: staging, toPath: dest)
         }
-        try FileManager.default.copyItem(atPath: source, toPath: dest)
+    }
+
+    /// Where the next copy is built. A sibling of the destination, so the swap is a rename within
+    /// one filesystem rather than a copy across two — and hidden, because a folder that exists only
+    /// between two instants should not invite anyone to load it into Chrome.
+    ///
+    /// The name is fixed rather than unique on purpose: a crash between the copy and the swap leaves
+    /// exactly one piece of debris, and the next run removes it before staging. A unique name would
+    /// leave one per crash, with nobody to collect them.
+    static func extensionStagingPath() -> String {
+        (appSupportDirectory() as NSString).appendingPathComponent(".extension.staging")
     }
 
     static func extensionState() -> SetupState {
         let manifest = (extensionDirectory as NSString).appendingPathComponent("manifest.json")
         if FileManager.default.fileExists(atPath: manifest) {
-            return .ok("준비됨")
+            return .ok(localized("app.status.extensionFolder.ready"))
         }
-        return .error("확장 폴더 없음 — [Chrome에 설치하기]를 누르면 준비됩니다")
+        return .error(
+            localized("app.status.extensionFolder.missing", localized("app.button.installInChrome"))
+        )
     }
 
-    /// 번들 확장과 설치된 사본의 내용이 다른가 (앱 업데이트로 확장이 갱신된 경우 등)
+    /// Whether the bundled extension and the installed copy differ — after an app update, say
     static func extensionCopyNeedsUpdate() -> Bool {
         guard let source = bundledExtensionPath else { return false }
         return directoryContentsDiffer(source, extensionDirectory)
@@ -145,16 +202,26 @@ enum Installer {
         return mapA != mapB
     }
 
-    /// 실행 시 자동 셋업: 안전·멱등 항목만 조용히 처리한다.
-    /// (Chrome 확장 로드와 TCC 권한 허용은 사용자만 할 수 있는 단계로 남는다)
+    /// Setup that runs on launch: the steps that are safe and idempotent, done quietly. Loading the
+    /// extension into Chrome and granting the TCC permissions stay with the user.
     static func autoSetup() {
-        // 사본이 없거나 번들과 다르면(앱 업데이트) 자동 재복사 — 별도 버튼 불필요.
-        // Chrome은 unpacked 확장 파일을 디스크에서 읽으므로, 반영에는 확장 새로고침만 필요하다
+        // Copy again when there is no copy, or when it differs from the bundle (an app update) — no
+        // button for it. Chrome reads an unpacked extension's files from disk, so a refresh in
+        // chrome://extensions is all that is needed for it to take effect
         if extensionCopyNeedsUpdate() {
-            try? installExtensionCopy()
+            // Not `try?`. There is no window to report into at launch, but a swallowed failure here
+            // is the difference between "Chrome has the old extension" and "Chrome has whatever was
+            // there", and the only place that distinction can still be recovered is the log. The
+            // swap itself leaves the previous copy in place on failure, so the state this reports is
+            // a known one rather than a mystery.
+            do {
+                try installExtensionCopy()
+            } catch {
+                checkoutLog("updating the installed extension copy failed — \(errorMessage(error))")
+            }
         }
         if case .ok = manifestState() {} else {
-            try? installManifest() // 앱 위치 변경 시 self-healing
+            try? installManifest() // self-healing when the app has moved
         }
     }
 }

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Terminal Checkout.app 빌드: swift build → 번들 조립 → ad-hoc 서명
+# Building Terminal Checkout.app: swift build → assemble the bundle → ad-hoc signing
 cd "$(dirname "$0")"
 
 swift build -c release
@@ -14,18 +14,33 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN/TerminalCheckout" "$APP/Contents/MacOS/"
 cp "$BIN/terminal-checkout-relay" "$APP/Contents/MacOS/"
-# Warp pane 안에서 도는 주입 헬퍼 — 앱이 Tab Config에 이 경로를 적어 넣는다
+# The injection helper that runs inside a Warp pane — the app writes this path into the Tab Config
 cp "$BIN/terminal-checkout-warp-helper" "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/Info.plist"
 [ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/"
 
-# 확장 프로그램을 번들에 내장 (앱이 App Support로 복사·설치한다)
+# The string catalogs. They are copied here rather than declared as SwiftPM `resources:` because
+# the generated `Bundle.module` accessor resolves through an absolute .build path on the machine
+# that compiled it, which hides a missing copy exactly where it would be caught. `cp -R` of
+# the directories keeps `<tag>.lproj/<file>` intact; the bundle gate compares what landed here
+# against these sources, file set included, so a catalog added to the sources and not to the
+# bundle is a red build rather than a language that silently falls back.
+cp -R Sources/App/Resources/*.lproj "$APP/Contents/Resources/"
+
+# Embed the extension in the bundle (the app copies and installs it into App Support)
 cp -R ../extension "$APP/Contents/Resources/extension"
 find "$APP/Contents/Resources/extension" -name '.DS_Store' -delete 2>/dev/null || true
 
-# ad-hoc 서명: 번들 안의 개별 실행 파일 먼저, 그다음 번들 전체
+# Ad-hoc signing: the individual executables inside the bundle first, then the bundle as a whole
 codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-relay"
 codesign --force --sign - "$APP/Contents/MacOS/terminal-checkout-warp-helper"
 codesign --force --sign - "$APP"
 
-echo "빌드 완료: $(pwd)/$APP"
+# The last step, so that "the build succeeded" means "the bundle carries exactly the resources the
+# sources declare". Copying catalogues by hand is what makes a missed copy possible at all, and the
+# failure it produces — one language silently falling back — is invisible on the machine that built
+# it. CI names this script as its own step as well, so deleting the call from here does not
+# quietly delete the gate.
+./verify-bundle.sh "$APP"
+
+echo "Build complete: $(pwd)/$APP"

@@ -1,4 +1,10 @@
-importScripts('defaults.js'); // defaults.js is the single source of truth for button defaults and presets
+// The compatibility dictionaries first, then defaults. The dictionary loads stay even though this
+// worker now reads Chrome's catalogue: a previous worker can open this directory after a folder
+// swap, and one missing import aborts that worker before it can run a command.
+importScripts(
+  'i18n.js', '_i18n/en.js', '_i18n/ko.js', '_i18n/ja.js', '_i18n/zh-Hans.js', '_i18n/zh-Hant.js',
+  'defaults.js' // the single source of truth for button defaults and presets
+);
 
 const NATIVE_HOST_NAME = 'com.dazebug.terminal_checkout';
 
@@ -163,6 +169,11 @@ async function loadButtons(kind) {
 // DOM, so a message can cause a refusal but cannot name its own repository. The extension-icon path
 // sends no *fingerprint* — nothing was drawn for it to disagree with — but it does send a target,
 // read from the tab when the icon was pressed, so it takes this same gate.
+//
+// Like `BUTTON_CHANGED_ERROR`, this is **not drawn anywhere**: the content script throws it and its
+// click handler turns it into `❌` plus a `console.error`. English, therefore — and on the
+// same trigger, since displaying it would mean sending an id from this worker, which has no render
+// locale, rather than a sentence.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
 
 // Internal coherence: the values a single read produced describe one page. This is what the final
@@ -210,36 +221,35 @@ async function assertRequestIsCoherent(tab, { clicked, source }) {
 // This is a *second* read: the page did its own when it drew the button, and the settings can have
 // moved in between — another device saved, someone reordered the list — or the page may be showing
 // something its own read never returned. Running whatever now sits at that index would run a command
-// the user never saw, so a click brings a fingerprint of what was drawn and it has to match.
+// the user never saw, so a click brings a fingerprint of what it was going to run and it has to
+// match. The index says which button, the fingerprint says what it runs, and the pair is the
+// identity this check is made of (defaults.js).
 //
 // The command still comes from here, from storage, never from the message: the fingerprint can only
 // cause a refusal, not introduce a command of its own.
-//
-// `shown` is absent only on the extension-icon path, which draws nothing — there is no rendered
-// button for it to disagree with, and "the first button for this page" is the whole of the request.
 async function clickedButton(kind, index, shown) {
   const button = (await loadButtons(kind))[index];
   if (!button) throw new Error(`Button index ${index} not found`);
-  if (shown !== undefined && buttonFingerprint(button) !== shown) {
-    throw new Error(BUTTON_CHANGED_ERROR);
-  }
+  if (!clickMatchesWhatWasShown(button, shown)) throw new Error(BUTTON_CHANGED_ERROR);
   return button;
 }
 
-// Send a message to the native host. The app reports variable validation failures and terminal
-// launch failures as a normal {success:false, error} response rather than an exception, so we have
-// to throw here for the failure to surface on the button
+// Hand one command to the app and interpret only the command outcome. Locale metadata may still be
+// present while old apps and extensions overlap, but this generation neither records nor forwards
+// it: Chrome owns the extension language now. `nativeOutcome` stays in the compatibility skeleton
+// and remains the one response-shape verdict in both generations.
 async function sendToNativeHost(message) {
   let response;
   try {
     response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
   } catch (error) {
-    console.error('Native host error:', error);
+    console.log('Native host error:', error);
     throw error;
   }
   console.log('Native host response:', response);
-  if (!response?.success) throw new Error(response?.error || 'native host returned no result');
-  return response;
+  const verdict = nativeOutcome(response);
+  if (verdict.failed) throw new Error(verdict.error);
+  return verdict.response;
 }
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
@@ -257,10 +267,13 @@ async function runButton(button, variables, page) {
   // same reason: closing it would need a compare-and-set the boundary does not offer. The app cannot
   // supply one either; it has no view of the browser's pages to re-check against.
   await assertRequestIsCoherent(page.tab, page);
-  const message = { command_template: button.command, variables };
+  // What this click executes, normalized once, in defaults.js — the same call the fingerprint is
+  // taken of. Trimming the claude inputs and dropping the empty ones used to happen here, so two
+  // buttons that produced the identical message could still fail the fingerprint check.
+  const { command, claudeInputs } = executionPayload(button);
+  const message = { command_template: command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
-  const claudeInputs = (button.claudeInputs || []).map(s => String(s).trim()).filter(Boolean);
   if (claudeInputs.length) message.claude_inputs = claudeInputs;
   await sendToNativeHost(message);
 }

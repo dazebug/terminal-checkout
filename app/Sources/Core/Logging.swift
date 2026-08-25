@@ -1,14 +1,11 @@
 import Foundation
 import os
 
-/// 앱·릴레이가 공유하는 진단 로그.
+/// The diagnostic log the app and the relay share.
 ///
-/// NSLog를 쓰지 않는 이유: NSLog는 메시지를 os_log의 인자로 넘기고, 인자는 통합 로그에서
-/// 기본적으로 가려진다. 그래서 `log show`에 `<private>`으로만 남아, 실패했다는 사실은 알아도
-/// 무엇이 실패했는지는 읽을 수 없다 — claude 입력이 전달되다 만 사고를 조사할 때 로그가
-/// 한 줄 있는데도 내용을 못 읽어 타임스탬프 간격으로 경로를 좁혀야 했다 (실측).
+/// Why not NSLog: NSLog passes the message as an *argument* to os_log, and arguments are redacted by default in the unified log. So `log show` keeps only `<private>`, which tells you that something failed but never what — investigating an incident where claude input stopped halfway, there was a line in the log whose contents could not be read, and the path had to be narrowed down from the gaps between timestamps instead (measured).
 ///
-/// 확인: `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 1h`
+/// To read it: `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 1h`
 private let checkoutLogger = Logger(subsystem: appBundleID, category: "app")
 
 public func checkoutLog(_ message: String) {
@@ -41,7 +38,7 @@ public final class DeliveryTimeline: @unchecked Sendable {
         self.previous = start
     }
 
-    /// Logs one stage as `<message> (+1.2s, 총 3.4s)`. Safe to call from either the request queue
+    /// Logs one stage as `<message> (+1.2s, total 3.4s)`. Safe to call from either the request queue
     /// or the delivery queue — they never overlap today, and the lock keeps that from being a
     /// premise a future caller has to know about.
     public func step(_ message: String) {
@@ -51,7 +48,7 @@ public final class DeliveryTimeline: @unchecked Sendable {
         let total = instant.timeIntervalSince(started)
         previous = instant
         lock.unlock()
-        emit("\(message) (+\(seconds(sincePrevious))s, 총 \(seconds(total))s)")
+        emit("\(message) (+\(seconds(sincePrevious))s, total \(seconds(total))s)")
     }
 
     private func seconds(_ value: TimeInterval) -> String {

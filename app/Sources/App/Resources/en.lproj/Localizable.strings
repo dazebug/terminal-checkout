@@ -1,0 +1,109 @@
+/* The app's string catalogue. Values here are the source of every user-facing sentence the
+   setup window draws; the window reads them through `localized(_:)` and never holds one in a
+   stored property, because a value captured at build time keeps the language it was built in.
+
+   Twelve of these are quoted verbatim by README.md, install.sh and issue #20 — changing one
+   of those means changing the documents in the same commit. Item 23 turns that pairing into a
+   registry a test can enforce.
+
+   What is deliberately **not** here: `testCommand`, which is shell syntax rather than a
+   message and is typed `ShellPayload` so a catalogue value cannot reach it. */
+
+"app.alert.extensionFolderFailed" = "Preparing the extension folder failed";
+"app.alert.manifestFailed" = "Native Host registration failed";
+"app.alert.permissionRequestFailed" = "Permission request failed";
+"app.automation.denied" = "Not granted — allow it in System Settings → Privacy & Security → Automation";
+"app.automation.granted" = "Granted";
+"app.automation.notDetermined" = "Not requested yet — press [%@]";
+"app.automation.targetNotRunning" = "Cannot check while iTerm2 is not running — pressing [%@] launches it";
+"app.automation.unknown" = "Status check failed (OSStatus %d)";
+"app.baseDir.missingFolder" = "%@ — this folder does not exist yet. It is created on the first clone";
+"app.baseDir.notConfigured" = "Not set — jumps with z alone. In a repository zoxide has never recorded, the command does nothing";
+"app.baseDir.notSaved" = "Not saved — %@";
+"app.baseDir.ok" = "%@ — where a failed z lands, and where a missing repository is cloned";
+"app.baseDir.placeholder" = "e.g. ~/Codes";
+"app.baseDir.reason.invalidCharacters" = "it contains characters that are unsafe in a shell, such as spaces or non-ASCII letters";
+"app.baseDir.reason.notAbsolute" = "it is not an absolute path";
+"app.baseDir.storedInvalid" = "The stored value is not usable (%@) — please choose it again";
+"app.button.chooseFolder" = "Choose Folder…";
+"app.button.installInChrome" = "Install in Chrome";
+"app.button.openOptionsPage" = "Open Extension Options Page";
+"app.button.openSystemSettings" = "Open System Settings";
+"app.button.registerUpdate" = "Register/Update";
+"app.button.requestAccessibility" = "Request Accessibility Permission";
+"app.button.requestItermPermission" = "Request iTerm2 Permission";
+"app.button.restartNow" = "Restart Now";
+"app.button.runInTerminal" = "Run in Terminal";
+"app.button.showSetupGuide" = "Show Setup Guide Again";
+"app.card.baseDir.help" = "The top-level folder you clone repositories into. When z cannot jump (no zoxide history, or no zoxide at all) the command moves into the repository under this folder, and clones it with gh when it is not there. Leave it empty to keep jumping with z alone, exactly as before.";
+"app.card.baseDir.legacyNote" = "Buttons saved by an earlier version keep the command they stored — choosing a folder does not add the fallback to them. Open the extension options page and an update notice appears at the top; review each button and save to apply it.";
+"app.card.baseDir.title" = "Repository base folder";
+"app.card.chrome.title" = "Chrome connection (Native Host)";
+"app.card.extension.help" = "Pressing [%@] copies the extension folder path to the clipboard and opens chrome://extensions.";
+"app.card.extension.title" = "Extension";
+"app.card.language.title" = "Language";
+"app.card.terminal.title" = "Terminal";
+"app.card.test.title" = "Run Test";
+"app.card.tools.help" = "Checked in your login shell: the tools a button's command and its claude input call.";
+"app.card.tools.title" = "Tools the commands call";
+"app.error.bundledExtensionMissing" = "The app bundle carries no extension resource. Build the app again.";
+"app.guide.step1" = "① Turn on Developer mode, top right";
+"app.guide.step2" = "② Click “Load unpacked”, top left";
+"app.guide.step3" = "③ In the file dialog: ⇧⌘G → ⌘V (paste) → Enter → [Select]";
+"app.guide.step4" = "④ Leave Developer mode on — turning it off disables the extension";
+"app.install.feedback" = "The path is on the clipboard and Chrome is open. Follow ① → ④ above.";
+"app.language.followSystem" = "Follow the system language";
+"app.language.note" = "The strings this app draws change immediately. System dialogs (file pickers, alerts) use this language from the next launch.";
+"app.language.restartDeferred" = "claude input is being delivered, so the app is not restarting right now. Press again once the delivery has finished.";
+"app.language.restartFailed" = "The app could not relaunch, so it is still running. Try again.";
+"app.menu.close" = "Close";
+"app.menu.copy" = "Copy";
+"app.menu.cut" = "Cut";
+"app.menu.edit" = "Edit";
+"app.menu.paste" = "Paste";
+"app.menu.quit" = "Quit %@";
+"app.menu.selectAll" = "Select All";
+"app.menu.window" = "Window";
+"app.panel.choosePrompt" = "Choose";
+"app.pipeline.node.app" = "app";
+"app.pipeline.node.extension" = "Chrome extension";
+"app.pipeline.node.relay" = "relay";
+"app.pipeline.relay.detail" = "Native Host: %@";
+"app.pipeline.socket.listening" = "socket server listening (host.sock)";
+"app.pipeline.socket.missing" = "no socket file — try restarting the app";
+"app.pipeline.warp.noAccessibility" = "No Accessibility permission — buttons with scheduled claude input are refused without opening a tab";
+"app.pipeline.warp.notInstalled" = "Warp is not installed";
+"app.pipeline.warp.ready" = "New tab through a Tab Config — claude input delivered by a helper inside the pane";
+"app.pipeline.wezterm.available" = "WezTerm CLI available — no TCC permission needed";
+"app.pipeline.wezterm.notInstalled" = "WezTerm is not installed";
+"app.section.accessibility.help" = "Used to confirm on Warp's screen that claude received the input. Without it, buttons that schedule claude input are refused without opening a tab — all three shipped presets are in that group, because a ! input only runs when it is typed into claude's shell mode. Buttons with no claude input, and buttons that schedule a single plain line, work without the permission. While a delivery is running you have to keep that tab in view.";
+"app.section.accessibility.title" = "Warp claude input (Accessibility)";
+"app.section.itermPermission.help" = "Grants iTerm2 control (Apple Events) to this app alone. Chrome needs no permission at all.";
+"app.section.itermPermission.title" = "iTerm2 control permission";
+"app.status.accessibility.denied" = "Not granted — buttons with scheduled claude input are refused";
+"app.status.accessibility.format" = "Accessibility: %@";
+"app.status.accessibility.granted" = "Granted";
+"app.status.extension.connected" = "Connected — last request %@";
+"app.status.extension.waiting" = "Waiting for the first request from Chrome — press a button on a GitHub PR page after installing";
+"app.status.extensionFolder.missing" = "No extension folder — pressing [%@] prepares it";
+"app.status.extensionFolder.ready" = "Ready";
+"app.status.iterm.notInstalled" = "iTerm2 is not installed";
+"app.status.itermAutomation.format" = "iTerm2 automation: %@";
+"app.status.itermAutomation.waiting" = "iTerm2 automation: waiting for the permission prompt…";
+"app.status.manifest.notRegistered" = "Not registered — press [%@]";
+"app.status.manifest.registered" = "Registered";
+"app.status.manifest.wrongExtensionID" = "The extension ID differs from the current setting — refresh it with [%@]";
+"app.status.manifest.wrongPath" = "Points at an app in another location — refresh it with [%@]";
+"app.status.unknown" = "state not checked";
+"app.terminal.notInstalled" = "%@ (not installed)";
+"app.terminal.note.common" = "Pressing a GitHub button runs the command in a new tab, and any scheduled claude input is delivered once claude is up. Do not type in that tab until it is done.";
+"app.terminal.note.warp" = " On Warp the delivery only runs while you are looking at that tab — switching away pauses it, and coming back resumes it.";
+"app.test.failed" = "Failed: %@";
+"app.test.running" = "Running…";
+"app.test.succeeded" = "It worked if a new tab opened in the terminal.";
+"app.tools.claude.advice" = "Command not found — buttons that schedule claude input cannot deliver it.";
+"app.tools.claudeWrapper.advice" = "claude could not be found as an executable, so claude input is not merged into the command (it may be installed only as a function or an alias, PATH may hold a relative entry, or the file may not be executable) — the input is typed into the session instead, which on Warp needs the Accessibility permission.";
+"app.tools.gh.advice" = "Command not found — the gh presets on issue buttons fail, and so does the clone step of the repository base folder. Run brew install gh, then gh auth login.";
+"app.tools.z.adviceNoBaseDir" = "Command not found — every button fails, because the default command starts with z. Run brew install zoxide and add eval \"$(zoxide init zsh)\" to ~/.zshrc, or set the “Repository base folder” below.";
+"app.tools.z.adviceWithBaseDir" = "Command not found — the buttons still work, since they fall back to the repository base folder. Installing zoxide also lets them jump to repositories outside that folder (brew install zoxide).";
+"app.window.title" = "Terminal Checkout Setup";

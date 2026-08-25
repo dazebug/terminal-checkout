@@ -1,13 +1,13 @@
 #!/bin/bash
-# e2e 회귀 테스트: Chrome 프레이밍 → relay → unix socket → 앱 서버 → 응답 왕복.
-# 터미널이 실제로 열리지 않도록 오류 경로만 사용한다. 사전 조건: ./build.sh 완료.
+# The e2e regression test: Chrome framing → relay → unix socket → app server → response round trip.
+# It uses failure paths only, so no terminal is actually opened. Precondition: ./build.sh has run.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$SCRIPT_DIR/build/Terminal Checkout.app"
 RELAY="$APP_DIR/Contents/MacOS/terminal-checkout-relay"
 
-# unix socket 경로는 104바이트 제한이 있어 짧은 경로가 필수
+# The unix socket path has a 104-byte limit, so a short path is mandatory
 export TERMINAL_CHECKOUT_SOCKET="/tmp/tc-e2e-$$.sock"
 
 rm -f "$TERMINAL_CHECKOUT_SOCKET"
@@ -19,7 +19,7 @@ for _ in $(seq 1 50); do
   [ -S "$TERMINAL_CHECKOUT_SOCKET" ] && break
   sleep 0.1
 done
-[ -S "$TERMINAL_CHECKOUT_SOCKET" ] || { echo "FAIL: 서버 소켓이 생성되지 않음"; exit 1; }
+[ -S "$TERMINAL_CHECKOUT_SOCKET" ] || { echo "FAIL: the server socket was never created"; exit 1; }
 
 frame() {
   python3 -c 'import struct,sys; p=sys.argv[1].encode(); sys.stdout.buffer.write(struct.pack("=I",len(p))+p)' "$1"
@@ -56,7 +56,7 @@ run_case "unprovided template variable" \
   '{"command_template":"git checkout {main}","variables":{"repo":"r"}}' \
   'Variable {main} not provided'
 
-# claude_inputs가 relay를 거쳐 앱의 해석까지 닿는지 확인 (입력 속 변수도 command와 같은 검증)
+# Checks that claude_inputs reach the app's resolver through the relay (a variable inside an input gets the same validation as one in the command)
 run_case "claude_inputs unprovided variable" \
   '{"command_template":"z {repo} && claude","variables":{"repo":"r"},"claude_inputs":["fix {nope}"]}' \
   'Variable {nope} not provided'
@@ -65,7 +65,7 @@ run_case "claude_inputs must be array" \
   '{"command_template":"z {repo}","variables":{"repo":"r"},"claude_inputs":"x"}' \
   'claude_inputs must be an array'
 
-# 이슈/PR 번호와 owner도 셸에 그대로 들어가므로 같은 화이트리스트 검증을 받는다
+# The issue/PR number and the owner also go into the shell as they are, so they get the same whitelist validation
 run_case "issue number injection" \
   '{"command_template":"gh issue view {number}","variables":{"number":"1; rm -rf /"}}' \
   'Invalid characters'
@@ -82,4 +82,4 @@ run_case "app-provided variable cannot come from the extension" \
   '{"command_template":"{cd}","variables":{"cd":"rm -rf /"}}' \
   'Unknown variable: {cd}'
 
-echo "e2e 전체 통과"
+echo "e2e: all cases passed"

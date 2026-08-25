@@ -1,0 +1,7 @@
+/* Info.plist keys that face the user. The only one is NSAppleEventsUsageDescription, and it is
+   drawn by tccd rather than by us: it is the single sentence a user reads at the moment they are
+   first asked for the permission. Whether that prompt follows the language chosen in the app is
+   **unmeasured** — measuring it would mean resetting the user's live Automation grant
+   (docs/context/localization.md). The value here matches the one in `app/Info.plist`, which is
+   what macOS falls back to for a locale that has no InfoPlist.strings of its own. */
+"NSAppleEventsUsageDescription" = "Automation permission is needed to run the checkout command requested from GitHub in a new iTerm2 tab.";

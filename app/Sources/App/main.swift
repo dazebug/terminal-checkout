@@ -2,7 +2,7 @@ import AppKit
 import Core
 import Foundation
 
-// 테스트용 헤드리스 모드: UI 없이 소켓 서버만 띄운다 (e2e 테스트에서 사용)
+// Headless mode for tests: the socket server only, with no UI (this is what `e2e.sh` drives)
 if CommandLine.arguments.contains("--headless-server") {
     let server = HostServer(socketPath: defaultSocketPath())
     do {
@@ -15,6 +15,14 @@ if CommandLine.arguments.contains("--headless-server") {
     RunLoop.main.run()
     exit(0)
 }
+
+// Apply AppKit's choice before `NSApplication.shared`. When an explicit override is needed, the
+// method reads the external system order before writing it; `auto` later reads the argument/global
+// domains directly so this app's own value cannot become its system-language input.
+// Measured, a write after AppKit's first localization lookup leaves that process in the old
+// language and only shows up on the next launch. The headless server above never reaches here on
+// purpose — it draws nothing, and a process with no window has no business rewriting defaults.
+AppLocalization.applyStoredLanguageToAppKit()
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

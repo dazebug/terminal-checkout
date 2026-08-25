@@ -70,8 +70,38 @@ if pgrep -x TerminalCheckout >/dev/null 2>&1; then
     pkill -x TerminalCheckout || true
     sleep 1
 fi
-rm -rf "$INSTALL_DIR/$APP_NAME"
-ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
+# Build the new bundle beside the old one, then swap — rather than deleting the installed app and
+# copying into the hole. The same class as the extension folder's replacement (`Installer.swift`),
+# on a different target: what reads this path is LaunchServices and the user, not Chrome.
+#
+# **This is narrowed, not atomic, and the difference is worth stating.** The shell has no equivalent
+# of `replaceItemAt`, and `mv` onto a populated directory fails the same way `rename(2)` does, so
+# the window cannot be closed here — only shrunk from "the length of a recursive copy" to "the
+# length of two renames". It cannot be delegated to the app either: this script is replacing the
+# very binary that would have to perform it.
+#
+# What it does buy besides the shorter window: a failure between the two renames leaves the previous
+# bundle sitting at `.<name>.previous`, and the second rename **puts it back**. If restoration also
+# fails, both copies remain on disk under the names the message names, which is the most a shell can
+# promise here.
+STAGING="$INSTALL_DIR/.$APP_NAME.staging"
+PREVIOUS="$INSTALL_DIR/.$APP_NAME.previous"
+rm -rf "$STAGING" "$PREVIOUS"
+ditto "$SCRIPT_DIR/app/build/$APP_NAME" "$STAGING"
+if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
+    mv "$INSTALL_DIR/$APP_NAME" "$PREVIOUS"
+fi
+if ! mv "$STAGING" "$INSTALL_DIR/$APP_NAME"; then
+    if [ -d "$PREVIOUS" ] && mv "$PREVIOUS" "$INSTALL_DIR/$APP_NAME"; then
+        rm -rf "$STAGING"
+        echo "Install failed while swapping the new app in; the previous one is back in place." >&2
+    else
+        echo "Install failed while swapping the new app in, and the previous app could not be" >&2
+        echo "restored. The new build is at $STAGING and the old one at $PREVIOUS." >&2
+    fi
+    exit 1
+fi
+rm -rf "$PREVIOUS"
 "$LSREGISTER" -f "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
 echo "[3/3] Installed: $INSTALL_DIR/$APP_NAME"
 
@@ -96,9 +126,9 @@ echo ""
 echo "=== Installation complete! Launching the app ==="
 echo ""
 echo "The app's setup window walks you through the remaining steps (Native Host registration and extension folder setup are automatic):"
-echo "  ① [Install in Chrome] (shown today as [Chrome에 설치하기]) → load the folder from chrome://extensions"
-echo "  ② Pick a terminal (if you pick iTerm2, allow the permission prompt — the permission is granted to this app only)"
-echo "  ③ Verify it works with [Run in Terminal] (shown today as [터미널에서 실행])"
+echo "  ① [Install in Chrome] → load the folder from chrome://extensions"
+echo "  ② Pick a language and a terminal (if you pick iTerm2, allow the permission prompt — the permission is granted to this app only)"
+echo "  ③ Verify it works with [Run in Terminal]"
 echo ""
 
 open "$INSTALL_DIR/$APP_NAME"

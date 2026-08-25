@@ -2,92 +2,69 @@ import Core
 import Darwin
 import Foundation
 
-// Warp pane 주입 헬퍼.
+// The Warp pane injection helper.
 //
-// Warp에는 pane에 텍스트를 보내는 수단이 없다 — AppleScript 미지원, warpctrl은 Stable에서
-// 기본 비활성, `wezterm cli send-text` 같은 CLI도 없다(모두 실측). 남은 경로는 pane의 tty
-// 입력 큐에 바이트를 직접 넣는 `TIOCSTI`인데, BSD 커널은 비root에게 **호출 프로세스의 제어
-// 터미널**로만 이것을 허용한다(`isctty`). 그래서 앱이 아니라 pane 안에서 도는 이 프로세스가
-// 주입을 맡고, 앱은 유닉스 소켓의 클라이언트가 된다.
+// Warp has no way to send text to a pane — no AppleScript support, warpctrl disabled by default on Stable, and no CLI like `wezterm cli send-text` (all measured). What is left is `TIOCSTI`, which puts bytes straight into the pane's tty input queue, and for a non-root caller the BSD kernel allows that only on **the calling process's controlling terminal** (`isctty`). So the injection is done by this process running inside the pane rather than by the app, and the app becomes a client of its unix socket.
 //
-// 절대 하지 않는 것 두 가지:
-//   - tty에서 읽지 않는다 — 사용자가 그 pane에 친 키를 훔치게 된다
-//   - tty에 쓰지 않는다 — claude가 그리는 화면을 망친다
-// 로그는 os_log로만 남긴다(`checkoutLog`).
+// Two things this never does:
+//   - it never reads from the tty — that would steal the keys the user typed into that pane
+//   - it never writes to the tty — that would wreck the screen claude is drawing
+// Logging goes to os_log alone (`checkoutLog`).
 
-/// `_IOW('t', 114, char)` — tty 입력 큐에 바이트 하나를 밀어 넣는다.
-/// `_IOR('f', 127, int)` — 아직 읽히지 않은 바이트 수.
-/// 둘 다 C 매크로라 Swift로 넘어오지 않아 값을 직접 적는다.
+/// `_IOW('t', 114, char)` — pushes one byte into the tty input queue.
+/// `_IOR('f', 127, int)` — how many bytes have not been read yet.
+/// Both are C macros and do not come through to Swift, so the values are written out here.
 private let requestTIOCSTI: UInt = 0x8001_7472
 private let requestFIONREAD: UInt = 0x4004_667F
 
-/// 한 번에 큐에 넣어 두는 최대 바이트. tty 입력 큐 상한(TTYHOG, 기본 1024)보다 넉넉히 낮게
-/// 잡아 두고, 넘치는 분량은 소비를 기다렸다 이어 넣는다.
+/// The maximum bytes left in the queue at once. It sits comfortably below the tty input queue's cap (TTYHOG, 1024 by default), and the surplus waits for consumption before continuing.
 private let injectQueueLimit = 512
-/// 한 요청으로 받아 주는 최대 바이트. claude 입력은 한 줄이라 이보다 훨씬 짧다 —
-/// 상한이 없으면 보내는 쪽이 수십만 번의 ioctl을 시킬 수 있다.
+/// The maximum bytes accepted in one request. A claude input is a single line and far shorter than this — without a cap the sender could make us issue hundreds of thousands of ioctls.
 private let injectMaxBytes = 8 * 1024
-/// 수신 버퍼 상한. base64는 원본의 4/3이라 위 상한의 두 배면 넉넉하다.
+/// The receive buffer cap. base64 is 4/3 of the original, so twice the cap above is ample.
 private let requestLineLimit = 16 * 1024
-/// 조각을 밀어 넣는 도중 포그라운드를 다시 보는 간격(바이트). 확인 없이 도는 구간이
-/// "claude가 끝났을 때 셸로 새는 최대 바이트"라 짧을수록 좋지만, `tcgetpgrp`+`getpgid`가
-/// 바이트마다 두 번씩 도는 것도 낭비다 — 한 줄 입력에서 유출이 한눈에 들어오는 크기로 잡는다.
+/// How often (in bytes) the foreground is re-checked while a chunk is being pushed in. The stretch that runs without a check is "the most bytes that can leak to the shell when claude has ended", so shorter is better, but running `tcgetpgrp`+`getpgid` twice per byte is waste too — this is sized so that a leak in a one-line input is visible at a glance.
 private let foregroundRecheckStride = 16
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 신뢰 경계 선언 (이 기능 전체에 적용된다)
+// Trust boundary declaration (this applies to the whole feature)
 //
-// **경계는 uid다.** 같은 uid로 도는 프로세스는 신뢰하고, 다른 uid는 막는다. 이유는 두 가지다:
-// macOS 자신이 이 부류(유닉스 소켓·사용자 홈의 파일)에 uid를 경계로 쓰고, 같은 uid 안에서는
-// 숨길 자리가 없다 — argv·환경변수·0600 파일을 모두 읽을 수 있고, 이 소켓 경로는 Tab Config
-// 파일과 pane 화면에 그대로 보인다. 그래서 `getpeereid`의 uid 비교는 **인증이 아니라 경계
-// 확인**이다.
+// **The boundary is the uid.** Processes running as the same uid are treated as inside the boundary; other uids are refused. There are two reasons: macOS itself uses the uid as the boundary for this class of thing (unix sockets, files in the user's home), and within one uid there is nowhere to hide — argv, environment variables and 0600 files are all readable, and this socket path is written plainly in the Tab Config file and visible on the pane's screen. So the uid comparison in `getpeereid` is **a boundary check, not authentication**.
 //
-// 이 경계 안에서 가능한 것(막지 않는다):
-//  1. 살아 있는 헬퍼 소켓에 임의의 `inject` — 같은 uid 프로세스는 그 pane의 claude에 원하는
-//     바이트를 넣을 수 있다. 좁히는 축은 수명뿐이다: 전달이 끝나면 `bye`로 즉시 죽고,
-//     그러지 못하면 유휴 180초·수명 900초에 걸린다
-//  2. 경로 기반 `unlink`의 TOCTOU — 소켓 회수·Tab Config 회수·예약 삭제·`uninstall.sh`.
-//     `lstat`/`fstat`과 inode 재확인으로 창을 마이크로초로 줄였지만, macOS에 `funlinkat`이
-//     없어 마지막 한 걸음은 경로다. 우리 난수 이름을 미리 알아야 끼워 넣을 수 있다
-//  3. 헤더를 확인한 뒤 내용을 바꿔치기 — 판정은 fd로 하지만 삭제는 경로다(2와 같은 창)
-//  4. 헬퍼 소켓 경로에 파일을 미리 놓아 `bind`를 실패시키기(전달만 무산되는 DoS)
+// What is possible inside this boundary (and is not prevented):
+//  1. An arbitrary `inject` into a live helper socket — a same-uid process can put whatever bytes it likes into that pane's claude. The only axis left to narrow is lifetime, and it is narrowed at both ends **against accident, not against this boundary**: a helper whose app went away between admitting the request and this pane coming up does not take the advertised address (`claimWarpHelperAddress`), one that did take it dies immediately on `bye`, and failing both it is caught by the 180-second idle cap and the 900-second lifetime cap. **Those two caps start once this helper is serving**, so they bound nothing before the claim — what bounds that interval is the deadline the app writes into the launch line, which this process is holding before it creates anything. The first of those is a same-uid process away from being undone — see residual 5 — so the sentence is about what happens when nobody is trying, which is what the caps are for.
+//  2. The TOCTOU in path-based `unlink` — socket reclaim, Tab Config reclaim, the scheduled deletion, and `uninstall.sh`. `lstat`/`fstat` plus an inode re-check narrowed the window to microseconds, but macOS has no `funlinkat`, so the last step is by path. Slipping into it requires knowing our random name in advance.
+//  3. Swapping the contents after the header has been checked — the verdict is reached through an fd but the deletion is by path (the same window as 2).
+//  4. Placing a file at either of the helper's two paths in advance — the staging name it binds, or the advertised name it takes with `link` — so that the helper cannot come up (a DoS that only defeats delivery). The app does the second of these itself, deliberately, as it goes away: taking an address back is exactly this move, which is why the helper treats a refused claim as a decision it cannot see behind rather than as an error.
+//  5. **Removing what the app put there**, which is the same move in reverse and is not covered by 4: taking an address back occupies the advertised name, and a same-uid process that deletes it before a delayed helper's `link` turns a refused claim into a successful one — a helper that outlives the app. The same goes for the pin the app links from (`warpHelperPinPath`): deleting it before termination leaves the app with nothing to link, which is the `.failed` state, and that state is at least reported rather than mistaken for a dismissal. All of this is inside the declared boundary and is not prevented; what changes is that residual 1's "narrowed at both ends" is a statement about accidents, not about this.
+//  6. Taking the staging name first. The helper unlinks a socket sitting at the deterministic `.pre` name before binding, which on a token collision — random 8 hex, or a deliberate one from the same uid — removes another live claimant's socket. It is the same path-ownership residual as 2, stated here rather than left to be inferred from the two syscalls.
 //
-// 경계와 **무관한** 잔여(악의가 없어도 남는 것)는 따로다 — 섞지 않는다:
-//  - pane 증명이 본문 타이핑 시점까지만 유효한 창 (`proveOurPane` 주석)
-//  - 큐에 넣은 CR을 셸이 먼저 읽어 가는 경합, 그리고 겨눈 claude가 사라졌을 때 **읽히지 않은
-//    우리 바이트가 셸 줄 버퍼에 잔해로 남는 것** — 버려서 막지 않는다(`watchUntilRead` 주석)
-//  - Tab Config 20초 예약 삭제가 "Warp가 읽었다"를 보장하지 못하는 것 (`runInWarp` 주석)
-//  - 전달 중 사용자가 같은 pane에 타이핑하면 입력창에서 섞여 함께 제출되는 것 (이슈 #16).
-//    큐 단계에서는 정상으로 보인다 — claude가 즉시 읽어 가 큐가 계속 비기 때문이다.
-//    접근성 API가 화면 전체만 주고 입력창 내용을 따로 주지 않아 "우리 것만 있다"를
-//    증명할 수 없다
+// The residuals that have **nothing to do with** the boundary (the ones that remain even with no malice) are kept separate — the two are never mixed:
+//  - the window in which the pane proof is valid only up to the moment the body is typed (see the `proveOurPane` comment)
+//  - the race where the shell reads a queued CR first, and — when the claude we aimed at is gone — **our unread bytes lingering as residue in the shell's line buffer**; this is not prevented by discarding them (see the `watchUntilRead` comment)
+//  - the fact that the Tab Config's 20-second scheduled deletion cannot guarantee "Warp has read it" (see the `runInWarp` comment)
+//  - the user typing into the same pane during delivery, which mixes into the input box and is submitted together (issue #16). At the queue level this looks normal — claude reads immediately, so the queue keeps draining. The Accessibility API only hands over the whole screen and not the input box's contents separately, so "only ours is in there" cannot be proven.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-/// `bye`가 오지 못한 경우의 유휴 상한. 정상 전달에서 가장 긴 침묵은 앱이 claude 기동을
-/// 기다리는 구간(`deliverClaudeInputs`의 기본 120초)이라 그보다 여유만 두면 된다.
+/// The idle cap for when `bye` never arrives. The longest silence in a normal delivery is the stretch where the app waits for claude to start (120 seconds by default in `deliverClaudeInputs`), so this only needs headroom over that.
 private let idleTimeout: TimeInterval = 180
-/// 전체 수명 상한. 최악의 정상 전달(기동 대기 120초 + 입력 5개 × 재시도)이 400초 안쪽이라
-/// 그 두 배 남짓으로 잡는다 — 여기에 걸린다는 것은 이미 비정상이다.
+/// The overall lifetime cap. The worst normal delivery (a 120-second startup wait plus 5 inputs with retries) stays inside 400 seconds, so this is set at roughly twice that — being caught here already means something is abnormal.
 private let maxLifetime: TimeInterval = 900
 
 private let serveFlag = "--serve"
 
-/// 시그널 핸들러는 async-signal-safe한 것만 부를 수 있다 — Swift 문자열을 만들 수 없으므로
-/// 경로를 C 문자열로 미리 떠 둔다. `lstat`·`unlink`는 둘 다 안전 목록에 있다.
+/// A signal handler may only call async-signal-safe functions — it cannot build a Swift string, so the path is captured as a C string in advance. `lstat` and `unlink` are both on the safe list.
 private var socketPathForSignal: UnsafeMutablePointer<CChar>?
 
-/// 우리 소켓일 때만 지운다. 경로만 보고 지우면, 그 사이 누가 같은 경로에 놓은 파일을
-/// 없앤다 — 정상 경로에서는 겹칠 일이 없지만 삭제는 되돌릴 수 없다.
+/// Deletes only when the object at the path we expected is a socket. That is **inferred** ownership, not proven: a same-uid process can put a socket of its own there, and residual 2 in the preamble is exactly that. Going by the path alone would also remove a regular file somebody put there in the meantime — collisions do not happen on the normal path, but a deletion cannot be undone.
 private func unlinkIfSocket(_ path: UnsafePointer<CChar>) {
     var info = stat()
     guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK else { return }
     unlink(path)
 }
 
-/// SIGTERM(앱 재설치·`pkill`)·SIGINT·SIGHUP에서 소켓 파일을 지우고 나간다.
-/// SIGKILL은 잡을 수 없으므로 그 몫은 앱이 다음 실행에서 회수한다
-/// (`reclaimDeadWarpHelperSockets`).
+/// On SIGTERM (an app reinstall, `pkill`), SIGINT and SIGHUP, the socket file is deleted before exiting.
+/// SIGKILL cannot be caught, so that share is reclaimed by the app on its next run (`reclaimDeadWarpHelperSockets`).
 private func installSocketCleanupOnSignals(path: String) {
     socketPathForSignal = strdup(path)
     for number in [SIGTERM, SIGINT, SIGHUP] {
@@ -99,13 +76,13 @@ private func installSocketCleanupOnSignals(path: String) {
 }
 
 private func fail(_ message: String) -> Never {
-    checkoutLog("Warp 주입 헬퍼 종료: \(message)")
+    checkoutLog("Warp injection helper exiting: \(message)")
     exit(1)
 }
 
 private func lastErrnoName() -> String { String(cString: strerror(errno)) }
 
-/// tty 입력 큐에 남은 바이트 수. 조회 실패면 nil.
+/// How many bytes remain in the tty input queue. nil on a failed query.
 private func ttyPendingBytes(_ fd: Int32) -> Int? {
     var pending: Int32 = 0
     let result = withUnsafeMutablePointer(to: &pending) {
@@ -114,9 +91,7 @@ private func ttyPendingBytes(_ fd: Int32) -> Int? {
     return result == 0 ? Int(pending) : nil
 }
 
-/// 헬퍼가 사는 동안의 상태. 정지 판정을 여기 하나로 모아 **대기 루프와 요청 처리 경로가
-/// 같은 기준**을 쓰게 한다 — 상한 검사가 대기 루프에만 있으면 연결을 물고 계속 요청하는
-/// 쪽이 유휴·수명 상한을 통째로 우회한다.
+/// The helper's state while it lives. The stop verdict is gathered here in one place so **the waiting loop and the request-handling path use the same criterion** — with the cap checked only in the waiting loop, someone holding the connection open and requesting continuously bypasses the idle and lifetime caps entirely.
 private final class HelperState {
     let ttyFD: Int32
     let ttyPath: String
@@ -132,9 +107,9 @@ private final class HelperState {
 
     func stopReason() -> WarpHelperStop? {
         warpHelperStopReason(
-            // tty 번호는 재사용된다 — pane이 닫힌 뒤 같은 번호를 새 세션이 차지하면
-            // 세션 id가 달라진다. 이 비교가 "남의 tty에 붙은 헬퍼"를 막는 유일한 신호다
-            ttySessionMatches: tcgetsid(ttyFD) == getsid(0),
+            // tty numbers get reused — once the pane closes and a new session takes the same number, the session id differs. This comparison is the only signal that keeps a helper from being attached to somebody else's tty
+            // Through `warpTTYSessionIsOurs` because both calls answer -1 on failure, and -1 == -1 read as "still ours"
+            ttySessionMatches: warpTTYSessionIsOurs(ttySID: tcgetsid(ttyFD), ourSID: getsid(0)),
             idleSeconds: Date().timeIntervalSince(lastActivity),
             aliveSeconds: Date().timeIntervalSince(startedAt),
             idleLimit: idleTimeout,
@@ -143,10 +118,8 @@ private final class HelperState {
     }
 }
 
-/// 큐 여유만큼 나눠 넣는다. 통째로 거절하면 512바이트가 넘는 claude 프롬프트가 항상
-/// 실패하는데, 그 길이는 사용자가 직접 쓰는 입력에서 드물지 않다.
-/// 바이트 단위로 잘라도 되는 이유는 tty 입력 큐가 바이트 스트림이기 때문이다 — 멀티바이트
-/// 문자가 조각나 들어가도 순서대로 이어지면 claude가 온전히 받는다(한글 입력으로 실측).
+/// Writes in pieces sized to the queue's headroom. Rejecting outright would make every claude prompt longer than 512 bytes fail, and that length is not rare in input the user writes themselves.
+/// Cutting on byte boundaries is fine because the tty input queue is a byte stream — a multi-byte character split across pieces still arrives whole for claude as long as the order is kept (measured with Korean input).
 private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> WarpHelperResponse {
     let ttyFD = state.ttyFD
     guard !bytes.isEmpty else { return .ok("0") }
@@ -155,25 +128,22 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
     }
     let all = [UInt8](bytes)
     var sent = 0
-    // 이 요청에 쓸 수 있는 시간 전부 — 큐가 비기를 기다리는 것과 읽히는지 지켜보는 것을
-    // 합쳐 앱의 응답 대기보다 확실히 짧아야 한다(`warpHelperWorkBudget` 참고)
+    // All the time available to this request — waiting for the queue to drain and watching whether it gets read, together, have to stay comfortably shorter than the app's response wait (see `warpHelperWorkBudget`)
     let deadline = Date().addingTimeInterval(warpHelperWorkBudget)
     while sent < all.count {
-        // 조각마다 다시 본다. 분할 주입은 큐가 빌 때까지 예산만큼 기다리는데, 그 사이
-        // 우리 pane이 닫히고 같은 tty 번호를 새 세션이 차지하면 남은 조각이 남의 tty로 들어간다
+        // Re-checked for every piece. A split injection waits out its budget for the queue to drain, and if our pane closes in that time and a new session takes the same tty number, the remaining pieces go into somebody else's tty
         if let stop = state.stopReason() { return .err(stop.description) }
-        // 넣기 직전에 "지금 이 tty를 읽을 프로세스"를 확인한다. 앱의 게이트는 요청을 보내기
-        // 전의 상태만 보므로, 그 사이 claude가 끝났으면 우리 바이트를 셸이 읽는다.
-        // syscall 두 번이라 `ps` 왕복보다 싸고, 주입과 같은 프로세스라 창이 마이크로초다
-        guard warpForegroundIsExpected(
-            foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
-        ) else {
-            return .err("foreground is not the expected reader")
+        // Immediately before writing, "the process that will read this tty right now" is checked. The app's gate only sees the state before the request was sent, so if claude ended in between, the shell reads our bytes.
+        // It is two syscalls, cheaper than a `ps` round trip, and it runs in the same process as the injection, so the window is microseconds
+        let foreground = warpForeground(foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID))
+        switch foreground {
+        case .expected: break
+        case .different, .unknown: return .err(foreground.diagnosis)
         }
         guard let pending = ttyPendingBytes(ttyFD) else { return .err(lastErrnoName()) }
         let chunk = warpInjectChunkSize(pending: pending, remaining: all.count - sent, limit: injectQueueLimit)
         guard chunk > 0 else {
-            // claude가 아직 읽어 가지 않았다. 여기서 더 넣으면 커널이 조용히 버린다
+            // claude has not read it yet. Writing more here means the kernel silently drops it
             guard Date() < deadline else {
                 return .err("input queue not drained in time (\(pending) pending)")
             }
@@ -181,22 +151,25 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
             continue
         }
         for index in sent..<(sent + chunk) {
-            // 조각 전체를 한 번의 확인으로 밀어 넣으면, 그 사이 claude가 끝났을 때 남은
-            // 바이트가 통째로 셸로 간다. 512바이트 조각이면 확인 없이 도는 구간이 그만큼
-            // 길어지므로 중간에도 다시 본다 — 유출 상한을 이 간격으로 묶는다
+            // Pushing a whole piece in on one check sends every remaining byte to the shell if claude ends midway. With a 512-byte piece the stretch running without a check is that long, so it is re-checked partway through — this interval is what bounds the leak
             if index > sent, (index - sent) % foregroundRecheckStride == 0 {
-                guard warpForegroundIsExpected(
+                // Same check as the one before the write, and the same three answers: "somebody
+                // else" and "could not be read" stop the write alike but are not the same finding
+                let midWrite = warpForeground(
                     foregroundPGID: tcgetpgrp(ttyFD), expectedPGID: getpgid(expectedPID)
-                ) else {
-                    return .err("foreground changed after \(index - sent) bytes")
+                )
+                switch midWrite {
+                case .expected: break
+                case .different, .unknown:
+                    return .err("\(midWrite.diagnosis) after \(index - sent) bytes")
                 }
             }
             var value = CChar(bitPattern: all[index])
             let result = withUnsafeMutablePointer(to: &value) {
                 ioctl(ttyFD, requestTIOCSTI, UnsafeMutableRawPointer($0))
             }
-            // 중간에 실패하면 앞부분만 들어간 상태다 — 몇 바이트까지 갔는지 함께 알린다.
-            // 앱은 재시도 전에 Ctrl+U로 입력창을 비우므로 남은 조각은 정리된다
+            // A failure partway leaves only the front in — the count of how far it got is reported along with it.
+            // The app clears the input box with Ctrl+U before retrying, so the leftover piece gets cleaned up
             guard result == 0 else { return .err("\(lastErrnoName()) after \(index)") }
         }
         sent += chunk
@@ -204,58 +177,49 @@ private func inject(_ bytes: Data, expectedPID: Int32, state: HelperState) -> Wa
     return watchUntilRead(expectedPID: expectedPID, state: state, injected: sent, deadline: deadline)
 }
 
-/// 넣은 바이트가 읽힐 때까지 잠깐 지켜본다. 판정은 `warpInjectWatchDecision`이 하고, 여기서는
-/// 표본을 뜨고 그 결론을 실행만 한다.
+/// Watches briefly until the written bytes get read. The verdict is `warpInjectWatchDecision`'s; this function only takes samples and carries out its conclusion.
 ///
-/// **읽히지 않은 바이트를 버리지 않는다.** 예전에는 포그라운드가 우리 claude에서 벗어났을 때
-/// `tcflush`로 큐를 비웠지만, "남은 것이 우리 바이트"를 `FIONREAD`(출처 없는 총량)로는 증명할 수
-/// 없어 사용자가 방금 친 키를 지우는 갈래가 있었다(`warpInjectWatchDecision` 주석에 재현 둘).
-/// 그래서 증명을 강화하는 대신 버리는 동작을 없앴다 — **트레이드오프**: 우리 바이트가 셸 줄
-/// 버퍼에 잔해로 남는 창이 다시 넓어진다(`!…`로 시작하는 입력이면 사용자가 나중에 누른 Enter가
-/// 그것을 실행할 수 있다). 그래도 이쪽이 나은 이유는 잔해는 **보이고** 사용자가 지울 수 있는
-/// 반면, 잘못된 `tcflush`는 사용자의 키를 **조용히** 없애기 때문이다.
+/// **Unread bytes are never discarded.** There used to be a `tcflush` that emptied the queue when the foreground moved off our claude, but "what remains is our bytes" cannot be proven with `FIONREAD` (an unattributed total), so there was a branch that erased the keys the user had just typed (two reproductions are in the `warpInjectWatchDecision` comment). So instead of strengthening the proof, the discarding was removed — **the trade-off**: the window in which our bytes linger as residue in the shell's line buffer widens again (with an input that starts with `!…`, an Enter the user presses later can run it). This side is still better because residue is **visible** and the user can erase it, whereas a wrong `tcflush` removes the user's keys **silently**.
 ///
-/// **시간 안에 안 읽혔으면 실패다(fail-closed).** 한때 "포그라운드는 그대로니 claude가 느린
-/// 것"이라며 성공으로 돌려줬는데, 그러면 큐에 남은 tail을 앱이 모른 채 CR을 얹는다 —
-/// 앱의 화면 확인은 앞 24자만 보므로 claude가 앞부분만 읽어도 통과한다. 그 뒤 claude가
-/// 끝나면 셸이 [tail + CR]을 읽어 **명령으로 실행한다.** 성공은 큐가 빈 것을 본 경우뿐이다.
+/// **Not read in time is a failure (fail-closed).** There was a time this returned success on the grounds that "the foreground is unchanged, so claude is just slow", but then the app puts a CR on top of a tail still in the queue without knowing — the app's screen check looks only at the first 24 characters, so it passes even when claude read only the front. Once claude then ends, the shell reads [tail + CR] and **runs it as a command.** Success is only the case where the queue was seen empty.
 ///
-/// 여기서 보는 `FIONREAD`는 "아직 안 읽혔다"는 **부정** 신호다. 폐기한 것은
-/// "읽혔으니 claude가 그렸을 것"이라는 **긍정** 추론이고, 그쪽은 되살리지 않는다 —
-/// 전달 성공 판정은 여전히 화면 반영 확인이 한다. 이것은 그 앞에 얹는 필요조건이다.
+/// The `FIONREAD` consulted here is the **negative** signal "not read yet". What was discarded is the **positive** inference "it was read, so claude must have drawn it", and that one is not revived — the delivery-success verdict is still made by the screen reflection check. This is a necessary condition placed in front of it.
 private func watchUntilRead(
     expectedPID: Int32, state: HelperState, injected: Int, deadline: Date
 ) -> WarpHelperResponse {
     while true {
         guard let pending = ttyPendingBytes(state.ttyFD) else { return .err(lastErrnoName()) }
-        // 큐에 남은 바이트가 **누구 것인지는 묻지 않는다** — 물을 수단이 없다.
-        // 판정에 이력을 넘기지 않는 것이 그 추론이 되살아나지 못하게 하는 자리다
+        // **Whose the remaining bytes are is never asked** — there is no way to ask.
+        // Not passing any history into the verdict is what keeps that inference from coming back
+        let foreground = warpForeground(
+            foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
+        )
+        // The wording comes from the value itself (an exhaustive switch), so no branch here has to
+        // be right about which states can reach it
+        let seen = foreground.diagnosis
         switch warpInjectWatchDecision(
-            pending: pending,
-            readerIsOurs: warpForegroundIsExpected(
-                foregroundPGID: tcgetpgrp(state.ttyFD), expectedPGID: getpgid(expectedPID)
-            ),
-            budgetExpired: Date() >= deadline
+            pending: pending, foreground: foreground, budgetExpired: Date() >= deadline
         ) {
         case .delivered:
             return .ok(String(injected))
-        case .drainedByOther:
-            checkoutLog("Warp 주입 헬퍼: 큐는 비었으나 겨눈 claude가 아닌 쪽이 읽어 감")
-            return .err("queue drained by a different reader")
-        case .readerGone(let pending):
-            // 버리지 않는다. 남은 바이트는 셸 줄 버퍼에 잔해로 갈 수 있지만, 그것을 막겠다고
-            // 큐를 비우면 사용자가 방금 친 키까지 조용히 사라진다
-            checkoutLog("Warp 주입 헬퍼: 겨눈 claude가 사라짐 — 읽히지 않은 \(pending)바이트를 버리지 않고 실패로 알림")
-            return .err("expected reader gone; \(pending) bytes unread")
-        case .notReadInTime(let pending):
-            return .err("injected bytes not read in time (\(pending) pending)")
+        case .drainedWithoutConfirmedReader:
+            // Two observations, one sample: the queue is empty, and the foreground is not confirmably ours. Which of them consumed the bytes is not observable — `FIONREAD` is an unattributed total, and our claude reading and then exiting produces this same sample
+            checkoutLog("Warp injection helper: the queue drained and \(seen) — which of them consumed the bytes is not observable here")
+            return .err("queue drained without a confirmed reader")
+        case .readerUnconfirmed(let pending):
+            // Nothing is discarded. The remaining bytes may end up as residue in the shell's line buffer, but emptying the queue to prevent that would silently take the keys the user just typed as well
+            checkoutLog("Warp injection helper: \(seen) — reporting failure rather than discarding \(pending) unread byte(s)")
+            return .err("reader not confirmed; \(pending) bytes unread")
+        case .queueNotEmptyAtDeadline(let pending):
+            // Not "our bytes were not read": the count is unattributed, and keys the user pressed during the wait are in it too. What the deadline establishes is that the queue did not empty
+            return .err("queue not empty at the deadline (\(pending) pending) — consumption not confirmed")
         case .keepWaiting:
             usleep(5_000)
         }
     }
 }
 
-/// 연결 하나를 끝까지 처리한다. `bye`를 받았거나 상한에 걸렸으면 true(헬퍼 종료).
+/// Handles one connection to the end. true when `bye` arrived or a cap was hit (the helper exits).
 private func serve(client: Int32, state: HelperState) -> Bool {
     var tv = timeval(tv_sec: 10, tv_usec: 0)
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -267,11 +231,10 @@ private func serve(client: Int32, state: HelperState) -> Bool {
         while let line = buffer.nextLine() {
             var finished = false
             let response: WarpHelperResponse
-            // 요청마다 상한과 tty 동일성을 먼저 본다 — 연결을 물고 있는 쪽이 대기 루프의
-            // 검사를 건너뛰게 두면 상한이 없는 것과 같다
+            // The caps and the tty identity are checked before every request — letting whoever holds the connection skip the waiting loop's check is the same as having no caps at all
             if let stop = state.stopReason() {
                 _ = writeAll(fd: client, data: Data((encodeWarpHelperResponse(.err(stop.description)) + "\n").utf8))
-                checkoutLog("Warp 주입 헬퍼 종료: \(stop.description)")
+                checkoutLog("Warp injection helper exiting: \(stop.description)")
                 return true
             }
             state.touch()
@@ -302,9 +265,8 @@ private func serve(client: Int32, state: HelperState) -> Bool {
     }
 }
 
-/// 셸이 물려준 표준 입출력에서 pane tty의 이름을 읽는다.
-/// 자식이 `/dev/tty`를 여는 방법은 쓸 수 없다 — fd는 맞지만 `ttyname()`이 `/dev/tty`를
-/// 돌려주고(실측), 앱의 게이트는 `ps -t ttysNNN`·`stty -f /dev/ttysNNN`이라 실제 이름이 필요하다.
+/// Reads the pane tty's name from the stdio the shell handed down.
+/// Having the child open `/dev/tty` does not work — the fd is right but `ttyname()` returns `/dev/tty` (measured), and the app's gates are `ps -t ttysNNN` and `stty -f /dev/ttysNNN`, which need the real name.
 private func resolvePaneTTYName() -> String? {
     for fd in Int32(0)...2 {
         guard isatty(fd) == 1, let raw = ttyname(fd) else { continue }
@@ -314,61 +276,58 @@ private func resolvePaneTTYName() -> String? {
     return nil
 }
 
-// MARK: - 기동
+// MARK: - Startup
 
 let arguments = CommandLine.arguments
 
-if arguments.count == 2 && arguments[1] != serveFlag {
-    // 부모 모드: 자식을 띄우고 즉시 빠진다 — 셸의 다음 명령(claude)이 바로 이어져야 하므로
-    // 포그라운드에 남아 있으면 안 된다. `setsid`는 하지 않는다: 세션을 벗어나면 그 tty가
-    // 제어 터미널이 아니게 되어 TIOCSTI 권한을 잃는다
+if arguments.count == 3 && arguments[1] != serveFlag {
+    // Parent mode: launch the child and get out immediately — the shell's next command (claude) has to follow right away, so this must not stay in the foreground. `setsid` is **not** called: leaving the session means that tty is no longer the controlling terminal, which loses the TIOCSTI permission
     guard let ttyName = resolvePaneTTYName() else {
-        fail("pane tty 이름을 알 수 없음 — 표준 입출력이 터미널이 아니다")
+        fail("no stdio descriptor names a usable pane tty")
     }
     let child = Process()
     child.executableURL = URL(fileURLWithPath: Bundle.main.executablePath ?? arguments[0])
-    child.arguments = [serveFlag, arguments[1], ttyName]
-    // pane tty를 실수로도 만지지 못하게 표준 입출력을 끊는다. 제어 터미널은 fd가 아니라
-    // 세션에 딸린 것이라 이렇게 끊어도 자식의 TIOCSTI 권한은 그대로다(실측)
+    // The deadline is carried through untouched: it is the one thing this helper is told at birth that nothing later can take away, and the process that enforces it is the child
+    child.arguments = [serveFlag, arguments[1], ttyName, arguments[2]]
+    // stdio is severed so the pane tty cannot be touched even by accident. The controlling terminal belongs to the session rather than to an fd, so severing it this way leaves the child's TIOCSTI permission intact (measured)
     child.standardInput = FileHandle.nullDevice
     child.standardOutput = FileHandle.nullDevice
     child.standardError = FileHandle.nullDevice
     do {
         try child.run()
     } catch {
-        fail("자식 프로세스를 띄우지 못함: \(errorMessage(error))")
+        fail("could not launch the child process: \(errorMessage(error))")
     }
     exit(0)
 }
 
-guard arguments.count == 4, arguments[1] == serveFlag else {
-    FileHandle.standardError.write(Data("usage: \(arguments.first ?? "helper") <socket-path>\n".utf8))
+guard arguments.count == 5, arguments[1] == serveFlag else {
+    FileHandle.standardError.write(Data("usage: \(arguments.first ?? "helper") <socket-path> <claim-deadline>\n".utf8))
     exit(2)
 }
 let socketPath = arguments[2]
 let ttyPath = arguments[3]
+// Seconds since the epoch, written into the launch line by the app. A word we cannot read is a helper that must not claim: the deadline is the only bound on the interval before the claim, so an unreadable one is treated as already past rather than as absent
+let claimDeadline = Double(arguments[4]) ?? 0
 
-// 우리는 백그라운드 프로세스 그룹에 있다(포그라운드는 claude다). SIGTTOU를 무시하지 않으면
-// TIOCSTI가 통째로 막힌다 — 실측: 부모가 빠져 orphaned가 된 프로세스 그룹에서는 EIO,
-// orphaned가 아니면 SIGTTOU가 날아와 EINTR. 무시로 두면 두 경우 모두 성공한다.
+// We are in a background process group (the foreground is claude). Without ignoring SIGTTOU, TIOCSTI is blocked entirely — measured: in a process group orphaned by the parent leaving it is EIO, and when not orphaned a SIGTTOU arrives and it is EINTR. Ignoring it makes both cases succeed.
 signal(SIGTTOU, SIG_IGN)
-// 앱이 응답을 받기 전에 연결을 끊으면 write에서 SIGPIPE로 죽는다
+// If the app closes the connection before receiving the response, the write kills us with SIGPIPE
 signal(SIGPIPE, SIG_IGN)
 
 let ttyFD = open(ttyPath, O_RDWR | O_NOCTTY)
-guard ttyFD >= 0 else { fail("\(ttyPath)를 열 수 없음 (\(lastErrnoName()))") }
-// 이름과 fd가 같은 터미널을 가리키는지가 아니라, 그것이 **우리 세션의 제어 터미널**인지를
-// 확인한다 — 아니면 앱에 남의 tty를 알려 주게 되고, 게이트가 엉뚱한 세션을 보고 통과한다.
-// 세션의 제어 터미널은 하나뿐이라 이 비교로 충분하다
+guard ttyFD >= 0 else { fail("could not open \(ttyPath) (\(lastErrnoName()))") }
+// What is checked is not whether the name and the fd point at the same terminal, but whether it is **our session's controlling terminal** — otherwise we would report somebody else's tty to the app and its gates would pass while looking at the wrong session.
+// A session has exactly one controlling terminal, so this comparison suffices
 guard tcgetsid(ttyFD) == getsid(0) else {
-    fail("\(ttyPath)는 이 세션의 제어 터미널이 아님")
+    fail("\(ttyPath) is not this session's controlling terminal")
 }
 
 umask(0o077)
-// 이미 있는 파일을 지우고 bind한다. 소켓이 아닌 것은 우리가 만든 것이 아니므로 손대지 않는다 —
-// 앱이 난수 토큰으로 경로를 뽑으니 정상 경로에서는 겹치지 않지만, 겹쳤다면 그건 남의 파일이다
-socketPath.withCString { unlinkIfSocket($0) }
-guard var address = makeUnixSockaddr(socketPath) else { fail("소켓 경로가 너무 김: \(socketPath)") }
+// **Listening comes before being reachable.** The advertised path is taken at the end, with `link`, so this binds a private name first. Deletes an existing file and binds. Anything that is not a socket was not made by us and is left alone — the app draws the path with a random token so collisions do not happen on the normal path, but if one did, that file is somebody else's
+let stagingPath = warpHelperStagingPath(advertised: socketPath)
+stagingPath.withCString { unlinkIfSocket($0) }
+guard var address = makeUnixSockaddr(stagingPath) else { fail("the socket path is too long: \(stagingPath)") }
 let server = socket(AF_UNIX, SOCK_STREAM, 0)
 guard server >= 0 else { fail("socket(): \(lastErrnoName())") }
 let bound = withUnsafePointer(to: &address) {
@@ -377,7 +336,21 @@ let bound = withUnsafePointer(to: &address) {
     }
 }
 guard bound == 0, listen(server, 4) == 0 else { fail("bind/listen: \(lastErrnoName())") }
-chmod(socketPath, 0o600)
+chmod(stagingPath, 0o600)
+// **This is where this helper finds out whether it is still wanted**, and it is one operation rather than a look at something the app could change a moment later: `link` onto a name that already exists is refused, and the app takes an address back by linking its own file there as it leaves. So `File exists` here means the name is **occupied** — by the app on its way out, which is the case this exists for, or by a leftover, or by anything else with this uid; the errno does not say which. Either way this helper must not serve, and exiting now is exiting before the advertised name has ever referred to this socket, which is the difference between a helper that was dismissed and one that never was anything
+// **The claim is bounded from birth.** Nothing before this line bounds it: the app's caps below start once this helper is *serving*, which is after the claim, so a process suspended here had no cap at all — and "the instruction after `listen`" is not a time. The check is immediately before the claim rather than at startup because the suspension this bounds can happen between any two instructions
+guard Date().timeIntervalSince1970 <= claimDeadline else {
+    stagingPath.withCString { unlinkIfSocket($0) }
+    close(server)
+    fail("the claim deadline passed before this helper could take its address")
+}
+guard claimWarpHelperAddress(from: stagingPath, as: socketPath) else {
+    // **The reason is read, not assumed.** `EEXIST` is occupancy and anything else is not, so the
+    // two outcomes get separate diagnostics.
+    let reason = errno
+    close(server)
+    fail(warpHelperClaimFailure(reason))
+}
 installSocketCleanupOnSignals(path: socketPath)
 
 private let state = HelperState(ttyFD: ttyFD, ttyPath: ttyPath)
@@ -389,12 +362,7 @@ while !finished {
     if ready > 0 {
         let client = accept(server, nil, nil)
         if client >= 0 {
-            // 같은 사용자 프로세스만 허용 (앱 소켓과 같은 기준). uid만 보는 것이 여기서는
-            // 충분한 신뢰 경계다 — 같은 uid의 프로세스는 이미 이 사용자의 파일을 고치고
-            // 앱 번들을 갈아 끼우고 claude가 붙은 pane에 무엇이든 할 수 있어서, 호출자를
-            // 특정 바이너리로 좁혀도 실제로 막히는 것이 없다. 다른 사용자는 소켓 파일
-            // 퍼미션(0600)에서 먼저 걸린다. 경로의 난수 토큰은 비밀이 아니라 실행끼리
-            // 섞이지 않게 하는 이름표다 (Tab Config에 그대로 적혀 pane에도 보인다)
+            // Only same-user processes are allowed (the same criterion as the app's socket). Looking at the uid alone is a sufficient trust boundary here — a process of the same uid can already edit this user's files, swap the app bundle, and do anything at all to the pane claude is attached to, so narrowing the caller to a specific binary would prevent nothing in practice. Other users are stopped earlier by the socket file's permissions (0600). The random token in the path is not a secret but a name tag that keeps runs from mixing (it is written plainly in the Tab Config and visible on the pane too)
             var uid: uid_t = 0
             var gid: gid_t = 0
             if getpeereid(client, &uid, &gid) == 0, uid == getuid() {
@@ -404,12 +372,12 @@ while !finished {
             close(client)
         }
     } else if ready < 0 && errno != EINTR {
-        checkoutLog("Warp 주입 헬퍼 poll 실패: \(lastErrnoName())")
+        checkoutLog("Warp injection helper poll failed: \(lastErrnoName())")
         break
     }
-    // 요청이 없는 동안에도 같은 판정으로 본다 (요청 경로는 `serve`가 본다)
+    // The same verdict is applied while there are no requests too (the request path is `serve`'s to check)
     if !finished, let stop = state.stopReason() {
-        checkoutLog("Warp 주입 헬퍼 종료: \(stop.description)")
+        checkoutLog("Warp injection helper exiting: \(stop.description)")
         break
     }
 }

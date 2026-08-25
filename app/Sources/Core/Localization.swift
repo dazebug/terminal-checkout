@@ -1,0 +1,172 @@
+import Foundation
+
+/// Which language the app renders in — the verdict only, never the rendering.
+///
+/// The two questions here are "given what the user stored and what the system prefers, which of
+/// the bundled catalogs answers" and "is that a different answer from a prior resolved snapshot
+/// in the retained migration-era pure model". Both are pure: every input arrives as an argument,
+/// so a test can state the case it means instead of the case the machine it runs on happens to be
+/// in. Reading `Locale.preferredLanguages` or the bundle in here would put the host machine's
+/// language into the answer — measured: a `Bundle(url:)` lookup for `en` resolves through the
+/// host language and returns the ko-KR string on a ko-KR machine.
+///
+/// It lives in Core rather than in App for the same reason `BaseDirectory` does: the App target's
+/// only tests drive AppKit windows and save and restore the user's live settings, so asserting on
+/// a verdict placed there would mean asserting through a window server and the real defaults.
+/// The snapshot helpers below are retained as a pure migration-era model for focused Core tests;
+/// no current app path persists or sends one to the extension. Keeping the resolver in Core still
+/// prevents a second copy from drifting from the verdict the window renders.
+
+/// The tags the app ships a catalog for. This is the whole list — `zh-Hant` covers Hong Kong and
+/// Macau as well, which is what macOS itself does with them.
+public let supportedLocales: [String] = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
+
+/// The stored preference that means "follow the system". Our own token, not a language tag, so it
+/// is compared exactly: `AUTO` or `auto ` is a value we did not write, and guessing that someone
+/// meant this one would blur the line the corrupt case is defined by.
+public let automaticLocalePreference = "auto"
+
+/// Where every question we cannot answer lands. Folding an unshipped language to English rather
+/// than to whatever the machine happens to prefer is a decision, not a property of the bundle.
+public let fallbackLocale = "en"
+
+/// A tag we actually ship a catalogue for.
+///
+/// It keeps the pure model from carrying an unshipped tag. A value such as `"fr"` cannot be
+/// persisted even though no shipped catalog could render it; the type checks that boundary when
+/// the value is made instead of relying on a later runtime check. That is the same move
+/// `ShellPayload` makes in the App target, one direction over: a computed value must not reach a
+/// shell, and an unshipped tag must not reach the model.
+///
+/// The only way to build one without asking is `fallback`, which is `fallbackLocale` — a member of
+/// `supportedLocales` by construction, and `testTheFallbackIsALocaleWeShip` keeps that true.
+public struct SupportedLocale: Equatable {
+    public let tag: String
+
+    private init(unchecked tag: String) {
+        self.tag = tag
+    }
+
+    public init?(_ tag: String) {
+        guard supportedLocales.contains(tag) else { return nil }
+        self.init(unchecked: tag)
+    }
+
+    /// The answer for a question we could not answer — English, for the reason `fallbackLocale`
+    /// gives.
+    public static let fallback = SupportedLocale(unchecked: fallbackLocale)
+}
+
+/// The catalog to render in.
+///
+/// `preference` is the **stored object**, not a decoded string — `UserDefaults.object(forKey:)`
+/// hands back whatever is in the plist, and a hand-edited or future-build value that is not a
+/// string is precisely the case that must not be mistaken for a choice. Pass it through as it
+/// came: substituting a default for a value that failed to decode (`string(forKey:) ?? "auto"`)
+/// would fold a corrupt byte into "follow the system" silently, and `Settings.baseDirectory`
+/// already refuses that same fold for the same reason. Absence — the key was never written — is
+/// the only other thing that means `auto`.
+///
+/// An explicit tag and a system-list entry go through one matcher, so `zh-HK` names Traditional
+/// Chinese wherever it was read from. What an explicit choice does **not** do is fall through to
+/// the system list when we cannot honour it: the user named a language, and answering with a
+/// third one they never mentioned would be a guess dressed as a preference.
+///
+/// The result is an element of `available` by identity whenever that list is non-empty, which is
+/// what lets a caller spell `<result>.lproj` and find a directory. An empty list has no answer to
+/// give and yields `en`.
+public func resolveLocale(
+    preference: Any?,
+    systemPreferred: [String],
+    available: [String] = supportedLocales
+) -> String {
+    let lastResort = available.contains(fallbackLocale) ? fallbackLocale : (available.first ?? fallbackLocale)
+
+    if let stored = preference {
+        guard let text = stored as? String else { return lastResort }
+        if text != automaticLocalePreference {
+            return matchingLocale(for: text, in: available) ?? lastResort
+        }
+    }
+
+    // `auto`: the system's own order decides, so the first entry we can answer wins. Scanning
+    // `available` instead would answer in our order and hand a user whose list reads
+    // [ja, ko] the Korean catalog.
+    for tag in systemPreferred {
+        if let match = matchingLocale(for: tag, in: available) { return match }
+    }
+    return lastResort
+}
+
+/// Case and `_` are levelled so that `zh_TW` and `ZH-Hant` are read as the tags they name.
+/// Nothing else is trimmed — a value with spaces around it is not a tag we wrote.
+///
+/// The fold is the stdlib's, which is the same fold everywhere: measured under
+/// `-AppleLanguages '(tr)'`, `"I".lowercased()` is `i` while Foundation's locale-aware
+/// `lowercased(with: Locale("tr"))` is `ı`. Swapping in the locale-aware one would make `zh-HANT`
+/// stop matching on a Turkish machine and nowhere else.
+private func normalizedTag(_ tag: String) -> String {
+    tag.replacingOccurrences(of: "_", with: "-").lowercased()
+}
+
+/// The language subtag of an already-normalized tag, or nil when the string is not a tag.
+///
+/// **Every** subtag is checked, not just the first one. Reading only the first answered Korean for
+/// `ko--KR`: the walk stopped at the leading `-`, found `ko`, and never looked at the rest — and
+/// `ko-`, `zh--Hant`, `ko-💩` and `zh-Hant foo` went the same way. Empty subtags are rejected for
+/// every position; accepting only the leading-empty shape would not define the rule. Nothing here
+/// is a full BCP-47 validator: a subtag is 1–8 ASCII alphanumerics, the first is
+/// 2–8 ASCII letters, and anything else is a string nobody who meant a language wrote.
+private func languageSubtag(_ normalized: String) -> String? {
+    let subtags = normalized.split(separator: "-", omittingEmptySubsequences: false)
+    guard let first = subtags.first else { return nil }
+    for subtag in subtags {
+        guard (1...8).contains(subtag.count),
+              subtag.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) })
+        else { return nil }
+    }
+    let language = String(first)
+    guard (2...8).contains(language.count), language.allSatisfy({ $0.isASCII && $0.isLetter })
+    else { return nil }
+    return language
+}
+
+/// Which Chinese script an already-normalized `zh…` tag is written in.
+///
+/// A script subtag answers directly. Without one the region does, and the split is measured
+/// against five real `.lproj` bundles): `zh-HK`, `zh-MO` and `zh-TW` resolved to `zh-Hant`, while
+/// `zh` and `zh-SG` resolved to `zh-Hans`. Regions outside that measurement follow the same rule
+/// rather than a second one — that is generalization, not measurement.
+private func chineseScript(_ normalized: String) -> String {
+    let parts = normalized.split(separator: "-").map(String.init)
+    if parts.contains("hant") { return "hant" }
+    if parts.contains("hans") { return "hans" }
+    let traditionalRegions: Set<String> = ["hk", "mo", "tw"]
+    return parts.dropFirst().contains(where: { traditionalRegions.contains($0) }) ? "hant" : "hans"
+}
+
+/// The bundled tag that answers `tag`, or nil when nothing we ship speaks its language.
+///
+/// The returned string is taken from `available`, never assembled here, so the caller gets back
+/// the exact spelling it declared.
+private func matchingLocale(for tag: String, in available: [String]) -> String? {
+    let wanted = normalizedTag(tag)
+    // The check runs **before** the exact match. Behind it, a malformed value could still be
+    // answered by an entry of `available` spelled the same way — the one path that skipped
+    // validation altogether.
+    guard let language = languageSubtag(wanted) else { return nil }
+    if let exact = available.first(where: { normalizedTag($0) == wanted }) { return exact }
+
+    let sameLanguage = available.filter { languageSubtag(normalizedTag($0)) == language }
+    guard !sameLanguage.isEmpty else { return nil }
+
+    if language == "zh" {
+        let script = chineseScript(wanted)
+        if let byScript = sameLanguage.first(where: { chineseScript(normalizedTag($0)) == script }) {
+            return byScript
+        }
+        // The script we wanted is not bundled. Falling through to the other Chinese catalog is
+        // inference — with both `zh-Hans` and `zh-Hant` shipped there is no input that reaches it.
+    }
+    return sameLanguage.first(where: { normalizedTag($0) == language }) ?? sameLanguage.first
+}

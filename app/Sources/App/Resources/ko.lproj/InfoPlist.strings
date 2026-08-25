@@ -1,0 +1,4 @@
+/* 한국어 값은 `app/Info.plist`에 있던 문장을 그대로 옮긴 것이다 — 항목 11은 이전(移轉)이지
+   재작성이 아니다. 그리는 주체는 tccd이고, 권한 프롬프트가 앱에서 고른 언어를 따르는지는
+   **미측정**이다(docs/context/localization.md). */
+"NSAppleEventsUsageDescription" = "GitHub에서 요청한 checkout 명령을 iTerm2 새 탭에서 실행하기 위해 자동화 권한이 필요합니다.";

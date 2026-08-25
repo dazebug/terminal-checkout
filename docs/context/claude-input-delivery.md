@@ -16,7 +16,7 @@ An input starting with `!` is typed into the running TUI so that claude's own sh
 
 **Rejected alternative — carry the `!` line in argv instead of typing it.** This would have kept the speed of the paste route without the paste. Measured, it does not exist: `claude -- '!echo x'` does **not** enter shell mode. The line arrives as an ordinary message and the model then decides to run it through its Bash tool — which can stop at a permission prompt, is a judgement rather than a shell fact, and spends a turn. The official CLI reference documents no flag or prefix for it either.
 
-**Rejected alternative — keep pre-execution as an option.** Dropped rather than kept behind a switch: it doubles the delivery paths that every later change has to be correct in, and the whole hardening effort that followed was about removing paths, not adding them.
+**Implementation consideration — keeping pre-execution behind a switch.** Written down as a rejected alternative once, and demoted here because it never was one: `git log -S`, the commit body of PR #36 and that PR's comments carry no proposal, no branch, and no reproduction for it (searched round 10). What is true is the reason it was not built — a second delivery path is a second path every later change has to be correct in — and that is a design consideration rather than a road anyone took.
 
 **Consequence, accepted:** every shipped preset that schedules claude input is `!`-only, so all of them are typed. On Warp that makes the Accessibility permission a hard requirement for those three buttons, where the paste route had needed nothing.
 
@@ -108,6 +108,68 @@ Every wait in the delivery loop reads before it sleeps, and the sleep is shorten
 **Reason:** the attempt counts assume one iteration costs one interval. A Warp Accessibility read measures 134–143ms against a 0.15s interval, so sleeping a full interval on top made every deadline take nearly twice its stated wall clock. The first shape also slept before its first read, so a screen that was already drawn still cost a full interval — four times per input.
 
 **Rejected alternative — shorten the deadlines instead.** The deadlines are what wait out "the user has not looked at the tab yet", which on Warp is a design constraint rather than a delay to remove. The waiting moved into the attempt count instead: more attempts, each shorter, so a marker claude's initialisation swallowed is abandoned in ~2s rather than holding the budget for 5.
+
+## An unreadable `stty` used to open gate ②
+
+**Type:** decision
+**Status:** superseded
+**Evidence:** confirmed
+**Source:** PR #3, which introduced both the gate and the fallback; superseded by PR #41
+**Revisit when:** never on its own — it is here so the replacement is read as an expiry rather than as a discovery
+
+The commit that added gate ② also added a way past it: when `stty` could not be read, the check was treated as undecidable and delivery continued on the `ps` check alone. The commit body says so twice — "stty를 읽지 못하면 판정 불가로 보고 기존처럼 ps만으로 진행한다", and "iTerm2 경로는 미검증이나, stty 조회 실패 시 ps만으로 폴백하므로 회귀 위험은 없다". A test named `testAcceptsInputFallsBackToForegroundWhenSttyUnavailable` then pinned it, so the fallback was the documented behaviour rather than an oversight.
+
+**It was a regression-safety argument, not a measurement.** At the moment the gate was introduced, the argument was that a new check must not take away delivery that already worked. That is a claim about the change, not about what an unreadable `stty` means — which is what the next entry measures.
+
+## Gate ② stays closed when raw mode cannot be decided
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed for the case measured — one pty, three states, plus three unreadable ttys
+**Source:** PR #41; `app/Sources/Core/ClaudeInjector.swift:52` and `:73`
+**Revisit when:** a terminal appears where `stty` cannot be read while the tty is genuinely usable
+
+`ttyIsRawMode(...) ?? true` became `== true`: an undecidable raw-mode check no longer opens the gate.
+
+**Reason, measured — and the measurement is small.** One pty on macOS 26.4.1, asked in three states: canonical answered `icanon`, raw answered `-icanon`, and canonical again answered `icanon` (13 lines of output each time). The cases that produced nothing were a tty path with no device, a pty whose ends had both been closed, and a file that is not a terminal, and in every one of those `ps -t` is empty too, so the first gate has already refused. That supports **"every live pty we measured answered", not "a live pty always answers"** — the earlier wording here claimed the second, which is the overclaim class this loop keeps finding in other people's sentences. A previous evidence line also read "13 lines, 650 characters" as *thirteen ptys*; it was the size of one pty's output, and one careful reader has already drawn the wrong number from it. What is left for "could not read `stty`" to mean is "the tty we are about to type into cannot be read", which is precisely the state gate ② exists to stop: without it, the kernel echo in the canonical window right after `exec` gets mistaken for claude rendering the input, and the first input is lost.
+
+**Cost, not hidden.** If `stty` is unreadable for good, polling now runs to its deadline and the log does not say why.
+
+**Rejected alternative — widen it into three states** the way the foreground check was widened. "Not raw" and "could not tell" take the same action here, and nothing today distinguishes them in what it says either, so a third state would be a shape with no consumer.
+
+## The foreground check has three states, and `unknown` is not `different`
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** PR #41; `WarpForeground` in `app/Sources/Core/WarpHelperProtocol.swift:83-91`, its `diagnosis` at `:98`, `app/Sources/WarpHelper/main.swift:110`
+**Revisit when:** a caller appears that needs to act differently on `.different` and `.unknown`, rather than only to say something different
+
+A single `Bool` gave "another process group was observed" and "the lookup failed" the same value, and the diagnostic built on it then said something false — `.drainedByOther` names a reader that nothing had identified.
+
+**The safety truth table is unchanged.** `.different` and `.unknown` both refuse, and only `.expected` succeeds. What the split changed is what the code *says*, not what it *does*.
+
+**Rejected alternative — wording discipline**, where every false path is only allowed to claim "could not confirm". That holds exactly as long as the next caller remembers it. A three-state enum makes the compiler ask instead, and the old `Bool` function was deleted rather than left beside it, because leaving it leaves the collapsing path open.
+
+**Closed with it, same class.** `tcgetsid` and `getsid` both return `-1` on failure, so two failures compared equal and read as "still our tty" while holding an fd the helper could not identify. And a watch decision written as `pending <= 0` turned a negative — that is, malformed — queue count into successful delivery; it is `== 0` now, and a malformed count falls through to the fail-closed branches.
+
+## Non-ASCII text changes normalization when it crosses `Process.arguments`
+
+**Type:** constraint
+**Status:** superseded — the delivery paths no longer cross this boundary (commit `682b6c7`); the platform behaviour it describes is unchanged
+**Evidence:** confirmed (measured)
+**Source:** PR #41; `ProcessArgumentBoundaryTests` in `app/Tests/CoreTests/CoreTests.swift`
+**Revisit when:** a delivery path has to put a value that is not a path into `Process.arguments` or the environment again
+
+Measured by reading codepoints with AppleScript's `id of`: text handed to `osascript -e` arrives **decomposed** (NFD — `4361 4453 4527 4352 4456`), while the same text read from a script file or from stdin arrives **composed** (NFC — `49444 44228`). So a claude message a user wrote in Korean or Japanese reached the iTerm2 path in a different form from the one they typed, and where the input was a `!` one the decomposed bytes reached the shell.
+
+**The first probe was wrong, and that is worth recording.** AppleScript's `count of characters` counts grapheme clusters, so it answered `2` for both forms and measured nothing at all. The generalization drawn from it — that this is a rule about non-ASCII in shell and path strings generally — was too broad as well.
+
+**And the correction was too narrow.** "The WezTerm fallback carries ASCII today" was wrong: a single plain-text input is appended to the command, which then holds the user's sentence, so the fallback carried it on the first click of anyone who had not started WezTerm. `Process.environment` was later measured to decompose exactly like `Process.arguments`, which widened the boundary again. Both corrections came from following the value rather than from re-reading the rule.
+
+**What was done about it is a *decision* and lives in `localization.md`** ("The bytes a user typed are carried, not normalized"): the carriers changed — one stdin door for every AppleScript run, and an ASCII-only argument for the WezTerm fallback — rather than the app normalizing anything.
+
+**Unmeasured.** What iTerm2 itself received. The measurement now reaches one step further than the interpreter's codepoints — those decomposed bytes were confirmed to leave AppleScript *as bytes*, through `do shell script` and through AppleScript's own UTF-8 writer — but the last hop, `write text` putting them on the tty, needs iTerm2 running.
 
 ## Residuals kept rather than closed
 

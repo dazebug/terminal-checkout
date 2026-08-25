@@ -7,16 +7,22 @@ let package = Package(
     products: [
         .executable(name: "TerminalCheckout", targets: ["App"]),
         .executable(name: "terminal-checkout-relay", targets: ["Relay"]),
-        // Warp pane 안에서 도는 주입 헬퍼 — TIOCSTI는 호출 프로세스의 제어 터미널로만
-        // 허용되므로 앱이 아니라 pane 안의 프로세스가 claude 입력을 넣는다
+        // The injection helper that runs inside a Warp pane — TIOCSTI is only allowed on the calling process's controlling terminal, so claude input is put in by a process inside the pane rather than by the app
         .executable(name: "terminal-checkout-warp-helper", targets: ["WarpHelper"]),
     ],
     targets: [
         .target(name: "Core"),
-        .executableTarget(name: "App", dependencies: ["Core"]),
+        .target(name: "TestSupport"),
+        // `exclude` and not `resources`: SwiftPM notices any `.lproj` under a target and, left to
+        // itself, demands `defaultLocalization` and starts producing a `Bundle.module` accessor —
+        // that accessor resolves through an absolute `.build`
+        // path on the machine that compiled it and so hides a missing copy exactly where it would
+        // be caught. `app/build.sh` copies these into `Contents/Resources/` and the app reads them
+        // with `Bundle(path:)`; this line is what keeps the two schemes from overlapping.
+        .executableTarget(name: "App", dependencies: ["Core"], exclude: ["Resources"]),
         .executableTarget(name: "Relay", dependencies: ["Core"]),
         .executableTarget(name: "WarpHelper", dependencies: ["Core"]),
-        .testTarget(name: "CoreTests", dependencies: ["Core"]),
-        .testTarget(name: "AppTests", dependencies: ["App", "Core"]),
+        .testTarget(name: "CoreTests", dependencies: ["Core", "TestSupport"]),
+        .testTarget(name: "AppTests", dependencies: ["App", "Core", "TestSupport"]),
     ]
 )

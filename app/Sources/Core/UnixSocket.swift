@@ -12,7 +12,7 @@ public func makeUnixSockaddr(_ path: String) -> sockaddr_un? {
     return addr
 }
 
-/// Unix domain socket에 연결. 실패 시 nil.
+/// Connects to a unix domain socket. nil on failure.
 public func connectToUnixSocket(path: String) -> Int32? {
     guard var addr = makeUnixSockaddr(path) else { return nil }
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)

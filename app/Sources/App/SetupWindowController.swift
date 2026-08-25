@@ -1,9 +1,12 @@
 import AppKit
 import Core
 
-/// 설치·터미널 선택·권한·테스트를 한 화면에서 처리하는 설정 창.
-/// 디자인: 설정 창 자체가 터미널 세션 — 섹션은 프롬프트(❯), 상태는 종료 코드처럼 색으로 읽힌다.
-/// 노출은 상태 기반: 완료된 설정 항목의 카드는 사라지고 파이프라인 스트립의 점으로만 남는다.
+/// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
+/// The design is that the window *is* a terminal session — a section reads as a prompt (❯), and a
+/// state reads the way an exit code does, through colour.
+/// What is on screen follows the state: the card for a step that is done disappears, and that step
+/// stays visible only as a dot on the pipeline strip.
+
 /// Card width. File scope so the status-label factory below can use it before `self` exists.
 let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
@@ -35,7 +38,11 @@ final class FittedContentStackView: NSStackView {
     private var lastRequestedSize: NSSize?
     /// Stands in for the screen so a test can exercise the clamp without depending on whichever
     /// display it happens to run on.
-    var visibleFrameOverride: NSRect?
+    /// Setting the stand-in after the first layout must schedule the pass that consumes it; a plain
+    /// stored property would leave a clean tree measuring the real display until another change.
+    var visibleFrameOverride: NSRect? {
+        didSet { needsLayout = true }
+    }
 
     override func layout() {
         super.layout()
@@ -86,20 +93,30 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
+    /// The two stacks that are **filled** rather than created — a rebuild appends to them unless
+    /// the builders clear first, which is the one way replacing the view tree can double a window
+    var refillableSectionsForTesting: [NSStackView] { [permissionSection, accessibilitySection] }
+
     var statusLabelsForTesting: [NSTextField] {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
             permissionStatusLabel, accessibilityStatusLabel, testResultLabel,
         ]
     }
-    private let requestPermissionButton = NSButton(title: "iTerm2 권한 요청", target: nil, action: nil)
+    /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
+    /// a title set here would be the one string in this window that kept its old language. The
+    /// title is set in the builder instead, where a rebuild reads it again — and it lives in
+    /// exactly one place, so a rebuild has one site to update rather than two to keep in step.
+    private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
-    /// iTerm2 선택 + 권한 미허용일 때만 표시 (WezTerm은 TCC 권한 불필요)
+    /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
+    /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
+    /// permission at all, which is why it has no section of its own.
     private let permissionSection = NSStackView()
-    /// Warp 선택 + 손쉬운 사용 미허용일 때만 표시
+    /// On screen only while the terminal is Warp and the Accessibility permission is not granted
     private let accessibilitySection = NSStackView()
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
@@ -114,10 +131,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// user may want to change, not an install step that completes and disappears.
     private var baseDirCard: NSView!
     private let baseDirField = NSTextField(string: "")
+    /// **What this window last put in that field**, which is how it can tell its own text from the
+    /// user's. Anything else in there is a draft — typed and not stored, because an unusable path is
+    /// deliberately never stored — and a draft is not something a redraw may throw away. `nil` until
+    /// the first draw, so the first one happens.
+    private var drawnBaseDirectory: String?
     private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private var guideBlock: NSView!
     private var utilityRow: NSView!
-    /// [설치 안내 다시 보기]로 확장 카드를 강제 표시 (창 닫으면 초기화)
+    private var languagePopUp: NSPopUpButton!
+    private var languageRestartButton: NSButton!
+    private var languageNoteLabel: NSTextField!
+    private var languageObserver: NSObjectProtocol?
+    /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
+    /// (`windowWillClose`), so the next time the window opens the state decides again.
     private var forceShowInstall = false
     private var requestObserver: (any NSObjectProtocol)?
     private var toolsObserver: (any NSObjectProtocol)?
@@ -132,29 +159,33 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         [
             (
                 "z", toolIsCritical("z", baseDirectoryConfigured: baseDirectoryConfigured),
-                baseDirectoryConfigured
-                    ? "명령을 찾을 수 없습니다 — 저장소 기본 폴더로 대신 이동하므로 버튼은 동작합니다. "
-                        + "zoxide를 설치하면 기본 폴더 밖의 저장소로도 점프합니다(brew install zoxide)."
-                    : "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. "
-                        + "brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하거나, "
-                        + "아래 「저장소 기본 폴더」를 설정하세요."
+                // Two complete messages rather than a shared opening plus two tails: a
+                // sentence assembled from pieces cannot be reordered by a translator, and three of
+                // these did share an opening clause
+                localized(
+                    baseDirectoryConfigured
+                        ? "app.tools.z.adviceWithBaseDir" : "app.tools.z.adviceNoBaseDir"
+                )
             ),
             (
                 "gh", false,
-                "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋과 저장소 기본 폴더의 clone 단계가 실패합니다. "
-                    + "brew install gh 후 gh auth login."
+                localized("app.tools.gh.advice")
             ),
             (
                 "claude", false,
-                "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다."
+                localized("app.tools.claude.advice")
             ),
         ]
     }
 
     private let terminalRadioWidth: CGFloat = 120
-    private let testCommand = "echo 'Terminal Checkout: 연결 OK'"
+    /// Shown on screen **and** run in the user's terminal, which is why it is a `ShellPayload`
+    /// and not a catalogue key: a translated apostrophe breaks the `echo '…'` quoting and the test
+    /// button reports a shell error instead of opening a tab. The type is what enforces it —
+    /// `localized(…)` returns a `String`, and `ShellPayload` cannot be built from one.
+    private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 
-    /// 창이 닫힐 때 알림 (AppDelegate가 Dock 표시를 되돌리는 데 사용)
+    /// Called when the window closes — `AppDelegate` uses it to hide the app from the Dock again
     var onClose: (() -> Void)?
 
     convenience init() {
@@ -163,10 +194,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        window.title = "Terminal Checkout 설정"
+        window.title = localized("app.window.title")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // 터미널은 어둡다 — 시스템 모드와 무관하게 다크로 고정 (레이어 색이 정적이므로 필수)
+        // A terminal is dark, so this window is pinned to dark whatever the system appearance is.
+        // Not a preference: `Theme`'s colours are fixed values rather than dynamic ones, and in a
+        // light appearance they would not follow
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Theme.bg
         window.isMovableByWindowBackground = true
@@ -183,14 +216,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // 도구 확인은 로그인 셸을 띄우느라 창보다 늦게 끝난다
+        // The tool check opens a login shell, so it finishes after this window is already up
         toolsObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
+        // Our own strings do not wait for a restart — a language change redraws this window
+        languageObserver = NotificationCenter.default.addObserver(
+            forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.rebuildForLanguageChange() }
     }
 
     deinit {
-        for observer in [requestObserver, toolsObserver].compactMap({ $0 }) {
+        for observer in [requestObserver, toolsObserver, languageObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -209,7 +246,131 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         onClose?()
     }
 
-    // MARK: - UI 구성
+    /// **The window is built once, and `refresh()` rewrites only the status lines.** Everything
+    /// else — card titles, section headings, help paragraphs, button and radio titles, the picker's
+    /// `auto` entry — is created in `buildContent()` and never touched again, so a language change
+    /// would leave the whole window in the old language while three labels moved. A lookup function
+    /// alone does not switch anything: the lookup has to be reached again, and nothing reaches it.
+    ///
+    /// Rebuilding the content is the mechanism, rather than a second pass that re-sets each string:
+    /// a re-set pass has to name every string, so it is wrong the moment a new string is added,
+    /// and it would be wrong silently. This is correct for strings that do not exist yet.
+    ///
+    /// It runs **only on a language change**, not on every `refresh()` — refresh runs on window
+    /// activation and on every socket request, and replacing the view tree that often would fight
+    /// the user for focus and for their place in the window.
+    ///
+    /// State survives because the views that hold it are stored properties: the base-directory
+    /// field, the status labels and the pipeline strip are re-parented into the new stack rather
+    /// than recreated, so what the user has typed is still there afterwards.
+    ///
+    /// **What does not survive on its own is where the user was.** The scroll origin lives in the
+    /// scroll view being replaced, and the first responder is dropped the moment its view leaves
+    /// the window — so a language change scrolled the window back to the top and took the focus
+    /// away, in the one interaction this whole feature is entered through. `SetupWindowPlace`
+    /// carries both across in terms that a rebuilt tree can still answer.
+    func rebuildForLanguageChange() {
+        guard let window = window else { return }
+        let place = capturePlace(in: window)
+        window.contentView = buildContent()
+        window.contentView?.layoutSubtreeIfNeeded()
+        refresh()
+        // Restored after `refresh()`, not before: refresh rewrites the status lines, and one that
+        // wraps onto a second line moves every card below it. Measuring against a document that is
+        // about to change height would put the user a status line away from where they were.
+        window.contentView?.layoutSubtreeIfNeeded()
+        restore(place, in: window)
+    }
+
+    /// Where the user was, in terms that outlive the views that held it: **a role and a card**,
+    /// never a view and never a bare number of points from the top.
+    private struct SetupWindowPlace {
+        /// The control that had focus. A field being edited answers with its field editor, so the
+        /// selection is carried too — `makeFirstResponder` on a text field selects the whole value,
+        /// and restoring focus without the range would leave the next keystroke replacing the path
+        /// the user was halfway through fixing.
+        var focusedRole: NSUserInterfaceItemIdentifier?
+        var selection: NSRange?
+        /// The card at the top of the viewport, and how far into it the viewport began.
+        var anchorRole: NSUserInterfaceItemIdentifier?
+        var anchorOffset: CGFloat = 0
+    }
+
+    /// The card to measure from, which is the captured one unless `refresh()` has just collapsed it.
+    ///
+    /// **A hidden card keeps the frame it last had**, so it cannot be measured from — and skipping
+    /// the restore because of that leaves the window at its first line, which is the whole defect
+    /// this machinery exists for, in the one case it did not cover. So the search
+    /// falls through to the next card **down the stack**, and "next" means next in the order the
+    /// cards are added rather than nearest in points: when a card collapses, the one below it moves
+    /// up into the space, so its top edge is about where the measurement was taken. Falling upwards
+    /// is the last resort, for an anchor that was the last visible card.
+    private func anchorToRestore(_ role: NSUserInterfaceItemIdentifier) -> NSView? {
+        let cards = rootStack?.arrangedSubviews ?? []
+        guard let index = cards.firstIndex(where: { $0.identifier == role }) else { return nil }
+        return cards[index...].first(where: { !$0.isHidden && $0.frame.height > 0 })
+            ?? cards[..<index].last(where: { !$0.isHidden && $0.frame.height > 0 })
+    }
+
+    private func capturePlace(in window: NSWindow) -> SetupWindowPlace {
+        var place = SetupWindowPlace()
+        let editor = window.firstResponder as? NSTextView
+        let focused = (editor?.delegate as? NSView) ?? (window.firstResponder as? NSView)
+        place.focusedRole = focused?.identifier
+        place.selection = editor?.selectedRange
+
+        guard let scroll = window.contentView as? NSScrollView, let stack = rootStack else { return place }
+        let top = scroll.documentVisibleRect.maxY
+        // The document view is **not flipped**, so the first card has the largest `y` and the top of
+        // the viewport is `maxY` rather than `minY`. The anchor is the lowest card whose own top is
+        // still at or above that line — the card the reader's eye is in. Hidden cards are skipped:
+        // a collapsed one keeps a stale frame, and the rebuilt tree would put it somewhere else.
+        let cards = stack.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
+        let anchor = cards.filter { $0.frame.maxY >= top }.min(by: { $0.frame.maxY < $1.frame.maxY })
+            ?? cards.max(by: { $0.frame.maxY < $1.frame.maxY })
+        guard let anchor else { return place }
+        place.anchorRole = anchor.identifier
+        place.anchorOffset = anchor.frame.maxY - top
+        return place
+    }
+
+    /// **What comes back is the anchor card's top edge and the distance below it**, not the line of
+    /// text the reader was on: the words inside the card reflowed too, and nothing here can say
+    /// where a particular sentence went. A translation is longer or shorter than the one it
+    /// replaced, so the cards above the viewport are a different height afterwards and the old
+    /// origin points at different content — which is why the measurement is taken from a card edge.
+    /// `scrollOrigin` answers the one position the document may not have, above its first line.
+    private func restore(_ place: SetupWindowPlace, in window: NSWindow) {
+        if let scroll = window.contentView as? NSScrollView,
+           let document = scroll.documentView,
+           let role = place.anchorRole,
+           let anchor = anchorToRestore(role) {
+            let origin = scrollOrigin(
+                anchorTop: anchor.frame.maxY, offset: place.anchorOffset,
+                clip: scroll.contentView.bounds.height
+            )
+            document.scroll(NSPoint(x: 0, y: origin))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        guard let role = place.focusedRole,
+              let control = window.contentView?.firstDescendant(withRole: role),
+              window.makeFirstResponder(control) else { return }
+        guard let selection = place.selection, let editor = (control as? NSControl)?.currentEditor() else { return }
+        // The text can have changed under the cursor — a stored value drawn over a field that held
+        // this window's own text — so the range is clamped to what is there now.
+        //
+        // **In the units `NSRange` is written in, which are UTF-16 and not characters.** `String.count`
+        // counts what a reader would call characters, so for a path with an
+        // emoji or a decomposed vowel in it the two disagree and clamping against the wrong one
+        // moves the cursor to before where it was. Decomposition is not exotic here: this
+        // repository already carries what re-encodes to NFD and what does not.
+        let length = editor.string.utf16.count
+        let location = min(selection.location, length)
+        editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
+    }
+
+    // MARK: - Building the UI
 
     private func buildContent() -> NSView {
         let stack = FittedContentStackView()
@@ -219,6 +380,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         stack.edgeInsets = NSEdgeInsets(top: 38, left: 20, bottom: 18, right: 20)
         stack.wantsLayer = true
         stack.layer?.backgroundColor = Theme.bg.cgColor
+        // The stand-in for the screen belongs to the display, not to this instance of the stack:
+        // the screen does not change because the language did, and a rebuild that dropped it would
+        // measure the next layout against the real display in the middle of a test that pinned one
+        stack.visibleFrameOverride = rootStack?.visibleFrameOverride
 
         chromeCard = buildChromeCard()
         extensionCard = buildExtensionCard()
@@ -226,17 +391,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsCard = buildToolsCard()
         utilityRow = buildUtilityRow()
 
-        stack.addArrangedSubview(header())
-        stack.addArrangedSubview(pipeline)
-        stack.setCustomSpacing(16, after: pipeline)
-
-        stack.addArrangedSubview(chromeCard)
-        stack.addArrangedSubview(extensionCard)
-        stack.addArrangedSubview(terminalCard())
-        stack.addArrangedSubview(baseDirCard)
-        stack.addArrangedSubview(toolsCard)
-        stack.addArrangedSubview(testCard())
-        stack.addArrangedSubview(utilityRow)
+        // **Named, because a rebuild has to be able to find them again.** The scroll anchor is a
+        // card, and a card's own text is the one thing a language change rewrites — so the name is
+        // declared here rather than derived from anything drawn. Reordering this list moves the
+        // cards and carries their names with them, which is what an index could not do.
+        for (name, card) in [
+            ("header", header()), ("pipeline", pipeline), ("chrome", chromeCard!),
+            ("extension", extensionCard!), ("language", languageCard()), ("terminal", terminalCard()),
+            ("baseDir", baseDirCard!), ("tools", toolsCard!), ("test", testCard()),
+            ("utility", utilityRow!),
+        ] {
+            card.identifier = NSUserInterfaceItemIdentifier("card.\(name)")
+            stack.addArrangedSubview(card)
+            if card === pipeline { stack.setCustomSpacing(16, after: pipeline) }
+        }
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.widthAnchor.constraint(equalToConstant: setupContentWidth + 40).isActive = true
@@ -281,33 +449,35 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return row
     }
 
-    // MARK: 카드 — 설정 단계 (완료되면 숨김)
+    // MARK: Cards — the setup steps (hidden once done)
 
     private func buildChromeCard() -> NSView {
-        card("Chrome 연결 (Native Host)", [
+        card(localized("app.card.chrome.title"), [
             manifestStatusLabel,
-            buttonRow([button("등록/업데이트", #selector(registerManifest))]),
+            buttonRow([button(localized("app.button.registerUpdate"), #selector(registerManifest))]),
         ])
     }
 
     private func buildExtensionCard() -> NSView {
-        let installButton = button("Chrome에 설치하기", #selector(installInChrome))
+        let installButton = button(localized("app.button.installInChrome"), #selector(installInChrome))
         installButton.keyEquivalent = "\r"
         installButton.bezelColor = Theme.actionGreen
         installButton.toolTip = Installer.extensionDirectory
 
         guideBlock = quoteBlock([
-            "① 우측 상단 「개발자 모드」 켜기",
-            "② 좌측 상단 「압축해제된 확장 프로그램을 로드합니다」 클릭",
-            "③ 파일 선택 창에서 ⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]",
-            "④ 개발자 모드는 켜둔 채로 유지하세요 — 끄면 확장이 비활성화됩니다",
+            localized("app.guide.step1"),
+            localized("app.guide.step2"),
+            localized("app.guide.step3"),
+            localized("app.guide.step4"),
         ])
         guideBlock.isHidden = true
         installFeedbackLabel.isHidden = true
 
-        return card("확장 프로그램", [
+        return card(localized("app.card.extension.title"), [
             extensionStatusLabel,
-            helpLabel("[Chrome에 설치하기]를 누르면 확장 폴더 경로가 클립보드에 복사되고 chrome://extensions가 열립니다."),
+            // The button's own label, not a second copy of it: quoting a label by hand is how a
+            // body ends up naming a button that has since been renamed, and in five locales at once
+            helpLabel(localized("app.card.extension.help", localized("app.button.installInChrome"))),
             buttonRow([installButton]),
             guideBlock,
             installFeedbackLabel,
@@ -320,25 +490,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// live in Core — this card stores the **normalized** result (echoed back into the field) and
     /// only words the rejection reasons.
     private func buildBaseDirCard() -> NSView {
-        baseDirField.placeholderString = "예: ~/Codes"
+        baseDirField.placeholderString = localized("app.baseDir.placeholder")
         baseDirField.font = Theme.mono(11.5)
         baseDirField.target = self
         baseDirField.action = #selector(baseDirectoryEdited)
+        baseDirField.identifier = role(#selector(baseDirectoryEdited))
         // Save on focus loss as well as Enter — nobody should close the window wondering
         // whether it was saved
         baseDirField.cell?.sendsActionOnEndEditing = true
         baseDirField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
 
-        let row = NSStackView(views: [baseDirField, button("폴더 선택…", #selector(chooseBaseDirectory))])
+        let row = NSStackView(views: [baseDirField, button(localized("app.button.chooseFolder"), #selector(chooseBaseDirectory))])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
 
-        return card("저장소 기본 폴더", [
+        return card(localized("app.card.baseDir.title"), [
             helpLabel(
-                "저장소들을 클론해 두는 최상위 폴더입니다. z가 이동에 실패하면(zoxide 기록이 없거나 "
-                    + "zoxide를 안 쓰는 경우) 이 폴더 아래의 저장소로 이동하고, 없으면 gh로 clone합니다. "
-                    + "비워 두면 지금까지와 똑같이 z로만 이동합니다."
+                localized("app.card.baseDir.help")
             ),
             row,
             baseDirStatusLabel,
@@ -347,33 +516,132 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             // offers that rewrite itself (issue #31), so point at the notice rather than asking for
             // the old by-hand re-apply
             helpLabel(
-                "이전 버전부터 쓰던 버튼은 저장해 둔 command를 그대로 유지합니다 — 폴더만 지정해서는 "
-                    + "폴백이 걸리지 않습니다. 확장 옵션 페이지를 열면 위쪽에 업데이트 표시가 뜨고, "
-                    + "버튼별로 확인한 뒤 저장하면 반영됩니다."
+                localized("app.card.baseDir.legacyNote")
             ),
         ])
     }
 
-    /// 명령이 부르는 도구 확인. 앱의 PATH가 아니라 로그인 셸에 물어야 한다 —
-    /// z는 zoxide가 rc에서 정의하는 셸 함수라 실행 파일 탐색으로는 찾을 수 없다.
+    /// The check on the tools a command calls. The login shell has to be asked rather than the
+    /// app's own PATH — `z` is a shell function zoxide defines in an rc file, so looking for an
+    /// executable of that name finds nothing.
     private func buildToolsCard() -> NSView {
         toolsList.orientation = .vertical
         toolsList.alignment = .leading
         toolsList.spacing = 6
-        return card("명령이 부르는 도구", [
-            helpLabel("버튼의 command와 claude 입력이 부르는 도구를 로그인 셸에서 확인했습니다."),
+        return card(localized("app.card.tools.title"), [
+            helpLabel(localized("app.card.tools.help")),
             toolsList,
         ])
     }
 
-    // MARK: 카드 — 상시 (터미널 선택·테스트)
+    // MARK: Cards — always on screen (terminal choice, test)
+
+    // MARK: Cards — language
+
+    /// **This picker controls the app; Chrome controls the extension**: the setup window is here
+    /// because it is what a user sees *before* the extension exists. The app defaults to macOS's
+    /// language (or uses an explicit choice), while the extension reads Chrome's catalogue and is
+    /// not synchronized with this picker.
+    ///
+    /// The entries are each written in their own language, which is what a language menu does
+    /// everywhere: a user who has landed in a language they cannot read has to be able to find
+    /// their way out of it. Only the `auto` line is in the window's language, and the catalogue
+    /// provides it with the rest of this window.
+    /// into the catalogue with the rest of this window.
+    private func languageCard() -> NSView {
+        languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        languagePopUp.addItem(withTitle: localized("app.language.followSystem"))
+        languagePopUp.lastItem?.representedObject = automaticLocalePreference
+        for tag in supportedLocales {
+            languagePopUp.addItem(withTitle: languageMenuTitles[tag] ?? tag)
+            languagePopUp.lastItem?.representedObject = tag
+        }
+        languagePopUp.target = self
+        languagePopUp.action = #selector(languageChanged)
+        languagePopUp.identifier = role(#selector(languageChanged))
+
+        // Half of the change lands now and half on the next launch, so the button that closes
+        // that gap sits next to the control that opens it rather than in a menu somewhere
+        languageRestartButton = button(localized("app.button.restartNow"), #selector(restartForLanguage))
+        languageNoteLabel = helpLabel("", width: setupContentWidth - 28)
+
+        let row = NSStackView(views: [languagePopUp, languageRestartButton])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 10
+        return card(localized("app.card.language.title"), [row, languageNoteLabel])
+    }
+
+    /// Each language in its own script. Not a catalogue lookup on purpose — these read the same
+    /// whatever language the window is in, which is the point of a language menu.
+    private var languageMenuTitles: [String: String] {
+        ["en": "English", "ko": "한국어", "ja": "日本語", "zh-Hans": "简体中文", "zh-Hant": "繁體中文"]
+    }
+
+    @objc private func languageChanged() {
+        guard let choice = languagePopUp.selectedItem?.representedObject as? String else { return }
+        Settings.language = choice
+        refresh()
+    }
+
+    /// **The picker asks, it does not decide.** Whether a restart is safe right now is
+    /// `LocaleRestartGate`'s question, and its answer is "no claude input delivery is in flight" —
+    /// restarting through one would cut it off and orphan a Warp helper whose only defence is its
+    /// lifetime.
+    ///
+    /// A refusal is **not** a deferral: it changes the note and stops, leaving the user holding the
+    /// trigger. Queueing the restart would need the queue to outlive a delivery that may never end,
+    /// which is the same self-lifetime problem this gate exists to avoid.
+    ///
+    @objc private func restartForLanguage() {
+        guard LocaleRestartGate.admitRestart() else {
+            languageNoteLabel.stringValue = languageNote(.restartBlocked)
+            return
+        }
+        let app = Bundle.main.bundlePath
+        // A detached `open` after this process exits: relaunching from inside a terminating app
+        // races the old instance's socket, and the new one would fail to bind
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", app]
+        do {
+            try task.run()
+        } catch {
+            // Nothing will come back to lift the admission, and an app that refuses every claude
+            // input for the rest of its life is a worse outcome than the restart not happening
+            LocaleRestartGate.withdrawAdmission()
+            checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
+            languageNoteLabel.stringValue = languageNote(.restartFailed)
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    /// The note is a closed state, so a blocked restart and a failed relaunch cannot be requested
+    /// together or silently collapse into the ordinary note.
+    private enum LanguageNoteState {
+        case ordinary
+        case restartBlocked
+        case restartFailed
+    }
+
+    private func languageNote(_ state: LanguageNoteState = .ordinary) -> String {
+        switch state {
+        case .restartFailed:
+            return localized("app.language.restartFailed")
+        case .restartBlocked:
+            return localized("app.language.restartDeferred")
+        case .ordinary:
+            return localized("app.language.note")
+        }
+    }
 
     private func terminalCard() -> NSView {
         itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
         weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
         warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
 
-        // 세로 배치 — 셋을 가로로 늘어놓으면 카드 폭에 눌린다
+        // Stacked vertically: three of them side by side do not fit the card's width
         let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
@@ -388,51 +656,64 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         buildPermissionSection()
         buildAccessibilitySection()
-        return card("터미널", [radioRow, permissionSection, accessibilitySection])
+        return card(localized("app.card.terminal.title"), [radioRow, permissionSection, accessibilitySection])
     }
 
     private func radio(_ title: String, installed: Bool) -> NSButton {
         let button = NSButton(
-            radioButtonWithTitle: installed ? title : "\(title) (미설치)",
+            radioButtonWithTitle: installed ? title : localized("app.terminal.notInstalled", title),
             target: self, action: #selector(terminalChanged)
         )
         button.isEnabled = installed
+        // The untranslated argument, not the drawn title: the drawn one is wrapped in a sentence
+        // when the terminal is missing, and that sentence is in whatever language the window is in
+        button.identifier = role(#selector(terminalChanged), title)
         return button
     }
 
     private func buildPermissionSection() {
+        // Idempotent: it fills a **stored** stack, so building a second time would append a second
+        // copy of everything rather than replace it. `toolsList` already clears for the same reason
+        permissionSection.arrangedSubviews.forEach { $0.removeFromSuperview() }
         permissionSection.orientation = .vertical
         permissionSection.alignment = .leading
         permissionSection.spacing = 9
         permissionSection.addArrangedSubview(hairline())
-        permissionSection.addArrangedSubview(sectionTitle("iTerm2 제어 권한"))
+        permissionSection.addArrangedSubview(sectionTitle(localized("app.section.itermPermission.title")))
         permissionSection.addArrangedSubview(helpLabel(
-            "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다."
+            localized("app.section.itermPermission.help")
         ))
         permissionSection.addArrangedSubview(permissionStatusLabel)
+        requestPermissionButton.title = localized("app.button.requestItermPermission")
         requestPermissionButton.target = self
         requestPermissionButton.action = #selector(requestPermission)
+        requestPermissionButton.identifier = role(#selector(requestPermission))
         requestPermissionButton.bezelStyle = .rounded
         permissionSection.addArrangedSubview(buttonRow([
             requestPermissionButton,
-            button("시스템 설정 열기", #selector(openAutomationSettings)),
+            button(localized("app.button.openSystemSettings"), #selector(openAutomationSettings)),
         ]))
     }
 
-    /// 화면을 읽어 "claude가 그 입력을 받았는지" 확인하는 데 쓴다. 확인 없이 제출하면 claude가
-    /// 초기화 중 버린 입력이 "전달됨"으로 기록되므로(실측), 이 권한 없이는 claude 입력을
-    /// 전달하지 않는다 — 명령 실행과는 무관하다는 것을 문구로 갈라 준다.
+    /// The permission is what lets the app read the screen and check whether claude received the
+    /// input. Submitting without that check records an input claude discarded during its
+    /// initialisation as "delivered" (measured), so without the permission claude input is not
+    /// delivered at all — and the wording keeps that apart from running a command, which needs
+    /// nothing.
     private func buildAccessibilitySection() {
+        // Idempotent: it fills a **stored** stack, so building a second time would append a second
+        // copy of everything rather than replace it. `toolsList` already clears for the same reason
+        accessibilitySection.arrangedSubviews.forEach { $0.removeFromSuperview() }
         accessibilitySection.orientation = .vertical
         accessibilitySection.alignment = .leading
         accessibilitySection.spacing = 9
         accessibilitySection.addArrangedSubview(hairline())
-        accessibilitySection.addArrangedSubview(sectionTitle("Warp claude 입력 (손쉬운 사용)"))
+        accessibilitySection.addArrangedSubview(sectionTitle(localized("app.section.accessibility.title")))
         accessibilitySection.addArrangedSubview(helpLabel(warpAccessibilityHelpText()))
         accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
         accessibilitySection.addArrangedSubview(buttonRow([
-            button("손쉬운 사용 권한 요청", #selector(requestAccessibility)),
-            button("시스템 설정 열기", #selector(openAccessibilitySettings)),
+            button(localized("app.button.requestAccessibility"), #selector(requestAccessibility)),
+            button(localized("app.button.openSystemSettings"), #selector(openAccessibilitySettings)),
         ]))
     }
 
@@ -448,30 +729,33 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             string: "$ ", attributes: [.font: Theme.mono(11), .foregroundColor: Theme.textFaint]
         )
         command.append(NSAttributedString(
-            string: testCommand, attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
+            string: testCommand.command,
+            attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
         ))
         let commandLabel = NSTextField(labelWithString: "")
         commandLabel.attributedStringValue = command
 
-        let row = NSStackView(views: [chip(commandLabel), button("터미널에서 실행", #selector(testTerminal))])
+        let row = NSStackView(views: [chip(commandLabel), button(localized("app.button.runInTerminal"), #selector(testTerminal))])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
 
         testResultLabel.isHidden = true
 
-        return card("동작 테스트", [row, testResultLabel])
+        return card(localized("app.card.test.title"), [row, testResultLabel])
     }
 
-    /// 설정 완료 후에만 보이는 유틸리티 (설정 중에는 확장이 로드되기 전이라 옵션 페이지가 없다)
+    /// Utilities that appear only once setup is done — before that the extension is not loaded and
+    /// there is no options page to open. `refresh()` ties this row to the extension card, so it
+    /// also goes away while the setup guide is deliberately back on screen.
     private func buildUtilityRow() -> NSView {
         buttonRow([
-            button("확장 옵션 페이지 열기", #selector(openOptionsPage)),
-            button("설치 안내 다시 보기", #selector(reshowInstall)),
+            button(localized("app.button.openOptionsPage"), #selector(openOptionsPage)),
+            button(localized("app.button.showSetupGuide"), #selector(reshowInstall)),
         ])
     }
 
-    // MARK: 뷰 팩토리
+    // MARK: View factories
 
     private func card(_ title: String, _ content: [NSView]) -> NSView {
         let box = NSView()
@@ -526,9 +810,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return label
     }
 
+    /// The name a control answers to after the window has been rebuilt around it.
+    ///
+    /// **Derived from the action rather than declared**, so it cannot go stale on its own: a
+    /// control that stopped having this action stopped being this control, and one that never had
+    /// an action does nothing for anyone to focus. The qualifier is for the one case where a single
+    /// action serves several controls — the terminal radios, told apart by a product name, which no
+    /// language rewrites either. A control with no action is not one this window owns, and
+    /// `testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames` is the enumeration of the ones
+    /// it does.
+    private func role(_ action: Selector, _ qualifier: String? = nil) -> NSUserInterfaceItemIdentifier {
+        NSUserInterfaceItemIdentifier((["control", "\(action)"] + [qualifier].compactMap { $0 }).joined(separator: "."))
+    }
+
     private func button(_ title: String, _ action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
+        button.identifier = role(action)
         return button
     }
 
@@ -558,7 +856,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return box
     }
 
-    /// 안내 절차용 인용 블록 — 왼쪽에 가는 세로 바를 세운 heredoc 느낌
+    /// The quote block the setup steps are drawn in — a thin vertical bar down the left, so it
+    /// reads like a heredoc
     private func quoteBlock(_ lines: [String]) -> NSView {
         let bar = NSView()
         bar.wantsLayer = true
@@ -612,18 +911,30 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "v\($0)" } ?? "dev"
     }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateTimeStyle = .named
-        return formatter
-    }()
+    /// A formatter is expensive enough to keep, and keeping one is exactly how this line stayed
+    /// Korean: it was a `static let` built once with `Locale(identifier: "ko_KR")`, so the language
+    /// was frozen into the value and no lookup function could ever have thawed it. **The language
+    /// is now part of the key.** A cache whose key omits the thing that varies is not a cache.
+    ///
+    /// Measured: `Locale(identifier:)` takes the tags we resolve as they are — `zh-Hans` gives
+    /// 1小时前 and `zh-Hant` 1小時前, so no ICU-style rewriting is needed on the way in.
+    private static var relativeFormatterCache: (tag: String, formatter: RelativeDateTimeFormatter)?
 
-    private func relative(_ date: Date) -> String {
-        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+    static func relativeFormatter(for tag: String) -> RelativeDateTimeFormatter {
+        if let cached = relativeFormatterCache, cached.tag == tag { return cached.formatter }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: tag)
+        formatter.dateTimeStyle = .named
+        relativeFormatterCache = (tag, formatter)
+        return formatter
     }
 
-    // MARK: - 터미널 선택
+    private func relative(_ date: Date) -> String {
+        Self.relativeFormatter(for: AppLocalization.resolvedTag())
+            .localizedString(for: date, relativeTo: Date())
+    }
+
+    // MARK: - The terminal choice
 
     @objc private func terminalChanged() {
         if weztermRadio.state == .on {
@@ -650,26 +961,39 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
         }
-        // 예약한 claude 입력은 claude가 뜬 뒤에야 전달되므로 시간이 걸린다 —
-        // 그 사이 사용자가 끼어들면 입력이 섞인다
-        var note = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 "
-            + "claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요."
-        // Warp는 화면을 "포커스된 탭"만 보여 주므로, 앱이 자기 탭을 확인할 수 있을 때만 제출한다
+        // Scheduled claude input is delivered only once claude is up, so it takes a while — and
+        // anything the user types in the meantime mixes into it
+        // Two complete sentences, joined as sentences. Each part is a message
+        // each part is a message a translator can write on its own, and neither is a clause of the other
+        var note = localized("app.terminal.note.common")
+        // Warp shows only the focused tab, so the app submits only while it can see its own
         if Settings.terminal == .warp {
-            note += " Warp는 그 탭을 보고 있는 동안에만 전달됩니다 — 다른 탭으로 옮기면 "
-                + "멈췄다가 돌아오면 이어집니다."
+            note += localized("app.terminal.note.warp")
         }
         terminalNoteLabel.stringValue = note
     }
 
-    // MARK: - 상태 갱신
+    // MARK: - Refreshing the state
 
     private func refresh() {
+        // The picker follows the stored value rather than its own last click: a second window, or a
+        // value written before this launch, has to show through
+        languagePopUp.selectItem(at: languagePickerIndex(
+            stored: Settings.language, drawn: AppLocalization.resolvedTag(),
+            entries: languagePopUp.itemArray.map { $0.representedObject as? String }
+        ))
+        // Any window may change the shared preference. Restart itself remains guarded by
+        // `LocaleRestartGate`, which protects in-flight delivery rather than socket ownership.
+        languagePopUp.isEnabled = true
+        languageRestartButton.isEnabled = true
+        languageNoteLabel.stringValue = languageNote()
+
         let manifest = Installer.manifestState()
         let folder = Installer.extensionState()
         let evidence = Settings.lastRequestAt
 
-        // Chrome 연결: 정상이면 카드를 숨긴다 (앱 실행 시 자동 등록·자가 치유되므로 버튼도 불필요)
+        // The Chrome connection: the card is hidden when it is fine — the app registers the
+        // manifest on launch and heals it when the app has moved, so there is nothing to press
         if case .ok = manifest {
             chromeCard.isHidden = true
         } else {
@@ -677,14 +1001,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             apply(manifest, to: manifestStatusLabel)
         }
 
-        // 확장: 소켓으로 요청이 실제 도착했을 때만 완료로 본다
+        // The extension counts as done only when a request has actually arrived on the socket
         let extensionState: SetupState
         if case .error = folder {
             extensionState = folder
         } else if let evidence {
-            extensionState = .ok("연결 확인됨 — 마지막 요청 \(relative(evidence))")
+            extensionState = .ok(localized("app.status.extension.connected", relative(evidence)))
         } else {
-            extensionState = .warning("Chrome에서의 첫 요청 대기 중 — 설치 후 GitHub PR 페이지에서 버튼을 누르면 완료됩니다")
+            extensionState = .warning(localized("app.status.extension.waiting"))
         }
         apply(extensionState, to: extensionStatusLabel)
         extensionCard.isHidden = evidence != nil && !forceShowInstall
@@ -696,27 +1020,29 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
-        // 손쉬운 사용이 없어도 명령 실행은 된다(claude 입력 전달만 막힌다) — 오류가 아니라 경고로 다룬다
+        // A command still runs without Accessibility — only the claude input delivery is refused —
+        // so this is a warning and not an error
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
-        // 터미널별 권한 UI — 케이스를 추가하면 "이 터미널에 권한 섹션이 필요한가"가 여기서
-        // 컴파일 에러로 강제된다
+        // The permission UI, per terminal. There is no `default`, so adding a terminal makes
+        // "does this one need a permission section" a compile error here rather than a question
+        // somebody has to remember to ask
         switch Settings.terminal {
         case .iterm:
             if PermissionChecker.isITermInstalled {
                 let status = PermissionChecker.iTermAutomationStatus()
                 permission = status.isGranted ? .ok(status.label) : .warning(status.label)
             } else {
-                permission = .warning("iTerm2가 설치되어 있지 않음")
+                permission = .warning(localized("app.status.iterm.notInstalled"))
             }
-            apply(permission!, to: permissionStatusLabel, prefix: "iTerm2 자동화: ")
+            apply(permission!, to: permissionStatusLabel, format: "app.status.itermAutomation.format")
         case .wezterm:
-            break // CLI 실행이라 TCC 권한이 필요 없다
+            break // driven through the CLI, so no TCC permission is involved
         case .warp:
             apply(
                 accessibilityGranted
-                    ? .ok("허용됨")
-                    : .warning("허용 안 됨 — claude 입력이 예약된 버튼은 거절됩니다"),
-                to: accessibilityStatusLabel, prefix: "손쉬운 사용: "
+                    ? .ok(localized("app.status.accessibility.granted"))
+                    : .warning(localized("app.status.accessibility.denied")),
+                to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
         }
         var granted = false
@@ -736,10 +1062,26 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// Redraws the base directory card from what is stored. The field is not touched while the
     /// user is typing in it — refresh() runs on every window activation and on every socket
     /// request, and overwriting a half-typed path would be maddening.
+    ///
+    /// **"Is being typed into" was a proxy for "holds the user's text", and the two came apart on
+    /// the current path**. A language change through the picker ends the
+    /// edit *before* the rebuild, so the field editor is gone by the time this runs and the
+    /// condition let the stored value overwrite a draft the user had just been refused — type a
+    /// path, change the language, lose the typing. The condition asks the question it meant to ask
+    /// now: the field is redrawn only while it still holds **what this window put there**, which is
+    /// true on every path rather than on the two it was written for.
+    ///
+    /// The original condition stays, and what it is left covering is narrow and real: the stored
+    /// value changing *while* the field is open and untouched — a hand-edited plist, another
+    /// instance — where the write would land in a live edit. It is not what protects the cursor;
+    /// measured, writing the **same** value into a field being edited leaves the selection where it
+    /// was.
     private func updateBaseDirCard() {
         let stored = Settings.baseDirectory
-        if window?.firstResponder !== baseDirField.currentEditor() {
+        let ours = drawnBaseDirectory == nil || baseDirField.stringValue == drawnBaseDirectory
+        if window?.firstResponder !== baseDirField.currentEditor(), ours {
             baseDirField.stringValue = stored
+            drawnBaseDirectory = stored
         }
         // A stored value can only be invalid if it was edited outside this window (a hand-edited
         // plist, an older build). Say so here rather than let every button fail unexplained.
@@ -749,14 +1091,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             resolved = try normalizedBaseDirectory(stored)
         } catch {
             apply(
-                .error("저장된 값이 올바르지 않습니다(\(baseDirectoryReason(error))) — 다시 지정해 주세요"),
+                .error(localized("app.baseDir.storedInvalid", baseDirectoryReason(error))),
                 to: baseDirStatusLabel
             )
             return
         }
         guard let normalized = resolved else {
             apply(
-                .warning("설정하지 않음 — z로만 이동합니다. zoxide 기록에 없는 저장소에서는 명령이 아무것도 하지 않습니다"),
+                .warning(localized("app.baseDir.notConfigured")),
                 to: baseDirStatusLabel
             )
             return
@@ -764,18 +1106,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory)
         if exists && isDirectory.boolValue {
-            apply(.ok("\(normalized) — z가 실패하면 여기로 이동하고, 저장소가 없으면 clone합니다"), to: baseDirStatusLabel)
+            apply(.ok(localized("app.baseDir.ok", normalized)), to: baseDirStatusLabel)
         } else {
             // clone creates the leading directories (measured), so a missing folder still works —
             // this only says so out loud, which is how a typo gets noticed
-            apply(.warning("\(normalized) — 아직 없는 폴더입니다. clone할 때 만들어집니다"), to: baseDirStatusLabel)
+            apply(.warning(localized("app.baseDir.missingFolder", normalized)), to: baseDirStatusLabel)
         }
     }
 
-    /// 없는 도구만 줄로 남긴다 — 준비된 도구까지 나열하면 정상 상태에서도 카드가 계속 떠 있게 된다.
+    /// Only the missing tools get a line. Listing the ones that are there too would leave the card
+    /// on screen in the state where nothing is wrong.
     private func updateToolsCard() {
         guard let availability = Settings.toolAvailability else {
-            toolsCard.isHidden = true // 아직 확인 전 (백그라운드에서 진행 중)
+            // No answer yet. The check runs in the background on every launch, and one that fails
+            // leaves this nil rather than writing something — so "not yet" and "it did not answer"
+            // arrive here as the same value
+            toolsCard.isHidden = true
             return
         }
         // nil covers both "not configured" and "stored value is unusable" — in either case the
@@ -802,7 +1148,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsList.addArrangedSubview(label)
     }
 
-    private func pipelineNodes(
+    /// Internal rather than private so `testPipelineNodesAreLocalized` can read the strings this
+    /// produces. Reaching them through the drawn view would mean walking a stack of labels, and a
+    /// walk that stopped finding them would go quiet instead of failing.
+    func pipelineNodes(
         manifest: SetupState, extensionState: SetupState,
         socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool
     ) -> [PipelineStripView.Node] {
@@ -820,39 +1169,60 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .iterm:
             terminalName = "iTerm2"
             terminalColor = permission.map(color) ?? Theme.warn
-            terminalDetail = "iTerm2 자동화: \(permission?.message ?? "상태 미확인")"
+            terminalDetail = localized(
+                "app.status.itermAutomation.format", permission?.message ?? localized("app.status.unknown")
+            )
         case .wezterm:
             terminalName = "WezTerm"
             let installed = PermissionChecker.isWezTermInstalled
             terminalColor = installed ? Theme.ok : Theme.err
-            terminalDetail = installed ? "WezTerm CLI 사용 가능 — TCC 권한 불필요" : "WezTerm이 설치되어 있지 않음"
+            terminalDetail = localized(
+                installed ? "app.pipeline.wezterm.available" : "app.pipeline.wezterm.notInstalled"
+            )
         case .warp:
             terminalName = "Warp"
             if !PermissionChecker.isWarpInstalled {
                 terminalColor = Theme.err
-                terminalDetail = "Warp가 설치되어 있지 않음"
+                terminalDetail = localized("app.pipeline.warp.notInstalled")
             } else if accessibilityGranted {
                 terminalColor = Theme.ok
-                terminalDetail = "Tab Config로 새 탭 — pane 안 헬퍼로 claude 입력 전달"
+                terminalDetail = localized("app.pipeline.warp.ready")
             } else {
-                // claude 입력이 없는 버튼은 그대로 도므로 오류가 아니라 경고다
+                // Buttons that schedule no claude input still work, so this is a warning
                 terminalColor = Theme.warn
-                terminalDetail = "손쉬운 사용 권한 없음 — claude 입력이 예약된 버튼은 탭을 열지 않고 거절됨"
+                terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
         }
         return [
-            .init(label: "Chrome 확장", color: color(extensionState), detail: extensionState.message),
-            .init(label: "relay", color: color(manifest), detail: "Native Host: \(manifest.message)"),
             .init(
-                label: "앱", color: socketAlive ? Theme.ok : Theme.err,
-                detail: socketAlive ? "소켓 서버 대기 중 (host.sock)" : "소켓 파일 없음 — 앱을 재시작해 보세요"
+                label: localized("app.pipeline.node.extension"), color: color(extensionState),
+                detail: extensionState.message
+            ),
+            .init(
+                label: localized("app.pipeline.node.relay"), color: color(manifest),
+                // The frame comes from the catalogue and only the payload is free. This one
+                // was assembled here — `"Native Host: \(manifest.message)"` — which put an English
+                // word in front of a translated status and, being a literal, was invisible to
+                // the source gate: it counts `localized(…)` calls, not strings nobody localised.
+                detail: localized("app.pipeline.relay.detail", manifest.message)
+            ),
+            .init(
+                label: localized("app.pipeline.node.app"), color: socketAlive ? Theme.ok : Theme.err,
+                detail: localized(
+                    socketAlive ? "app.pipeline.socket.listening" : "app.pipeline.socket.missing"
+                )
             ),
             .init(label: terminalName, color: terminalColor, detail: terminalDetail),
         ]
     }
 
-    private func apply(_ state: SetupState, to label: NSTextField, prefix: String = "") {
-        label.stringValue = "● \(prefix)\(state.message)"
+    /// `format` is a **key**, not a prefix. Gluing a translated label in front of a translated
+    /// status is the assembly rule against — in a language that puts the subject last, the pieces
+    /// end up in the wrong order and no translator can fix it from inside either half. A whole
+    /// message with `%@` can be written the way the language wants.
+    private func apply(_ state: SetupState, to label: NSTextField, format: StaticString? = nil) {
+        let body = format.map { localized($0, state.message) } ?? state.message
+        label.stringValue = "● \(body)"
         switch state {
         case .ok: label.textColor = Theme.ok
         case .warning: label.textColor = Theme.warn
@@ -860,24 +1230,25 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    // MARK: - 액션
+    // MARK: - Actions
 
     @objc private func registerManifest() {
         do {
             try Installer.installManifest()
         } catch {
-            showError("Native Host 등록 실패", error)
+            showError(localized("app.alert.manifestFailed"), error)
         }
         refresh()
     }
 
-    /// 설치 도우미: 폴더 준비(사본이 없거나 낡았으면 갱신) → 경로 클립보드 복사 → chrome://extensions 열기
+    /// The install helper: prepare the folder (copy again when the copy is missing or stale) → put
+    /// the path on the clipboard → open chrome://extensions
     @objc private func installInChrome() {
         if Installer.extensionCopyNeedsUpdate() {
             do {
                 try Installer.installExtensionCopy()
             } catch {
-                showError("확장 프로그램 폴더 준비 실패", error)
+                showError(localized("app.alert.extensionFolderFailed"), error)
                 return
             }
         }
@@ -886,21 +1257,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         pasteboard.setString(Installer.extensionDirectory, forType: .string)
         openInChrome("chrome://extensions")
         guideBlock.isHidden = false
-        installFeedbackLabel.stringValue = "경로가 클립보드에 복사되었고 Chrome이 열렸습니다. 위 ①→④ 순서대로 진행하세요."
+        installFeedbackLabel.stringValue = localized("app.install.feedback")
         installFeedbackLabel.textColor = Theme.accent
         installFeedbackLabel.isHidden = false
         refresh()
     }
 
-    /// The Korean wording for a rejection. Core hands back only the reason so each surface can word
-    /// it its own way — the button response is English, this window is Korean until #24 lands.
+    /// The localized wording for a rejection. Core hands back only the reason so each surface can
+    /// word it its own way — the button response remains an English protocol diagnostic.
     private func baseDirectoryReason(_ error: Error) -> String {
         guard case CommandError.invalidBaseDirectory(let problem, _) = error else {
             return errorMessage(error)
         }
         switch problem {
-        case .notAbsolute: return "절대 경로가 아닙니다"
-        case .invalidCharacters: return "공백이나 한글 등 셸에서 안전하지 않은 문자가 있습니다"
+        case .notAbsolute: return localized("app.baseDir.reason.notAbsolute")
+        case .invalidCharacters: return localized("app.baseDir.reason.invalidCharacters")
         }
     }
 
@@ -914,9 +1285,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let normalized = try normalizedBaseDirectory(typed)
             Settings.baseDirectory = normalized ?? ""
             baseDirField.stringValue = normalized ?? ""
+            // Stored and echoed back, so what is in the field is this window's text again and a
+            // redraw may replace it. The failure path below leaves it a draft on purpose
+            drawnBaseDirectory = normalized ?? ""
         } catch {
             apply(
-                .error("저장하지 않았습니다 — \(baseDirectoryReason(error))"),
+                .error(localized("app.baseDir.notSaved", baseDirectoryReason(error))),
                 to: baseDirStatusLabel
             )
             // FittedContentStackView.layout() re-measures on the label change — no manual resize
@@ -930,7 +1304,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "선택"
+        panel.prompt = localized("app.panel.choosePrompt")
         let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             self.baseDirField.stringValue = url.path
@@ -955,13 +1329,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func requestPermission() {
         requestPermissionButton.isEnabled = false
-        permissionStatusLabel.stringValue = "● iTerm2 자동화: 권한 프롬프트 응답 대기 중…"
+        permissionStatusLabel.stringValue = "● " + localized("app.status.itermAutomation.waiting")
         permissionStatusLabel.textColor = Theme.textDim
         PermissionChecker.requestITermAutomation { [weak self] result in
             guard let self else { return }
             self.requestPermissionButton.isEnabled = true
             if case .failure(let error) = result {
-                self.showError("권한 요청 실패", error)
+                self.showError(localized("app.alert.permissionRequestFailed"), error)
             }
             self.refresh()
         }
@@ -971,8 +1345,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         PermissionChecker.openAutomationSettings()
     }
 
-    /// 손쉬운 사용 프롬프트는 그 자리에서 허용되지 않고 시스템 설정으로 안내만 한다 —
-    /// 완료 콜백이 없어 창이 다시 키가 될 때(windowDidBecomeKey → refresh) 상태를 다시 읽는다
+    /// The Accessibility prompt grants nothing on the spot — it only points at System Settings —
+    /// and it has no completion callback, so the state is read again when the window becomes key
+    /// (`windowDidBecomeKey` → `refresh()`).
     @objc private func requestAccessibility() {
         PermissionChecker.requestAccessibility()
         refresh()
@@ -984,8 +1359,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func testTerminal() {
         let terminal = Settings.terminal
-        let command = testCommand
-        testResultLabel.stringValue = "실행 중…"
+        let command = testCommand.command
+        testResultLabel.stringValue = localized("app.test.running")
         testResultLabel.textColor = Theme.textDim
         testResultLabel.isHidden = false
         DispatchQueue.global().async { [weak self] in
@@ -997,10 +1372,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
             DispatchQueue.main.async {
                 if let failure {
-                    self?.testResultLabel.stringValue = "실패: \(errorMessage(failure))"
+                    self?.testResultLabel.stringValue = localized("app.test.failed", errorMessage(failure))
                     self?.testResultLabel.textColor = Theme.err
                 } else {
-                    self?.testResultLabel.stringValue = "터미널에 새 탭이 열렸다면 성공입니다."
+                    self?.testResultLabel.stringValue = localized("app.test.succeeded")
                     self?.testResultLabel.textColor = Theme.textDim
                 }
                 self?.refresh()
@@ -1008,7 +1383,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    // MARK: - 헬퍼
+    // MARK: - Helpers
 
     private func openInChrome(_ urlString: String) {
         guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
@@ -1032,34 +1407,76 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+/// Where the viewport goes so the anchor card's **top edge** returns to the same line of the
+/// window: `anchorTop` is that edge and `offset` is how far below it the viewport began. What that
+/// preserves is the edge and the distance, which is all that survives a reflow — the text inside
+/// the card was rewritten too, so no sentence has a place to be put back to.
+///
+/// **A free function because the arithmetic is the part worth testing**, and it needs no window.
+/// Only the near end is clamped, and only that end can be reached: an anchor is a visible card
+/// *inside* this document, so `anchorTop` never passes the document's own height and the answer
+/// never passes its last scrollable line. Wanting to see above the first line is ordinary — any
+/// card within one viewport of the top asks for it. Measured, and the reason this is arithmetic we
+/// do rather than a request we make: `NSView.scroll(_:)` keeps a point past the end instead of
+/// correcting it, so a target that could pass the end would leave the window on blank space.
+func scrollOrigin(anchorTop: CGFloat, offset: CGFloat, clip: CGFloat) -> CGFloat {
+    max(0, anchorTop - offset - clip)
+}
+
 /// What to say when claude can be called but does **not** resolve to an executable — an install
 /// that is only a shell function or an alias.
 ///
 /// The merge path launches `command claude`, which skips functions and aliases, so those setups
 /// take the typed route instead. All the user sees otherwise is that delivery got slower, or — on
 /// Warp without the Accessibility permission — that the button now refuses outright, with the
-/// reason nowhere on screen (independent reviewer, round 7).
+/// reason nowhere on screen.
 ///
 /// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
 /// line already says that one, and saying it twice reads as two different problems.
 ///
 /// It does **not** name the cause as "a function or an alias": the same answer comes from a
 /// relative `PATH` entry and from a file without the executable bit (both measured), and a card
-/// that asserts the wrong cause sends people to fix the wrong thing (round 8).
+/// that asserts the wrong cause sends people to fix the wrong thing.
+/// Which entry the language picker points at.
+///
+/// Three cases, and the third is the one that had a defect. A stored preference that matches an
+  /// entry selects it. A stored preference that matches nothing is a **third state** —
+/// not `auto`, not a language we ship — and pointing at the first entry there would have the picker
+/// claim "follow the system" while the window draws English. It points at the language actually
+/// being drawn instead, which `resolveLocale` has already decided; picking anything writes a clean
+/// value and the state is gone.
+///
+/// It takes the entries rather than reading the control so the three rows can be enumerated in a
+/// test without a window, a `UserDefaults` write, or a language change on this machine.
+func languagePickerIndex(stored: String, drawn: String, entries: [String?]) -> Int {
+    entries.firstIndex { $0 == stored } ?? entries.firstIndex { $0 == drawn } ?? 0
+}
+
 func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
     guard available?["claude"] == true, executable?["claude"] == false else { return nil }
-    return "claude를 실행 파일로 찾지 못해 claude 입력을 병합하지 못합니다"
-        + " (함수·별칭으로만 설치됐거나, PATH에 상대 경로 항목이 있거나, 실행 권한이 없는 경우입니다)"
-        + " — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다."
+    return localized("app.tools.claudeWrapper.advice")
 }
 
 /// What the Accessibility card says. It used to promise that the command would still run without
 /// the permission and only the claude input would be missing — the app does the opposite: a button
 /// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
-/// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
+/// A card that contradicts the behaviour sends people looking for the wrong problem.
 func warpAccessibilityHelpText() -> String {
-    "claude가 입력을 받은 것을 Warp 화면에서 확인하는 데 씁니다. 허용하지 않으면 claude 입력이 "
-        + "예약된 버튼은 탭을 열지 않고 거절됩니다 — **기본 프리셋 3종이 전부 여기 해당합니다**"
-        + "(`!` 입력은 claude 셸 모드에 타이핑해야 실행되기 때문입니다). claude 입력이 없는 버튼과 "
-        + "평문 한 줄만 예약한 버튼은 권한 없이 그대로 동작합니다. 전달 중에는 그 탭을 보고 있어야 합니다."
+    // The `**…**` and the backticks are gone: `NSTextField` renders neither, so they were
+    // showing up as literal asterisks on screen — and translating them would have copied that into
+    // five catalogues
+    localized("app.section.accessibility.help")
+}
+
+private extension NSView {
+    /// The view here that answers to a role — the question a rebuild asks about a control it has
+    /// just replaced. Depth first, so a control inside a card is found without the caller knowing
+    /// which card that is.
+    func firstDescendant(withRole role: NSUserInterfaceItemIdentifier) -> NSView? {
+        for view in subviews {
+            if view.identifier == role { return view }
+            if let found = view.firstDescendant(withRole: role) { return found }
+        }
+        return nil
+    }
 }

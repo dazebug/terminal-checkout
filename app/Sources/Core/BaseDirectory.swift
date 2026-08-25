@@ -32,7 +32,8 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
         throw CommandError.invalidBaseDirectory(.notAbsolute, trimmed)
     }
 
-    // Strip trailing slashes so composing `<base>/<repo>` never yields `//` (root stays root)
+    // Strip trailing slashes so the `<base>/<repo>` join never adds a `//` (root stays root). A
+    // `//` the user typed *inside* the path survives — the kernel collapses it, and this owns the join
     var path = expanded
     while path.count > 1, path.hasSuffix("/") { path.removeLast() }
 
@@ -45,10 +46,10 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
 
 /// The value of `{cd}` — the clause a command opens with to move into the repository.
 ///
-/// With no base directory configured this is `z <repo>`, **byte-identical** to what the presets
-/// used to spell out. That equivalence is why the app assembles the clause instead of the presets
-/// carrying a path variable: a path variable would leave every button of an unconfigured user
-/// failing with `Variable {basedir} not provided`.
+/// With no base directory configured this is `z <repo>`, **byte-identical** to the preset form.
+/// That equivalence is why the app assembles the clause instead of the presets carrying a path
+/// variable: a path variable would leave every button of an unconfigured user failing with
+/// `Variable {basedir} not provided`.
 ///
 /// Configured, it chains `z` → `cd` (guarded) → `clone`. `z` coming first is a rule: the base
 /// directory must not override a jump `z` made successfully. Measured, a cold DB exits 1 and a

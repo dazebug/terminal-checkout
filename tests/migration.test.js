@@ -9,6 +9,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
+// The options page's order, dictionaries first: both files resolve their sentences when they are
+// read, so both need `tr` — running them without it was testing a load order that never happens.
+vm.runInThisContext(read('i18n.js'));
+for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
+  vm.runInThisContext(read(`_i18n/${tag}.js`));
+}
 vm.runInThisContext(read('defaults.js'));
 vm.runInThisContext(read('migrations.js'));
 
@@ -16,6 +22,11 @@ const { BUTTON_KINDS, SETTINGS_VERSION, SETTINGS_KEYS, VERSION_KEY } =
   vm.runInThisContext('({ BUTTON_KINDS, SETTINGS_VERSION, SETTINGS_KEYS, VERSION_KEY })');
 const { MIGRATIONS, storedSchemaVersion, versionToSave } =
   vm.runInThisContext('({ MIGRATIONS, storedSchemaVersion, versionToSave })');
+// Node has no `chrome`, so every lookup throws unless a backend is installed. This one
+// reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
+// than evidence about Chrome — the real load is a release gate.
+const { catalogueBackend } = require('./chrome-messages.js');
+vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
 // --- The stored version, and the only ways it may go up ---
 // A save that stamps the current version without the user having seen anything would erase the
@@ -55,7 +66,7 @@ test('a reviewed save moves to the current version', () => {
 
 // The normal load path can still hand us a future version: another machine on the same account
 // runs a newer extension and synced its marker down. Import can no longer produce this — a newer
-// backup is refused outright (decision 5, revised) — but a save from here must not downgrade it.
+// backup is refused outright — but a save from here must not downgrade it.
 test('a version from the future is never downgraded, reviewed or not', () => {
   assert.equal(versionToSave({ loadedVersion: 7, reviewed: false }), 7);
   assert.equal(versionToSave({ loadedVersion: 7, reviewed: true }), 7);
@@ -143,7 +154,7 @@ test('the same old string maps the same way whichever page it was saved under', 
 });
 
 test('a customized command with the exact old first clause is promoted to a candidate', () => {
-  // Revised decision 4: strict prefix only, and only the first clause is replaced. Offered, but as
+  // Strict prefix only, and only the first clause is replaced. Offered, but as
   // a behavior change — the tail is theirs, and with a base folder set it will run somewhere the old
   // command never reached.
   const plan = plan0(stored('buttons', 'z {repo} && npm test'));
@@ -215,7 +226,7 @@ test('applying leaves every other field of the button alone', () => {
   });
 });
 
-// --- The preview's view model (item 3) ---
+// --- The preview's view model ---
 // What the panel needs to render, kept out of the DOM so the three states that matter can be pinned.
 
 const { migrationSummary } = vm.runInThisContext('({ migrationSummary })');
@@ -239,7 +250,7 @@ test('summary: unchecking everything still lets the user finish — as a review,
 });
 
 test('summary: no candidates at all is a review-only notice', () => {
-  // Decision 2: even with nothing to rewrite there is no silent promotion — the click is the consent
+  // Even with nothing to rewrite there is no silent promotion — the click is the consent
   const data = stored('buttons', 'cd x && z {repo}');
   const plan = plan0(data);
   assert.equal(plan.actionable.length, 0);
@@ -248,7 +259,7 @@ test('summary: no candidates at all is a review-only notice', () => {
   assert.equal(summary.informationalCount, 1);
 });
 
-// --- Import (item 5) ---
+// --- Import ---
 // A backup carries the version too. Reading one that came from a newer extension is a refusal, not
 // a partial import: we cannot know what its keys mean.
 
@@ -282,7 +293,7 @@ test('a non-numeric version in a backup is ignored, not refused', () => {
   assert.equal(importedSchemaVersion({ version: 'nope', buttons: [] }), 0);
 });
 
-// --- Adopting a change that arrived from another machine (item 6) ---
+// --- Adopting a change that arrived from another machine ---
 
 const { shouldAdoptSyncedChange } = vm.runInThisContext('({ shouldAdoptSyncedChange })');
 
@@ -353,11 +364,11 @@ test('a fractional version can never skip a step, even if one leaks in', () => {
   assert.equal(plan.actionable.length, 1);
 });
 
-// --- Registry coverage, derived from the presets that exist today (P3) ---
+// --- Registry coverage, derived from the presets that exist today ---
 
 test('the registry covers exactly the current presets, pair for pair', () => {
   // Derived rather than listed: deleting a pair, or adding a preset without one, has to fail here.
-  // This is the git-free half of the 294c46a cross-check, so it also runs on a shallow CI checkout.
+  // This cross-check also runs on a shallow CI checkout.
   const entry = MIGRATIONS.find(step => step.to === 1);
   const current = new Set(
     Object.values(BUTTON_KINDS).flatMap(kind => [...kind.presets, ...kind.defaults].map(b => b.command))
@@ -404,7 +415,7 @@ test('candidates are keyed by the button uid', () => {
 });
 
 test('unchecking one of two identical commands survives a reorder', () => {
-  // The exact P1-2 repro: two buttons with the same command, decline the first, move the second to
+  // Two buttons with the same command: decline the first, move the second to
   // the front, apply. With index identity this rewrote the button the user had just declined.
   const a = { uid: 'A', face: 'x', label: 'keep A', command: V0.claude, claudeInputs: [] };
   const b = { uid: 'B', face: 'x', label: 'apply B', command: V0.claude, claudeInputs: [] };
@@ -445,7 +456,7 @@ test('merging sources takes the lowest generation of the two', () => {
 });
 
 test('a plan over a merged edit state covers the sections the file never mentioned', () => {
-  // The P1-1 repro at the level where it is decidable: importing {"defaultMain":"main"} leaves the
+  // Importing {"defaultMain":"main"} leaves the
   // other sections holding their old commands, and those still have to appear in the plan.
   const merged = {
     ...stored('buttons', V0.checkout),
@@ -464,7 +475,7 @@ test('a plan over a merged edit state covers the sections the file never mention
 // a save that would land on settings that moved is refused outright.
 
 test('a snapshot that was overtaken while loading is thrown away', () => {
-  // P1-5: onChanged -> loadSettings() awaits storage, and the user types during the await. Applying
+  // `onChanged -> loadSettings()` awaits storage, and the user types during the await. Applying
   // the snapshot afterwards overwrites what they just typed. Checkbox changes count too — they are
   // not "dirty", but they are the user having said something about this plan.
   const { shouldApplyLoadedSnapshot } = vm.runInThisContext('({ shouldApplyLoadedSnapshot })');
@@ -604,11 +615,11 @@ test('a save onto a settings object that moved is refused, not merged', () => {
   const outcome = planSave({ capturedSnapshot: loadedByA, liveSnapshot: savedByB, payload: payloadFromA });
   assert.equal(outcome.refused, true);
   assert.equal(outcome.write, undefined, 'nothing may be written');
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
   // The way out has to be in the message: what happened, how to see it, how not to lose your edits
-  assert.match(SAVE_CONFLICT_MESSAGE, /another device/i);
-  assert.match(SAVE_CONFLICT_MESSAGE, /reload/i);
-  assert.match(SAVE_CONFLICT_MESSAGE, /export/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /another device/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /reload/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /export/i);
   // B's settings stay exactly as B left them
   assert.deepEqual(savedByB, { buttons: [{ command: '{cd} && claude' }], version: 1 });
 });
@@ -658,7 +669,7 @@ test('our own write coming back is not another device changing things', () => {
 });
 
 test('a review the user has touched blocks a remote change from resetting it', () => {
-  // Codex's order exactly: uncheck a candidate, another device saves defaultMain, the change
+  // Uncheck a candidate, let another device save defaultMain, and let the change
   // arrives. Adopting it re-planned and re-selected everything, so Apply then rewrote the very
   // button the user had just declined.
   const { shouldAdoptSyncedChange, defaultSelection } = vm.runInThisContext('({ shouldAdoptSyncedChange, defaultSelection })');
@@ -731,7 +742,7 @@ const { nothingHappenedSince, shouldAcceptUserAction, LOAD_FAILED_MESSAGE } =
   vm.runInThisContext('({ nothingHappenedSince, shouldAcceptUserAction, LOAD_FAILED_MESSAGE })');
 
 test('a save that was overtaken does not get to declare the page settled', () => {
-  // Codex (1): reviewTouched was cleared on the success path *before* the revision check, so a
+  // `reviewTouched` was cleared on the success path *before* the revision check, so a
   // checkbox toggled during the save was forgotten. The next remote change was then adopted, the
   // selection reset to the defaults, and Apply rewrote a candidate the user had declined.
   assert.equal(nothingHappenedSince(1, 2), false, 'a toggle during the save must be noticed');
@@ -743,7 +754,7 @@ test('a save that was overtaken does not get to declare the page settled', () =>
 });
 
 test('a review in progress blocks a load answer, not just a typed edit', () => {
-  // Codex (2): the badge click did not bump the revision, so an in-flight load applied its answer
+  // The badge click did not bump the revision, so an in-flight load applied its answer
   // and wiped the review. Both are covered now — the click bumps it, and the predicate reads
   // reviewTouched as well, so neither half alone can let the answer through.
   const inFlight = { generation: 1, latestGeneration: 1, initial: false, dirty: false };
@@ -774,8 +785,8 @@ test('a failed load leaves the page shut, and says how to reopen it', () => {
   // The gate must stay shut — opening it would bring back writing an empty settings object — so the
   // way out is a retry, and the message has to offer one.
   assert.equal(shouldAcceptUserAction(false), false);
-  assert.match(LOAD_FAILED_MESSAGE, /could not|failed/i);
-  assert.match(LOAD_FAILED_MESSAGE, /retry/i);
+  assert.match(LOAD_FAILED_MESSAGE(), /could not|failed/i);
+  assert.match(LOAD_FAILED_MESSAGE(), /retry/i);
 });
 
 // --- An async task settles against the world it started in (class (a)) ---
@@ -788,7 +799,7 @@ const { planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE } =
   vm.runInThisContext('({ planImport, IMPORT_STALE_MESSAGE, SAVE_RELOADED_MESSAGE })');
 
 test('a save writes against the world it started in, not the one adoption left behind', () => {
-  // Codex R5 P1, exactly. Clean page, Save pressed: the payload is built from S0 and the live read
+  // Clean page, Save pressed: the payload is built from S0 and the live read
   // goes out. While it is pending another device saves S1; onChanged adopts it, so `loadedSnapshot`
   // becomes S1 — and the pre-write comparison was S1 against S1, saw no conflict, and wrote S0 over
   // S1. Adoption is not a user action and bumps no revision, so nothing else caught it either.
@@ -801,13 +812,13 @@ test('a save writes against the world it started in, not the one adoption left b
   });
   assert.equal(outcome.refused, true, 'S0 must not be written over S1');
   assert.equal(outcome.write, undefined);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
 });
 
 test('a change that arrived during the save refuses it even if the live read raced', () => {
   // The live get can be answered from before the remote write landed, while the change event says
   // it landed. The event is the stronger fact: the store moved, so this payload is stale.
-  // (R7 renamed this input to `storeMovedSinceLoad`: an event that arrived just *before* the save
+  // `storeMovedSinceLoad` represents an event that arrived just *before* the save
   // disqualifies it exactly as much as one that arrives during it, and the narrower name was the
   // reason the earlier arrival was not being checked at all.)
   const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
@@ -815,13 +826,13 @@ test('a change that arrived during the save refuses it even if the live read rac
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
 });
 
 test('a save whose page reloaded under it is refused rather than written', () => {
   // A load that landed mid-save replaced the edit state on screen; the payload describes what was
   // there before it. Writing it would store something the user is no longer looking at.
-  // (R7: compared against the *applied* generation. The request counter this used to read could not
+  // Compare against the *applied* generation. The request counter this used to read could not
   // see a load that was requested before the save started.)
   const S0 = { buttons: [{ command: 'z {repo}' }], version: 0 };
   const outcome = planSave({
@@ -829,14 +840,14 @@ test('a save whose page reloaded under it is refused rather than written', () =>
     appliedGenerationAtStart: 1, appliedGenerationNow: 2,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
-  assert.match(SAVE_RELOADED_MESSAGE, /save again/i);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE());
+  assert.match(SAVE_RELOADED_MESSAGE(), /save again/i);
 });
 
 test('only one save is in flight at a time', () => {
   // Two saves started from the same captured world would both pass their own check and the later
   // write would win with information from before the earlier one landed.
-  // R9 folded the per-task gates into one: the exclusions were enumerated per task and the
+  // The per-task gates are one: the exclusions were enumerated per task and the
   // enumeration was wrong (an import excluded other imports and nothing else).
   assert.equal(shouldStartPageTask({ loaded: true, saving: false }), true);
   assert.equal(shouldStartPageTask({ loaded: true, saving: true }), false);
@@ -858,8 +869,8 @@ test('an import that finished reading after the form moved is refused, not appli
   });
   assert.equal(refused.refused, true);
   assert.equal(refused.apply, undefined);
-  assert.equal(refused.message, IMPORT_STALE_MESSAGE);
-  assert.match(IMPORT_STALE_MESSAGE, /import again/i);
+  assert.equal(refused.message, IMPORT_STALE_MESSAGE());
+  assert.match(IMPORT_STALE_MESSAGE(), /import again/i);
 
   const reloaded = planImport({
     revisionAtStart: 4, revisionNow: 4, generationAtStart: 1, generationNow: 2, settings: {},
@@ -907,7 +918,7 @@ test('a user action is the guard and then the change, never the other way round'
 });
 
 test('the add handler cannot change the edit state before the first load', () => {
-  // Codex R5, unresolved from R4: `pr-add.click()` pushed the button onto the edit state and called
+  // `pr-add.click()` used to push the button onto the edit state and call
   // touch() afterwards, so the guard could only ever refuse a change that had already happened.
   // Same shape for add-override, the card inputs, delete, duplicate, reorder and the checkboxes.
   const page = { buttons: [] };
@@ -952,12 +963,15 @@ test('a bad entry inside a good key is counted per key, not silently dropped', (
   });
   assert.equal(adopted.settings.buttons.length, 1);
   assert.deepEqual(adopted.skippedByKey, { buttons: 1 });
-  assert.deepEqual(describeSkipped({ buttons: 1 }), ['1 entry in buttons could not be used and was skipped']);
-  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['2 entries in issueButtons could not be used and were skipped']);
+  // One shape for both counts. The English used to inflect `entry`/`entries` and `was`/`were`
+  // against the number, and a translation cannot be assembled out of the pieces that made those
+  // agree — so the count moved behind a noun and a colon, where no language here inflects anything.
+  assert.deepEqual(describeSkipped({ buttons: 1 }), ['Unusable entries skipped in buttons: 1']);
+  assert.deepEqual(describeSkipped({ issueButtons: 2 }), ['Unusable entries skipped in issueButtons: 2']);
   assert.deepEqual(describeSkipped({}), []);
 });
 
-// --- A signal that arrived is never dropped (R7, class (a)) ---
+// --- A signal that arrived is never dropped ---
 // "The store moved" reaches this page as a change event or as a read, and both can arrive at a
 // moment when the page cannot act on them. Not acting is fine; forgetting is not — every arrival
 // ends either adopted or on the banner.
@@ -966,7 +980,7 @@ const { classifyStorageChange, SAVE_LOADING_MESSAGE } =
   vm.runInThisContext('({ classifyStorageChange, SAVE_LOADING_MESSAGE })');
 
 test('a save refuses while this page has not caught up with a change it already saw', () => {
-  // Codex R6 P1-A, the half that does not lean on read ordering. Another device saved S1, the event
+  // Another device saved S1, the event
   // arrived, and the re-read is still in flight — so the page knows it is behind the store and its
   // payload describes the world before that change. The live read agreeing with the capture proves
   // nothing here: that read can be answered from before the remote write committed.
@@ -975,7 +989,7 @@ test('a save refuses while this page has not caught up with a change it already 
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, storeMovedSinceLoad: true,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE);
+  assert.equal(outcome.message, SAVE_CONFLICT_MESSAGE());
   assert.equal(outcome.stale, true, 'and the banner has to stay up');
 });
 
@@ -988,14 +1002,14 @@ test('a load that applied under a save refuses it — the form is not what the p
     appliedGenerationAtStart: 1, appliedGenerationNow: 2,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE);
+  assert.equal(outcome.message, SAVE_RELOADED_MESSAGE());
   assert.equal(outcome.stale, false, 'the page just caught up — it is not behind the store');
 });
 
 test('a save does not start while a load is in flight', () => {
   assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: false }), true);
   assert.equal(shouldStartPageTask({ loaded: true, saving: false, loading: true }), false);
-  assert.match(SAVE_LOADING_MESSAGE, /again/i);
+  assert.match(SAVE_LOADING_MESSAGE(), /again/i);
 });
 
 test("Codex's P1-A combination cannot happen: a load applies, or the save is allowed, never both", () => {
@@ -1013,13 +1027,13 @@ test("Codex's P1-A combination cannot happen: a load applies, or the save is all
 
 test('every arrival of a remote change ends adopted or on the banner, never nowhere', () => {
   const ours = { buttons: {} };
-  // R9 renamed `saving` to `taskInFlight`: an import holds the form across an await exactly as a
+  // `taskInFlight` covers imports as well as saves: each holds the form across an await exactly as a
   // save does, and the narrower name was why only one of them was covered.
   const base = { changes: ours, loaded: true, taskInFlight: false, busy: false, isOwnWrite: false };
   assert.equal(classifyStorageChange(base), 'adopt');
   assert.equal(classifyStorageChange({ ...base, busy: true }), 'banner');
   assert.equal(classifyStorageChange({ ...base, taskInFlight: true }), 'defer');
-  // Codex R6 P1-B: dropped outright before the first load, with a comment claiming the load in
+  // A change before the first load is dropped outright; a load in
   // flight would pick it up — it cannot, because its read may predate the change.
   assert.equal(classifyStorageChange({ ...base, loaded: false }), 'defer');
   assert.equal(classifyStorageChange({ ...base, isOwnWrite: true }), 'ignore');
@@ -1035,8 +1049,8 @@ test('a load answer that had to be discarded still reports that the store moved'
   assert.equal(saveConflict(loaded, { ...loaded }), false, 'an unchanged store raises no banner');
 });
 
-// --- What a filtered-out stored value costs, and who may write over it (R7, class (b)) ---
-// The quarantine panel that was drafted here is gone (decision 9): the only realistic producer of
+// --- What a filtered-out stored value costs, and who may write over it ---
+// The quarantine panel that was drafted here is gone: the only realistic producer of
 // entries this page cannot read was version skew between machines, and the storage-namespace
 // contract removes that at the source. What is left — a hand edit, or a bug of ours — is served by
 // skipping loudly, refusing to invent replacements, and saying what Save will do.
@@ -1045,7 +1059,7 @@ const { seedFromStorage, STORED_FROM_FUTURE_MESSAGE, SKIP_CONSEQUENCE } =
   vm.runInThisContext('({ seedFromStorage, STORED_FROM_FUTURE_MESSAGE, SKIP_CONSEQUENCE })');
 
 test('settings written by a newer generation may be read but never written over', () => {
-  // Insurance against a breach of decision 9: a future version is supposed to write its own
+  // Insurance against a future version writing its own
   // namespace and leave this one alone. If one did not, this page must not answer by recording its
   // own older shape on top.
   const S0 = { buttons: [], version: SETTINGS_VERSION + 1 };
@@ -1053,10 +1067,10 @@ test('settings written by a newer generation may be read but never written over'
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION + 1,
   });
   assert.equal(outcome.refused, true);
-  assert.equal(outcome.message, STORED_FROM_FUTURE_MESSAGE);
+  assert.equal(outcome.message, STORED_FROM_FUTURE_MESSAGE());
   assert.equal(outcome.write, undefined);
-  assert.match(STORED_FROM_FUTURE_MESSAGE, /newer version of the extension/i);
-  assert.match(STORED_FROM_FUTURE_MESSAGE, /chrome:\/\/extensions/);
+  assert.match(STORED_FROM_FUTURE_MESSAGE(), /newer version of the extension/i);
+  assert.match(STORED_FROM_FUTURE_MESSAGE(), /chrome:\/\/extensions/);
   // The current generation is not the future, and neither is one we have already caught up to
   assert.equal(planSave({
     capturedSnapshot: S0, liveSnapshot: { ...S0 }, payload: S0, loadedVersion: SETTINGS_VERSION,
@@ -1067,7 +1081,7 @@ test('settings written by a newer generation may be read but never written over'
 });
 
 test('a key that lost entries is not refilled with our defaults', () => {
-  // Codex R6 P1-C: `claudeInputs: "!secret"` made the entry unreadable, the section fell back to the
+  // `claudeInputs: "!secret"` makes the entry unreadable, so the section must not fall back to the
   // shipped preset, and an ordinary Save then recorded that preset over a command the user had
   // written. "Nothing stored" and "stored something we could not use" are different answers.
   const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
@@ -1086,7 +1100,7 @@ test('a key that lost entries is not refilled with our defaults', () => {
 test('entries beyond the button limit are skipped and counted, never silently trimmed', () => {
   // The limits used to be enforced only on the import path, so storage readers passed a fourth
   // button through to the app while import quietly dropped it — and a quiet drop is the same defect
-  // as P1-C, because the next Save records the trimmed list.
+  // because the next Save records the trimmed list.
   const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
   const button = n => ({ face: 'x', label: `b${n}`, command: `{cd} && echo ${n}`, claudeInputs: [] });
   const adopted = adoptStoredSettings({ buttons: [button(1), button(2), button(3), button(4)] });
@@ -1106,11 +1120,11 @@ test('claude inputs beyond the limit make the whole entry unusable rather than b
 test('the report says what Save is going to do about what it skipped', () => {
   // Skipping is only honest if the consequence is stated: the entries are not in the edit state, so
   // the next Save writes them out of existence.
-  assert.match(SKIP_CONSEQUENCE, /saving will remove/i);
-  assert.match(SKIP_CONSEQUENCE, /export/i);
+  assert.match(SKIP_CONSEQUENCE(), /saving will remove/i);
+  assert.match(SKIP_CONSEQUENCE(), /export/i);
 });
 
-// --- One page-changing task at a time, and one definition of "unsaved" (R8) ---
+// --- One page-changing task at a time, and one definition of "unsaved" ---
 
 const { IMPORT_BUSY_MESSAGE, hasUnsavedWork } =
   vm.runInThisContext('({ IMPORT_BUSY_MESSAGE, hasUnsavedWork })');
@@ -1122,8 +1136,8 @@ test('a second import while one is still being read is refused, and says why', (
   assert.equal(shouldStartPageTask({ loaded: true, importing: false }), true);
   assert.equal(shouldStartPageTask({ loaded: true, importing: true }), false);
   assert.equal(shouldStartPageTask({ loaded: false, importing: false }), false);
-  assert.match(IMPORT_BUSY_MESSAGE, /already being read|in progress/i);
-  assert.match(IMPORT_BUSY_MESSAGE, /again/i, 'a refusal has to say what to do next');
+  assert.match(IMPORT_BUSY_MESSAGE(), /already being read|in progress/i);
+  assert.match(IMPORT_BUSY_MESSAGE(), /again/i, 'a refusal has to say what to do next');
 });
 
 test('leaving with a decided-but-unsaved review is leaving unsaved work', () => {
@@ -1157,8 +1171,8 @@ test('the applied count is what was actually rewritten, not what was checked', (
   assert.equal(applyMigrationPlan({ buttons: [a, b] }, plan, []).applied, 0);
 });
 
-// --- One page-changing task at a time, for real this time (R9) ---
-// R8 serialized imports against each other and stopped there: a Save could still start while a file
+// --- One page-changing task at a time, for real this time ---
+// Imports are serialized against each other, but a Save could still start while a file
 // was being read, and an import while a save was in flight. Each of those builds a payload from a
 // form the other is about to replace.
 
@@ -1190,7 +1204,7 @@ test('a remote change is deferred while any page task holds the form, not only a
   assert.equal(classifyStorageChange({ ...base, taskInFlight: true }), 'defer');
 });
 
-// --- Settings that cannot be stored are refused before they are attempted (R9) ---
+// --- Settings that cannot be stored are refused before they are attempted ---
 
 test('a payload too large for one sync item is refused, and says which key', () => {
   // storage.sync caps an item at 8,192 bytes. A 9,000-character command made `buttons` 9,159 bytes,
@@ -1203,9 +1217,52 @@ test('a payload too large for one sync item is refused, and says which key', () 
   assert.equal(outcome.write, undefined, 'nothing may be written');
   assert.match(outcome.message, /too large/i);
   assert.match(outcome.message, /buttons/, 'the key that is over has to be named');
-  assert.match(SETTINGS_TOO_LARGE_MESSAGE, /shorten/i, 'and what to do about it');
+  assert.match(SETTINGS_TOO_LARGE_MESSAGE(), /shorten/i, 'and what to do about it');
 
   const fits = { buttons: [{ face: 'x', label: 'b', command: '{cd} && claude', claudeInputs: [] }] };
   assert.equal(planSave({ capturedSnapshot: {}, liveSnapshot: {}, payload: fits }).refused, false);
   assert.ok(MAX_STORED_ITEM_BYTES >= 4096, 'and it must not refuse a plausible set of buttons');
+});
+
+// --- The refusals are messages now, and still say the way out ---
+// These sentences are translated, so what a test may assert about them is what the *message* says,
+// not what a constant holds. The wording checks are pinned against English explicitly: reading them
+// out of whatever language the fixture happens to be in would let a translation quietly drop the
+// instruction while the test went on passing.
+
+test('every refusal the options page can show is a message, resolved when it is read', () => {
+  // Chrome picks what "the language" is: the catalogue is selected by Chrome and the lookup asks it on every
+  // call, so the extension has no locale of its own to move. The question this case asks is the same
+  // one a layer down — is the refusal resolved now, or was it frozen when the module loaded?
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
+  const previous = installMessageBackend(catalogueBackend('en'));
+  try {
+    const english = SAVE_CONFLICT_MESSAGE();
+    installMessageBackend(catalogueBackend('ko'));
+    const korean = SAVE_CONFLICT_MESSAGE();
+    assert.notEqual(english, korean, 'the refusal did not follow the catalogue');
+    assert.ok(korean.length > 0);
+  } finally {
+    installMessageBackend(previous);
+  }
+});
+
+test('the save-conflict refusal is not the stale banner reworded', () => {
+  // These two are one symbol and one word apart. The ownership gate only refuses
+  // *exact* duplicates, so a pair like that passes the gate while reading to a user as a slip —
+  // they are said at different moments and now say different things.
+  const { setCurrentLocale, currentLocale, i18nText } =
+    vm.runInThisContext('({ setCurrentLocale, currentLocale, i18nText })');
+  const before = currentLocale();
+  try {
+    setCurrentLocale('en');
+    const banner = i18nText('ext.banner.stale', 'en');
+    const refusal = SAVE_CONFLICT_MESSAGE();
+    assert.notEqual(banner, refusal);
+    // and not merely different by a character — the refusal has to report that nothing was saved
+    assert.match(refusal, /not saved/i, 'the refusal no longer says the save did not happen');
+    assert.doesNotMatch(banner, /not saved/i, 'the banner started reporting a refusal it does not know about');
+  } finally {
+    setCurrentLocale(before);
+  }
 });

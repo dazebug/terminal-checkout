@@ -4,43 +4,71 @@
 // The content script, the service worker, and the options page all load this file first.
 
 // Every preset opens with `{cd}` — the clause that moves into the repository. Its value comes from
-// the app, not from this file: with no base directory configured it is exactly `z {repo}` (what
-// these presets used to spell out), and with one configured it falls back to `cd <base>/<repo>` and
+// the app, not from this file: with no base directory configured it is exactly `z {repo}`, and with
+// one configured it falls back to `cd <base>/<repo>` and
 // then to cloning. A bare `z {repo}` exits non-zero on a cold zoxide DB, which kills the whole `&&`
 // chain with nothing to see anywhere (issue #30).
 //
+// A preset is *named* by its `id` and *shown* by its `name` and `face`. Those last two are display
+// text and will be translated, so nothing may find a preset by them: the dropdown's value, and the
+// default buttons' reference back to the preset they were built from, both go through the id.
+// Ids are ASCII `<kind>.<what>` and never change — a translation is not a reason to touch one.
+//
+// An id names a preset and never a button. It is not written to storage: a saved button is a
+// snapshot of the preset's fields (`toStoredButton`), and putting a persistent id into the stored
+// schema would be a SETTINGS_VERSION bump, which is a different piece of work entirely.
+//
+// A preset. Its `id` and `command` are fixed; its display text is resolved **when it is read**
+// rather than when this file loads.
+//
+// `name` and `face` are accessors over the dictionaries. A value read at load time would freeze the
+// language the context started in, so presets are built here and never spread: object spread
+// evaluates accessors and would store their current values.
+//
+// The face is a key only when it is **text on the page**. The PR and issue presets show an emoji,
+// which no language rewrites, so those keep a literal — and a literal is also what keeps `isTextFace`
+// answering the same way in every language for them.
+function definePreset({ id, nameKey, faceKey, face, command, claudeInputs }) {
+  const preset = { id, command };
+  if (claudeInputs) preset.claudeInputs = claudeInputs;
+  Object.defineProperty(preset, 'name', { get: () => tr(nameKey), enumerable: true });
+  if (faceKey) Object.defineProperty(preset, 'face', { get: () => tr(faceKey), enumerable: true });
+  else preset.face = face;
+  return preset;
+}
+
 // PR pages: buttons next to the branch name. The { } is grouping, not a subshell — cd has to stick
 // in the current shell, so ( ) must not be used
 const PR_PRESETS = [
-  {
-    name: 'Checkout Branch', face: '⏏️',
-    // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
+  // If checkout fails (branch already checked out in a worktree, etc.), move to the worktree at the conventional path
+  definePreset({
+    id: 'pr.checkout', nameKey: 'ext.preset.pr.checkout', face: '⏏️',
     command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }',
-  },
-  {
-    name: 'Checkout + Claude', face: '🤖',
+  }),
+  definePreset({
+    id: 'pr.checkoutClaude', nameKey: 'ext.preset.pr.checkoutClaude', face: '🤖',
     command: '{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; } && claude',
-  },
-  {
-    name: 'Worktree + Claude', face: '🌳',
+  }),
+  definePreset({
+    id: 'pr.worktreeClaude', nameKey: 'ext.preset.pr.worktreeClaude', face: '🌳',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch} && claude',
-  },
-  {
-    name: 'Worktree', face: '🪵',
+  }),
+  definePreset({
+    id: 'pr.worktree', nameKey: 'ext.preset.pr.worktree', face: '🪵',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-{branch_underbar} ] || git worktree add -f ../{repo}-{branch_underbar} {branch}) && cd ../{repo}-{branch_underbar} && git merge --ff-only origin/{branch}',
-  },
-  {
-    name: 'Review PR (claude)', face: '🔍',
+  }),
+  // A leading `!` is typed into claude's shell mode, so the command really runs in that session
+  definePreset({
+    id: 'pr.review', nameKey: 'ext.preset.pr.review', face: '🔍',
     command: '{cd} && claude',
-    // A leading `!` is typed into claude's shell mode, so the command really runs in that session
     claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}'],
-  },
+  }),
 ];
 
 // Issue pages: buttons on the status badge row. There is no head branch, so the {branch} family and {base} are unavailable
 const ISSUE_PRESETS = [
-  {
-    name: 'Read Issue (claude)', face: '📋',
+  definePreset({
+    id: 'issue.read', nameKey: 'ext.preset.issue.read', face: '📋',
     command: '{cd} && claude',
     claudeInputs: [
       '!gh issue view {number}',
@@ -48,51 +76,75 @@ const ISSUE_PRESETS = [
       // Numbers of the issues and PRs that mention this issue. The --json fields only surface the "closing PR", so use the timeline
       '!gh api repos/{owner}/{repo}/issues/{number}/timeline --jq \'[.[]|select(.event=="cross-referenced")|.source.issue.number]\'',
     ],
-  },
-  {
-    name: 'Start Work on Issue', face: '🌳',
+  }),
+  definePreset({
+    id: 'issue.startWork', nameKey: 'ext.preset.issue.startWork', face: '🌳',
     command: '{cd} && git fetch origin && ([ -d ../{repo}-issue-{number} ] || git worktree add -f ../{repo}-issue-{number} -b issue-{number} origin/{main}) && cd ../{repo}-issue-{number} && claude',
     claudeInputs: ['!gh issue view {number} --comments'],
-  },
-  {
-    name: 'Open Issue', face: '📂',
+  }),
+  definePreset({
+    id: 'issue.open', nameKey: 'ext.preset.issue.open', face: '📂',
     command: '{cd}',
     claudeInputs: [],
-  },
+  }),
 ];
 
 // Repository pages: buttons next to the repository name in the header. Unlike PR and issue buttons
 // these look like GitHub's green action button, so a name reads more naturally than a short emoji
 // as the face
 const REPO_PRESETS = [
-  {
-    name: 'Open in Terminal', face: 'Open in Terminal',
+  definePreset({
+    id: 'repo.open', nameKey: 'ext.preset.repo.open', faceKey: 'ext.preset.repo.open',
     command: '{cd}',
-  },
-  {
-    name: 'Open + Claude', face: 'Open + Claude',
+  }),
+  definePreset({
+    id: 'repo.openClaude', nameKey: 'ext.preset.repo.openClaude', faceKey: 'ext.preset.repo.openClaude',
     command: '{cd} && claude',
-  },
-  {
-    name: 'Update main', face: 'main ⤓',
+  }),
+  definePreset({
+    id: 'repo.updateMain', nameKey: 'ext.preset.repo.updateMain', faceKey: 'ext.preset.repo.updateMain.face',
     command: '{cd} && git checkout {main} && git pull --ff-only',
-  },
+  }),
 ];
 
-const DEFAULT_BUTTONS = [
-  { face: PR_PRESETS[0].face, label: PR_PRESETS[0].name, command: PR_PRESETS[0].command, claudeInputs: [] },
-];
+// The preset an id names, or null. A list search rather than a keyed object: an id arrives from a
+// `<select>` the page filled in, and comparing against the entries is the form that cannot answer
+// with something off Object.prototype (the same rule the stored-settings readers keep).
+function presetById(presets, id) {
+  return presets.find(preset => preset.id === id) ?? null;
+}
 
-const DEFAULT_ISSUE_BUTTONS = [
-  {
-    face: ISSUE_PRESETS[0].face, label: ISSUE_PRESETS[0].name,
-    command: ISSUE_PRESETS[0].command, claudeInputs: [...ISSUE_PRESETS[0].claudeInputs],
-  },
-];
+// What the options page's dropdown is built from — the id as the value, the name as the text. The
+// pairing lives here rather than in options.js because *which field identifies a preset* is a
+// defaults.js decision, and because there is nowhere to assert it on the options page.
+function presetOptions(presets) {
+  return presets.map(preset => ({ value: preset.id, text: preset.name }));
+}
 
-const DEFAULT_REPO_BUTTONS = [
-  { face: REPO_PRESETS[0].face, label: REPO_PRESETS[0].name, command: REPO_PRESETS[0].command, claudeInputs: [] },
-];
+// The button drawn when a section has nothing stored: the preset's fields, plus the id it came from
+// so the reference survives its name being translated. `presetId` is edit-state only — every reader
+// reaches a button through buttonFields, which keeps the four stored fields and drops the rest.
+function defaultFromPreset(presets, id) {
+  const preset = presetById(presets, id);
+  // Loud at load rather than a default button with no command: a typo here ships a button that
+  // reaches the app as an empty command_template and is refused with nothing to explain it.
+  if (!preset) throw new Error(`No preset with id ${id}`);
+  return {
+    presetId: preset.id,
+    // Read through to the preset, so the button drawn when nothing is stored is in the language
+    // being drawn right now rather than the one this file was loaded in
+    get face() { return preset.face; },
+    get label() { return preset.name; },
+    command: preset.command,
+    claudeInputs: [...(preset.claudeInputs || [])],
+  };
+}
+
+const DEFAULT_BUTTONS = [defaultFromPreset(PR_PRESETS, 'pr.checkout')];
+
+const DEFAULT_ISSUE_BUTTONS = [defaultFromPreset(ISSUE_PRESETS, 'issue.read')];
+
+const DEFAULT_REPO_BUTTONS = [defaultFromPreset(REPO_PRESETS, 'repo.open')];
 
 // Variables the app fills in on its own, usable on every page. They are deliberately kept out of
 // the per-page `variables` lists below, which mean "what the extension actually sends": the app is
@@ -298,7 +350,7 @@ const SYNC_QUOTA_BYTES_PER_ITEM = 8192;
 // The budget a single settings key may occupy, a quarter under the hard limit. The spare quarter is
 // not decoration: a measured real profile (the presets plus two overrides) is 1,978 bytes across all
 // keys, so this refuses nothing anyone has, while leaving room for whatever framing a future
-// generation puts around the same content (decision 9 clause 2 — if that clause packs a generation
+// generation puts around the same content (if that clause packs a generation
 // and its seed snapshot into one item, this budget has to be revisited with it).
 const MAX_STORED_ITEM_BYTES = 6144;
 
@@ -414,20 +466,80 @@ function readableButtonFields(entry) {
 // saved, someone reordered — or the page may be showing something its own read never returned. The
 // command that then runs is one the user never saw.
 //
-// So a click carries a fingerprint of the button as it was drawn, and the service worker runs it
-// only if what it now reads is that same button. The fingerprint is a comparison key and nothing
-// more: the command still comes from storage and never from the message, so a message can only ever
-// cause a refusal, never introduce a command of its own. That is the same shape as the app owning
-// the terminal choice — the side that executes keeps the single source of truth.
+// So a click carries a fingerprint of what it was going to run, and the service worker runs it only
+// if what it now reads runs the same thing. The fingerprint is a comparison key and nothing more:
+// the command still comes from storage and never from the message, so a message can only ever cause
+// a refusal, never introduce a command of its own. That is the same shape as the app owning the
+// terminal choice — the side that executes keeps the single source of truth.
 //
-// Both sides reach a button through adoptStoredButtons, so both fingerprint the same normalized
-// shape, and buttonFields writes its keys in a fixed order, which makes the JSON stable.
-function buttonFingerprint(button) {
-  return JSON.stringify(buttonFields(button));
+// Everything a click will hand the app, normalized exactly as the send normalizes it: the inputs are
+// trimmed and the empty ones dropped, which is what runButton did on its way out. It builds its
+// message from this now, so the two cannot disagree — a normalization the fingerprint performs and
+// the send does not is two buttons that are different to us and byte-identical to the app.
+//
+// Key order is fixed by this literal, which is what makes the JSON of it a stable comparison key.
+function executionPayload(button) {
+  return {
+    command: button.command || '',
+    claudeInputs: (button.claudeInputs || []).map(input => String(input).trim()).filter(Boolean),
+  };
 }
 
-// What a mismatch reports. It reaches the user on the button itself, through the {success:false}
-// response the content script already inspects, so it has to say what to do next.
+// The question the fingerprint answers is "is this still the button that was drawn" — where a
+// *button* is the command and the inputs it carries, and not its face or its tooltip. Which button
+// was clicked is answered by its index within its section, and the pair of the two is what names it:
+// `(kind, index, executionFingerprint)`.
+//
+// **It is not the identity of the request**, and the earlier wording here — "execution identity",
+// "the same thing executed" — claimed that it was. The message also carries `variables`, which this
+// does not cover and must not: they are read from the live DOM at click time, not frozen when the
+// button was drawn, so a PR whose branch moved between the two runs the command against the branch
+// it has *now*, which is the behaviour anyone pressing "check out this PR" is asking for. Whether
+// the page is still the page is a different question with a different answer — `requestIsCoherent`,
+// which compares identity (`kind/owner/repo/number`) and deliberately not content, because content
+// changing underneath a page is expected and is not a reason to refuse.
+//
+// `face` and `label` were part of this and had to come out. They are display text: they never leave
+// the browser (runButton sends the command template, the page's variables and the claude inputs —
+// never the face or the tooltip), and they will be translated. Two extension contexts can resolve
+// different languages for a whole request — Chrome contexts can outlive an extension-folder swap,
+// and adjacent generations can therefore render the same button through different catalogues — and
+// with a display string in the key, that difference refused a command that had not changed by a
+// character.
+//
+// So this is the identity of **what the button will run**. It is not a security identity and not a
+// UX one: two buttons with the same command and the same inputs are one button to this check. That
+// is deliberate — the request and the run are identical, so there is no wrong command it could pick
+// — and it is the residual to revisit if buttons ever need telling apart individually, which would
+// mean a persistent id in the stored schema and therefore a SETTINGS_VERSION bump.
+function buttonFingerprint(button) {
+  return JSON.stringify(executionPayload(button));
+}
+
+// Whether a click may run: what storage holds now has to run what the page drew.
+//
+// The comparison lives here, next to the fingerprint it compares, rather than inline at the one
+// call site — the two are one decision, and a caller holding half of it is a caller that can be
+// given the other half wrong. `shown` is absent only on the extension-icon path, which draws
+// nothing: there is no rendered button for it to disagree with.
+function clickMatchesWhatWasShown(button, shown) {
+  return shown === undefined || buttonFingerprint(button) === shown;
+}
+
+// What a mismatch reports, and where it goes.
+//
+// The content script inspects the `{success:false}` response and throws, but both click handlers
+// catch that throw, put a phase marker on the button (`Error!` / `❌`) and send the message to
+// `console.error`.
+// **No error text is drawn on a GitHub page at all** — the only strings a button ever shows are its
+// face, its tooltip and those phase markers.
+//
+// So this string is a diagnostic today, and it stays English — but it is not an ordinary
+// one, because it is written as an instruction to a user and it will become locale-dependent the
+// moment anything displays it. What that would take is not a translation: the message is composed in
+// the **service worker**, which draws nothing and has no render locale, so displaying it properly
+// means sending a message *id* to the content script and letting the side that knows the language
+// render it. That is a protocol change, and it is the trigger to revisit this.
 const BUTTON_CHANGED_ERROR =
   'This button no longer matches your saved settings — reload the page and try again.';
 
@@ -464,6 +576,11 @@ function adoptStoredMainBranch(raw) {
 
 // What the service worker reads through: same verdict, plus a line in the console where there is no
 // status line to put it in (the counterpart of readStoredButtons).
+// **Latent, like the button warning below it** (see `content.js` for where that boundary was drawn
+// wrongly first): both of these are addressed to a user — they name what was lost and where to go
+// and repair it — and they reach only the console today. English for that reason, not because
+// `console.*` is diagnostic by definition. Their English plural branches would have to be rewritten
+// along with them, which is part of the cost of ever displaying them.
 function readStoredMainBranch(raw) {
   const adopted = adoptStoredMainBranch(raw);
   if (adopted.skipped) {
@@ -519,13 +636,16 @@ function toStoredButton(button) {
 // caller has nothing to change and must not report an edit.
 //
 // It is a function rather than the body of the click handler because the handler is a guard and
-// then a change, and that order is what a test has to be able to reach: [+ Add Button] used to push
-// the button onto the edit state and ask afterwards whether it was allowed to.
+// then a change; the guard must run before the edit state changes.
 function appendButton(buttons, { presets, defaults }) {
   if (buttons.length >= MAX_BUTTONS) return buttons;
   const used = new Set(buttons.map(button => button.face));
   const face = presets.map(preset => preset.face).find(f => !used.has(f)) || defaults[0].face;
-  return [...buttons, adoptButton({ face, label: 'New Button', command: '' })];
+  // The label is resolved now and **stored as text**, so it is a snapshot of the language the
+  // button was created in — the same class as a saved command being a snapshot of the preset it came
+  // from. Making it follow the language later would mean a persistent id in the stored schema, and
+  // that is a SETTINGS_VERSION bump this release does not make.
+  return [...buttons, adoptButton({ face, label: tr('ext.button.newButton'), command: '' })];
 }
 
 // A new array with button `from` moved "before" card `insertBefore`, indexed against the original.

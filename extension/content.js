@@ -20,8 +20,10 @@ const REPO_BUTTON_STYLE = `
 // the button sharply and make the header jump.
 function createRepoButton(buttonConfig, index) {
   const face = buttonFace(buttonConfig);
+  // Read now, for this drawing of the button, so the phases and face come from the same catalogue.
+  // Chrome fixes that catalogue for this extension context; a page reload creates the next one.
   const phases = isTextFace(face)
-    ? { busy: 'Opening...', done: 'Done!', error: 'Error!' }
+    ? { busy: tr('ext.button.phase.busy'), done: tr('ext.button.phase.done'), error: tr('ext.button.phase.error') }
     : { busy: '⏳', done: '✅', error: '❌' };
 
   const button = document.createElement('button');
@@ -67,10 +69,14 @@ function createRepoButton(buttonConfig, index) {
 // Run a single button. sendMessage does not reject when the background returns {success:false}, so
 // without inspecting the response a rejected command would still show up as success on the button.
 //
-// The index says which button; the fingerprint says which button it *was* when it was drawn; the
-// target says which page it was clicked on. The service worker reads storage again for the command
-// and the page again for the branch, and refuses if either disagrees — so what runs is what was on
-// screen, for the page it was on screen for.
+// The index says which button; the fingerprint says what that button was going to run when it was
+// drawn; the target says which page it was clicked on. The service worker reads storage again for
+// the command and the page again for the branch, and refuses if either disagrees — so what runs is
+// what was on screen, for the page it was on screen for.
+//
+// What the fingerprint deliberately leaves out is the face and the tooltip: they are display text
+// and will be translated, so adjacent contexts that rendered through different catalogue
+// generations would otherwise refuse a command neither of them changed (defaults.js).
 //
 // Both are comparison keys, never sources. The command still comes from storage, and the repository,
 // number and branch still come from the tab and its DOM; these two only decide whether to refuse.
@@ -107,6 +113,11 @@ async function loadButtonConfigs(kind) {
     // wrote as null would otherwise throw while drawing and take the whole button row with it
     return readStoredButtons(data[storageKey], defaults);
   } catch (error) {
+    // **Latent, not diagnostic.** "Could not read your
+    // buttons, will retry" is addressed to a *user*: it says what failed, whose it was, and what
+    // happens next. It reaches only the console today, which is why it stays English, but the
+    // boundary that decides that is **who a sentence is addressed to**, not where it is written.
+    // "Everything in `console.*` is a diagnostic" was the broad version, and this is where it leaked.
     console.warn('Terminal Checkout: could not read your buttons, will retry —', error);
     return null;
   }
@@ -379,6 +390,14 @@ function onUrlChange() {
   lastTarget = target;
   // On a URL change, wait a moment before trying to insert the buttons
   setTimeout(tryInsertButton, 300);
+}
+
+// Prime only an adjacent old dictionary skeleton. The current skeleton exposes
+// `installMessageBackend` and needs no locale holder; the baseline skeleton lacks it and still needs
+// its UI-language fallback when a folder swap pairs it with this consumer. The current×current path
+// therefore executes no cache selector, first-render gate, locale notification or redraw machinery.
+if (typeof installMessageBackend !== 'function') {
+  setCurrentLocale(localeToRenderIn(null, chrome.i18n?.getUILanguage?.() || ''));
 }
 
 // Detect History API events

@@ -1,0 +1,5 @@
+/* Info.plist keys that face the user. The only one is NSAppleEventsUsageDescription, and it is
+   drawn by tccd rather than by us. Whether that prompt follows the language chosen in the app is
+   **unmeasured** — measuring it would mean resetting the user's live Automation grant
+   (docs/context/localization.md). */
+"NSAppleEventsUsageDescription" = "GitHub から要求されたチェックアウトコマンドを新しい iTerm2 タブで実行するために、オートメーション権限が必要です。";

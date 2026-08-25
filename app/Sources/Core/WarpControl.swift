@@ -2,28 +2,43 @@ import ApplicationServices
 import Foundation
 
 // MARK: - Tab Config
-// Warp에 새 탭을 열고 명령을 실행시키는 수단은 이것뿐이다: AppleScript를 지원하지 않고
-// (번들에 .sdef 없음, Info.plist에 NSAppleScriptEnabled 없음), warpctrl은 Stable에서 기본
-// 비활성이며, pane에 텍스트를 보내는 CLI(`wezterm cli send-text` 같은 것)도 없다 — 모두 실측.
+// This is the only way to open a new tab in Warp and run a command in it: Warp does not support AppleScript (no .sdef in the bundle, no NSAppleScriptEnabled in Info.plist), warpctrl is disabled by default on Stable, and there is no CLI that sends text to a pane (nothing like `wezterm cli send-text`) — all measured.
 
-/// 요청마다 다른 이름을 쓴다. 고정 이름은 두 가지를 동시에 깨뜨렸다:
-/// ① 같은 이름의 사용자 Tab Config가 있으면 말없이 덮어쓴다
-/// ② `open`이 돌아온 뒤에도 Warp는 파일을 조금 뒤에 읽는다(pane 등장까지 실측 0.5∼0.7초) —
-///    그 사이 다음 요청이 덮어쓰면 두 탭 중 하나에 남의 명령이 뜬다
-/// 이름을 나누면 두 문제가 파일 하나당 하나의 요청이라는 성질로 함께 사라진다. 대신 `+` 메뉴에
-/// 파일이 쌓이지 않도록 실행이 끝나면 지우고(`runInWarp`), 앱이 그 전에 죽어 남은 것은
-/// 다음 실행이 회수한다(`reclaimStaleWarpTabConfigs`).
+/// Every request uses a different name. A fixed name broke two things at once:
+/// ① a user Tab Config of the same name gets silently overwritten
+/// ② Warp reads the file a little after `open` has returned (measured 0.5∼0.7s until the pane appears) — if the next request overwrites it in that gap, one of the two tabs shows the other's command
+/// Splitting the names makes both problems disappear together, through the property that one file belongs to one request. In exchange, the file is deleted once the run is done so it does not pile up in the `+` menu (`runInWarp`), and whatever is left behind because the app died first gets reclaimed by the next run (`reclaimStaleWarpTabConfigs`).
 public let warpTabConfigPrefix = "terminal-checkout-"
 
-/// 이 브랜치 초기 빌드가 쓰던 고정 이름 — 회수 대상으로만 남긴다
+/// The fixed name early builds of this branch used — kept only as a reclaim target.
 let warpTabConfigLegacyStem = "terminal-checkout"
 
-/// 생성 파일임을 알아보는 표시. 사용자 파일을 지우지 않기 위한 마지막 확인이다.
-public let warpTabConfigHeader = "# Terminal Checkout이 자동 생성합니다"
+/// The mark that identifies a file as generated. It is the last check before deleting, and it is there to keep a user file from being removed — a purpose, not a guarantee: `removeWarpTabConfigIfOurs` below documents the window in which one still could be.
+///
+/// **This token is a permanent machine protocol: it will not change again.** It carries no natural
+/// language on purpose, so no future localization can have a reason to touch it. `uninstall.sh`
+/// greps for it and `warpTabConfigIsOurs` matches it — both against the **whole first line**, so a
+/// file that merely starts with it stays the user's — and those three copies have to stay
+/// byte-identical, since a divergence means files nobody deletes. Anything a human should read goes
+/// on the line **below** it (`warpTabConfigTOML`), where translating it is harmless.
+public let warpTabConfigHeader = "#!terminal-checkout/tab-config/v1"
+
+/// The header earlier builds wrote, kept **only** so their files stay reclaimable. It is Korean,
+/// which is exactly why the token above replaced it.
+///
+/// **Rollback is forward-only, and that is accepted rather than solved**: an older binary
+/// cannot recognise a file written with the new token, so rolling back leaves those files in
+/// `~/.warp/tab_configs/` for nobody to collect. The damage is bounded to clutter in Warp's `+`
+/// menu — no data is lost — which is why it is documented instead of engineered around.
+///
+/// Removing this constant is safe only once no user can still be holding a file an older build
+/// wrote. There is no signal that says so, so the trigger is a deliberate one: drop it in the first
+/// release after the app gains a way to know its own upgrade history, or never.
+public let warpTabConfigLegacyHeader = "# Terminal Checkout이 자동 생성합니다"
 
 public func warpTabConfigStem(token: String) -> String { warpTabConfigPrefix + token }
 
-/// Stable 채널만 본다 — Preview 등 다른 채널은 이 디렉토리부터 `~/.warp-<channel>`로 갈린다.
+/// Only the Stable channel is looked at — other channels (Preview and so on) diverge starting from this very directory, at `~/.warp-<channel>`.
 public func warpTabConfigDirectory() -> String {
     (NSHomeDirectory() as NSString).appendingPathComponent(".warp/tab_configs")
 }
@@ -34,7 +49,7 @@ public func warpTabConfigPath(stem: String) -> String {
 
 public func warpTabConfigURL(stem: String) -> String { "warp://tab_config/\(stem)" }
 
-/// 회수해도 되는 파일 이름인가 — 우리 접두사 + 16진 토큰, 또는 옛 고정 이름.
+/// Is this a file name we may reclaim — our prefix plus a hex token, or the old fixed name.
 public func warpTabConfigFileIsOurs(name: String) -> Bool {
     guard name.hasSuffix(".toml") else { return false }
     let stem = String(name.dropLast(".toml".count))
@@ -43,13 +58,24 @@ public func warpTabConfigFileIsOurs(name: String) -> Bool {
     return isOurRequestToken(stem.dropFirst(warpTabConfigPrefix.count))
 }
 
-/// 내용까지 확인한다 — 이름이 우연히 겹친 사용자 파일을 지우면 안 된다.
+/// The contents are checked too — a user file whose name happens to collide must not be deleted.
+///
+/// Both headers count. The legacy one is not a fallback for our own writes (we never write it any
+/// more) but for **files already on users' disks**: dropping it here would strand every Tab Config
+/// an earlier build left behind.
 public func warpTabConfigIsOurs(contents: String) -> Bool {
-    contents.hasPrefix(warpTabConfigHeader)
+    // The token is matched **whole line, exactly**. A prefix match reads `…/v1` followed by
+    // anything as ours — `…/v10`, the shape the next format version takes, and any user line that
+    // happens to start the same way — and the verdict's one job is to keep a user file from being
+    // deleted. We had made this exact match possible ourselves by moving the explanation onto its
+    // own line and then kept matching by prefix.
+    if contents.prefix(while: { $0 != "\n" }) == warpTabConfigHeader { return true }
+    // The legacy header keeps its prefix match because earlier builds wrote the explanation on the
+    // **same** line, so there is no exact string on those disks to match.
+    return contents.hasPrefix(warpTabConfigLegacyHeader)
 }
 
-/// TOML basic string 이스케이프. 제어문자는 리터럴로 담을 수 없어 반드시 escape sequence로
-/// 바꿔야 한다 — 하나라도 새면 Warp가 파일 파싱에 실패해 탭이 아예 열리지 않는다.
+/// Escaping for a TOML basic string. Control characters cannot be carried literally and have to become escape sequences — let one through and Warp fails to parse the file, so the tab does not open at all.
 public func escapeForTOMLBasicString(_ text: String) -> String {
     var out = ""
     for scalar in text.unicodeScalars {
@@ -83,7 +109,8 @@ public func escapeForTOMLBasicString(_ text: String) -> String {
 public func warpTabConfigTOML(commands: [String]) -> String {
     let list = commands.map { "\"\(escapeForTOMLBasicString($0))\"" }.joined(separator: ", ")
     return """
-    \(warpTabConfigHeader) — 탭이 열리면 지웁니다.
+    \(warpTabConfigHeader)
+    # Generated by Terminal Checkout; deleted once the tab has opened.
     name = "\(appDisplayName)"
 
     [[panes]]
@@ -94,29 +121,35 @@ public func warpTabConfigTOML(commands: [String]) -> String {
     """
 }
 
-// MARK: - 주입 헬퍼 기동
+// MARK: - Launching the injection helper
 
-/// 앱 번들 안에서 relay와 나란히 놓이는 실행 파일 이름 (`app/build.sh`가 복사한다).
+/// The name of the executable that sits next to the relay inside the app bundle (`app/build.sh` copies it).
 let warpHelperExecutableName = "terminal-checkout-warp-helper"
 
-/// 헬퍼 실행 파일 경로. 앱에서는 `Contents/MacOS/` 안, 테스트·CLI에서는 실행 파일 옆이다.
-/// 못 찾으면 nil — 그때는 명령만 실행하고 claude 입력을 포기한다.
+/// The helper executable's path: inside `Contents/MacOS/` for the app, next to the executable for tests and the CLI.
+/// nil when it cannot be found — the command then runs on its own and claude input is given up.
 func warpHelperExecutablePath() -> String? {
     guard let directory = Bundle.main.executableURL?.deletingLastPathComponent() else { return nil }
     let path = directory.appendingPathComponent(warpHelperExecutableName).path
     return FileManager.default.isExecutableFile(atPath: path) ? path : nil
 }
 
-/// 셸 단어 하나로 만든다. 앱 번들 경로에는 공백이 있어(`Terminal Checkout.app`)
-/// 인용하지 않으면 셸이 두 단어로 갈라 헬퍼가 뜨지 않는다.
+/// Turns it into a single shell word. The app bundle path contains a space (`Terminal Checkout.app`), so without quoting the shell splits it into two words and the helper never starts.
 public func shellSingleQuoted(_ text: String) -> String {
     "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
 }
 
-/// Both arguments are absolute paths, single-quoted — nothing in the user's shell (PATH,
-/// functions, aliases) can change what this line runs.
-public func warpHelperCommand(executable: String, socketPath: String) -> String {
-    "\(shellSingleQuoted(executable)) \(shellSingleQuoted(socketPath))"
+/// The paths are absolute and single-quoted — nothing in the user's shell (PATH, functions, aliases)
+/// can change what this line runs.
+///
+/// The third word is the **deadline**: seconds since the epoch, past which the helper does not take
+/// its address. We write this line, so what the helper is told at birth is ours to choose, and this
+/// is the one thing it needs that nothing later can take away from it.
+public func warpHelperCommand(
+    executable: String, socketPath: String, deadline: Date = Date().addingTimeInterval(warpHelperClaimWindow)
+) -> String {
+    let seconds = String(Int(deadline.timeIntervalSince1970))
+    return "\(shellSingleQuoted(executable)) \(shellSingleQuoted(socketPath)) \(seconds)"
 }
 
 /// Can the injection helper be launched — is the executable in the bundle, and does the socket
@@ -126,12 +159,10 @@ public func warpInjectionHelperIsReady() -> Bool {
     warpHelperExecutablePath() != nil && warpHelperSocketPath(token: warpHelperToken()) != nil
 }
 
-/// 실행마다 새로 뽑는다 — 고정 이름이면 이전 실행이 남긴 죽은 소켓 파일에 붙거나,
-/// 아직 살아 있는 이전 헬퍼(다른 pane)에 입력을 보내게 된다.
 /// Is this the token **we** put in a name? One rule for every name we reclaim, because the
 /// reclaim side used to be wider than the creation side: `%08x` writes exactly eight lower-case
 /// ASCII hex digits, so anything else — upper case, a different length, a Unicode digit — is a
-/// name we never wrote, and deleting one of those is deleting somebody else's file (round 8).
+/// name we never wrote, and deleting one of those is deleting somebody else's file.
 func isOurRequestToken(_ token: Substring) -> Bool {
     token.count == requestTokenLength && token.allSatisfy(\.isASCIIHexLower)
 }
@@ -147,38 +178,243 @@ extension Character {
     var isASCIIHexLower: Bool { isASCII && isHexDigit && !isUppercase }
 }
 
+/// Drawn fresh for every run — with a fixed name we would either attach to a dead socket file left by an earlier run, or send input to an earlier helper that is still alive in another pane.
 public func warpHelperToken() -> String {
     String(format: "%08x", UInt32.random(in: .min ... .max))
 }
 
-/// 회수해도 되는 소켓 파일 이름인가 — 우리 접두사 + 16진 토큰.
+/// Is this a socket file name we may reclaim — our prefix plus a hex token.
+///
+/// Both names a helper can leave behind are ours: the advertised one, and the staging one it binds
+/// before it is entitled to the advertised one (`warpHelperStagingPath`). A helper killed between
+/// `listen` and the claim leaves the second, and a reclaim that only knew the first would leave it
+/// in `/tmp` for good.
+/// And the pin, which is not a socket and so is not one of the two names above.
+public func warpHelperPinFileIsOurs(name: String) -> Bool {
+    guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(warpHelperPinSuffix) else { return false }
+    return isOurRequestToken(
+        name.dropFirst(warpHelperSocketPrefix.count).dropLast(warpHelperPinSuffix.count)
+    )
+}
+
 public func warpHelperSocketFileIsOurs(name: String) -> Bool {
-    guard name.hasPrefix(warpHelperSocketPrefix), name.hasSuffix(".sock") else { return false }
-    return isOurRequestToken(name.dropFirst(warpHelperSocketPrefix.count).dropLast(".sock".count))
+    guard name.hasPrefix(warpHelperSocketPrefix) else { return false }
+    for suffix in [warpHelperAdvertisedSuffix, warpHelperStagingSuffix] where name.hasSuffix(suffix) {
+        return isOurRequestToken(name.dropFirst(warpHelperSocketPrefix.count).dropLast(suffix.count))
+    }
+    return false
 }
 
 public let warpHelperSocketPrefix = "tcw-"
+/// The name the app writes into the Tab Config and later talks to.
+public let warpHelperAdvertisedSuffix = ".sock"
+/// The name a helper listens on until it is allowed to answer to the advertised one. Shorter than
+/// the advertised suffix on purpose: a path that fits `sun_path`'s 104 bytes then has a staging
+/// name that fits too, so the length check on the advertised path answers for both.
+public let warpHelperStagingSuffix = ".pre"
+/// The file the app links from to take an address back (`warpHelperPinPath`). Not a socket and
+/// never bound, so it needs no room in `sun_path`.
+public let warpHelperPinSuffix = ".pin"
 
-/// 후보 디렉토리 중 sun_path 104바이트에 들어가는 첫 경로. 하나도 안 들어가면 nil.
+/// The first candidate directory whose path fits in sun_path's 104 bytes. nil when none of them fits.
 public func warpHelperSocketPath(token: String, directories: [String]) -> String? {
     for directory in directories {
-        let path = (directory as NSString).appendingPathComponent("\(warpHelperSocketPrefix)\(token).sock")
+        let path = (directory as NSString)
+            .appendingPathComponent("\(warpHelperSocketPrefix)\(token)\(warpHelperAdvertisedSuffix)")
         if makeUnixSockaddr(path) != nil { return path }
     }
     return nil
 }
 
-/// 임시 디렉토리를 쓰는 이유는 경로가 짧아 sun_path 104바이트 제한에 여유가 있어서다.
-/// 남은 파일을 OS가 치워 주리라고 기대하지 않는다 — 헬퍼가 SIGKILL로 끝나면 `unlink`가 돌지
-/// 못하므로, 다음 실행이 죽은 소켓을 직접 회수한다(`reclaimDeadWarpHelperSockets`).
+/// A temporary directory is used because its path is short, which leaves headroom against sun_path's 104-byte limit.
+/// The OS is not relied on to clean up what is left behind — when the helper ends on SIGKILL its `unlink` never runs, so the next run reclaims dead sockets itself (`reclaimDeadWarpHelperSockets`).
 public func warpHelperSocketPath(token: String) -> String? {
     warpHelperSocketPath(token: token, directories: [NSTemporaryDirectory(), "/tmp"])
 }
 
-// MARK: - 설치 감지와 프로세스 트리
+// MARK: - The advertised address has one owner, and the kernel decides which
 
-/// Warp 앱 번들. LaunchServices 조회(AppKit)를 Core에 들이지 않으려고 표준 위치만 본다 —
-/// 앱과 Core가 같은 함수를 쓰게 해서 "설정에는 설치됨, 실행은 못 찾음"이 생기지 않게 한다.
+// A helper is created by a line this app writes into a Tab Config, and it is created **late**: the
+// launch can take fifteen seconds and Warp brings the pane up 0.5∼0.7s after `open` returns
+// (measured). So the app can decide to go away between admitting a request and that helper being
+// born, and the farewell it sends on the way out then reaches a socket nobody is listening on.
+// The window opens at `record`, not at `open`.
+//
+// It is closed by making the two sides race for **one name**, one operation each, with both
+// outcomes safe.
+//
+// **The app occupies the name with the same operation the helper claims it with — `link`.** `bind`
+// and `mkdir` each leave a failure path in which the helper can still claim:
+//  - `bind` needs a descriptor, so it failed where `socket()` failed, and every such failure read as
+//    "the helper won" — a farewell to nobody while the delayed helper's `link` still succeeded;
+//  - `mkdir` needs no descriptor but it does need an **inode**, and `link` reuses the socket's. The
+//    an inode shortage answers `.failed`, which sends no farewell, while the helper's `link` goes
+//    through.
+// Linking from a file the app already holds removes the argument instead of narrowing it: both sides
+// create a directory entry in the **same parent** and neither allocates an inode, so *the app could
+// not occupy* implies *the helper cannot claim* — **while the source entry and the filesystem
+// conditions are unchanged between the two calls**. The same two syscalls at different moments are
+// not the same outcome, and this file
+// documents the counterexample a few paragraphs down — a same-uid process deleting the pin makes the
+// app's `link` answer `ENOENT` while the helper's later one succeeds. Neither side retries a
+// transient either. What the construction removes is the *class* of divergence that came from the
+// two operations being different operations; what remains is named as residual 5 in the helper's
+// preamble. The file to link from is made
+// when the helper is registered rather than when the app is leaving, which is what keeps
+// termination-time pressure out of the path (`warpHelperPinPath`).
+//
+// Measured with throwaway probes that are not in the repository — the findings below are the whole
+// record of them, so nothing here is a pointer to go and read:
+//  - `link` onto a name that already exists is refused with `EEXIST`, either way round, and a
+//    *listening* socket reached through a hard link accepts connections normally — so the helper can
+//    bind privately, listen, and only then put itself where the app is looking;
+//  - the two links fail together: parent missing is `ENOENT` for both, parent read-only `EACCES` for
+//    both, and the advertised name ends up carrying the source's inode (`nlink` 2), so nothing new
+//    is allocated on either side;
+//  - `rename` overwrites its destination and is therefore useless here — the helper would take back
+//    an address the app had already occupied.
+// What is lost is `EADDRINUSE`'s specificity, and what replaces it is narrower than it looks:
+// `EEXIST` says the name is **occupied** and nothing more — not who by. That is why the value says
+// `occupied` and the farewell is best effort (measured: connecting to a non-socket is `ENOTSOCK`,
+// not a hang).
+
+/// The name a helper binds before it is entitled to answer on the advertised one.
+public func warpHelperStagingPath(advertised: String) -> String {
+    (advertised as NSString).deletingPathExtension + warpHelperStagingSuffix
+}
+
+/// The file the app links from when it takes an address back.
+///
+/// It sits beside the advertised name so that the occupation and the helper's claim are entries in
+/// the same directory — that is what makes their failures the same failures. It is created when the
+/// helper is registered, because a source made at termination would put the allocation this design
+/// exists to avoid back into the moment that must not fail.
+public func warpHelperPinPath(advertised: String) -> String {
+    (advertised as NSString).deletingPathExtension + warpHelperPinSuffix
+}
+
+/// What is written inside the pin, and therefore inside the occupied name — they are two names for
+/// one inode, so proving one proves the other.
+///
+/// It exists because the sweep that removes them has to tell our file from a file somebody else put
+/// at the same name, and a name cannot do that: the socket sweeps are narrow on purpose ("anyone can
+/// drop a regular file or a symlink under the same name"), and widening one to regular files would
+/// have given that away. Content is how `warpTabConfigIsOurs` already answers the same question. A
+/// language-neutral token because nothing here is ever translated.
+public let warpHelperPinMarker = "terminal-checkout/warp-helper-pin v1\n"
+
+/// Makes that file. Called once per Warp request that schedules claude input, next to the register
+/// entry it belongs to.
+///
+/// False means the request is refused — `runInWarp` throws on it, because a helper whose address
+/// cannot be taken back is the defect this whole mechanism exists for.
+///
+/// **A partial pin is worse than none**, so a failed write takes the file with it: the sweep removes
+/// only files carrying the whole marker, so a half-written one would be collected by nothing, ever.
+/// What survives that is a process that dies between the `write` and the `unlink` — the file is then
+/// a leak this design does not collect, and that is the residual rather than a race.
+@discardableResult
+public func createWarpHelperPin(forAdvertised advertised: String) -> Bool {
+    let path = warpHelperPinPath(advertised: advertised)
+    let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    guard writeAll(fd: fd, data: Data(warpHelperPinMarker.utf8)) else {
+        unlink(path)
+        return false
+    }
+    return true
+}
+
+/// Removes one we have just made and are giving up on — the registration threw, so nothing was
+/// launched and nothing can claim.
+///
+/// It goes through the same verifier the sweep uses rather than a raw `unlink`: between making the
+/// file and this line a same-uid process can put something else at that name, and "we made it a
+/// moment ago" is not the same fact as "this is it".
+public func removeWarpHelperPin(forAdvertised advertised: String) {
+    removeWarpHelperFileIfOurs(path: warpHelperPinPath(advertised: advertised))
+}
+
+/// **The helper's half**, taken after it is already listening — which is why the advertised name
+/// never exists in a state where a connection to it would be refused.
+///
+/// False means the advertised name was already occupied — by the app taking it back before the pane
+/// came up, which is the case this exists for, or by anything else at that name — and then this
+/// helper must not serve. The staging name is dropped either way: on success the socket has the
+/// advertised name, on failure this process is leaving, and in both cases the socket itself is held
+/// by the fd rather than by a name.
+///
+/// `errno` is put back after the `unlink` so the caller can still say *why* it lost — `EEXIST` is
+/// occupancy and anything else is not, and a diagnostic that could not tell them apart would report
+/// a vanished temporary directory as a decision the app made.
+public func claimWarpHelperAddress(from staging: String, as advertised: String) -> Bool {
+    let claimed = link(staging, advertised) == 0
+    let failure = errno
+    unlink(staging)
+    if !claimed { errno = failure }
+    return claimed
+}
+
+/// **What became of an address the app tried to take back on its way out.**
+///
+/// Three outcomes are distinct: an occupied address can receive a farewell, a withdrawn address
+/// needs none, and a failed withdrawal leaves the name free for a delayed helper to claim. The
+/// last case is kept separate so it cannot be mistaken for an occupied address.
+public enum WarpHelperAddressWithdrawal: Equatable {
+    /// Taken. No helper can ever answer there, and there is nothing to dismiss.
+    case withdrawn
+    /// **Something is at that name.** Not "a helper is listening": `EEXIST` is returned for a helper
+    /// socket, for a leftover from an earlier run, and for anything else the same uid put there, and
+    /// nothing in an errno separates them. The farewell is attempted because the
+    /// occupant may be a helper; a refused connection is the expected outcome when it is not.
+    case occupied
+    /// Neither, and **this is not an address to say goodbye to**. What it is instead is a fact to
+    /// report: this process could not act, and saying goodbye would record a dismissal that did not
+    /// happen. Since the occupation became a `link`, this also means the helper cannot claim — the
+    /// two operations fail together (see the section preamble).
+    case failed(String)
+}
+
+/// Why a claim was refused, in words that are true for **that** errno.
+///
+/// It lives here rather than at the one `fail(...)` in the helper because a diagnostic nobody can
+/// exercise is a diagnostic that goes wrong quietly: a vanished temporary directory must not be
+/// reported as a decision the app made.
+///
+/// **`EEXIST` says occupied, not who by**. The app taking the address back is one
+/// way the name comes to be occupied; a leftover from an earlier run and anything else with this
+/// uid are others, and this process cannot tell them apart from an errno. The sentence says what is
+/// known.
+public func warpHelperClaimFailure(_ code: Int32) -> String {
+    let reason = String(cString: strerror(code))
+    return code == EEXIST
+        ? "the advertised address is already occupied (\(reason)) — the app takes it that way when it goes away, and it is not the only thing that can"
+        : "the advertised address could not be taken (\(reason))"
+}
+
+/// **The app's half**, taken as it goes away: occupy the address the helper has not taken yet, so
+/// that it never can.
+///
+/// `link` from the pin, for the reason in the section preamble: it is the same operation the helper
+/// claims with, into the same parent, and neither allocates an inode — so **whatever stops this
+/// stops that**. A separate directory allocation would leave a failure window between taking the
+/// name and entering the guard inside it.
+///
+/// A missing pin is itself a `.failed`, with `ENOENT` — and the same `ENOENT` is what the helper's
+/// `link` would get if the parent were gone, which is the only way the pin can be missing without
+/// somebody having removed it. Removing it is a same-uid act and is residual 5 in the helper's
+/// preamble.
+public func withdrawWarpHelperAddress(_ advertised: String) -> WarpHelperAddressWithdrawal {
+    guard link(warpHelperPinPath(advertised: advertised), advertised) != 0 else { return .withdrawn }
+    let reason = errno
+    guard reason != EEXIST else { return .occupied }
+    return .failed(String(cString: strerror(reason)))
+}
+
+// MARK: - Install detection and the process tree
+
+/// The Warp app bundle. Only the standard locations are looked at, so a LaunchServices lookup (AppKit) never enters Core — the app and Core share this one function, which is what keeps "installed according to the settings, not found when running" from happening.
 public func findWarpAppBundle() -> String? {
     let candidates = [
         "/Applications/Warp.app",
@@ -187,8 +423,7 @@ public func findWarpAppBundle() -> String? {
     return candidates.first { FileManager.default.fileExists(atPath: $0) }
 }
 
-/// Warp 실행 파일의 절대 경로. ps의 command 열과 정확히 맞아야 GUI 프로세스를 특정할 수 있어
-/// 실행 파일 이름은 번들 Info.plist에서 읽는다 (Stable은 `stable`).
+/// The absolute path of the Warp executable. It has to match ps's command column exactly for the GUI process to be identified, so the executable name is read from the bundle's Info.plist (on Stable it is `stable`).
 public func findWarpExecutable() -> String? {
     guard let bundle = findWarpAppBundle() else { return nil }
     let infoPath = (bundle as NSString).appendingPathComponent("Contents/Info.plist")
@@ -198,14 +433,13 @@ public func findWarpExecutable() -> String? {
     return FileManager.default.isExecutableFile(atPath: executable) ? executable : nil
 }
 
-/// `ps -axo pid=,ppid=,command=` 출력에서 Warp GUI 프로세스의 pid를 골라낸다.
-/// GUI 프로세스는 `terminal-server`의 부모다(실측: `stable terminal-server --parent-pid=<gui>`).
-/// GUI 자신은 인자 없이 뜨므로 인자로 갈라야 한다 — 인자를 보지 않으면 GUI의 부모(launchd)를
-/// Warp로 지목하게 된다.
+/// Picks the Warp GUI process's pid out of `ps -axo pid=,ppid=,command=` output.
+/// The GUI process is the parent of `terminal-server` (measured: `stable terminal-server --parent-pid=<gui>`).
+/// The GUI itself starts with no arguments, so the arguments are what tells them apart — without looking at them, the GUI's parent (launchd) gets named as Warp.
 public func warpGUIPIDs(psOutput: String, executablePath: String) -> [Int] {
     var pids: [Int] = []
     for line in psOutput.split(separator: "\n") {
-        // "pid ppid command…" — command에는 공백이 들어가므로 앞 두 칸만 가른다
+        // "pid ppid command…" — the command contains spaces, so only the first two gaps are split on
         let parts = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
         guard parts.count == 3, let ppid = Int(parts[1]) else { continue }
         let command = parts[2].trimmingCharacters(in: .whitespaces)
@@ -216,7 +450,7 @@ public func warpGUIPIDs(psOutput: String, executablePath: String) -> [Int] {
     return pids
 }
 
-/// 지금 떠 있는 Warp GUI 프로세스들.
+/// The Warp GUI processes currently running.
 func currentWarpGUIPIDs() -> [Int] {
     guard let executable = findWarpExecutable(),
           let ps = try? runProcess("/bin/ps", ["-axo", "pid=,ppid=,command="], timeout: 5),
@@ -225,40 +459,34 @@ func currentWarpGUIPIDs() -> [Int] {
     return warpGUIPIDs(psOutput: ps.stdout, executablePath: executable)
 }
 
-// MARK: - 접근성 (화면 읽기)
-// 입력 전달 자체는 접근성과 무관하다 — 헬퍼가 우리 tty에만 바이트를 넣기 때문이다.
-// 접근성은 "claude가 그 입력을 입력창에 그렸는가"를 확인하는 데만 쓰는 best-effort 신호다.
+// MARK: - Accessibility (reading the screen)
+// Delivering input has nothing to do with Accessibility — the helper puts bytes only into our own tty.
+// Accessibility is a best-effort signal used solely to check "did claude draw that input in its input box".
 
-/// 접근성 권한 상태 — 프롬프트를 띄우지 않고 조회만 한다.
+/// The Accessibility permission state — queried without raising a prompt.
 public func accessibilityIsTrusted() -> Bool {
     let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
     return AXIsProcessTrustedWithOptions([key: false] as CFDictionary)
 }
 
-/// 접근성 권한 프롬프트를 띄운다 (이미 허용됐으면 그대로 true).
-/// 자동화 권한과 달리 이 프롬프트는 그 자리에서 허용시켜 주지 않고 시스템 설정으로 안내만
-/// 하므로, 결과는 `accessibilityIsTrusted()` 재조회로 확인해야 한다.
+/// Raises the Accessibility permission prompt (true straight away when it is already granted).
+/// Unlike the Automation permission, this prompt does not grant anything on the spot — it only points at System Settings — so the outcome has to be confirmed by asking `accessibilityIsTrusted()` again.
 @discardableResult
 public func requestAccessibilityPrompt() -> Bool {
     let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
     return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
 }
 
-/// Warp의 포커스된 pane 화면 텍스트. 권한이 없거나 Warp가 없으면 nil.
+/// The screen text of Warp's focused pane. nil without the permission, or without Warp.
 ///
-/// 읽히는 것은 "그 창에서 포커스된 pane"이라 우리 pane이라는 보장이 없다 — Warp 창의 AX
-/// 자식은 `AXTextArea` 하나 + 창 버튼 셋뿐이고 탭 바도 pane 식별자도 없으며, 탭을 바꿔도
-/// 같은 AX 요소가 재사용된다(실측). 그래도 안전한 이유는 **입력이 이 경로로 가지 않기**
-/// 때문이다: 타이핑·제출은 헬퍼가 우리 tty에만 넣으므로, 남의 pane을 읽어 생기는 최악은
-/// "pane 증명·반영 확인이 실패해 재시도하다 아무것도 제출하지 않는 것"이다.
+/// What gets read is "the focused pane in that window", so there is no guarantee it is ours — a Warp window's AX children are a single `AXTextArea` plus three window buttons, with no tab bar and no pane identifier, and switching tabs reuses the same AX element (measured). It is nevertheless safe because **input does not travel this path**: typing and submitting go through the helper into our own tty alone, so the worst that reading someone else's pane can do is "the pane proof and the reflection check fail, we retry, and nothing gets submitted".
 public func warpScreenText() -> String? {
     // Timed from the first line, not from after the guard: what the poll interval has to cover is
     // the **whole call** — the TCC trust check, the `ps` that finds Warp's pids, and the AX walk
     let started = Date()
     defer { warpScreenReadCost.record(Date().timeIntervalSince(started)) }
     guard accessibilityIsTrusted() else { return nil }
-    // 창 하나를 읽을 때마다 ps를 다시 부른다 — 반영 확인은 0.4초 간격 다섯 번이라
-    // 비용이 드러나지 않고, 캐시를 두면 Warp 재시작 뒤 죽은 pid를 붙들게 된다
+    // ps is called again for every window read — the reflection check runs five times at 0.4s intervals, so the cost does not show, and a cache would hold on to a dead pid after Warp restarts
     for pid in currentWarpGUIPIDs() {
         if let text = warpFocusedPaneText(pid: pid_t(pid)) { return text }
     }
@@ -267,11 +495,11 @@ public func warpScreenText() -> String? {
 
 /// What one Accessibility screen read costs, for the first few reads of a process.
 ///
-/// Round 10 set `screenPollInterval` (0.15s) so that every known reader stays under half the
-/// interval — osascript 59ms, wezterm cli 14ms, ps+stty 9ms — and had to **assume** Warp's read was
+/// `screenPollInterval` (0.15s) keeps every known reader under half the interval — osascript 59ms,
+/// wezterm cli 14ms, ps+stty 9ms — and Warp's read was
 /// "no cheaper than osascript", because measuring it needs Warp running and the permission granted.
 /// Both hold now, so the reads report themselves. If this turns out to be hundreds of milliseconds,
-/// the poll interval is resting on a false premise and the next round has its input.
+/// the poll interval rests on a false premise and needs revisiting.
 ///
 /// Only the first reads are logged: the first one carries process-attach and AX-tree warm-up, the
 /// next few are the steady state, and after that it would be noise on every poll. The normal log
@@ -292,11 +520,11 @@ private final class ScreenReadCostLog: @unchecked Sendable {
         reported += 1
         let index = reported
         lock.unlock()
-        checkoutLog("Warp 화면 읽기 \(index)회차 \(Int((elapsed * 1000).rounded()))ms")
+        checkoutLog("Warp screen read #\(index) took \(Int((elapsed * 1000).rounded()))ms")
     }
 }
 
-/// 주어진 Warp 프로세스의 포커스된 창에서 pane 화면 텍스트를 읽는다.
+/// Reads the pane screen text from the focused window of the given Warp process.
 private func warpFocusedPaneText(pid: pid_t) -> String? {
     let app = AXUIElementCreateApplication(pid)
     guard let window = axElement(app, kAXFocusedWindowAttribute as String)
@@ -339,21 +567,16 @@ private func firstTextAreaValue(in element: AXUIElement, depth: Int) -> String? 
     return nil
 }
 
-// MARK: - 회수
-// 정상 경로는 스스로 치운다: 헬퍼는 `bye`·pane 종료·잡을 수 있는 시그널에서 소켓을 지우고,
-// `runInWarp`은 탭이 열린 뒤 Tab Config를 지운다. 건너뛰는 것은 SIGKILL·전원 차단·앱 크래시다.
-// 그 몫을 다음 실행이 훑어 되찾는다 — **살아 있는 것을 건드리지 않는 것**이 조건이다.
+// MARK: - Reclaiming
+// The normal paths clean up after themselves: the helper removes its socket on `bye`, on the pane closing, and on any catchable signal, and `runInWarp` deletes the Tab Config once the tab has opened. What skips all that is SIGKILL, a power cut, or an app crash.
+// The next run sweeps up that remainder — on the condition that it **never touches anything alive**.
 
-/// 주인이 죽은 헬퍼 소켓 파일을 지운다. 삭제 조건이 셋인 이유는 하나씩으로는 남의 파일을
-/// 지우기 때문이다:
-///  ① 이름이 우리 것 — 그러나 같은 이름의 **일반 파일·심볼릭 링크**를 누구나 놓을 수 있다
-///  ② `lstat`이 소켓 — 링크를 따라가지 않으므로 링크가 가리키는 파일도 안전하다
-///  ③ 연결되지 않음 — 연결되면 살아 있는 헬퍼다
-/// 갓 만들어진 파일을 건너뛰는 이유는 `bind`와 `listen` 사이의 짧은 순간에 연결이 거절되기
-/// 때문이다 — 그 창에서 지우면 살아 있는 헬퍼의 소켓을 없애 전달이 통째로 사라진다.
-/// ③과 `unlink` 사이의 TOCTOU는 없앨 수 없다(경로로 지우는 수밖에 없다). 삭제 직전에
-/// `lstat`을 한 번 더 해 창을 좁히고, 그 사이 새로 태어난 헬퍼는 ①의 난수 토큰이 달라
-/// 같은 경로를 쓰지 않는다는 것으로 막는다.
+/// Deletes helper socket files whose owner has died. There are three conditions because any one of them alone would delete somebody else's file:
+///  ① the name is ours — but anyone can put a **regular file or a symbolic link** of the same name there
+///  ② `lstat` says it is a socket — it does not follow links, so whatever a link points at is safe too
+///  ③ it does not accept a connection — one that does belongs to a live helper
+/// Freshly created files are skipped because connections are refused during the brief moment between `bind` and `listen` — deleting in that window removes a live helper's socket and the whole delivery disappears.
+/// The TOCTOU between ③ and `unlink` cannot be removed (deleting is only possible by path). It is narrowed by doing one more `lstat` immediately before deleting, and a helper born in that gap is kept out by ①'s random token differing, so it never uses the same path.
 func reclaimDeadWarpHelperSockets(
     in directories: [String] = [NSTemporaryDirectory(), "/tmp"], youngerThan grace: TimeInterval = 60
 ) {
@@ -372,27 +595,95 @@ func reclaimDeadWarpHelperSockets(
             guard isUnixSocketFile(path) else { continue }
             unlink(path)
         }
+        reclaimStaleWarpHelperOccupations(in: directory)
     }
 }
 
-/// 심볼릭 링크를 따라가지 않는 타입 확인 — 따라가면 링크가 가리키는 남의 파일을 지운다.
+/// **How long after the launch line is written a helper may still take its address.**
+///
+/// A launch timeout is not a bound: "the instruction after `listen`" is not a time, and a suspended
+/// process can be anywhere. The helper's own caps do not close it
+/// either — the 180-second idle cap and the 900-second lifetime cap both start once it is *serving*,
+/// which is after the claim, so a helper suspended before the claim had no cap at all.
+///
+/// So the helper is handed this at birth and refuses to claim past it. That is not a check on app
+/// state, but the helper bounding itself against a constant it was
+/// given, which needs nothing to be reachable and nothing to still be true.
+///
+/// Two minutes: `open` alone is allowed fifteen seconds, the pane follows 0.5∼0.7s after it returns
+/// (measured), and the rest is slack for a machine under load. A helper that has not claimed in two
+/// minutes has lost its pane or its scheduler, and delivery has failed either way.
+public let warpHelperClaimWindow: TimeInterval = 120
+
+/// When the sweep may take what a take-back left, and the pin it linked from.
+///
+/// It is **the number the helper enforces**, plus slack — not an optimistic derivation of its own.
+/// Once the window has passed no helper will claim, so nothing is being protected any more.
+let warpHelperOccupationLifetime: TimeInterval = warpHelperClaimWindow + 60
+
+/// Removes what taking an address back leaves: the occupied name and the pin it was linked from.
+///
+/// Both are **regular files**, which is why the socket sweep above passes them by and why they
+/// needed a rule of their own. A live helper's address is a socket and is never in range here.
+func reclaimStaleWarpHelperOccupations(
+    in directory: String, olderThan lifetime: TimeInterval = warpHelperOccupationLifetime
+) {
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
+    for name in names where warpHelperSocketFileIsOurs(name: name) || warpHelperPinFileIsOurs(name: name) {
+        let path = (directory as NSString).appendingPathComponent(name)
+        guard let modified = fileModificationDate(path),
+              Date().timeIntervalSince(modified) > lifetime
+        else { continue }
+        removeWarpHelperFileIfOurs(path: path)
+    }
+}
+
+/// Deletes one only when its **contents** say it is ours.
+///
+/// The name is not enough and deliberately so: the socket sweeps are narrow because anyone can drop
+/// a regular file under one of our names, and a sweep that took regular files by name would hand
+/// that protection back. The verdict is reached through an fd — `O_NOFOLLOW` excludes links from the
+/// outset and the `fstat` and the read are on that same descriptor, so "what was checked" and "what
+/// was read" are one file — and then one more `lstat` before the `unlink` narrows the window that
+/// remains, exactly as `removeWarpTabConfigIfOurs` does for a Tab Config.
+func removeWarpHelperFileIfOurs(path: String) {
+    let fd = open(path, O_RDONLY | O_NOFOLLOW)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+
+    // **The whole file, not a prefix of it.** Reading the marker's length and comparing says the file
+    // *begins* our way, which a user file that starts with the same line also does — and this deletes
+    // what it matches. The size is the other half of "this is our file".
+    let expected = Array(warpHelperPinMarker.utf8)
+    var opened = stat()
+    guard fstat(fd, &opened) == 0,
+          (opened.st_mode & S_IFMT) == S_IFREG,
+          opened.st_size == off_t(expected.count)
+    else { return }
+
+    var head = [UInt8](repeating: 0, count: expected.count)
+    let count = read(fd, &head, head.count)
+    guard count == expected.count, head == expected else { return }
+
+    var current = stat()
+    guard lstat(path, &current) == 0,
+          current.st_ino == opened.st_ino, current.st_dev == opened.st_dev
+    else { return }
+    unlink(path)
+}
+
+/// A type check that does not follow symbolic links — following one deletes whatever file the link points at.
 private func isUnixSocketFile(_ path: String) -> Bool {
     var info = stat()
     guard lstat(path, &info) == 0 else { return false }
     return (info.st_mode & S_IFMT) == S_IFSOCK
 }
 
-/// 우리가 만든 Tab Config만 지운다. 예약 삭제는 20초 뒤에 도는데 그 사이 사용자가 같은
-/// 경로에 자기 파일이나 링크를 놓았을 수 있다.
+/// Deletes only the Tab Configs we created. The scheduled deletion fires 20 seconds later, and in that time the user may have put their own file or link at the same path.
 ///
-/// 판정을 **fd로** 한다: `O_NOFOLLOW`로 열어 링크를 애초에 배제하고, 같은 fd에서 `fstat`과
-/// 내용을 읽어 "검사한 것과 읽은 것"이 같은 파일임을 보장한다. 경로로 두 번 보면 그 사이
-/// 바꿔치기될 수 있다.
+/// The verdict is reached **through an fd**: opening with `O_NOFOLLOW` excludes links from the outset, and doing both the `fstat` and the content read on that same fd guarantees "what was checked" and "what was read" are the same file. Looking twice by path leaves room for a swap in between.
 ///
-/// 남는 창: macOS에는 `funlinkat`이 없어 마지막 `unlink`만은 경로로 해야 한다. 직전에
-/// `lstat`으로 같은 inode인지 다시 확인해 창을 수십 마이크로초로 줄였지만 완전히 없앨 수는
-/// 없다 — 최악의 결과는 "그 창에 정확히 끼워 넣은 파일 하나가 지워진다"이고, 그렇게 하려면
-/// 우리 난수 이름을 미리 알아야 하므로 같은 uid에서만 가능하다.
+/// The remaining window: macOS has no `funlinkat`, so the final `unlink` alone has to go by path. One more `lstat` immediately before it re-confirms the inode and narrows the window to tens of microseconds, but it cannot be closed entirely — the worst outcome is "one file slipped exactly into that window gets deleted", and doing that requires knowing our random name in advance, which is only possible from the same uid.
 func removeWarpTabConfigIfOurs(path: String) {
     guard warpTabConfigFileIsOurs(name: (path as NSString).lastPathComponent) else { return }
     let fd = open(path, O_RDONLY | O_NOFOLLOW)
@@ -415,9 +706,8 @@ func removeWarpTabConfigIfOurs(path: String) {
     unlink(path)
 }
 
-/// 앱이 자기 Tab Config를 지우기 전에 죽으면 파일이 남아 Warp `+` 메뉴에 쌓인다.
-/// 나이를 보는 이유는 지금 막 열리고 있는 다른 요청의 파일을 지우지 않기 위해서고,
-/// 내용까지 보는 이유는 이름이 겹친 사용자 파일을 지우지 않기 위해서다.
+/// When the app dies before deleting its own Tab Config, the file survives and piles up in Warp's `+` menu.
+/// The age is checked in order not to delete another request's file that is opening right now, and the contents are checked in order not to delete a user file whose name collides. Both are reasons for the checks, not promises about their outcome — the residual window is in `removeWarpTabConfigIfOurs`.
 func reclaimStaleWarpTabConfigs(
     in directory: String = warpTabConfigDirectory(), olderThan age: TimeInterval = 300
 ) {
@@ -435,13 +725,11 @@ private func fileModificationDate(_ path: String) -> Date? {
     (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
 }
 
-// MARK: - 헬퍼 소켓 클라이언트
+// MARK: - The helper socket client
 
-/// 요청 하나를 보내고 응답 한 줄을 받는다. 연결·전송·해석 중 하나라도 실패하면 nil이다 —
-/// 호출자는 이것을 "이번 호출이 실패했다"로만 다뤄야 한다(세션이 끝났다는 뜻이 아니다).
+/// Sends one request and receives one response line. nil when the connection, the send, or the parse fails — the caller must treat that as "this call failed" and nothing more (it does not mean the session is over).
 ///
-/// 대기 시간은 헬퍼의 작업 예산에서 유도한다(`warpHelperRequestTimeout`) — 앱이 먼저
-/// 포기하고 재시도하는 동안 헬퍼가 계속 주입하면 그 바이트가 재시도분과 섞인다.
+/// The wait is derived from the helper's work budget (`warpHelperRequestTimeout`) — if the app gives up first and retries while the helper keeps injecting, those bytes mix with the retry's.
 func warpHelperRequest(
     _ request: WarpHelperRequest, socket path: String,
     timeout: TimeInterval = warpHelperRequestTimeout
@@ -449,7 +737,7 @@ func warpHelperRequest(
     guard let fd = connectToUnixSocket(path: path) else { return nil }
     defer { close(fd) }
 
-    // 헬퍼가 응답하지 않을 때 전달 스레드가 영영 매달리지 않게 한다
+    // Keeps the delivery thread from hanging forever when the helper does not answer
     var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))

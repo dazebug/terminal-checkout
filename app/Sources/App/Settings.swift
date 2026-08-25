@@ -1,15 +1,17 @@
 import Core
 import Foundation
 
-/// 앱이 단일 소스로 관리하는 설정. 터미널 선택은 확장이 아니라 여기서 결정된다.
+/// The settings the app owns as their single source. Which terminal to use is decided here and not
+/// by the extension.
 enum Settings {
     static var terminal: Terminal {
         get {
             if let value = UserDefaults.standard.string(forKey: "terminal") {
                 return Terminal(storedValue: value)
             }
-            // 기본값: 설치된 터미널 자동 감지. 순서는 지원이 오래돼 실사용으로 다져진
-            // 순이다 — Warp는 pane을 지목할 정식 API가 없어 헬퍼 프로세스를 끼우므로 마지막
+            // The default detects what is installed. The order is how long each has been supported
+            // and worn in by real use — Warp is last because it has no official way to address a
+            // pane and needs a helper process in between
             if PermissionChecker.isITermInstalled { return .iterm }
             if PermissionChecker.isWezTermInstalled { return .wezterm }
             if PermissionChecker.isWarpInstalled { return .warp }
@@ -24,11 +26,8 @@ enum Settings {
     /// sends this value: paths differ per machine while extension settings ride storage.sync
     /// across an account.
     ///
-    /// A stored value that isn't a string (a hand-edited plist, some future build writing another
-    /// type) must not read as "not configured" — that is exactly the silent fold decision 4 rules
-    /// out. It is handed on as text instead, so `normalizedBaseDirectory` rejects it and the button
-    /// fails carrying the reason. `string(forKey:)` cannot express that: it returns nil for both
-    /// "absent" and "present but another type".
+    /// A stored value that isn't a string must not read as "not configured". It is handed on as
+    /// text so `normalizedBaseDirectory` rejects it and the button fails carrying the reason.
     static var baseDirectory: String {
         get {
             guard let stored = UserDefaults.standard.object(forKey: "baseDirectory") else { return "" }
@@ -37,8 +36,29 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "baseDirectory") }
     }
 
-    /// 소켓으로 마지막 요청이 도착한 시각 — "확장이 Chrome에 로드되어 실제로 연결됐다"는 유일한 증거.
-    /// (폴더 준비 여부만으로는 Chrome 로드 완료를 알 수 없다)
+    /// The language the user picked, or `auto`. A preference is app-local state: our own strings
+    /// redraw after the notification, while AppKit chrome follows on the restart action because
+    /// AppKit reads its language before the process creates `NSApplication`. In automatic mode the
+    /// resolver reads macOS's argument/global language domains, not the app override it wrote.
+    static var language: String {
+        get { languagePreference(in: .standard) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: languagePreferenceKey)
+            NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        }
+    }
+
+    /// What a stored preference reads as. A value that is not a string remains a third state rather
+    /// than silently becoming `auto`, so the picker and the resolver cannot claim different choices.
+    static func languagePreference(in defaults: UserDefaults) -> String {
+        guard let stored = defaults.object(forKey: languagePreferenceKey) else {
+            return automaticLocalePreference
+        }
+        return stored as? String ?? String(describing: stored)
+    }
+
+    /// When the last request arrived on the socket — the only evidence that the extension really is
+    /// loaded in Chrome and connected. A prepared folder cannot tell you whether Chrome loaded it.
     static var lastRequestAt: Date? {
         get { UserDefaults.standard.object(forKey: "lastRequestAt") as? Date }
         set { UserDefaults.standard.set(newValue, forKey: "lastRequestAt") }
@@ -51,31 +71,33 @@ enum Settings {
         }
     }
 
-    /// 명령이 부르는 도구(z/gh/claude)의 마지막 확인 결과. 확인은 로그인 셸을 띄우느라
-    /// 시간이 걸리므로, 창이 열리자마자 보여줄 직전 값을 남겨 둔다. 확인 전이면 nil.
+    /// The last answer about the tools a command calls (z/gh/claude). Asking takes time — it opens a
+    /// login shell — so the previous answer is kept for the window to draw the moment it opens. Nil
+    /// before the first check.
     static var toolAvailability: [String: Bool]? {
         get { UserDefaults.standard.dictionary(forKey: "toolAvailability") as? [String: Bool] }
         set { UserDefaults.standard.set(newValue, forKey: "toolAvailability") }
     }
 
-    /// 같은 확인의 다른 사실: 그 이름이 **실행 파일**로 풀리는가. 병합 경로는 `command claude`로
-    /// 부르므로 함수·별칭뿐인 설치에서는 병합이 성립하지 않는다.
+    /// A different fact from the same check: does that name resolve to an **executable**. The merge
+    /// path calls it as `command claude`, so an installation that is only a function or an alias
+    /// cannot take that path.
     static var toolExecutables: [String: Bool]? {
         get { UserDefaults.standard.dictionary(forKey: "toolExecutables") as? [String: Bool] }
         set { UserDefaults.standard.set(newValue, forKey: "toolExecutables") }
     }
 
-    /// 확인 **전**에는 참으로 본다 — 앱이 방금 떠서 아직 로그인 셸을 못 물어본 순간에 병합을
-    /// 꺼 버리면, 흔한 설치(실행 파일)에서 프리셋이 느려지거나 Warp에서는 권한 없이 거절까지
-    /// 간다. 반대 방향의 오판은 pane에 command not found 한 줄로 드러나고 다음 확인에서 고쳐진다
+    /// Taken as true **before** the check has run. A wrong answer in the other direction shows up as
+    /// one `command not found` line in the pane and is corrected by the next check.
     static var claudeIsExecutable: Bool { toolExecutables?["claude"] ?? true }
 
-    /// 앱 실행 때마다 다시 확인한다 — 사용자가 그 사이 도구를 설치했을 수 있다.
-    /// 확인에 실패하면(셸이 응답하지 않음) 직전 결과를 그대로 둔다.
+    /// Asked again on every launch — the user may have installed something since. When no answer
+    /// comes back the previous one is left as it is.
     static func refreshToolAvailability() {
         DispatchQueue.global(qos: .utility).async {
             guard let result = checkTools() else {
-                checkoutLog("도구 확인 실패 — 로그인 셸이 응답하지 않음")
+                // `checkTools` returns nil when no login-shell form returned an answer we could parse.
+                checkoutLog("tool check failed — no login-shell form returned an answer we could parse")
                 return
             }
             toolAvailability = result.available
@@ -88,8 +110,30 @@ enum Settings {
 }
 
 extension Notification.Name {
-    /// 소켓 요청 처리 시 발행 — 설정 창이 열려 있으면 상태를 실시간 갱신한다
+    /// Posted when a socket request is handled — the setup window, if open, updates its state live
     static let terminalCheckoutRequestHandled = Notification.Name("TerminalCheckoutRequestHandled")
-    /// 도구 확인이 끝났을 때 발행 — 확인은 백그라운드라 창이 먼저 열려 있을 수 있다
+    /// Posted when the tool check finishes — it runs in the background, so the window can be up first
     static let terminalCheckoutToolsChecked = Notification.Name("TerminalCheckoutToolsChecked")
+    /// Posted after the language choice changes — our own strings redraw immediately, with no restart
+    static let terminalCheckoutLanguageChanged = Notification.Name("TerminalCheckoutLanguageChanged")
+}
+
+/// Whether restarting right now would cut something off.
+///
+/// A language restart must not run while claude input is still being delivered: that delivery is
+/// asynchronous, and the Warp injection helper's **only** defence is its lifetime — a restart that
+/// orphans it breaks the trust boundary `CLAUDE.md` sets out.
+///
+/// The answer comes from `ClaudeDelivery`, which is kept by the delivery itself rather than by
+/// whoever starts one: a flag maintained outside the interval it describes is a second state, and
+/// two states drift.
+enum LocaleRestartGate {
+    /// **Admission, not a question.** Granting now latches: every later `ClaudeDelivery.admit()` is
+    /// refused until it is withdrawn.
+    ///
+    /// Injectable so a test can drive the consumer's branches without a delivery running; the
+    /// default is the real operation, so nothing has to remember to wire it up at launch.
+    static var admitRestart: () -> Bool = { ClaudeDelivery.admitRestart() }
+    /// Given back when the restart it was granted for did not happen.
+    static var withdrawAdmission: () -> Void = { ClaudeDelivery.withdrawRestartAdmission() }
 }

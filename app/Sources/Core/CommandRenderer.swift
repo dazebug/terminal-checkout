@@ -1,8 +1,8 @@
 import Foundation
 
-/// Why a base directory was rejected. Each surface words it differently (the button response is
-/// English, the setup window is Korean until #24), so only the reason travels as a value and every
-/// surface builds its own sentence.
+/// Why a base directory was rejected. Each surface words it differently: the button response is an
+/// English protocol diagnostic, while the setup window uses its localized catalogue, so only the
+/// reason travels as a value and every surface builds its own sentence.
 public enum BaseDirectoryProblem {
     case notAbsolute
     case invalidCharacters
@@ -33,9 +33,8 @@ private let allowedVariables: Set<String> = [
     "repo", "branch", "base", "main", "branch_underbar", "number", "owner",
 ]
 
-// 허용 문자 화이트리스트 (command injection 방지).
-// 파이썬 시절 정규식 `^[a-zA-Z0-9\-_./]+$`와 동일하되, `$`가 끝의 개행 하나를
-// 허용하던 구멍까지 막기 위해 문자 단위로 검사한다.
+// The whitelist of allowed characters (command injection defence).
+// Equivalent to the Python-era regex `^[a-zA-Z0-9\-_./]+$`, except that it checks character by character in order to also close the hole where `$` allowed a single trailing newline.
 private let allowedValueScalars: Set<Unicode.Scalar> = {
     var set = Set<Unicode.Scalar>()
     for range in [UInt32(0x30)...0x39, UInt32(0x41)...0x5A, UInt32(0x61)...0x7A] {
