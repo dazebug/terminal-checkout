@@ -1,8 +1,5 @@
-// The compatibility dictionaries first, then defaults. The dictionary loads stay even though this
-// worker now reads Chrome's catalogue: a previous worker can open this directory after a folder
-// swap, and one missing import aborts that worker before it can run a command.
 importScripts(
-  'i18n.js', '_i18n/en.js', '_i18n/ko.js', '_i18n/ja.js', '_i18n/zh-Hans.js', '_i18n/zh-Hant.js',
+  'i18n.js',
   'defaults.js' // the single source of truth for button defaults and presets
 );
 
@@ -235,9 +232,8 @@ async function clickedButton(kind, index, shown) {
 }
 
 // Hand one command to the app and interpret only the command outcome. Locale metadata may still be
-// present while old apps and extensions overlap, but this generation neither records nor forwards
-// it: Chrome owns the extension language now. `nativeOutcome` stays in the compatibility skeleton
-// and remains the one response-shape verdict in both generations.
+// present while an old app overlaps, but this extension neither records nor forwards it: Chrome
+// owns the extension language.
 async function sendToNativeHost(message) {
   let response;
   try {

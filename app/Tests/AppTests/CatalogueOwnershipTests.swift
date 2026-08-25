@@ -13,8 +13,7 @@ import XCTest
 /// rather than a list:
 ///
 ///   * `app.…`                      → `app/Sources/App/Resources/<locale>.lproj/Localizable.strings`
-///   * compatibility `ext.…`       → `extension/_i18n/<tag>.js`
-///   * live extension messages     → `extension/_locales/<chrome tag>/messages.json`
+///   * extension messages           → `extension/_locales/<chrome tag>/messages.json`
 ///
 /// A key's name says where it lives; a file's location says what it may hold. Both directions are
 /// asserted, because either one alone permits a key to exist in two places at once.
@@ -24,10 +23,10 @@ import XCTest
 /// different places" is a judgement about meaning, and no file records it. Those judgements are the
 /// exception tables below, and each one carries its reason. There are three.
 ///
-/// This gate lives on the Swift side because it is the only side that can already read all three
-/// stores: `PropertyListSerialization` parses `.strings`, the compatibility dictionaries are JSON
-/// object literals, and the live Chrome entries are JSON objects. The JavaScript side pins the
-/// compatibility files and owns their argument identity; this gate owns cross-store ownership.
+/// This gate lives on the Swift side because it is the only side that can already read both
+/// stores: `PropertyListSerialization` parses `.strings`, and the live Chrome entries are JSON
+/// objects. The JavaScript side owns the live catalogues' structure and argument identity; this
+/// gate owns cross-store ownership.
 final class CatalogueOwnershipTests: XCTestCase {
     private static var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath) // <root>/app/Tests/AppTests/CatalogueOwnershipTests.swift
@@ -44,29 +43,6 @@ final class CatalogueOwnershipTests: XCTestCase {
             from: try Data(contentsOf: url), format: nil
         )
         return try XCTUnwrap(parsed as? [String: String], "\(locale) is not a dictionary of strings")
-    }
-
-    /// The extension's dictionary for one tag.
-    ///
-    /// The file is a classic browser script that assigns one object literal, and the literal's body
-    /// is JSON apart from a trailing comma — which is exactly what makes it readable from here
-    /// without running JavaScript. Both halves of that assumption are asserted: that the region was
-    /// found, and that it parsed. A reader that quietly returns nothing would make every check below
-    /// pass over an empty set, which is the way this kind of gate usually fails.
-    private func extensionDictionary(_ tag: String) throws -> [String: String] {
-        let url = Self.repositoryRoot.appendingPathComponent("extension/_i18n/\(tag).js")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        let opening = try XCTUnwrap(source.range(of: "] = {"), "\(tag).js does not assign a dictionary")
-        let closing = try XCTUnwrap(source.range(of: "};", options: .backwards), "\(tag).js has no end")
-        var body = String(source[source.index(before: opening.upperBound)..<closing.lowerBound])
-        body += "}"
-        // The trailing comma the generator leaves after the last entry
-        if let comma = body.range(of: ",", options: .backwards),
-           body[comma.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines) == "}" {
-            body.replaceSubrange(comma, with: "")
-        }
-        let parsed = try JSONSerialization.jsonObject(with: Data(body.utf8))
-        return try XCTUnwrap(parsed as? [String: String], "\(tag).js is not a dictionary of strings")
     }
 
     private func chromeMessages(_ tag: String) throws -> [String: Any] {
@@ -129,20 +105,8 @@ final class CatalogueOwnershipTests: XCTestCase {
                 XCTAssertTrue(key.hasPrefix("app."), "\(locale): the app catalogue holds \(key)")
                 checked += 1
             }
-            for key in try extensionDictionary(locale).keys {
-                XCTAssertTrue(key.hasPrefix("ext."), "\(locale): the extension dictionary holds \(key)")
-                checked += 1
-            }
         }
         XCTAssertGreaterThan(checked, 300, "the scan compared almost nothing — check the paths")
-
-        // The other direction: a name that belongs to one store may not appear in another. Without
-        // this, both stores could hold `app.x` and each would still satisfy its own rule.
-        for locale in try filledLocales() {
-            let app = Set(try appCatalogue(locale).keys)
-            let ext = Set(try extensionDictionary(locale).keys)
-            XCTAssertEqual(app.intersection(ext), [], "\(locale): a key lives in two catalogues")
-        }
 
         // Chrome's own namespace holds those two names and nothing from ours. The count is checked
         // on the side that owns the file; what is checked here is ownership.
@@ -163,12 +127,11 @@ final class CatalogueOwnershipTests: XCTestCase {
             chromeTags.sorted(), expected.sorted(),
             "_locales holds \(chromeTags), and the languages we ship map to \(expected.sorted())"
         )
-        // **`_locales` holds two namespaces, and that is the migration's doing rather than a leak.**
-        // It carries the two manifest keys, as it always did, plus one baseline-derived name per
-        // compatibility message: the conversion writes `ext.header.options` there as
-        // `ext_header_options`, because a `_locales` name cannot contain a dot. Reviewed live
-        // additions use the same `ext_` namespace before the compatibility passenger retires.
-        // An `app.` key or a name outside those namespaces is still foreign.
+        // **`_locales` holds two namespaces, and that is the boundary conversion's doing rather
+        // than a leak.** It carries the two manifest keys, plus one converted name per extension
+        // message: the conversion writes `ext.header.options` there as `ext_header_options`,
+        // because a `_locales` name cannot contain a dot. An `app.` key or a name outside those
+        // namespaces is foreign.
         //
         // **The physical-name conversion is not repeated here.** The JavaScript ownership gate and
         // the read-only checker share `chromeMessageId`; this Swift gate owns only the namespace
@@ -210,13 +173,11 @@ final class CatalogueOwnershipTests: XCTestCase {
     func testNoValueHasTwoHomes() throws {
         for locale in try filledLocales() {
             let app = try appCatalogue(locale)
-            let ext = try extensionDictionary(locale)
             let chrome = try chromeMessages(chromeLocaleDirectories[locale] ?? locale)
                 .compactMap { value in
                     (value as? [String: Any])?["message"] as? String
                 }
-            let extensionValues = Set(ext.values).union(chrome)
-            let shared = Set(app.values).intersection(extensionValues)
+            let shared = Set(app.values).intersection(chrome)
             XCTAssertEqual(
                 shared.sorted(), [],
                 "\(locale): the app and the extension both own \(shared.sorted())"
@@ -338,7 +299,6 @@ final class CatalogueOwnershipTests: XCTestCase {
             "a shipped locale has an unreadable or empty catalogue — every check in this file skips it"
         )
         XCTAssertGreaterThan(try appCatalogue("en").count, 90)
-        XCTAssertGreaterThan(try extensionDictionary("en").count, 110)
         XCTAssertGreaterThan(
             try chromeMessageValues(try XCTUnwrap(chromeLocaleDirectories["en"])).count, 110
         )
@@ -346,10 +306,6 @@ final class CatalogueOwnershipTests: XCTestCase {
             XCTAssertEqual(
                 try appCatalogue(tag).count, try appCatalogue("en").count,
                 "the app catalogues disagree on size at \(tag)"
-            )
-            XCTAssertEqual(
-                try extensionDictionary(tag).count, try extensionDictionary("en").count,
-                "the extension dictionaries disagree on size at \(tag)"
             )
             let chromeTag = try XCTUnwrap(
                 chromeLocaleDirectories[tag], "no _locales directory is declared for \(tag)"

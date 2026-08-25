@@ -8,13 +8,11 @@ const vm = require('node:vm');
 const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
-// The derivation `_locales` came from, imported so the gate below runs it rather than a
-// description of it — the same reason the liveness sweep extracts its predicate. The current lookup
-// checks the compatibility baseline, live catalogue shape and live argument identity: the authority
-// moved to `_locales`, so a generator would be a way back.
+// The checker's own functions, imported so the gates below run them rather than a description of
+// them — the same reason the liveness sweep extracts its predicate.
 const {
-  loadExtensionI18n, deriveCatalogue, serialize, MANIFEST_KEYS, CHROME_LOCALE_DIRECTORIES,
-  CATALOGUE_BASELINE_HASHES, checkCompatibilityBaseline, checkLiveLocaleBaseline,
+  loadExtensionI18n, MANIFEST_KEYS, CHROME_LOCALE_DIRECTORIES,
+  CATALOGUE_BASELINE_HASHES, checkLiveLocaleStructure, checkLiveLocaleBaseline,
 } = require('../tools/check-locales.js');
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
@@ -22,15 +20,12 @@ const {
 // skeleton is shaped by — a single `chrome.*` at module scope would take down every test here
 // and the 158 that came before.
 vm.runInThisContext(read('i18n.js'));
-for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
-  vm.runInThisContext(read(`_i18n/${tag}.js`));
-}
-// and defaults.js, whose presets resolve their display text through the dictionaries above
+// and defaults.js, whose presets resolve their display text lazily through `tr`
 vm.runInThisContext(read('defaults.js'));
 const {
-  i18nText, applyDocumentLanguage, chromeMessageId,
-  TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
-} = vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
+  applyDocumentLanguage, chromeMessageId,
+  TC_I18N_LOCALES, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
+} = vm.runInThisContext('({ applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
 // Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
@@ -38,9 +33,8 @@ const { catalogueBackend } = require('./chrome-messages.js');
 vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
 
 // One projection for every assertion whose subject is what Chrome will show. Keeping the physical
-// entries here, rather than converting them back into the frozen dictionaries, is the boundary that
-// prevents a future authority move from leaving the content gates behind again. Compatibility and
-// mixed-generation tests below deliberately continue to read `globalThis.TC_I18N`.
+// entries here is the boundary that prevents a future authority move from leaving the content
+// gates behind again.
 const liveCataloguePathFor = tag => {
   const directory = CHROME_LOCALE_DIRECTORIES[tag];
   assert.ok(directory, `no Chrome catalogue directory is mapped for ${tag}`);
@@ -52,7 +46,6 @@ const LIVE_CATALOGUES = Object.fromEntries(
 const liveEntryFor = (tag, logicalKey) => LIVE_CATALOGUES[tag][chromeMessageId(logicalKey)];
 const liveMessageFor = (tag, logicalKey) => liveEntryFor(tag, logicalKey)?.message ?? '';
 const livePhysicalKeysFor = tag => Object.keys(LIVE_CATALOGUES[tag]);
-const baselinePhysicalKeysFor = tag => Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId);
 const liveValuesFor = tag => Object.values(LIVE_CATALOGUES[tag]).map(entry => entry.message);
 const livePlaceholderNamesFor = entry => Object.keys(entry.placeholders ?? {}).sort();
 const liveMessagesFor = tag => new Proxy({}, {
@@ -73,7 +66,6 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
     markupSource: HTML_FILES,
     manifest: MANIFEST_FILES,
     localeCatalogue: CATALOGUE_FILES,
-    compatibilityCatalogue: COMPATIBILITY_CATALOGUE_FILES,
   })) {
     assert.ok(files.length > 0, `nothing in the extension is ${role}, so its gates read nothing`);
   }
@@ -86,69 +78,16 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
     TC_I18N_LOCALES.map(cataloguePathForLocale).sort(),
     'the catalogue paths are not the paths derived from the shipped locale mapping',
   );
-  assert.deepEqual(
-    COMPATIBILITY_CATALOGUE_FILES,
-    TC_I18N_LOCALES.map(tag => `_i18n/${tag}.js`).sort(),
-    'the compatibility catalogue paths are not derived from the shipped locales',
-  );
   assert.equal(roleOf('_locales/not-shipped/messages.json'), null, 'an unshipped catalogue path was classified');
-  assert.equal(roleOf('_i18n/not-shipped.js'), null, 'an unshipped compatibility catalogue became a consumer');
   assert.equal(roleOf('_locales/en/probe.js'), null, 'a file under the catalogue tree became a consumer');
   // And the sets the gates use are derived from the roles, not re-filtered beside them
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
     EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
-    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...COMPATIBILITY_CATALOGUE_FILES].sort(),
+    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES].sort(),
     'a file has a role that no set takes',
   );
 });
-
-test('the five dictionaries register themselves, and nothing else does', () => {
-  assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
-  assert.deepEqual(TC_I18N_LOCALES, ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']);
-  // The app-era spelling is part of the retained dictionary ABI; adjacent consumers need no map.
-  assert.equal(TC_I18N_FALLBACK, 'en');
-});
-
-test('lookup: the asked-for locale, then English, then the key itself', () => {
-  const dictionaries = {
-    en: { 'ext.a': 'A', 'ext.b': 'B' },
-    ko: { 'ext.a': '가' },
-  };
-  assert.equal(i18nText('ext.a', 'ko', dictionaries), '가');
-  assert.equal(i18nText('ext.b', 'ko', dictionaries), 'B', 'a missing key did not fall back to English');
-  assert.equal(i18nText('ext.missing', 'ko', dictionaries), 'ext.missing');
-  assert.equal(i18nText('ext.a', 'fr', dictionaries), 'A', 'an unshipped locale did not fall back');
-  assert.equal(i18nText('ext.a', undefined, dictionaries), 'A');
-});
-
-test('lookup: a key that names a prototype member is not a hit', () => {
-  // Keys reach this from stored settings, and `{}.constructor` is not a translation
-  const dictionaries = { en: { 'ext.a': 'A' } };
-  assert.equal(i18nText('constructor', 'en', dictionaries), 'constructor');
-  assert.equal(i18nText('toString', 'ko', dictionaries), 'toString');
-});
-
-test('lookup happens when it is called, not when the file loads', () => {
-  // It has to go through the **default** argument. Passing a dictionary in proves only that the
-  // function reads the object it was handed, which every implementation does — measured: a version
-  // that captured `globalThis.TC_I18N` at load time passed that weaker check unchanged.
-  const registry = globalThis.TC_I18N;
-  try {
-    assert.equal(i18nText('ext.late.probe', 'en'), 'ext.late.probe');
-    globalThis.TC_I18N = { en: { 'ext.late.probe': 'arrived' } };
-    assert.equal(
-      i18nText('ext.late.probe', 'en'),
-      'arrived',
-      'the registry was captured when the file loaded, so a dictionary arriving later is invisible',
-    );
-  } finally {
-    globalThis.TC_I18N = registry;
-  }
-  // and the dictionaries the other cases rely on are back
-  assert.deepEqual(Object.keys(globalThis.TC_I18N).sort(), [...TC_I18N_LOCALES].sort());
-});
-
 test('the document language names the catalogue that answered, not the language Chrome is set to', () => {
   // Why `<html lang>` moves in the same commit as the lookup: Chrome
   // may be set to a language we do not ship and still serve the English catalogue; writing what
@@ -158,31 +97,22 @@ test('the document language names the catalogue that answered, not the language 
   const previous = installMessageBackend(catalogueBackend('ja'));
   try {
     const doc = { documentElement: { lang: 'en' } };
-    // The options page's other half of the same question: an app cache saying `ko` no longer has any
-    // say, because there is no extension-side locale left for it to move.
-    assert.equal(applyDocumentLanguage(null, doc), 'ja');
+    assert.equal(applyDocumentLanguage(doc), 'ja');
     assert.equal(doc.documentElement.lang, 'ja');
     assert.match(tr('ext.header.options'), /[ぁ-んァ-ン一-龥]/, 'the text drawn is not the catalogue that named itself');
     // Chrome set to a language we do not ship: the English catalogue answers and says so, so the
     // document says `en` — not `fr`, which is the accessibility defect in reverse.
     installMessageBackend(catalogueBackend('en'));
-    assert.equal(applyDocumentLanguage(null, doc), 'en');
+    assert.equal(applyDocumentLanguage(doc), 'en');
     assert.equal(doc.documentElement.lang, 'en');
   } finally {
     installMessageBackend(previous);
   }
   // No document, nothing to say
-  assert.equal(applyDocumentLanguage(null, undefined), null, 'it reached for a document that is not there');
-  // The old consumer's shape: a locale in the first position, which no longer decides anything
-  assert.equal(applyDocumentLanguage('ko', { documentElement: {} }), 'en', 'the legacy argument chose the tag');
+  assert.equal(applyDocumentLanguage(undefined), null, 'it reached for a document that is not there');
 });
 
 test('the key spaces are separate, whatever is in them', () => {
-  for (const tag of TC_I18N_LOCALES) {
-    for (const key of Object.keys(globalThis.TC_I18N[tag])) {
-      assert.ok(key.startsWith('ext.'), `${tag} carries ${key}, which is not in the extension's space`);
-    }
-  }
   // `chrome.i18n`'s namespace holds exactly the two keys a manifest cannot fill any other way
   //
   // **Five directories are required.** An empty `messages.json` is a shape nobody had measured, but
@@ -193,10 +123,9 @@ test('the key spaces are separate, whatever is in them', () => {
   // English in three of the five languages it otherwise speaks.
   //
   // **And `_locales` carries the extension's own messages too.** It holds two namespaces,
-  // not one: the two keys a manifest cannot fill any other way, and one baseline-derived name per
-  // logical id. They do not overlap and cannot — every baseline-derived name begins `ext_`, which is
-  // what the dotted prefix becomes, and the two manifest keys have no dot to convert. New live `ext_`
-  // names are allowed while the compatibility passenger is retained.
+  // not one: the two keys a manifest cannot fill any other way, and one converted name per
+  // logical id. They do not overlap and cannot — every converted name begins `ext_`, which is
+  // what the dotted prefix becomes, and the two manifest keys have no dot to convert.
   for (const tag of TC_I18N_LOCALES) {
     const messages = LIVE_CATALOGUES[tag];
     assert.deepEqual(
@@ -204,8 +133,8 @@ test('the key spaces are separate, whatever is in them', () => {
       ['extDescription', 'extName'],
       `${CHROME_LOCALE_DIRECTORIES[tag]} carries something that is neither a manifest key nor an extension id`,
     );
-    for (const name of [...MANIFEST_KEYS, ...baselinePhysicalKeysFor(tag)]) {
-      assert.ok(Object.hasOwn(messages, name), `${tag} is missing baseline message ${name}`);
+    for (const name of [...MANIFEST_KEYS, ...livePhysicalKeysFor('en')]) {
+      assert.ok(Object.hasOwn(messages, name), `${tag} is missing ${name}, which en carries`);
     }
     for (const key of Object.keys(messages)) {
       assert.ok(
@@ -221,7 +150,7 @@ test('the key spaces are separate, whatever is in them', () => {
 test('the manifest names those two keys and declares where to fall back', () => {
   assert.equal(manifest.name, '__MSG_extName__');
   assert.equal(manifest.description, '__MSG_extDescription__');
-  assert.equal(manifest.default_locale, TC_I18N_FALLBACK);
+  assert.equal(manifest.default_locale, 'en');
   assert.ok(
     fs.existsSync(path.join(extension, '_locales', manifest.default_locale, 'messages.json')),
     'default_locale names a directory that is not there — documented as a load failure, not measured here',
@@ -239,9 +168,6 @@ test('every script the manifest lists exists, and i18n.js comes before content.j
   );
   // Chrome injects `js` in array order (documented), which is the whole guarantee here — and the
   // reason `defaults.js` may sit anywhere is that no lookup happens at load time.
-  for (const tag of TC_I18N_LOCALES) {
-    assert.ok(scripts.includes(`_i18n/${tag}.js`), `${tag} is not injected into the page`);
-  }
 });
 
 test('nothing in the skeleton touches chrome at load time, and one statement names it at all', () => {
@@ -253,12 +179,7 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
   // anything, and an old worker after a copy swap never installs at all.
   const realm = vm.createContext({});
   vm.runInContext(read('i18n.js'), realm);
-  for (const tag of TC_I18N_LOCALES) vm.runInContext(read(`_i18n/${tag}.js`), realm);
   assert.equal(vm.runInContext('typeof tr', realm), 'function', 'the skeleton did not finish loading');
-  // ...and the dictionaries stay free of it entirely, which is a lint because they are data
-  for (const tag of TC_I18N_LOCALES) {
-    assert.ok(!/\bchrome\./.test(read(`_i18n/${tag}.js`)), `_i18n/${tag}.js reaches for chrome`);
-  }
   // **One statement names `chrome.i18n.getMessage` in the whole extension**. More than one is
   // a second lookup path, and a second lookup path is where the preprocessing gets skipped.
   // Prose is not a call: these files explain the seam at length, and the sentence above this one in
@@ -266,333 +187,6 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
   const code = file => read(file).split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
   const calls = MARKUP_FILES.flatMap(file => [...code(file).matchAll(/chrome\.i18n\.getMessage/g)].map(() => file));
   assert.deepEqual(calls, ['i18n.js'], 'the lookup is named somewhere other than its one seam');
-});
-
-// ---------------------------------------------------------------------------------------------
-// The cache reducer. Every case names what it asserts, because "the callback came back" is not an
-// assertion — what is checked is the **final cache value** and whether anything was written.
-// ---------------------------------------------------------------------------------------------
-
-const { localeCacheUpdate, localeGenerationOf, isUsableLocaleCache, localeToRenderIn, createLocaleRenderer } =
-  vm.runInThisContext(
-    '({ localeCacheUpdate, localeGenerationOf, isUsableLocaleCache, localeToRenderIn, createLocaleRenderer })',
-  );
-const { createLocaleCacheWriter, createFirstRenderGate } =
-  vm.runInThisContext('({ createLocaleCacheWriter, createFirstRenderGate })');
-
-// One worker's lifetime. The sequence fence only compares numbers minted in the same one, so the
-// helpers carry it the way the real path does — a fixture that left it out would be testing a shape
-// the code never sees.
-const WORKER = 'worker-1';
-const cache = (over = {}) => ({
-  locale: 'ko', installId: 'install-a', epoch: 3, appliedSeq: 10, appliedSeqScope: WORKER, ...over,
-});
-const generation = (over = {}) => ({
-  locale: 'ja', installId: 'install-a', epoch: 4, seq: 11, seqScope: WORKER, ...over,
-});
-
-test('a different installId is adopted unconditionally, and a late response from the prior install does not undo it', () => {
-  const reset = localeCacheUpdate(cache(), generation({ installId: 'install-b', epoch: 0, seq: 11 }));
-  assert.equal(reset.changed, true);
-  assert.deepEqual(reset.cache,
-    { locale: 'ja', installId: 'install-b', epoch: 0, appliedSeq: 11, appliedSeqScope: WORKER });
-
-  // The stale install response: the old instance answers a request we sent *earlier*, and its
-  // `installId` differs, which rule 2 alone would accept. The sequence fence is what refuses it.
-  const late = localeCacheUpdate(reset.cache, generation({ installId: 'install-a', epoch: 99, seq: 9 }));
-  assert.equal(late.changed, false, 'a stale install response replaced a newer cached locale');
-  assert.deepEqual(late.cache, reset.cache);
-});
-
-test('an out-of-order response leaves the newer locale in the cache', () => {
-  const newer = localeCacheUpdate(cache(), generation({ epoch: 7, locale: 'ja', seq: 11 }));
-  assert.equal(newer.cache.epoch, 7);
-  const older = localeCacheUpdate(newer.cache, generation({ epoch: 5, locale: 'en', seq: 12 }));
-  assert.equal(older.changed, false);
-  assert.deepEqual(older.cache, newer.cache, 'the final cache is not the newer locale');
-});
-
-test('the same installId with an equal epoch and a different locale is refused', () => {
-  const result = localeCacheUpdate(cache(), generation({ epoch: 3, locale: 'ja', seq: 11 }));
-  assert.equal(result.changed, false, 'equal counted as greater');
-  assert.equal(result.cache.locale, 'ko', 'the cache took a second locale at one epoch');
-});
-
-test('a response carrying no generation writes nothing and notifies nobody', () => {
-  // Not because it failed — a failure the app composed carries its publication now —
-  // but because nothing here has any to carry: a dead socket, an older app answering
-  // `command_template is required`, an empty object. The absence is the whole signal.
-  const start = cache();
-  for (const response of [null, undefined, { success: false, error: 'command_template is required' }, {}]) {
-    const result = localeCacheUpdate(start, localeGenerationOf(response, 11, WORKER));
-    assert.equal(result.changed, false, `${JSON.stringify(response)} changed the cache`);
-    assert.deepEqual(result.cache, start);
-  }
-});
-
-test('a successful response without locale metadata preserves the cache', () => {
-  // The ordinary command path, carrying a real result and no generation — not a discarded throat
-  const response = { success: true };
-  const result = localeCacheUpdate(cache(), localeGenerationOf(response, 11, WORKER));
-  assert.equal(result.changed, false);
-  assert.deepEqual(result.cache, cache());
-});
-
-test('a corrupt storage.local value is neither adopted nor rewritten', () => {
-  const corruptValues = [
-    'ko',
-    42,
-    null,
-    { locale: 'ko' },
-    { locale: 'fr', installId: 'a', epoch: 1, appliedSeq: 0 },
-    { locale: 'ko', installId: '', epoch: 1, appliedSeq: 0 },
-  ];
-  for (const corrupt of corruptValues) {
-    assert.equal(isUsableLocaleCache(corrupt), false, `${JSON.stringify(corrupt)} passed validation`);
-    // Nothing valid arriving: the corrupt value stays exactly as it is, evidence intact
-    const idle = localeCacheUpdate(corrupt, null);
-    assert.equal(idle.changed, false);
-    assert.equal(idle.cache, corrupt);
-    // Something valid arriving: it is adopted, because a value we cannot read is not a generation
-    const adopted = localeCacheUpdate(corrupt, generation());
-    assert.equal(adopted.changed, true);
-    assert.deepEqual(adopted.cache,
-      { locale: 'ja', installId: 'install-a', epoch: 4, appliedSeq: 11, appliedSeqScope: WORKER });
-  }
-});
-
-test('an unknown locale in a response is not a generation', () => {
-  for (const locale of ['fr', 'zh', 'KO', '', null, 42]) {
-    assert.equal(
-      localeGenerationOf({ success: true, locale, locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
-      null,
-      String(locale),
-    );
-  }
-  // **This assertion used to run the other way, and it was wrong.** The bare
-  // `{locale, locale_install_id, locale_epoch}` is not a response this app can compose,
-  // because every valid response carries `success` — accepting it meant the "did the app compose it"
-  // rule was really only checking the shape of the metadata. The test blessed the hole it left.
-  assert.equal(
-    localeGenerationOf({ locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
-    null,
-    'a response with no envelope was taken for one the app composed',
-  );
-  // Origin, not outcome: both envelopes are accepted
-  for (const success of [true, false]) {
-    assert.deepEqual(
-      localeGenerationOf({ success, locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
-      { locale: 'ko', installId: 'a', epoch: 1, seq: 1, seqScope: WORKER },
-      `success: ${success}`,
-    );
-  }
-});
-
-test('a malformed generation field is not a generation', () => {
-  const base = { locale: 'ko', locale_install_id: 'a', locale_epoch: 1 };
-  const broken = [
-    { ...base, locale_epoch: '1' },
-    { ...base, locale_epoch: 1.5 },
-    { ...base, locale_epoch: -1 },
-    { ...base, locale_install_id: '' },
-    { ...base, locale_install_id: 7 },
-  ];
-  for (const response of broken) {
-    assert.equal(localeGenerationOf(response, 1, WORKER), null, JSON.stringify(response));
-  }
-  // and the sequence has to be one of ours, not whatever a caller passed
-  assert.equal(localeGenerationOf(base, undefined, WORKER), null);
-  assert.equal(localeGenerationOf(base, '3', WORKER), null);
-});
-
-test('rendering never waits for the app: the language comes from what is already there', () => {
-  assert.equal(localeToRenderIn(cache(), 'en-US'), 'ko', 'a usable cache did not win');
-  // No cache: Chrome's own language, folded to something we ship
-  assert.equal(localeToRenderIn(null, 'ko'), 'ko');
-  assert.equal(localeToRenderIn(null, 'ja-JP'), 'ja');
-  assert.equal(localeToRenderIn(null, 'zh-TW'), 'zh-Hant');
-  assert.equal(localeToRenderIn(null, 'zh-CN'), 'zh-Hans');
-  assert.equal(localeToRenderIn(null, 'fr-CA'), 'en', 'an unshipped browser language did not fall back');
-  assert.equal(localeToRenderIn(undefined, undefined), 'en');
-  assert.equal(
-    localeToRenderIn({ locale: 'fr', installId: 'a', epoch: 1, appliedSeq: 0 }, 'ja'),
-    'ja',
-    'a corrupt cache was rendered from',
-  );
-});
-
-// ---------------------------------------------------------------------------------------------
-// The redraw contracts. Counted, not inspected: what goes wrong here is a listener registered twice
-// and a click that fires twice, neither of which shows up in the shape of the DOM.
-// ---------------------------------------------------------------------------------------------
-
-test('the locale observer is registered once, not once per redraw', () => {
-  let subscriptions = 0;
-  let redraws = 0;
-  const renderer = createLocaleRenderer({
-    subscribe: () => { subscriptions += 1; },
-    redraw: () => { redraws += 1; },
-  });
-  assert.equal(renderer.start(), true);
-  for (let i = 0; i < 5; i += 1) assert.equal(renderer.start(), false, 'it subscribed again');
-  assert.equal(subscriptions, 1, `subscribed ${subscriptions} times`);
-  assert.equal(renderer.subscribed, true);
-  assert.equal(redraws, 0, 'starting drew something on its own');
-});
-
-test('a redraw does not detach a button whose click is in flight', async () => {
-  // The click is modelled the way the page runs it: it holds its own handle and reports on that
-  // handle when it comes back, so a redraw replacing the nodes cannot silence it.
-  let released;
-  const inFlight = new Promise(resolve => { released = resolve; });
-  const button = { label: 'A', feedback: null };
-  const click = (async () => { await inFlight; button.feedback = 'done'; })();
-
-  let redraws = 0;
-  let notified;
-  const renderer = createLocaleRenderer({
-    subscribe: notify => { notified = notify(); },
-    redraw: () => { redraws += 1; },
-  });
-  renderer.start(); // the subscription fires a redraw immediately, mid-click
-  await notified;   // queued now, so it lands on a later tick rather than inside `subscribe`
-  assert.equal(redraws, 1);
-  assert.equal(button.feedback, null, 'the click finished early — the case proves nothing');
-
-  released();
-  await click;
-  assert.equal(button.feedback, 'done', 'a redraw during the click lost its result');
-});
-
-test('two redraws do not overlap, so the older language cannot land last', async () => {
-  // A redraw reads the cache and then assigns
-  // the language it drew in, with an await between the two. Two of them at once can finish in the
-  // order they did not start in, leaving the older language on screen — the same shape as the
-  // unserialized cache write, in the other file.
-  const order = [];
-  let started = 0;
-  let notify;
-  const renderer = createLocaleRenderer({
-    subscribe: (fn) => { notify = fn; },
-    async redraw() {
-      const id = started++;
-      order.push(`start-${id}`);
-      await new Promise(resolve => setTimeout(resolve, id === 0 ? 20 : 0)); // the first one is slow
-      order.push(`end-${id}`);
-    },
-  });
-  renderer.start();
-  await Promise.all([notify(), notify()]);
-  assert.deepEqual(order, ['start-0', 'end-0', 'start-1', 'end-1'], `redraws overlapped: ${order}`);
-});
-
-test('a redraw that throws does not stop the ones behind it', async () => {
-  let notify;
-  let succeeded = 0;
-  let calls = 0;
-  const renderer = createLocaleRenderer({
-    subscribe: (fn) => { notify = fn; },
-    async redraw() {
-      calls += 1;
-      if (calls === 1) throw new Error('the page went away');
-      succeeded += 1;
-    },
-  });
-  renderer.start();
-  await notify();
-  await notify();
-  assert.equal(succeeded, 1, 'one failed redraw made the page deaf to the next language');
-});
-
-test('a redraw does not invalidate a command already sent to the host', async () => {
-  let sends = 0;
-  const send = async () => { sends += 1; return { success: true }; };
-  const renderer = createLocaleRenderer({
-    subscribe: notify => { notify(); notify(); }, // two notifications
-    redraw: () => {},                             // drawing draws; it does not send
-  });
-  await send();
-  renderer.start();
-  assert.equal(sends, 1, `the redraw path sent ${sends} commands`);
-  await send();
-  assert.equal(sends, 2, 'the counter is not measuring anything');
-});
-
-test('sendToNativeHost does not wait for locale bookkeeping', async () => {
-  // The composition lives in a function that a test can drive. `background.js` needs `chrome` at
-  // module scope, so testing separated pieces or reading their arrangement would not execute it.
-  //
-  // The storage here never settles. If the answer waited on it, this test would time out.
-  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
-  let recordedSeq = null;
-  const request = createNativeRequester({
-    async send() { return { success: true, ok: 1 }; },
-    record(response, seq, scope) {
-      recordedSeq = { seq, scope };
-      return new Promise(() => {}); // a storage round trip that never comes back
-    },
-    log: () => {},
-  });
-
-  const answer = await request({ command_template: 'z {repo}' }, 'worker-1');
-  assert.deepEqual(answer, { success: true, ok: 1 }, 'the answer waited for the bookkeeping');
-  assert.deepEqual(recordedSeq, { seq: 1, scope: 'worker-1' }, 'the request was not recorded');
-});
-
-test('a rejected app command keeps its own error while bookkeeping is still pending', async () => {
-  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
-  const request = createNativeRequester({
-    async send() { return { success: false, error: 'Unknown variable: {evil}' }; },
-    record() { return new Promise(() => {}); },
-    log: () => {},
-  });
-  await assert.rejects(request({}, 'worker-1'), /Unknown variable/);
-});
-
-test('a bookkeeping failure never reaches the caller', async () => {
-  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
-  const failures = [];
-  const request = createNativeRequester({
-    async send() { return { success: true }; },
-    record() { throw new Error('storage.local.set failed'); },
-    log: (...parts) => failures.push(parts.join(' ')),
-  });
-  assert.deepEqual(await request({}, 'w'), { success: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(failures.some(line => line.includes('storage.local.set failed')), 'the failure vanished');
-});
-
-test('every request takes the next number, and the response is recorded against its own', async () => {
-  // The fence orders by what **we** sent, so the number has to belong to the request rather than to
-  // whatever happens to answer first.
-  const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
-  const seen = [];
-  let release;
-  const held = new Promise((resolve) => { release = resolve; });
-  const request = createNativeRequester({
-    async send(message) { if (message.slow) await held; return { success: true }; },
-    record(response, seq) { seen.push(seq); },
-    log: () => {},
-  });
-  const slow = request({ slow: true }, 'w');
-  const fast = request({}, 'w');
-  await fast;
-  release();
-  await slow;
-  assert.deepEqual(seen, [2, 1], 'a response was recorded against another request’s number');
-});
-
-test('the transport failure path carries no metadata and raises (lint)', () => {
-  // The one branch left unexercised above: `sendNativeMessage` itself rejecting. Driving it needs no
-  // chrome, but what it does — rethrow before anything is recorded — is one line, and the assertion
-  // that matters is that nothing was recorded, which the composition above already shows for the
-  // paths that do record.
-  const source = read('i18n.js');
-  const requester = source.slice(source.indexOf('function createNativeRequester('));
-  const body = requester.slice(0, requester.indexOf('\n}\n'));
-  const raise = body.indexOf('throw error;');
-  const record = body.indexOf('startBookkeeping(');
-  assert.ok(raise > 0 && record > raise, 'a transport failure is now recorded as a generation');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -649,12 +243,10 @@ const cataloguePathForLocale = tag => {
   return `_locales/${directory}/messages.json`;
 };
 const CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(cataloguePathForLocale));
-const COMPATIBILITY_CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(tag => `_i18n/${tag}.js`));
 const roleOf = (relativePath) => {
   if (relativePath === 'manifest.json') return 'manifest';
   if (CATALOGUE_PATHS.has(relativePath)) return 'localeCatalogue';
-  if (COMPATIBILITY_CATALOGUE_PATHS.has(relativePath)) return 'compatibilityCatalogue';
-  if (relativePath.startsWith('_i18n/') || relativePath.startsWith('_locales/')) return null;
+  if (relativePath.startsWith('_locales/')) return null;
   if (relativePath.endsWith('.js')) return 'speakingSource';
   if (relativePath.endsWith('.html')) return 'markupSource';
   return null;
@@ -673,7 +265,6 @@ const HTML_FILES = filesInRole('markupSource');
 const MARKUP_FILES = [...SPEAKING_FILES, ...HTML_FILES].sort();
 const MANIFEST_FILES = filesInRole('manifest');
 const CATALOGUE_FILES = filesInRole('localeCatalogue');
-const COMPATIBILITY_CATALOGUE_FILES = filesInRole('compatibilityCatalogue');
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
 // A consumer names a message through a literal call, a declared key-bearing data position, or a
@@ -961,12 +552,8 @@ test('each catalogue says which one it is, and that key is metadata rather than 
   // is the catalogue's own tag lets **Chrome's fallback choose the answer**: whichever catalogue it
   // picked is the one that replies.
   //
-  // It goes into `_i18n` **now**, before that store is pinned as the migration baseline, because of
-  // the general rule states: anything the new side needs from the old store has to be in the
-  // baseline at the moment the baseline is pinned. An adjacent consumer asking an unpinned `i18n.js` for
-  // this key would otherwise get the raw key back.
   for (const tag of TC_I18N_LOCALES) {
-    assert.equal(i18nText(TC_I18N_CATALOGUE_TAG_KEY, tag), tag, `${tag} does not name itself`);
+    assert.equal(liveMessageFor(tag, TC_I18N_CATALOGUE_TAG_KEY), tag, `${tag} does not name itself`);
   }
   // And it is **metadata**: not one of the 122 user-facing strings, so it stays out of the counts
   // that ask whether the extension is fully translated, and out of the gate that says every message
@@ -1107,21 +694,6 @@ test('a call-shaped string is not a reference, text consumer, or argument-supply
   assert.deepEqual(messageCallsIn(source), []);
   assert.equal(refuseArgumentMismatches('fixture.js', source, { 'ext.a': 'takes nothing' }), 0);
 });
-
-test('a compatibility catalogue cannot witness its own keys as consumer references', () => {
-  const sources = new Map([
-    ['consumer.js', "tr('ext.used');"],
-    ['_i18n/en.js', 'const messages = { "ext.used": "used", "ext.orphan": "orphan" };'],
-  ]);
-  const consumers = [...sources.keys()].filter(file => roleOf(file) === 'speakingSource');
-  const references = consumerReferenceKeysIn(consumers, file => sources.get(file));
-  assert.throws(
-    () => assertEveryCatalogueMessageIsReferenced(['ext.used', 'ext.orphan'], references),
-    /catalogue carries a message nothing asks for/,
-  );
-  assert.deepEqual(consumers, ['consumer.js']);
-});
-
 test('message strings and calls are separate projections of every JavaScript lexical state', () => {
   const source = [
     "t('ext.single');",
@@ -1149,57 +721,15 @@ test('message strings and calls are separate projections of every JavaScript lex
   }
 });
 
-test('_locales is pinned by bytes while the compatibility checker pins _i18n separately', () => {
-  // `_i18n` is the compatibility passenger and its exact bytes are the migration baseline. The
-  // live `_locales` values are canonical and may evolve, so its own exact-byte pin is a review
-  // prompt. The command checks the compatibility and machine-structure contracts; the test checks
+test('_locales is pinned by bytes, and its machine structure is checked live', () => {
+  // The live `_locales` values are canonical and may evolve, so their exact-byte pin is a review
+  // prompt, not an edit ban. The command checks the machine-structure contracts; the test checks
   // the live pin; neither claims that two live catalogues must remain textually equal.
-  assert.deepEqual(checkCompatibilityBaseline().failures, []);
+  assert.deepEqual(checkLiveLocaleStructure().failures, []);
   assert.deepEqual(checkLiveLocaleBaseline().failures, []);
-
-  const context = loadExtensionI18n();
-  for (const tag of TC_I18N_LOCALES) {
-    const { directory, messages } = deriveCatalogue(tag, context);
-    const actual = JSON.parse(read(`_locales/${directory}/messages.json`));
-    // The frozen baseline remains a subset of the live name set. A reviewed live message may arrive
-    // before the compatibility passenger retires, so exact equality here would turn a legitimate
-    // addition into a false regeneration instruction.
-    for (const name of Object.keys(messages)) {
-      assert.ok(Object.hasOwn(actual, name), `${directory} is missing baseline message ${name}`);
-    }
-    assert.deepEqual(
-      Object.keys(messages).sort(),
-      [...MANIFEST_KEYS, ...Object.keys(globalThis.TC_I18N[tag]).map(chromeMessageId)].sort(),
-      `${directory} does not carry one name per logical id`,
-    );
-  }
   assert.equal(Object.keys(CATALOGUE_BASELINE_HASHES.locales).length, TC_I18N_LOCALES.length);
 });
-
-test('a live catalogue may add a message before the compatibility passenger retires', () => {
-  // This is the name-set contract for the canonical store: a reviewed message may be added to
-  // `_locales` before the frozen `_i18n` passenger is retired. The baseline direction remains
-  // exact for the passenger itself; the live side must therefore accept a well-shaped superset.
-  const { readOnlyFiles, checkCompatibilityBaseline } = require('../tools/check-locales.js');
-  const original = readOnlyFiles.read;
-  const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
-  try {
-    readOnlyFiles.read = (file, encoding) => {
-      const originalValue = original(file, encoding);
-      if (file !== editedPath) return originalValue;
-      const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
-      const messages = JSON.parse(text);
-      messages.ext_future_reviewed_message = { message: 'A reviewed future message' };
-      const edited = `${JSON.stringify(messages, null, 2)}\n`;
-      return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
-    };
-    assert.deepEqual(checkCompatibilityBaseline().failures, []);
-  } finally {
-    readOnlyFiles.read = original;
-  }
-});
-
-test('a legitimate _locales edit stays green in the compatibility checker and names only its live pin', () => {
+test('a legitimate _locales edit stays green in the structure checker and names only its live pin', () => {
   const { readOnlyFiles } = require('../tools/check-locales.js');
   const original = readOnlyFiles.read;
   const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
@@ -1213,7 +743,7 @@ test('a legitimate _locales edit stays green in the compatibility checker and na
       const edited = `${JSON.stringify(messages, null, 2)}\n`;
       return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
     };
-    assert.deepEqual(checkCompatibilityBaseline().failures, []);
+    assert.deepEqual(checkLiveLocaleStructure().failures, []);
     const liveFailures = checkLiveLocaleBaseline().failures;
     assert.deepEqual(
       liveFailures,
@@ -1227,10 +757,14 @@ test('a legitimate _locales edit stays green in the compatibility checker and na
   }
 });
 
-test('_locales rejects a placeholder binding that moves from its source position', () => {
-  const { readOnlyFiles, checkCompatibilityBaseline } = require('../tools/check-locales.js');
+test('_locales rejects a translation whose placeholder binding moves away from en', () => {
+  // `en` is canonical for which arguments a message takes, so it has no external binding oracle —
+  // an en edit is reviewed through the byte pin. A translation, though, must bind the same names to
+  // the same positions as en, and a moved binding is exactly the defect that renders the wrong
+  // value into the right sentence.
+  const { readOnlyFiles, checkLiveLocaleStructure } = require('../tools/check-locales.js');
   const original = readOnlyFiles.read;
-  const editedPath = path.join(extension, '_locales', 'en', 'messages.json');
+  const editedPath = path.join(extension, '_locales', 'ko', 'messages.json');
   try {
     readOnlyFiles.read = (file, encoding) => {
       const originalValue = original(file, encoding);
@@ -1241,10 +775,10 @@ test('_locales rejects a placeholder binding that moves from its source position
       const edited = `${JSON.stringify(messages, null, 2)}\n`;
       return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
     };
-    const failures = checkCompatibilityBaseline().failures;
+    const failures = checkLiveLocaleStructure().failures;
     assert.ok(
       failures.some(failure => failure.includes(
-        '_locales/en/messages.json: ext_confirm_presetOverwrite placeholder ARG2 is bound to $1, expected $2',
+        '_locales/ko/messages.json: ext_confirm_presetOverwrite argument bindings differ from en',
       )),
       failures.join('\n'),
     );
@@ -1253,11 +787,9 @@ test('_locales rejects a placeholder binding that moves from its source position
   }
 });
 
-test('the derivation can only read, and that is a capability rather than a rule', () => {
-  // **The live catalogue is not generated here.** While `_i18n` was canonical, deriving `_locales` by program
-  // was the thing that made a wrong edit impossible to make twice; now `_locales` is what Chrome
-  // reads, and a program pointing the other way would be a path for the frozen store to overwrite
-  // the live one.
+test('the checker can only read, and that is a capability rather than a rule', () => {
+  // **The live catalogue is not generated here.** `_locales` is hand-edited and what Chrome reads;
+  // a generator pointed at it would be a path for some other store to overwrite the live one.
   //
   // **This used to be a blacklist of four spellings, and it was an overclaim**:
   // `fs.writeFile`, `fs.write`, `copyFileSync` and every rename-based replacement went straight
@@ -1265,83 +797,24 @@ test('the derivation can only read, and that is a capability rather than a rule'
   // work keeps finding, so the property is structural now — the checker takes its file access from
   // one injected reader. Swap the reader and every read goes through it; there is nothing else it
   // could reach.
-  const { readOnlyFiles, deriveCatalogue, loadExtensionI18n } = require('../tools/check-locales.js');
+  const { readOnlyFiles, checkLiveLocaleStructure } = require('../tools/check-locales.js');
   const original = readOnlyFiles.read;
   const seen = [];
   try {
-    readOnlyFiles.read = (file) => { seen.push(file); return original(file); };
-    const context = loadExtensionI18n();
-    deriveCatalogue('ko', context);
+    readOnlyFiles.read = (file, encoding) => { seen.push(file); return original(file, encoding); };
+    checkLiveLocaleStructure();
   } finally {
     readOnlyFiles.read = original;
   }
-  assert.ok(seen.length > 0, 'the derivation reached the filesystem some other way');
+  assert.ok(seen.length > 0, 'the checker reached the filesystem some other way');
   assert.ok(
     seen.every(file => file.includes('/extension/')),
-    `the derivation read outside the extension: ${seen.filter(file => !file.includes('/extension/'))}`,
+    `the checker read outside the extension: ${seen.filter(file => !file.includes('/extension/'))}`,
   );
   // The capability it was given has one verb. Anything it could write with would have to come from
   // somewhere this module does not look.
   assert.deepEqual(Object.keys(readOnlyFiles), ['read']);
 });
-
-test('the frozen compatibility formats render the same bytes for every argument-bearing message', () => {
-  // **Parity is not identity.** Five catalogues can agree on
-  // placeholder names and counts while every one of them binds those names to the wrong argument —
-  // all five saying `$ARG1$` where the source said `%2$d` passes every parity gate in this file. The
-  // only oracle that can tell is the old dictionary itself, rendered. `_i18n` remains the frozen
-  // source of argument identity, while the live `_locales` store has its own semantic gate in
-  // `checkCompatibilityBaseline`; this test keeps the source-side projection visible here too.
-  //
-  // So: render both formats with a distinct sentinel per position and require the same bytes. Two
-  // keys reorder their arguments between locales, which is where a consistently wrong binding stops
-  // being invisible — and every locale is checked, not just those two, because a binding that is
-  // wrong in one catalogue is exactly what a hand edit would produce.
-  const { formatMessage } = vm.runInThisContext('({ formatMessage })');
-  const SENTINELS = ['<<s1>>', '<<s2>>', '<<s3>>', '<<s4>>'];
-  // Chrome's own substitution, as a double: `$NAME$` is replaced by the argument its `content`
-  // names, and `$$` is a literal dollar. It is a second implementation of somebody else's rule and
-  // therefore proves nothing about Chrome — the real-Chrome load is a release gate. What it does
-  // prove is that the two *of ours* say the same thing.
-  const renderChromeStyle = (entry, args) => entry.message.replace(/\$([A-Za-z0-9_@]+)\$|\$\$/g, (whole, name) => {
-    if (whole === '$$') return '$';
-    const declared = entry.placeholders && entry.placeholders[name];
-    assert.ok(declared, `a message uses $${name}$ with no declaration`);
-    const position = Number(String(declared.content).slice(1));
-    return args[position - 1];
-  });
-  const context = loadExtensionI18n();
-  let compared = 0;
-  let reordering = 0;
-  for (const tag of TC_I18N_LOCALES) {
-    const { messages } = deriveCatalogue(tag, context);
-    for (const [key, value] of Object.entries(globalThis.TC_I18N[tag])) {
-      const entry = messages[chromeMessageId(key)];
-      const indices = [...value.matchAll(/%(\d+)\$[sd]/g)].map(match => Number(match[1]));
-      if (indices.length === 0) {
-        assert.ok(!entry.placeholders, `${tag}/${key} has no arguments but declares placeholders`);
-        continue;
-      }
-      // **Each declaration is pinned to its source position**, which is the half a rendering check
-      // cannot see on its own: a name bound to the wrong index renders wrongly, but a name bound to
-      // the right index by accident of ordering would still have to be read to be trusted.
-      for (const [name, declaration] of Object.entries(entry.placeholders)) {
-        assert.equal(declaration.content, `$${name.replace(/^ARG/, '')}`, `${tag}/${key}: ${name} is bound to ${declaration.content}`);
-      }
-      assert.equal(
-        renderChromeStyle(entry, SENTINELS), formatMessage(value, SENTINELS),
-        `${tag}/${key} renders differently in the two formats`,
-      );
-      if (indices.join() !== [...indices].sort().join()) reordering += 1;
-      compared += 1;
-    }
-  }
-  // The measured shape of the corpus, so that a catalogue losing its placeholders would show up
-  // here as a smaller number rather than as a quieter test: 32 argument-bearing values per locale.
-  assert.equal(compared, 32 * TC_I18N_LOCALES.length, `${compared} argument-bearing values were compared`);
-  assert.equal(reordering, 8, `${reordering} values put their arguments in a non-source order`);
-});
-
 test('the seam: nothing answers without a backend, and both paths get the same preprocessing', () => {
   // Three realms, built here rather than reused, because the hazard the lazy default carries is
   // not in production — it is Node global pollution: a `chrome` another test left behind would
@@ -1419,25 +892,23 @@ test('the boundary conversion is legal for every key, and collides for none', ()
   // dots — which is what makes "an old dictionary meeting a new consumer" a state that cannot be
   // written down rather than one a gate has to catch.
   //
-  // It lives in `i18n.js` because **the generator, the read-only checker and the runtime all load
-  // this function from here**. "The same rule" written twice is two implementations that agree
-  // until they do not, so the checker and runtime share this function.
+  // It lives in `i18n.js` because **the read-only checker and the runtime both load this function
+  // from here**. "The same rule" written twice is two implementations that agree until they do not.
   assert.equal(chromeMessageId('ext.header.options'), 'ext_header_options');
   assert.equal(chromeMessageId('ext.migration.effect.behaviorChange'), 'ext_migration_effect_behaviorChange');
   // A name already legal is its own conversion — the two Chrome-namespace keys are the case
   assert.equal(chromeMessageId('extName'), 'extName');
   const byFoldedName = new Map();
-  for (const key of Object.keys(globalThis.TC_I18N.en)) {
-    const id = chromeMessageId(key);
-    assert.match(id, /^[A-Za-z0-9_@]+$/, `${key} becomes ${id}, which _locales cannot hold`);
-    const folded = id.toLowerCase();
+  for (const name of livePhysicalKeysFor('en')) {
+    assert.match(name, /^[A-Za-z0-9_@]+$/, `${name} is a name _locales cannot hold`);
+    const folded = name.toLowerCase();
     assert.ok(
       !byFoldedName.has(folded),
-      `${key} and ${byFoldedName.get(folded)} become the same name once case is folded away`,
+      `${name} and ${byFoldedName.get(folded)} become the same name once case is folded away`,
     );
-    byFoldedName.set(folded, key);
+    byFoldedName.set(folded, name);
   }
-  assert.equal(byFoldedName.size, Object.keys(globalThis.TC_I18N.en).length);
+  assert.equal(byFoldedName.size, livePhysicalKeysFor('en').length);
 });
 
 test('the page can only ask for keys the catalogue has, and asks for all of them', () => {
@@ -1500,8 +971,8 @@ test('text and markup are separate halves, and nothing is on both', () => {
   for (const [physical, entry] of Object.entries(LIVE_CATALOGUES.en)) {
     const value = entry.message;
     if (!tagsOf(value).length) continue;
-    const key = Object.keys(globalThis.TC_I18N.en).find(logical => chromeMessageId(logical) === physical);
-    if (!key) continue; // A future live message has no source call until it is adopted by a consumer.
+    const key = [...textKeys, ...markupKeys].find(logical => chromeMessageId(logical) === physical);
+    if (!key) continue; // a message nothing asks for is the ask-for-all gate's subject, not this one's
     assert.ok(!textKeys.has(key), `${key} has markup and is asked for as text`);
     assert.ok(markupKeys.has(key), `${key} has markup and nothing asks for it as markup`);
   }
@@ -2285,10 +1756,9 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   // A loop over no matches is a test that says nothing while reading like one that says a lot — a
   // A count distinguishes an empty scan from a scan that actually checked its subject.
   assert.ok(localizedNodes > 30, `only ${localizedNodes} localized nodes were read`);
-  // The adjacent-generation compatibility branch and the synchronous fill, in that order. The
-  // current skeleton bypasses the branch and asks Chrome; the baseline skeleton takes it.
-  const first = optionsJs.indexOf("const compatibilityLocale = typeof installMessageBackend === 'function'");
-  const fill = optionsJs.indexOf('applyStaticText();\n\n//');
+  // The document language and the synchronous fill, in that order, at the top level of the script.
+  const first = optionsJs.indexOf('applyDocumentLanguage();');
+  const fill = optionsJs.indexOf('applyStaticText();');
   assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
   assert.ok(!/adoptLocaleFromCache|localeRenderer/.test(optionsJs), 'the retired locale redraw still runs');
 });
@@ -2304,201 +1774,6 @@ test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
   // A value is data, not a format language: nothing else is touched, including what an argument says
   assert.equal(formatMessage('100% sure %1$s', ['— %2$s']), '100% sure — %2$s');
 });
-
-// ---------------------------------------------------------------------------------------------
-// The lifecycle the reducer lives in.
-//
-// The reducer's own tests can pass while defects sit in the paths that own it: a fence that
-// blocked the next service worker forever, a read-reduce-write that could interleave with itself,
-// and a first render that races the cache read. These tests drive the asynchronous, lifecycle-owning
-// path rather than only its pure functions or source lints.
-// ---------------------------------------------------------------------------------------------
-
-test('a fresh worker is not fenced out by the sequence its predecessor persisted', () => {
-  // The reproduction, exactly: `appliedSeq` is persisted and the counter is not, so the next
-  // worker's first request is `seq: 1` against a cached `appliedSeq: 10`. Under the old rule that
-  // response — a different install id, therefore a different app — was refused, and every response
-  // after it too. The profile was stuck in the old language until storage was cleared.
-  const stale = { locale: 'ko', installId: 'install-a', epoch: 3, appliedSeq: 10, appliedSeqScope: 'worker-1' };
-  const fresh = { locale: 'ja', installId: 'install-b', epoch: 0, seq: 1, seqScope: 'worker-2' };
-  const result = localeCacheUpdate(stale, fresh);
-  assert.equal(result.changed, true, 'a new worker was fenced out by the previous worker’s number');
-  assert.equal(result.cache.locale, 'ja');
-  assert.equal(result.cache.appliedSeq, 1);
-  assert.equal(result.cache.appliedSeqScope, 'worker-2');
-});
-
-test('the fence still holds inside one worker', () => {
-  // The half that must not be lost with the fix: within a lifetime the numbers are comparable, and
-  // an older request answering late is still refused.
-  const applied = localeCacheUpdate(cache(), generation({ installId: 'install-b', epoch: 0, seq: 11 }));
-  assert.equal(applied.changed, true);
-  const late = localeCacheUpdate(applied.cache, generation({ installId: 'install-c', epoch: 0, seq: 9 }));
-  assert.equal(late.changed, false, 'a late response from the same worker overwrote a newer one');
-  assert.deepEqual(late.cache, applied.cache);
-});
-
-test('a cache with no scope is still a language, and never fences', () => {
-  // What an upgrade finds in storage: a cache this version did not write. It is a perfectly good
-  // answer to "what language" — the user keeps their language across the upgrade — but its number
-  // was minted by a worker that no longer exists, so it cannot refuse anything.
-  const old = { locale: 'ko', installId: 'install-a', epoch: 3, appliedSeq: 10 };
-  assert.equal(isUsableLocaleCache(old), true, 'an upgrade threw the language away');
-  assert.equal(localeToRenderIn(old, 'en-US'), 'ko');
-  const result = localeCacheUpdate(old, generation({ installId: 'install-b', epoch: 0, seq: 1 }));
-  assert.equal(result.changed, true, 'a scopeless cache fenced out the worker that replaced it');
-});
-
-test('a negative sequence is refused rather than compared', () => {
-  assert.equal(isUsableLocaleCache(cache({ appliedSeq: -1 })), false);
-  assert.equal(
-    localeGenerationOf({ success: true, locale: 'ja', locale_install_id: 'a', locale_epoch: 0 }, -3, WORKER),
-    null,
-  );
-  // and a generation with no scope cannot be ordered, so it is not a generation
-  assert.equal(
-    localeGenerationOf({ success: true, locale: 'ja', locale_install_id: 'a', locale_epoch: 0 }, 1, ''),
-    null,
-  );
-  assert.equal(
-    localeGenerationOf({ success: true, locale: 'ja', locale_install_id: 'a', locale_epoch: 0 }, 1, undefined),
-    null,
-  );
-});
-
-test('a refused command still tells us the language', () => {
-  // The reversal: the app attaches its publication to everything it composes, including a
-  // validation failure, because a failure can be the first successful contact with the running app
-  // — the cold-start query never ran, or an older app answered it, and then the relay launches this
-  // app and it refuses the command. Under the success-only rule that response said nothing.
-  const refused = {
-    success: false,
-    error: 'Unknown variable: {evil}',
-    locale: 'ja',
-    locale_install_id: 'install-b',
-    locale_epoch: 2,
-  };
-  const incoming = localeGenerationOf(refused, 11, WORKER);
-  assert.deepEqual(incoming, {
-    locale: 'ja', installId: 'install-b', epoch: 2, seq: 11, seqScope: WORKER,
-  });
-  assert.equal(localeCacheUpdate(cache(), incoming).changed, true);
-});
-
-test('concurrent locale cache updates are serialized', async () => {
-  // The defect this drives: read, reduce, write, with awaits in between and nothing holding the
-  // door. Request 12 reads and writes first; request 11 read the same old value and writes second;
-  // the reducer's fence never saw request 12 because it was handed the cache from before it. The
-  // cache goes backwards and every page is told to redraw in the older language.
-  //
-  // Forced, not hoped for: the first read is held open until the second update has been started.
-  let stored = cache();
-  const notified = [];
-  let releaseFirstRead;
-  const firstRead = new Promise((resolve) => { releaseFirstRead = resolve; });
-  let reads = 0;
-
-  const apply = createLocaleCacheWriter({
-    async read() {
-      reads += 1;
-      if (reads === 1) await firstRead; // hold request 12 inside its read
-      return stored;
-    },
-    async write(cache) { stored = cache; },
-    async notify(locale) { notified.push(locale); },
-  });
-
-  const twelve = apply(generation({ locale: 'ja', epoch: 4, seq: 12 }));
-  const eleven = apply(generation({ locale: 'en', epoch: 5, seq: 11 }));
-  releaseFirstRead();
-  await Promise.all([twelve, eleven]);
-
-  assert.equal(stored.appliedSeq, 12, `the cache regressed to seq ${stored.appliedSeq}`);
-  assert.equal(stored.locale, 'ja');
-  assert.deepEqual(notified, ['ja'], 'a page was told to redraw in the older language');
-});
-
-test('a serialized update that fails does not stop the ones behind it', async () => {
-  // The queue is a chain, and a chain that adopts a rejection stops. One failed write must not make
-  // the extension deaf to every later response.
-  let stored = cache();
-  let writes = 0;
-  const apply = createLocaleCacheWriter({
-    async read() { return stored; },
-    async write(next) {
-      writes += 1;
-      if (writes === 1) throw new Error('storage full');
-      stored = next;
-    },
-    async notify() {},
-  });
-
-  // **It resolves rather than rejecting, and that assertion used to read `rejects`.** The rejection
-  // had exactly one production consumer — the send path — and that consumer awaited it before
-  // deciding what to tell the page, so a storage failure became a failed command. There is nothing a
-  // caller can usefully do with this failure, so it does not get the chance.
-  const failed = await apply(generation({ epoch: 4, seq: 11 }));
-  assert.equal(failed, null, 'a failed cache update reached its caller');
-  await apply(generation({ locale: 'en', epoch: 5, seq: 12 }));
-  assert.equal(stored.locale, 'en', 'the queue stopped after one failure');
-});
-
-test('nothing is written and nobody is told when the reducer says no', async () => {
-  let writes = 0;
-  let notifications = 0;
-  const apply = createLocaleCacheWriter({
-    async read() { return cache(); },
-    async write() { writes += 1; },
-    async notify() { notifications += 1; },
-  });
-  await apply(null);                                    // no metadata on the response at all
-  await apply(generation({ epoch: 3, seq: 11 }));       // same epoch, so no advance
-  assert.equal(writes, 0);
-  assert.equal(notifications, 0);
-});
-
-test('initial render uses a valid cached locale', async () => {
-  // The first draw waited for nothing, so a valid Korean cache lost to the English fallback — and
-  // if the app's answer then equalled the cache, the reducer reported no change, no notification
-  // went out, and nothing repaired the page. Reading `storage.local` is not waiting for the app,
-  // which is the only thing the app-response rule forbids.
-  //
-  // The read is delayed here while a draw is attempted immediately, which is the shape of the race.
-  let resolveRead;
-  const read = new Promise((resolve) => { resolveRead = resolve; });
-  let locale = TC_I18N_FALLBACK;
-  const ready = createFirstRenderGate(async () => {
-    await read;
-    locale = localeToRenderIn(cache(), 'en-US');
-    return locale;
-  });
-
-  const drawn = [];
-  const draw = async () => { await ready(); drawn.push(locale); };
-  const first = draw();
-  const second = draw();
-  assert.deepEqual(drawn, [], 'a button was drawn before the cache had been read');
-  resolveRead();
-  await Promise.all([first, second]);
-  assert.deepEqual(drawn, ['ko', 'ko'], 'the first render used the fallback despite a valid cache');
-});
-
-test('the cache is read once however many times the page tries to draw', async () => {
-  let reads = 0;
-  const ready = createFirstRenderGate(async () => { reads += 1; });
-  await Promise.all([ready(), ready(), ready()]);
-  await ready();
-  assert.equal(reads, 1, `the gate read the cache ${reads} times`);
-});
-
-test('a gate whose read fails still lets the page draw', async () => {
-  // A rejected gate would be no buttons, forever. An unreadable cache is a language we do not know,
-  // not a page we refuse to render.
-  const ready = createFirstRenderGate(async () => { throw new Error('storage unavailable'); });
-  await ready();
-  await ready();
-});
-
 // ---------------------------------------------------------------------------------------------
 // The rest of the extension's strings.
 //
@@ -2556,19 +1831,18 @@ test('a saved button keeps the words it was saved with', () => {
   // text, so a button created in one language keeps that language after a switch. Following the
   // language would mean a persistent id in the stored schema — a SETTINGS_VERSION bump, which this
   // plan does not make.
-  const { setCurrentLocale, currentLocale } = vm.runInThisContext('({ setCurrentLocale, currentLocale })');
+  const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const { appendButton, toStoredButton, BUTTON_KINDS } =
     vm.runInThisContext('({ appendButton, toStoredButton, BUTTON_KINDS })');
-  const before = currentLocale();
+  const previous = installMessageBackend(catalogueBackend('ko'));
   try {
-    setCurrentLocale('ko');
     const [added] = appendButton([], BUTTON_KINDS.pr);
     const stored = toStoredButton(added);
-    setCurrentLocale('en');
+    installMessageBackend(catalogueBackend('en'));
     assert.equal(toStoredButton(stored).label, stored.label, 'a stored label moved with the language');
     assert.ok(stored.label.length > 0);
   } finally {
-    setCurrentLocale(before);
+    installMessageBackend(previous);
   }
 });
 
@@ -2593,58 +1867,6 @@ test('the messages that only reach a console are not in the dictionaries', () =>
     assert.ok(!values.has(sentence), `${sentence} was translated, but nothing displays it`);
   }
 });
-
-// ---------------------------------------------------------------------------------------------
-// Bookkeeping may not decide what a click reports.
-//
-// The cache write must not be **reachable** from the answer a click gets. These pin the separation
-// from both sides: the writer
-// cannot fail, and the thing that decides the answer is never handed the writer at all.
-// ---------------------------------------------------------------------------------------------
-
-test('a storage failure does not turn an executed command into a failed one', async () => {
-  // The repro, at the boundary the old test missed: storage refuses both reads and writes while the
-  // app answers normally. The terminal is already open by the time any of this runs.
-  const { nativeOutcome, startBookkeeping } = vm.runInThisContext('({ nativeOutcome, startBookkeeping })');
-  const logged = [];
-  const apply = createLocaleCacheWriter({
-    async read() { throw new Error('storage.local.get failed'); },
-    async write() { throw new Error('storage.local.set failed'); },
-    async notify() {},
-    log: (...parts) => logged.push(parts.join(' ')),
-  });
-
-  const success = { success: true, locale: 'ja', locale_install_id: 'b', locale_epoch: 1 };
-  startBookkeeping(() => apply(localeGenerationOf(success, 1, WORKER)), 'locale cache update', () => {});
-  const outcome = nativeOutcome(success);
-  assert.equal(outcome.failed, false, 'an executed command was reported as a failure');
-  assert.equal(outcome.response, success);
-
-  // ...and the app's own diagnostic survives when the command really did fail
-  const refused = { success: false, error: 'Unknown variable: {evil}', locale: 'ja', locale_install_id: 'b', locale_epoch: 1 };
-  startBookkeeping(() => apply(localeGenerationOf(refused, 2, WORKER)), 'locale cache update', () => {});
-  assert.deepEqual(nativeOutcome(refused), { failed: true, error: 'Unknown variable: {evil}' });
-
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(logged.length > 0, 'the storage failure vanished without a word');
-});
-
-test('a later locale response still updates the cache after storage recovers', async () => {
-  let stored;
-  let broken = true;
-  const apply = createLocaleCacheWriter({
-    async read() { if (broken) throw new Error('storage.local.get failed'); return stored; },
-    async write(next) { if (broken) throw new Error('storage.local.set failed'); stored = next; },
-    async notify() {},
-    log: () => {},
-  });
-  await apply(generation({ seq: 11 }));
-  assert.equal(stored, undefined);
-  broken = false;
-  await apply(generation({ locale: 'ja', epoch: 9, seq: 12 }));
-  assert.equal(stored?.locale, 'ja', 'the writer stayed broken after storage came back');
-});
-
 test('what a click reports is a function of the response alone', () => {
   // Not "guarded against" the cache — **unable to see it**. The signature is the guarantee.
   const { nativeOutcome } = vm.runInThisContext('({ nativeOutcome })');
@@ -2656,43 +1878,6 @@ test('what a click reports is a function of the response alone', () => {
   // a non-string error is not an error message
   assert.deepEqual(nativeOutcome({ success: false, error: 42 }), { failed: true, error: 'native host returned no result' });
 });
-
-test('startBookkeeping contains a rejection and a synchronous throw alike', async () => {
-  const { startBookkeeping } = vm.runInThisContext('({ startBookkeeping })');
-  const logged = [];
-  const log = (...parts) => logged.push(parts.join(' '));
-  assert.equal(startBookkeeping(() => Promise.reject(new Error('async')), 'x', log), undefined);
-  assert.equal(startBookkeeping(() => { throw new Error('sync'); }, 'y', log), undefined);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(logged.length, 2, `only ${logged.length} failures were reported`);
-});
-
-test('a redraw that returns nothing is noticed rather than silently unserialized', async () => {
-  // Class H, recurred in the promotion that named it: the options adapter started an asynchronous
-  // redraw and returned nothing, so the queue had nothing to wait for — and the renderer's test did
-  // not see it because the injected double *did* return a promise. A double politer than the
-  // adapter it stands for is not a test of the adapter.
-  let notify;
-  const renderer = createLocaleRenderer({
-    subscribe: (fn) => { notify = fn; },
-    redraw() {},
-    log: () => {},
-  });
-  renderer.start();
-  await notify();
-  assert.equal(renderer.unwaitableRedraws, 1, 'an unserializable redraw went unnoticed');
-
-  let ok;
-  const good = createLocaleRenderer({
-    subscribe: (fn) => { ok = fn; },
-    async redraw() {},
-    log: () => {},
-  });
-  good.start();
-  await ok();
-  assert.equal(good.unwaitableRedraws, 0, 'a proper adapter was reported as unserializable');
-});
-
 test('a translation cannot break out of an HTML attribute', () => {
   // The card template interpolates messages into `title="…"` and `placeholder="…"`. The other gates
   // check tags and placeholders and would not notice a quote, and one `"` in a translation ends the
@@ -2753,30 +1938,6 @@ test('no text ships in the markup without a message behind it', () => {
   // two look identical from here
   assert.ok(nodes > 100, `only ${nodes} text nodes were read`);
 });
-
-// ---------------------------------------------------------------------------------------------
-// The shape another gate depends on.
-// ---------------------------------------------------------------------------------------------
-
-test('a dictionary file is one JSON object, so the ownership gate can read it', () => {
-  // `CatalogueOwnershipTests` is the only place that can see all three catalogues at once — Swift
-  // parses `.strings` natively — and it reads these files as text rather than running them. That
-  // works because the body of the assignment is JSON apart from its trailing comma. The assumption
-  // is asserted **here**, on the side that owns these files, so a hand edit that breaks it fails
-  // where its author is looking rather than in a Swift test about the app.
-  for (const tag of TC_I18N_LOCALES) {
-    const source = read(`_i18n/${tag}.js`);
-    const opening = source.indexOf('] = {');
-    const closing = source.lastIndexOf('};');
-    assert.ok(opening > 0 && closing > opening, `${tag}.js no longer assigns one object literal`);
-    const body = `${source.slice(opening + 4, closing)}}`.replace(/,(\s*)\}$/, '$1}');
-    let parsed;
-    assert.doesNotThrow(() => { parsed = JSON.parse(body); }, `${tag}.js is not readable as JSON`);
-    // and it agrees with what running the file produced, which is the real dictionary
-    assert.deepEqual(parsed, globalThis.TC_I18N[tag], `${tag}.js reads differently as text and as code`);
-  }
-});
-
 // ---------------------------------------------------------------------------------------------
 // What only becomes checkable once five locales exist.
 // ---------------------------------------------------------------------------------------------
@@ -2934,4 +2095,16 @@ test('a translation that is still English is caught where English is not the ans
         + `${identical.slice(0, 5).map(([k]) => k).join(', ')}`,
     );
   }
+});
+
+test('no extension-root name starts with an underscore except the ones Chrome itself owns', () => {
+  // Chrome refuses to load an unpacked extension whose root contains any other `_`-prefixed
+  // name — "Filenames starting with \"_\" are reserved for use by the system" — so a directory
+  // that every VM-based gate here loads happily can still make the real loader reject the whole
+  // folder (measured: `_i18n/` did exactly that on first load). `_locales` is Chrome's own
+  // catalogue directory; nothing else may claim the prefix.
+  const chromeOwned = new Set(['_locales']);
+  const reserved = fs.readdirSync(extension)
+    .filter(name => name.startsWith('_') && !chromeOwned.has(name));
+  assert.deepEqual(reserved, [], `Chrome will refuse to load the extension: ${reserved.join(', ')}`);
 });

@@ -392,14 +392,6 @@ function onUrlChange() {
   setTimeout(tryInsertButton, 300);
 }
 
-// Prime only an adjacent old dictionary skeleton. The current skeleton exposes
-// `installMessageBackend` and needs no locale holder; the baseline skeleton lacks it and still needs
-// its UI-language fallback when a folder swap pairs it with this consumer. The current×current path
-// therefore executes no cache selector, first-render gate, locale notification or redraw machinery.
-if (typeof installMessageBackend !== 'function') {
-  setCurrentLocale(localeToRenderIn(null, chrome.i18n?.getUILanguage?.() || ''));
-}
-
 // Detect History API events
 const originalPushState = history.pushState;
 history.pushState = function(...args) {
