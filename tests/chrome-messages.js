@@ -3,11 +3,11 @@
 // **It is a double for somebody else's rule, and it proves nothing about Chrome.** Substitution,
 // `$$` escaping and the empty string for a missing name are what Chrome documents; whether Chrome
 // *does* them, and which catalogue it picks for a display language we do not ship, is settled by
-// loading the extension in a real browser — which is why that load is a release gate (D179, D184)
-// rather than something this file pretends to cover.
+// loading the extension in a real browser — which is why that load is a release gate rather than
+// something this file pretends to cover.
 //
 // What it is for is narrower and worth having: Node has no `chrome`, so without an installed backend
-// every lookup throws (D163). Reading the catalogues Chrome will actually read — the derived
+// every lookup throws. Reading the catalogues Chrome will actually read — the derived
 // `_locales`, not the dictionaries they came from — keeps these tests on the same side of the
 // migration as the product.
 'use strict';

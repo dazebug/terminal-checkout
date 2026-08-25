@@ -7,7 +7,7 @@ import XCTest
 /// and installer status lines, and the one `Info.plist` key macOS puts in the permission prompt. The
 /// window's own strings are `SetupWindowLayoutTests`' subject; what these cases pin is that nothing
 /// outside it went back to a literal, and that the sentences naming a button take that button's
-/// label as an argument instead of spelling it out (D28).
+/// label as an argument instead of spelling it out.
 ///
 /// The catalogues are read from the **source** tree: `swift test` runs with no app bundle, and
 /// whether `build.sh` copied them is `verify-bundle.sh`'s question.
@@ -93,7 +93,7 @@ final class AppMessageTests: XCTestCase {
     /// cannot reach.
     func testTheInstallerStatusMessagesComeFromTheCatalogue() throws {
         let source = try repoSource("app/Sources/App/Installer.swift")
-        // **A constructor and its argument need not be on the same line** (round 17 sweep), and
+        // **A constructor and its argument need not be on the same line**, and
         // four of the six here are not: `.error(` opens and the argument sits indented on the next
         // line. The spelling this looked for was the quote up against the parenthesis, so those
         // four had no position it could see, and a sentence hardcoded one line down was read by
@@ -132,7 +132,7 @@ final class AppMessageTests: XCTestCase {
         }
     }
 
-    /// **Every sentence that points at a button takes the label as an argument** (D28). A body that
+    /// **Every sentence that points at a button takes the label as an argument**. A body that
     /// went back to spelling the label out would still read correctly today and drift the moment the
     /// button is renamed or translated differently, so the placeholder is what is pinned.
     func testEverySentenceNamingAButtonTakesItsLabelAsAnArgument() {
@@ -170,7 +170,7 @@ final class AppMessageTests: XCTestCase {
         )
 
         let source = try repoSource("app/Sources/App/AppDelegate.swift")
-        // **Every way a menu carries a title, and proof that it read some** (round 17 sweep). Two
+        // **Every way a menu carries a title, and proof that it read some**. Two
         // spellings were listed because they are the two this file uses, which leaves
         // `NSMenuItem(title:)` and a `.title =` afterwards as titles no gate would look at. And the
         // filter is the same shape as the locale filter this file already had to fix: one that

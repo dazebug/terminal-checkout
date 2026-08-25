@@ -3,10 +3,10 @@ import TestSupport
 import XCTest
 @testable import App
 
-/// Item 12's gate: the five catalogues agree with each other and with the sources.
+/// The five catalogues agree with each other and with the sources.
 ///
 /// Everything here is read from the **source tree** through `#filePath` and parsed with
-/// `PropertyListSerialization`. Not through `Bundle`: measured (D7), a bundle lookup resolves
+/// `PropertyListSerialization`. Not through `Bundle`: measured, a bundle lookup resolves
 /// through the host machine's language, so an oracle aimed at `en` answered with the Korean string
 /// on a ko-KR Mac — it would pass here and fail in CI, or pass in both while testing nothing.
 ///
@@ -18,14 +18,11 @@ import XCTest
 /// scope so that **every** gate in this target that enumerates sources reaches the same walk.
 /// Nothing is nested under `Sources/App` today, which is exactly why the recursion could not
 /// otherwise be asserted: a flat tree gives the same answer either way, and a gate would have gone
-/// on reporting about a set it had never seen. Round 18 found a gate written one round earlier that
-/// used `contentsOfDirectory` — the defect this comment warns about, committed beside the comment —
-/// which is why the helper stopped being a member of one class.
+/// on reporting about a set it had never seen. The recursive helper keeps every source-reading gate
+/// on the same walk.
 /// **What a file is called inside that tree.** A basename is not an identity once the walk descends:
-/// the round that made the walk recursive left three gates comparing `lastPathComponent`, so a
-/// nested `Feature/HostServer.swift` answered to the name of the canonical one and a nested
-/// `Feature/Localization.swift` inherited its exemption (round 20 review) — the same class one level
-/// up, created by the fix for it.
+/// a nested `Feature/HostServer.swift` must not answer to the canonical one, and a nested
+/// `Feature/Localization.swift` must not inherit its exemption.
 func pathInTree(_ file: URL, under root: URL) -> String {
     let rootPath = root.standardizedFileURL.path
     let filePath = file.standardizedFileURL.path
@@ -45,7 +42,7 @@ func swiftFiles(under root: URL) throws -> [URL] {
 }
 
 final class LocalizationCatalogTests: XCTestCase {
-    /// **Empty, and emptying it was item 24's completion condition.** Every shipped locale is now
+    /// **Empty.** Every shipped locale is now
     /// held to the full key set, so the exemption branch below is unreachable and stays only as the
     /// shape a future partly-written catalogue would use.
     ///
@@ -174,7 +171,7 @@ final class LocalizationCatalogTests: XCTestCase {
     }
 
     /// **No key sits in the catalogue unused.** An unused key is a sentence nobody sees, and it is
-    /// also five translations of it — the cost lands on item 24 and on every translator after.
+    /// also five translations of it — the cost lands on every translator.
     func testEveryCatalogueKeyIsAskedFor() throws {
         let english = Set(try catalogue(fallbackLocale).keys)
         let referenced = Set(try matches("\"(app\\.[A-Za-z0-9._]+)\"", in: try sourceText()))
@@ -208,18 +205,15 @@ final class LocalizationCatalogTests: XCTestCase {
         // aim it at one catalogue at a time. Production reaching it directly would step around the
         // type, so the only callers meant to exist are the two shorthands in that same file.
         //
-        // **It walks the same tree `sourceText()` does, through the same function.** This used to
-        // call `contentsOfDirectory`, which does not descend — the exact defect that walk was
-        // written to fix, left standing a few lines below three separate paragraphs explaining why a
-        // directory listing is not a source tree. Measured: a caller placed in a subdirectory of
-        // `Sources/App` passed unseen. Two walks is how one of them gets strengthened alone, so
-        // there is one.
+        // **It walks the same tree `sourceText()` does, through the same function.** A flat
+        // directory listing does not descend, so a caller placed in a subdirectory of `Sources/App`
+        // would be missed. Two walks could then drift; there is one.
         for file in try swiftFiles(under: Self.appSources)
         // The canonical file by its place in the tree, not by its name: excluding every file called
         // `Localization.swift` exempts one somebody adds in a subdirectory
         where pathInTree(file, under: Self.appSources) != "Localization.swift" {
             let text = try auditSource(file.path, claim: .sourceLiteral).text
-            // **The spelling is the language's, not this file's** (round 17 sweep): Swift permits
+            // **The spelling is the language's, not this file's**: Swift permits
             // whitespace and a line break around the dot and before the parenthesis, so the exact
             // string this looked for was one of the ways to write the call rather than the way.
             XCTAssertNil(
@@ -315,11 +309,11 @@ final class LocalizationCatalogTests: XCTestCase {
         }
     }
 
-    /// **A sentence that quotes a button names the button's key** (D28), and that key is real.
+    /// **A sentence that quotes a button names the button's key**, and that key is real.
     ///
     /// The relation is what the gate checks, not the wording: a body carrying `[%@]` has to be
     /// called with a `localized("app.button…")` argument, so renaming or retranslating the button
-    /// moves the sentence with it. Item 11 found the drift this prevents already in place — the
+    /// moves the sentence with it. The drift this prevents already existed — the
     /// Korean quoted `[권한 요청]` while the button read `iTerm2 권한 요청`.
     func testEverySentenceQuotingALabelNamesARealLabelKey() throws {
         let english = try catalogue(fallbackLocale)

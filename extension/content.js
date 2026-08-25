@@ -113,7 +113,7 @@ async function loadButtonConfigs(kind) {
     // wrote as null would otherwise throw while drawing and take the whole button row with it
     return readStoredButtons(data[storageKey], defaults);
   } catch (error) {
-    // **Latent, not diagnostic** — the reclassification item 22 got wrong. "Could not read your
+    // **Latent, not diagnostic.** "Could not read your
     // buttons, will retry" is addressed to a *user*: it says what failed, whose it was, and what
     // happens next. It reaches only the console today, which is why it stays English, but the
     // boundary that decides that is **who a sentence is addressed to**, not where it is written.

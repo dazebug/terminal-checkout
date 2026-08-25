@@ -7,18 +7,18 @@ import Foundation
 /// in the retained migration-era pure model". Both are pure: every input arrives as an argument,
 /// so a test can state the case it means instead of the case the machine it runs on happens to be
 /// in. Reading `Locale.preferredLanguages` or the bundle in here would put the host machine's
-/// language into the answer — measured (D7): a `Bundle(url:)` lookup for `en` resolves through the
+/// language into the answer — measured: a `Bundle(url:)` lookup for `en` resolves through the
 /// host language and returns the ko-KR string on a ko-KR machine.
 ///
 /// It lives in Core rather than in App for the same reason `BaseDirectory` does: the App target's
 /// only tests drive AppKit windows and save and restore the user's live settings, so asserting on
-/// a verdict placed there would mean asserting through a window server and the real defaults. The
+/// a verdict placed there would mean asserting through a window server and the real defaults.
 /// The snapshot helpers below are retained as a pure migration-era model for focused Core tests;
 /// no current app path persists or sends one to the extension. Keeping the resolver in Core still
 /// prevents a second copy from drifting from the verdict the window renders.
 
 /// The tags the app ships a catalog for. This is the whole list — `zh-Hant` covers Hong Kong and
-/// Macau as well, which is what macOS itself does with them (D12).
+/// Macau as well, which is what macOS itself does with them.
 public let supportedLocales: [String] = ["en", "ko", "ja", "zh-Hans", "zh-Hant"]
 
 /// The stored preference that means "follow the system". Our own token, not a language tag, so it
@@ -32,12 +32,11 @@ public let fallbackLocale = "en"
 
 /// A tag we actually ship a catalogue for.
 ///
-/// It keeps the pure model from carrying an unshipped tag. The migration-era writer used to accept
-/// any string, so a value such as `"fr"` could be persisted even though no shipped catalog could
-/// render it; the type moves that check to the moment the value is made and asks the compiler
-/// instead of a reviewer. That is the same move `ShellPayload` makes in the App target, one
-/// direction over: there a computed value must not reach a shell, here an unshipped tag must not
-/// reach the model.
+/// It keeps the pure model from carrying an unshipped tag. A value such as `"fr"` cannot be
+/// persisted even though no shipped catalog could render it; the type checks that boundary when
+/// the value is made instead of relying on a later runtime check. That is the same move
+/// `ShellPayload` makes in the App target, one direction over: a computed value must not reach a
+/// shell, and an unshipped tag must not reach the model.
 ///
 /// The only way to build one without asking is `fallback`, which is `fallbackLocale` — a member of
 /// `supportedLocales` by construction, and `testTheFallbackIsALocaleWeShip` keeps that true.
@@ -114,10 +113,9 @@ private func normalizedTag(_ tag: String) -> String {
 ///
 /// **Every** subtag is checked, not just the first one. Reading only the first answered Korean for
 /// `ko--KR`: the walk stopped at the leading `-`, found `ko`, and never looked at the rest — and
-/// `ko-`, `zh--Hant`, `ko-💩` and `zh-Hant foo` went the same way (round 5 review). The round
-/// before had switched the split to keep empty subtags, which closed the **leading**-empty shape
-/// alone; a rule that holds for one shape of malformed input is not the rule this is supposed to
-/// be. Nothing here is a full BCP-47 validator: a subtag is 1–8 ASCII alphanumerics, the first is
+/// `ko-`, `zh--Hant`, `ko-💩` and `zh-Hant foo` went the same way. Empty subtags are rejected for
+/// every position; accepting only the leading-empty shape would not define the rule. Nothing here
+/// is a full BCP-47 validator: a subtag is 1–8 ASCII alphanumerics, the first is
 /// 2–8 ASCII letters, and anything else is a string nobody who meant a language wrote.
 private func languageSubtag(_ normalized: String) -> String? {
     let subtags = normalized.split(separator: "-", omittingEmptySubsequences: false)
@@ -135,7 +133,7 @@ private func languageSubtag(_ normalized: String) -> String? {
 
 /// Which Chinese script an already-normalized `zh…` tag is written in.
 ///
-/// A script subtag answers directly. Without one the region does, and the split is measured (D12,
+/// A script subtag answers directly. Without one the region does, and the split is measured
 /// against five real `.lproj` bundles): `zh-HK`, `zh-MO` and `zh-TW` resolved to `zh-Hant`, while
 /// `zh` and `zh-SG` resolved to `zh-Hans`. Regions outside that measurement follow the same rule
 /// rather than a second one — that is generalization, not measurement.
@@ -155,7 +153,7 @@ private func matchingLocale(for tag: String, in available: [String]) -> String? 
     let wanted = normalizedTag(tag)
     // The check runs **before** the exact match. Behind it, a malformed value could still be
     // answered by an entry of `available` spelled the same way — the one path that skipped
-    // validation altogether (round 5 review).
+    // validation altogether.
     guard let language = languageSubtag(wanted) else { return nil }
     if let exact = available.first(where: { normalizedTag($0) == wanted }) { return exact }
 

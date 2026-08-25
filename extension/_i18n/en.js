@@ -1,29 +1,12 @@
-// The English dictionary — the options page's messages (item 21). Item 22 moves the rest in.
+// Frozen compatibility catalogue for adjacent generations; Chrome reads and the extension draws
+// from `_locales`. The migration baseline pins this passenger; see `docs/context/localization.md`.
 //
-// **This store is frozen and is a compatibility passenger.** `_locales/` is what Chrome reads and
-// what this extension draws from; these files are pinned at the migration baseline so the previous
-// release, which does read them, still finds what it imports. Corrections belong in `_locales`, and
-// `tools/check-locales.js` pins this compatibility file at the migration baseline; reviewed
-// translations belong in `_locales` and update its A7 baseline pin.
+// This classic script registers its dictionary globally because the content script, service worker
+// and options page load it in the same order, and tests evaluate it without a `chrome` global.
 //
-//
-// A classic browser script, not a module: the content script, the service worker and the options
-// page all load it the same way, and `node --test` runs it through `vm.runInThisContext` with no
-// `chrome` global at all (D6). Registering into a global is what makes those three loaders and the
-// test one thing rather than four.
-//
-// Keys live in the `ext.` namespace, which is how the extension's space stays separate from the
-// app's `app.` one — item 20's ownership gate starts green because the split exists before there
-// are any keys to sort (D24/D37).
-//
-// **Markup in a value is deliberate and bounded.** A tag that decorates translated text rides in
-// the value — `<b>` on a word being emphasised, `<span class="faint">` on a gloss — because the
-// alternative is handing JavaScript the pieces of a sentence to reassemble, and reassembly is the
-// defect the app spent 25 fragments learning about. A tag that wraps a **literal** is the opposite
-// case and would be the thing to keep out; `<code>` here only ever holds a variable name or a shell
-// word, which is why a test pins those contents identical across locales rather than trusting them
-// to survive translation. The gate also checks tag balance and that every locale carries the same
-// tag multiset.
+// **Markup in a value is deliberate and bounded.** Tags may decorate translated text, but `<code>`
+// wraps only variable names or shell words. Tests therefore pin code contents, tag balance and the
+// tag multiset across locales.
 
 (globalThis.TC_I18N = globalThis.TC_I18N || {})['en'] = {
   "ext.meta.catalogueTag": "en",

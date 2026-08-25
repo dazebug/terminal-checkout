@@ -138,7 +138,7 @@ final class ExtensionCopyTests: XCTestCase {
             Self.repositoryFile("app/Sources/App/Installer.swift"), claim: .sourceStructure
         ).text
         let copyFunction = try XCTUnwrap(installer.range(of: "static func installExtensionCopy() throws {"))
-        // **The window is the function, found by matching its braces.** It was a fixed 1400
+        // **The window is the function, measured by matching its braces.** It was a fixed 1400
         // characters over a 1147-character body — five lines of headroom — and the two directions
         // did not fail alike: the positive assertions failed *closed* when the function outgrew it,
         // while the `XCTAssertFalse` below failed *open*, because a destination delete written past
@@ -191,7 +191,7 @@ final class ExtensionCopyTests: XCTestCase {
     /// The lint above asks whether `install.sh` still says the right words. It cannot answer what
     /// happens when the swap fails, and the answer used to be "nothing": the previous bundle was
     /// moved aside, the second `mv` failed, `set -e` left, and the install path had no app at all
-    /// while a comment three lines up said there was something to put back (round 14 review).
+    /// while a comment three lines up said there was something to put back.
     ///
     /// The shipped block is lifted verbatim so the bytes under test are the bytes that run, and the
     /// failure is injected the only way a shell allows without breaking the filesystem: `mv` is

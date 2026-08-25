@@ -81,11 +81,9 @@ fi
 # very binary that would have to perform it.
 #
 # What it does buy besides the shorter window: a failure between the two renames leaves the previous
-# bundle sitting at `.<name>.previous`, and the second rename **puts it back**. That sentence used to
-# stop at "so there is something to put back" while nothing put it back — the comment described work
-# the code did not do, and `set -e` meant the script simply left with no app at the install path
-# (round 14 review). Restoring is best effort by necessity: if it fails too, both copies are still on
-# disk under names the message names, which is the most a shell can promise here.
+# bundle sitting at `.<name>.previous`, and the second rename **puts it back**. If restoration also
+# fails, both copies remain on disk under the names the message names, which is the most a shell can
+# promise here.
 STAGING="$INSTALL_DIR/.$APP_NAME.staging"
 PREVIOUS="$INSTALL_DIR/.$APP_NAME.previous"
 rm -rf "$STAGING" "$PREVIOUS"

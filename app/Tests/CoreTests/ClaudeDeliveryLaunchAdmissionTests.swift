@@ -3,7 +3,7 @@ import TestSupport
 import XCTest
 @testable import Core
 
-/// **The admission has to cover the launch, not just the record** (round 17 review, P0).
+/// **The admission has to cover the launch, not just the record**.
 ///
 /// `record` succeeds under the admission lock and returns; the lock is released, and only then does
 /// `runInWarp` create a directory, write the Tab Config and call `open` with a fifteen-second
@@ -88,7 +88,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
 
     /// **A helper admitted before the gate shut cannot take its address afterwards.**
     ///
-    /// This is the interleaving the review named: the record is in, the farewells have gone out, and
+    /// This is the dangerous interleaving: the record is in, the farewells have gone out, and
     /// only now does the pane come up. The helper must not end up listening where the app was
     /// looking — and it must find that out before the advertised name has ever referred to it, which
     /// is what makes the outcome "never existed" rather than "was not dismissed".
@@ -193,18 +193,8 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertTrue(helper.claim(), "the helper of an ongoing delivery could not take its address")
     }
 
-    /// **The withdrawal must survive the sweep that used to be its virtue** (round 19 review).
-    ///
-    /// `d4f76a1` presented the leftover as a merit: a dead socket file is exactly what
-    /// `reclaimDeadWarpHelperSockets` removes, and the terminating process has no later moment of
-    /// its own to clean up in. That is the hole. A later run's sweep deleting it while the delayed
-    /// helper is still alive on its staging name puts the address back within reach and the `link`
-    /// succeeds — the P0 again, by way of the tidying. The withdrawal is a directory now, which no
-    /// sweep here touches, so nothing had to be taught a rule about pairs.
-    ///
-    /// The invariant, in the reviewer's words: *an aged advertised tombstone must remain while its
-    /// matching staging socket is listening; otherwise the delayed helper must still be unable to
-    /// claim.*
+    /// **The withdrawal must survive the later sweep.** An aged advertised tombstone remains while
+    /// its matching staging socket is listening, so a delayed helper cannot reclaim the address.
     func testAWithdrawalSurvivesTheSweepAndTheDelayedHelperStillCannotClaim() throws {
         let path = pinned("aaaaaaa5")
         XCTAssertEqual(withdrawWarpHelperAddress(path), .withdrawn)
@@ -225,7 +215,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertNil(connectToUnixSocket(path: path), "the address answers, so that helper is serving")
     }
 
-    /// **A withdrawal that did not happen is not a farewell address** (round 19 review, P0).
+    /// **A withdrawal that did not happen is not a farewell address**.
     ///
     /// It used to answer `false` for `socket()` failing, for an unconstructible address and for
     /// every `bind` failure, and every false became something to say goodbye to. The comment
@@ -233,7 +223,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     /// nobody holding the name, and a farewell that reaches nobody while the delayed helper's `link`
     /// still succeeds.
     ///
-    /// The invariant, in the reviewer's words: *a forced non-`EADDRINUSE` withdrawal failure with no
+    /// The invariant: *a forced non-`EADDRINUSE` withdrawal failure with no
     /// advertised file must not allow a delayed helper to claim the address* — the half this process
     /// can keep is that it does not **claim** to have dismissed one.
     func testAFailedWithdrawalIsNotAnAddressToSayGoodbyeTo() throws {
@@ -288,7 +278,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         }
     }
 
-    /// **`.occupied` says the name is taken and nothing about by what** (round 21 review).
+    /// **`.occupied` says the name is taken and nothing about by what**.
     ///
     /// `EEXIST` comes back for a helper socket, for a leftover directory, for a regular file, for a
     /// symlink and for a dead socket alike, and the previous shape called all of them
@@ -323,7 +313,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertFalse(message.contains("withdrew"), "an errno was read as a decision the app made")
     }
 
-    /// **A take-back that fails means the helper cannot claim either** (round 21 review, P0).
+    /// **A take-back that fails means the helper cannot claim either**.
     ///
     /// `mkdir` needed an inode and the helper's `link` reuses the socket's, so the code could answer
     /// `.failed` — no farewell — while the claim went through: the orphan again, by way of the branch
@@ -331,7 +321,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     /// Both sides are `link` into the same parent now, so the failures are the same failures by
     /// construction rather than by an enumeration that can be incomplete.
     ///
-    /// The invariant, in the reviewer's words: *a staging socket is already listening, the take-back
+    /// The invariant: *a staging socket is already listening, the take-back
     /// fails, and the delayed helper must still be unable to claim.*
     func testWhenTheTakeBackFailsTheHelperCannotClaimEither() throws {
         let locked = directory + "/locked3"
@@ -355,11 +345,11 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertNil(connectToUnixSocket(path: path), "the advertised address answers")
     }
 
-    /// **No pin, no launch** — the hole this round's own fix would otherwise have opened.
+    /// **No pin, no launch.** A request whose pin cannot be made cannot safely launch its helper.
     ///
     /// Linking from a file the app already holds is what makes the take-back fail exactly when the
     /// claim would, but only while that file exists. A request whose pin could not be made is a
-    /// request whose helper cannot be taken back, which is the P0 reached by carrying on. The
+    /// request whose helper cannot be taken back is refused. The
     /// source-order half is a lint, not a runtime `runInWarp` proof; the writable-directory fixture
     /// below exercises the pin-creation failure itself.
     func testAWarpRequestIsRefusedWhenItsPinCannotBeMade() throws {
@@ -386,7 +376,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         )
     }
 
-    /// **A finished delivery does not spend the pin** (round 23 review, P0).
+    /// **A finished delivery does not spend the pin**.
     ///
     /// One object had two lifetime rules: departure kept it — correctly, that is what takes the
     /// address back — and ordinary completion removed it. The difference was the defect. A helper
@@ -439,7 +429,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     ///
     /// The bound used to be derived from the Tab Config lifetime, `open`'s timeout and how long a
     /// pane takes to appear — and none of that bounds anything, because "the instruction after
-    /// `listen`" is not a time and a suspended process can be anywhere (round 23 review). The
+    /// `listen`" is not a time and a suspended process can be anywhere. The
     /// helper's own caps start once it is serving, which is after the claim.
     func testTheLaunchLineCarriesTheDeadlineTheSweepIsDerivedFrom() throws {
         let line = warpHelperCommand(
@@ -463,7 +453,7 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
     }
 
     /// **The sweep takes our file and only our file.** The check was a prefix read, so a user file
-    /// that merely *starts* with the marker was deleted (round 23 review). The fixture list is the
+    /// that merely *starts* with the marker was deleted. The fixture list is the
     /// specification.
     func testTheSweepTakesTheExactMarkerAndNothingElse() throws {
         let ours = directory + "/tcw-aaaaabb1.pin"
@@ -498,12 +488,10 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: readOnly + "/tcw-aaaaabb4.pin"))
     }
 
-    /// **What taking an address back leaves is bounded** (round 21 review).
+    /// **What taking an address back leaves is bounded**.
     ///
-    /// Round 19 left it unswept, and that was right for the reason it gave — removing one reopens the
-    /// late-helper race. But a name older than any possible time-to-claim protects nothing, and this
-    /// repository does not count the OS emptying its temporary directory as a lifecycle. The bound is
-    /// derived in `warpHelperOccupationLifetime`.
+    /// A tombstone older than any possible time-to-claim protects nothing. The bound is derived in
+    /// `warpHelperOccupationLifetime`, and the sweep removes it only after that bound.
     func testWhatIsLeftBehindIsSweptOnceItCannotProtectAnything() throws {
         let path = pinned("aaaaaab6")
         XCTAssertEqual(withdrawWarpHelperAddress(path), .withdrawn)
@@ -550,11 +538,8 @@ final class ClaudeDeliveryLaunchAdmissionTests: XCTestCase {
 
     /// **A refused claim says why it was refused, and `EEXIST` says only that the name is occupied.**
     ///
-    /// The helper printed the take-back's name for every errno, so `ENOENT` reported a decision the
-    /// app never made. That is a diagnostic contradicted by the code around it — the class this work
-    /// has swept since round 1, introduced by the round that swept it. And once it was a function of
-    /// the errno it was still wider than the errno: `EEXIST` is returned for anything at that name,
-    /// so naming the app as the cause was provenance an errno cannot carry (round 21 review).
+    /// `ENOENT` means the address was absent, while `EEXIST` means only that the name is occupied;
+    /// neither errno identifies who owns it. The diagnostic must report that distinction.
     func testARefusedClaimNamesTheReasonItWasRefusedFor() {
         XCTAssertTrue(warpHelperClaimFailure(EEXIST).contains("occupied"))
         XCTAssertTrue(warpHelperClaimFailure(EEXIST).contains("File exists"))

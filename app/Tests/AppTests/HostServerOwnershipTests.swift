@@ -3,7 +3,7 @@ import Darwin
 import XCTest
 @testable import App
 
-/// **What a server instance owns, and for how long** (round 16 review).
+/// **What a server instance owns, and for how long**.
 ///
 /// These cases bind real sockets in a short-lived directory because pathname identity and teardown
 /// ordering are socket properties. Locale publication is no longer part of this ownership contract.

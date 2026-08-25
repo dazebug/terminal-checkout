@@ -82,7 +82,7 @@ enum Installer {
         try? FileManager.default.removeItem(atPath: legacyManifestPath())
     }
 
-    /// The three sentences that point at a button take its label from the catalogue as `%@` (D28),
+    /// The three sentences that point at a button take its label from the catalogue as `%@`,
     /// and every one of them is read at the moment the window draws it.
     static func manifestState() -> SetupState {
         guard let data = FileManager.default.contents(atPath: nativeHostManifestPath()),
@@ -113,11 +113,9 @@ enum Installer {
     /// Copies the extension bundled inside the app to a fixed path under App Support, so that moving
     /// or rebuilding the app leaves the extension's path and ID unchanged.
     ///
-    /// **Built beside the old copy, then swapped.** It used to delete the destination and copy into
-    /// it, which meant the folder Chrome reads was *absent* for the length of a recursive copy and
-    /// then partially populated — and that window grew when five locales added `_locales/` and
-    /// `_i18n/` to it. What Chrome would find there is not a stale extension but a broken one: no
-    /// manifest at all, or dictionaries without the code that reads them.
+    /// **Built beside the old copy, then swapped.** The folder Chrome reads stays present and
+    /// complete while the staged directory is built, so Chrome never observes a missing or
+    /// partially copied extension.
     ///
     /// `replaceItemAt` is Foundation's replacement primitive and the reason this is possible at all.
     /// Measured on a populated directory with a throwaway probe kept nowhere: plain `rename(2)`

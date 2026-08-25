@@ -62,14 +62,10 @@ public func ttyIsRawMode(sttyOutput: String) -> Bool? {
 /// Neither signal can be used alone: zsh's zle also leaves the tty in raw mode while the shell waits at its prompt (measured), so going by raw mode alone types straight into the shell. Treating the ps check as redundant and removing it brings back the very shell mistyping this exists to prevent.
 public func acceptingClaudePID(psOutput: String, sttyOutput: String) -> Int? {
     guard let pid = claudeForegroundPID(psOutput: psOutput) else { return nil }
-    // **"Cannot tell" is not "raw".** This used to be `?? true`, which let an unreadable stty skip
-    // gate ② and carry on with the ps gate alone. That was deliberate when the gate was added
-    // (`20d7617`): the check was new, and falling back to the previous ps-only behaviour meant it
-    // could not regress anyone. The argument was about the migration and it has expired — measured
-    // since, a **live tty always reports the token** (`icanon` canonical, `-icanon` raw), and stty
-    // fails to produce one only when the tty is gone or is not a terminal. In that state `ps -t`
-    // finds nothing either, so the guard above has already returned. What is left is "the tty we
-    // are about to type into cannot be read", and typing there is what gate ② exists to stop.
+    // **"Cannot tell" is not "raw".** A live tty reports `icanon` in canonical mode or `-icanon`
+    // in raw mode. stty produces neither only when the tty is gone or is not a terminal; in that
+    // state `ps -t` finds nothing too, and the guard above has already returned. An unreadable tty
+    // is therefore not a state to type in.
     guard ttyIsRawMode(sttyOutput: sttyOutput) == true else { return nil }
     return pid
 }
@@ -136,7 +132,7 @@ public struct ClaudeSessionIO {
     public var sessionIsUnchanged: () -> Bool
     /// What stands between us and confirming through the screen, or nil when nothing does. When it answers non-nil **nothing new is typed** — what is typed without confirmation can neither be submitted nor taken back. The cleanup that undoes what was already typed (`clearAbandonedInput`) deliberately does not look at this condition: blocking it too would leave our automatic input in the box, to be run by an Enter the user presses later.
     ///
-    /// It carries the **reason** rather than a `Bool` because a diagnosis names it. A bare "cannot confirm" is true of any terminal we might add, while "grant the Accessibility permission" is true only where the means of confirmation is a permission — telling them apart from one `Bool` meant leaning on today's wiring being the only wiring, which is not a property the type held (round 6 review).
+    /// It carries the **reason** rather than a `Bool` because a diagnosis names it. A bare "cannot confirm" is true of any terminal we might add, while "grant the Accessibility permission" is true only where the means of confirmation is a permission — telling them apart from one `Bool` meant leaning on today's wiring being the only wiring, which is not a property the type held.
     public var screenConfirmation: () -> ClaudeInputBlocker?
 
     /// Can the screen still be confirmed? Derived, so the answer and its reason cannot disagree.
@@ -199,13 +195,13 @@ func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: I
 
 /// **Might a fragment of ours be in claude's input box right now** — the state that decides whether a cleanup (Ctrl+U) is sent.
 ///
-/// The two questions are **never mixed** (round 7):
+/// The two questions are **never mixed**:
 ///  - **(i) did claude receive the message** — not proven. It cannot be established from outside the TUI, and it is not a safety property either. That is why the log says "sent" rather than "delivered".
 ///  - **(ii) is the input box empty** — **this is a safety property.** Where the next bytes land, and whether a cleanup is sent, both depend on it. When it is unknown, "empty" is not assumed.
 ///
 /// This type deals only with (ii):
 ///  - Bytes may already be in even when a send comes back as a failure (the helper can inject part of a write and then error). So it is raised by the **attempt**, not the result — otherwise the remaining fragment cannot be erased.
-///  - **A CR does not lower it.** Writing a CR to the tty and the TUI processing it as a submission are different things, and if it was not processed the body is still sitting in the box. Lowering it here is how residue got appended to the next input and submitted as one line (reviewer reproduction: `"/review!git status"`).
+///  - **A CR does not lower it.** Writing a CR to the tty and the TUI processing it as a submission are different things, and if it was not processed the body is still sitting in the box. Lowering it here is how residue got appended to the next input and submitted as one line.
 ///  - Only **evidence** lowers it: the screen showed our marker disappear after a clear (Ctrl+U), or the screen showed that ours is not there. Writing the Ctrl+U is not itself evidence — see `recordSendAttempt`.
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
@@ -219,7 +215,7 @@ struct InputBoxOwnership {
     mutating func recordInputBoxIsFreeOfOurs() { mayHoldOurs = false }
 }
 
-/// Sends the inputs to a prepared claude session in order and returns **how many got as far as a CR** — it does not count whether claude turned them into messages (that cannot be confirmed from outside, and round 6 removed it from the requirements). That is why the log says "sent" rather than "delivered".
+/// Sends the inputs to a prepared claude session in order and returns **how many got as far as a CR** — it does not count whether claude turned them into messages, which cannot be confirmed from outside. That is why the log says "sent" rather than "delivered".
 /// Every input goes out as [type without a newline → confirm the screen reflects it → submit with CR]: LF (\n) is not recognised as a submission, and even past the gates there are moments when the TUI has not drawn the input yet (both measured on WezTerm). While the first input is being processed, the rest queue up in claude's input box.
 /// Session identity is confirmed before every input — if the original session died in the meantime and a new claude came up on the same tty, the remaining inputs belong to an unrelated session, and a `!…` input would even run a shell command.
 ///
@@ -322,7 +318,7 @@ private func typeAndSubmit(
             checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
             continue
         }
-        // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice** (reviewer reproduction). With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
+        // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice**. With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
         guard send(text, io: io) else {
             checkoutLog("failed to send the typing — retrying (\(attempt)/\(maxAttempts))")
             continue
@@ -344,7 +340,7 @@ private func typeAndSubmit(
             // **At least** one more, not exactly one more: claude may draw our line a second time
             // (the hint-line behaviour the attribution experiment exists for), and demanding an
             // exact count made the button do nothing at all — five typings, no CR, no message
-            // (reviewer reproduction). Only the *disappearance* check needs an exact count, where
+            // Only the *disappearance* check needs an exact count, where
             // "some of it is still there" has to fail
             if probeCount(of: text, in: screen) >= baseline + 1 {
                 reflected = screen
@@ -399,9 +395,8 @@ private enum SubmitOutcome {
 
 /// What the screen says about the **input box** right after the CR.
 ///
-/// **This is not a submission check, on purpose (round 6).** Nothing outside the TUI can prove a
-/// message exists — two rounds of trying produced a check that was wrong in both directions, and
-/// the property was never a safety property anyway. What this feature has to guarantee is that our
+/// **This is not a submission check, on purpose.** Nothing outside the TUI can prove a
+/// message exists, and that is not the safety property. What this feature has to guarantee is that our
 /// bytes do not leak into another session (the three gates and the pane proof), that nothing is
 /// submitted twice (a CR-ed input is never retyped) and that we leave no residue behind. Only the
 /// last one needs the screen, and it needs one operational answer: **may the next input be typed?**
@@ -411,7 +406,7 @@ private enum SubmitOutcome {
 /// The region compared is **from our input to the end of the screen**, i.e. everything the box can
 /// occupy. A change above it — a spinner, streaming output, a clock — says nothing about the box,
 /// and treating it as if it did is what made a whole-screen comparison report a stuck input as
-/// submitted (reviewer reproduction). Three samples, because the TUI may not have redrawn yet
+/// submitted. Three samples, because the TUI may not have redrawn yet
 /// right after the CR, and the answer is taken from the last readable one.
 enum InputBoxAfterSubmit: Equatable {
     /// Our input is still exactly where we typed it. The one state that changes what we do:
@@ -430,7 +425,7 @@ enum InputBoxAfterSubmit: Equatable {
 /// (`docs/new-terminal-checklist.md`), so anything shorter is a guess. Being generous is the safe
 /// direction here: the safety of the next input rests on the clear we send **before typing**, not
 /// on this look, so a slow answer costs nothing, while a hasty "it is stuck" drops the inputs that
-/// were still to come (reviewer reproduction R3).
+/// were still to come.
 private let inputBoxLookDeadline: TimeInterval = 3.6
 
 func inputBoxAfterSubmit(
@@ -452,8 +447,8 @@ func inputBoxAfterSubmit(
           let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
     var last = InputBoxAfterSubmit.unknown
     _ = poll(io: io, within: inputBoxLookDeadline) {
-        // A read we could not make says nothing. It used to end the look, which threw away what
-        // the earlier reads had already established (reviewer reproduction R5)
+        // A read we could not make says nothing; keep the look open so earlier readable samples
+        // remain useful.
         guard let screen = io.screenText() else { return false }
         guard let tail = screenTail(from: probe, in: screen) else {
             last = .ourInputIsGone
@@ -470,8 +465,7 @@ func inputBoxAfterSubmit(
 }
 
 /// Types a throwaway marker, waits for it to appear, **clears the box and waits for it to go
-/// away**. One experiment, three answers, and the canonical version of what used to be two
-/// half-overlapping mechanisms (the Warp pane proof and round 8's body experiment):
+/// away**. One experiment answers three questions, combining the pane proof and input-box check:
 ///
 ///  1. **The screen is our pane.** A random marker can only reach the tty we injected it into, so
 ///     seeing it appear rules out reading someone else's pane — the Warp requirement, now applied
@@ -482,7 +476,7 @@ func inputBoxAfterSubmit(
 ///  3. **The TUI processed our Ctrl+U.** AppleScript and the wezterm CLI report that the terminal
 ///     accepted the write, never that claude acted on it; the disappearance is the only evidence.
 ///
-/// **Why a marker and not the body** (round 9, the regression this replaces): the experiment types
+/// **Why a marker and not the body:** the experiment types
 /// something and leaves it on screen for a moment. If the user presses Enter right then — on Warp
 /// they are watching that tab by design — *they* submit whatever is in the box. With the body in
 /// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
@@ -596,7 +590,7 @@ private func screenTail(from probe: String, in screen: String) -> String? {
 }
 
 /// Submits an input already confirmed on screen, with a CR. When the send fails it resends the CR rather than retyping — a reported failure may in fact have gone through, and retyping then submits the same input twice. A CR into an empty input box does nothing (measured), so resending after it has already been submitted is harmless.
-/// Session identity is confirmed every time, **including before the first CR**. Even immediately after confirming the screen reflection, if the original claude ended in the meantime and the shell on that tty — or a newly started claude — receives that CR, it submits and runs whatever the user was typing. There was a time when "we just confirmed the reflection, so it is safe" was assumed, but there is a polling-interval-sized gap between the screen check and the CR as well — the cost is one `ps` + `stty` round trip.
+/// Session identity is confirmed every time, **including before the first CR**. Even immediately after confirming the screen reflection, if the original claude ended in the meantime and the shell on that tty — or a newly started claude — receives that CR, it submits and runs whatever the user was typing. The screen check and CR are separated by a polling-interval-sized gap, so the extra `ps` + `stty` round trip is required.
 private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval) -> Bool {
     for attempt in 1...3 {
         if attempt > 1 { io.wait(0.4) }
@@ -607,61 +601,16 @@ private func submitConfirmedInput(io: ClaudeSessionIO, retryConfirmTimeout: Time
 }
 
 /// Waits until the claude in the spawned session can accept input, then delivers the inputs.
-/// **Which claude deliveries and helpers are alive, and whether a new one may start at all.**
+/// `ClaudeDelivery` tracks idle, in-flight and restart-admitted states. Admission is one-way and
+/// reserves a slot before `runInTerminal` can launch a helper.
 ///
-/// **Three states, not two** (round 14 review, P0). The register used to answer one question — "is a
-/// delivery running right now" — and the picker asked it just before terminating. That is a check,
-/// not an admission: it says what was true at the moment it was asked and closes nothing behind
-/// itself. Between the answer and the app going away, a request already in flight could reach
-/// `runInWarp`, write its Tab Config and **launch a helper**, leaving a same-uid injection socket
-/// alive in the user's pane while the app believed nothing was being delivered — the exact boundary
-/// `CLAUDE.md` says the helper's only defence is. So the states are **idle / in flight / restart
-/// admitted**, and admission is one-way: once granted, nothing new is.
-///
-/// **Registration happens before the side effect, not around the delivery.** Item 13 put it inside
-/// `deliverClaudeInputs`, reasoning that a `defer` there brackets exactly the interval being asked
-/// about. That was the wrong interval: `HostServer` dispatches that function **asynchronously**, and
-/// the helper is launched before it by `runInTerminal`, so the helper's lifetime *starts earlier
-/// than the delivery's*. A slot is reserved by `admit()` before anything can be launched, and the
-/// address is written into it by the code that is about to create the helper — so the window in
-/// which a helper exists unregistered does not exist.
-///
-/// **The address is written *before* the launch, and the write is the gate** (round 16 review, P0).
-/// Round 14 reserved the slot early and recorded the address afterwards, from whatever the terminal
-/// returned, and `attach` asked only whether the slot was still there. That leaves this order
-/// standing: reserve, termination closes the gate, `endEveryHelper` sees a reservation with no
-/// address and dismisses nobody, the helper starts, the address arrives — and the app goes away with
-/// a live injection socket in the user's pane. So there is no attach-after-launch at all any more.
-/// `record` is taken **under the same lock that closes the gate**, immediately before the Tab Config
-/// is written, and a closed gate refuses it; `runInWarp` turns that refusal into a throw, so the
-/// file is never written and no helper is ever launched. The two possible interleavings both end
-/// well: record first and the farewell finds the address, gate first and nothing is created.
-///
-/// A reservation whose address has not been written yet carries `.none`, which contributes no socket
-/// to `liveWarpSockets`. That is not a hole: `admitRestart` refuses while *any* entry is present, so
-/// nothing can restart during the interval where we hold a slot but not yet an address, and a
-/// termination through that interval cannot be followed by a launch.
-///
-/// **A launch already issued used to be what remained** — the file written, `open` returned, the
-/// pane yet to come up — and the residual as round 16 wrote it was narrower than the window it
-/// described: it read as though the gap opened at `open`, when it opens at `record` and stays open
-/// across a directory creation, a file write and a launch with a fifteen-second timeout (round 17
-/// review). Nothing in this process can signal a process that does not exist yet, so the answer is
-/// not to reach that helper but to make sure it never answers: **shutting the gate takes the address
-/// back** by linking a file the app already holds onto it, and the helper takes that same address
-/// with `link` after it is already listening — the same operation from both sides, which is what
-/// makes them fail together. Exactly one of the two operations succeeds, and each side learns which — a helper whose
-/// address was taken back exits before the advertised name has ever referred to it, and a helper that
-/// got there first is listening by definition, so the farewell connects. See
-/// `withdrawWarpHelperAddress` and `claimWarpHelperAddress` for the measurements.
-///
-/// **The withdrawal has three answers, not two** (round 19 review). It can also fail, and then the
-/// name is still free — a state that must not be filed under either of the others, because a
-/// farewell sent to it reaches nobody while the delayed helper's `link` still succeeds.
-///
-/// **The ordering inside the delivery's `defer` is still the invariant.** The helper is told to go
-/// *before* the entry is removed, so anyone who reads "nothing is being delivered" can conclude "no
-/// helper of ours is still alive on that account".
+/// The helper address is recorded under the same lock that closes admission, immediately before its
+/// Tab Config is written. A pending reservation carries `.none` and still blocks restart, so no
+/// helper can be created outside the register. If termination races a launch, the app and helper
+/// compete to link the same address; exactly one succeeds, and the losing side cannot serve or find
+/// a live helper to dismiss. Withdrawal therefore has distinct success, occupied and failed states.
+/// The delivery defer sends the farewell before removing its entry, so an empty register means no
+/// helper of ours is still alive on that account.
 public enum ClaudeDelivery {
     private static let lock = NSLock()
     private static var live: [Int: TerminalSessionHandle] = [:]
@@ -711,7 +660,7 @@ public enum ClaudeDelivery {
 
     /// Both questions in one turn of the lock: may a helper still be created, and if so this is
     /// where it will answer. Asking them separately is the race — the gate can close between an
-    /// answer and a write, which is precisely what round 16 found.
+    /// answer and a write, which is precisely the race this lock closes.
     private static func record(_ handle: TerminalSessionHandle, in token: Int) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -725,12 +674,9 @@ public enum ClaudeDelivery {
 
     /// Records that one has finished. Idempotent, for the reason `Admission.end` gives.
     ///
-    /// **It does not touch the pin, and that is the fix rather than an omission** (round 23 review,
-    /// P0). It used to remove it, which gave one object two lifetime rules: departure kept the pin —
-    /// correctly, since that is what takes the address back — and ordinary completion removed it. The
-    /// difference was the defect. A helper listening only on its staging name, suspended before its
-    /// `link`, while the delivery times out: the farewell goes to a path nothing is on, this line
-    /// removed the pin, the helper resumed and claimed, and nothing was left to dismiss it.
+    /// **It does not touch the pin.** Departure keeps the pin because that is what takes the address
+    /// back; ordinary completion leaves it until the occupation sweep proves that no helper can
+    /// still claim. A helper suspended before its `link` must not resume into an unprotected address.
     ///
     /// A pin is not spent when *this delivery* ends. It stops mattering when **no helper can still
     /// claim**, which is a fact about time and not about our bookkeeping, and the sweep is what owns
@@ -747,7 +693,7 @@ public enum ClaudeDelivery {
     ///
     /// **An observation, and nothing production reads it.** `admitRestart` asks the same thing
     /// inside the lock, where the answer still means something when it is acted on. Reading it here
-    /// and deciding out there is the shape round 17 spent a class closing, so a new caller that
+    /// and deciding out there is the race this API avoids, so a new caller that
     /// wants to act on it wants `admit`, `record` or `closeAdmission` instead.
     public static var isInFlight: Bool {
         lock.lock()
@@ -765,22 +711,21 @@ public enum ClaudeDelivery {
     /// the user quit or macOS is shutting us down, and refusing would not stop it — so the gate
     /// closes regardless and the caller dismisses whatever is still registered.
     ///
-    /// Round 14 closed this for the restart path alone and left termination calling cleanup with the
-    /// gate still open, so a request already accepted could launch a helper *after* the farewells had
-    /// gone out (round 15 review). One function now, so a third way of leaving has to find it.
+    /// Both restart and termination use this function, so a request already accepted cannot launch a
+    /// helper after the farewells have gone out.
     ///
     /// Closing it also refuses every `record` from a slot reserved earlier, which is what makes the
-    /// close total rather than merely forward-looking (round 16 review).
+    /// close total rather than merely forward-looking.
     ///
-    /// **And it withdraws the address of every helper that is not there yet** (round 17 review).
+    /// **And it withdraws the address of every helper that is not there yet**.
     /// Refusing a `record` covers a request that has not reached the launch; it does nothing about
     /// one that already has, because between `record` and the helper's birth there is a directory
-    /// creation, a file write and an `open` with a fifteen-second timeout. Those helpers used to be
-    /// born after their own farewell. Taking the address back occupies it, which answers both halves
+    /// creation, a file write and an `open` with a fifteen-second timeout. A helper can therefore
+    /// be born after its own farewell unless the address is taken back. Occupying it answers both halves
     /// at once: taken here means no helper can ever answer there, refused with `EEXIST` means the
     /// name is occupied — by a helper, or by something else at that name.
     ///
-    /// **And there is a third answer** (round 19 review, P0): the withdrawal itself can fail, and
+    /// **And there is a third answer**: the withdrawal itself can fail, and
     /// then the name is still free. Folding that into the farewell list — which is what a `Bool`
     /// did — sends a goodbye to nobody and leaves the delayed helper free to claim, which is the
     /// defect this gate exists to stop. Nil is the refused restart; otherwise the two lists are
@@ -810,14 +755,13 @@ public enum ClaudeDelivery {
     /// **Evidence that the gate was shut**, and the only way to come by one is to shut it.
     ///
     /// The order [close, then say goodbye] is an invariant — a request admitted between the two
-    /// would launch a helper the farewells have already walked past — and it used to live as two
-    /// adjacent lines in one function, read back out of the source by a test. Two lines are a habit;
-    /// this is the same order expressed as something you have to be holding.
+    /// would launch a helper the farewells have already walked past. The departure token carries
+    /// that ordering as a value rather than relying on adjacent statements.
     ///
     /// It says the gate was shut **when this was made**, which is a smaller claim than "is shut":
     /// `withdrawRestartAdmission` reopens it, for the restart whose relaunch failed to spawn. The
     /// path that terminates never withdraws, so the two cannot meet today — but the token cannot
-    /// promise that, and a comment that said it could would be the class this work keeps sweeping.
+    /// promise that, so the token deliberately does not make it.
     ///
     /// **It also carries the answer**, and that is what stops the farewell from being a second look
     /// at the register. The register says which helpers were *admitted*; the withdrawal that shuts
@@ -827,7 +771,7 @@ public enum ClaudeDelivery {
     public struct Departure {
         /// The addresses that were **occupied** when the gate shut. Not "the helpers that are
         /// listening": `EEXIST` says something is at that name and nothing about what, so a leftover
-        /// from an earlier run reaches this list too (round 21 review). Withdrawn ones are not here
+        /// from an earlier run reaches this list too. Withdrawn ones are not here
         /// and need nothing — they will exit at birth. A farewell is attempted to each, because the
         /// occupant may be a helper and a refused connection is the cost when it is not.
         fileprivate let occupied: [String]
@@ -835,7 +779,7 @@ public enum ClaudeDelivery {
         /// nobody holds the name. **They are deliberately not farewell addresses**: sending one
         /// would record a dismissal that did not happen, and the helper that is still coming can
         /// still claim. Carried so that the state exists and is reported rather than being counted
-        /// as one of the other two (round 19 review).
+        /// as one of the other two.
         fileprivate let unreachable: [String]
         fileprivate init(occupied: [String], unreachable: [String]) {
             self.occupied = occupied
@@ -867,9 +811,8 @@ public enum ClaudeDelivery {
     }
 
     /// The Warp helper addresses this process has admitted. **An observation**, like `isInFlight`,
-    /// and since round 17 nothing in production reads it either: it used to be what termination
-    /// walked, and the farewell now takes the partition that shutting the gate produced, because
-    /// this list cannot tell a helper that is listening from one whose address has already been
+    /// and nothing in production reads it: the farewell takes the partition that shutting the gate
+    /// produced, because this list cannot tell a helper that is listening from one whose address has already been
     /// taken back. A caller that wants to reach helpers wants a `Departure`, which is a thing only
     /// shutting the gate hands out.
     public static var liveWarpSockets: [String] {
@@ -920,7 +863,7 @@ public enum ClaudeDelivery {
 /// (`ClaudeDelivery.admit`). It is a parameter, and a required one, because the helper is launched by
 /// `runInTerminal`, which has already run by the time this function starts — a registration taken
 /// here would leave the helper unregistered for exactly the interval a restart must not use, and an
-/// optional one would let a caller that took no slot arrive with the same gap (round 14, P0). There
+/// optional one would let a caller that took no slot arrive with the same gap. There
 /// is nothing to check on the way in: this slot is the one the launch itself passed through.
 public func deliverClaudeInputs(
     _ inputs: [String], to handle: TerminalSessionHandle,
@@ -1002,7 +945,7 @@ public func deliverClaudeInputs(
     timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
     checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
     // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know.
-    // **The advice comes from the same value that made the answer no.** It used to be spelled out here and justified by "Warp is currently the only terminal whose confirmation can fail" — true today, and a sentence that would have gone on naming a permission for a terminal that had none (round 6 review). A reason that cannot name itself gets the first half of the line and no advice.
+    // **The advice comes from the same value that made the answer no.** It used to be spelled out here and justified by "Warp is currently the only terminal whose confirmation can fail" — true today, and a sentence that would have gone on naming a permission for a terminal that had none. A reason that cannot name itself gets the first half of the line and no advice.
     // One branch and not two: "cannot confirm" and "here is why" are now the same value, so there
     // is no state where the first is true and the second unavailable
     if sent < inputs.count, let blocker = io.screenConfirmation() {

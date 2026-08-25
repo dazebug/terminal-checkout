@@ -10,8 +10,7 @@
 //     An entry that cannot say which does not ship (issue #31).
 //   - The version only ever moves as the result of an explicit act by the user.
 
-// The v0 preset strings are history: they exist nowhere else in the tree (see
-// `git show 294c46a:extension/defaults.js`), so they are written out here verbatim and must not be
+// The v0 preset strings exist nowhere else in the tree, so they are written out here verbatim and must not be
 // "tidied". The 11 v0 presets collapse to 8 distinct commands — `z {repo} && claude` was shared by
 // three presets and `z {repo}` by two — and the same string always maps to the same replacement, so
 // the map needs no per-page split.
@@ -119,14 +118,15 @@ function storedSchemaVersion(stored) {
 // papered over: from a backup file, and from the account's own storage (another machine running a
 // newer extension). Both messages have to carry the way out, or the user is simply stuck.
 // A getter for the same reason the step's sentences are, and it quotes the [Reset to Defaults]
-// button through a placeholder rather than spelling the label out again (D28).
+// button through a placeholder rather than spelling the label out again.
 const BACKUP_FROM_FUTURE_MESSAGE = () => tr('ext.error.backupFromFuture', tr('ext.button.reset'));
 
 // Read yes, write no. This page can show settings from a newer generation and export them; anything
 // it writes would be its own older shape recorded on top of theirs. One message serves both the
 // import refusal and the save refusal, because the reason is the same in both.
 //
-// Under decision 9 this should be unreachable — a version that raises SETTINGS_VERSION writes its
+// Under the storage-version contract this should be unreachable — a version that raises
+// SETTINGS_VERSION writes its
 // own namespace and never touches this one. It is the insurance against that contract being broken.
 const STORED_FROM_FUTURE_MESSAGE = () => tr('ext.error.storedFromFuture');
 
@@ -134,7 +134,7 @@ const STORED_FROM_FUTURE_MESSAGE = () => tr('ext.error.storedFromFuture');
 // stated: the entries are not in the edit state, so the next Save writes them out of existence, and
 // the copy the user can still take is an export of what is stored right now.
 // Quotes the [Export (JSON)] button by key, so a translation cannot make the sentence name a
-// control by a different word than the control itself uses (D28).
+// control by a different word than the control itself uses.
 const SKIP_CONSEQUENCE = () => tr('ext.error.skipConsequence', tr('ext.button.export'));
 
 // What a section of the edit state starts from.
@@ -365,12 +365,10 @@ function isOwnEcho(changes, loadedSnapshot) {
 // content the page happened to hold — which stamped a v1 marker onto v0 commands and erased another
 // device's migration without a word. The version states which generation **the content being
 // written** belongs to; it cannot be defended separately from the content it describes.
-// **Deliberately not the same sentence as the stale banner**, which item 21 found sitting one
-// symbol and one word away from it. Two near-identical strings are the worst of both: item 20's
-// ownership gate only refuses *exact* duplicates, so a pair like that slips through while reading to
-// a user as a copy-paste slip. They are said at two different moments and now say two different
-// things — the banner warns that the store moved, this one reports that a save was refused because
-// of it.
+// **Deliberately not the same sentence as the stale banner.** Two near-identical strings are the
+// worst of both: the ownership gate only refuses exact duplicates, so a copy-paste slip can survive
+// while reading to a user as the same message. They are said at two different moments and report
+// different things — the banner warns that the store moved, this one reports that a save was refused.
 const SAVE_CONFLICT_MESSAGE = () => tr('ext.error.saveConflict');
 
 function sameStoredValue(a, b) {
@@ -489,7 +487,7 @@ function planSave({
       refused: true,
       stale: false,
       // The frame is a message; what follows it is a diagnostic payload — a storage key and a
-      // byte count, neither of which is a sentence (D59)
+      // byte count, neither of which is a sentence
       message: `${SETTINGS_TOO_LARGE_MESSAGE()} (${oversized} > ${MAX_STORED_ITEM_BYTES} bytes)`,
     };
   }
@@ -646,7 +644,7 @@ function adoptStoredSettings(raw) {
 // and more entries than this page can hold — and both end the same way.
 // The count sits behind a noun and a colon, so no language here has to make anything agree with
 // it — the English needed `1 entry … was` against `N entries … were`, and a translation cannot be
-// assembled out of the pieces that made those agree (D31a).
+// assembled out of the pieces that made those agree.
 function describeSkipped(skippedByKey) {
   return Object.entries(skippedByKey)
     .map(([key, count]) => tr('ext.error.skipped', key, count));

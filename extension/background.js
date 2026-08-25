@@ -1,6 +1,6 @@
 // The compatibility dictionaries first, then defaults. The dictionary loads stay even though this
 // worker now reads Chrome's catalogue: a previous worker can open this directory after a folder
-// swap, and one missing import aborts that worker before it can run a command (D170).
+// swap, and one missing import aborts that worker before it can run a command.
 importScripts(
   'i18n.js', '_i18n/en.js', '_i18n/ko.js', '_i18n/ja.js', '_i18n/zh-Hans.js', '_i18n/zh-Hant.js',
   'defaults.js' // the single source of truth for button defaults and presets
@@ -171,7 +171,7 @@ async function loadButtons(kind) {
 // read from the tab when the icon was pressed, so it takes this same gate.
 //
 // Like `BUTTON_CHANGED_ERROR`, this is **not drawn anywhere**: the content script throws it and its
-// click handler turns it into `❌` plus a `console.error`. English, therefore (D13/D27) — and on the
+// click handler turns it into `❌` plus a `console.error`. English, therefore — and on the
 // same trigger, since displaying it would mean sending an id from this worker, which has no render
 // locale, rather than a sentence.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
@@ -269,7 +269,7 @@ async function runButton(button, variables, page) {
   await assertRequestIsCoherent(page.tab, page);
   // What this click executes, normalized once, in defaults.js — the same call the fingerprint is
   // taken of. Trimming the claude inputs and dropping the empty ones used to happen here, so two
-  // buttons that produced the identical message could still fail the fingerprint check (D52).
+  // buttons that produced the identical message could still fail the fingerprint check.
   const { command, claudeInputs } = executionPayload(button);
   const message = { command_template: command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them

@@ -9,7 +9,7 @@ const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
 // The derivation `_locales` came from, imported so the gate below runs it rather than a
-// description of it — the same reason the liveness sweep extracts its predicate. Since A3 it
+// description of it — the same reason the liveness sweep extracts its predicate. The current lookup
 // checks the compatibility baseline, live catalogue shape and live argument identity: the authority
 // moved to `_locales`, so a generator would be a way back.
 const {
@@ -19,7 +19,7 @@ const {
 
 // The same loader the extension's three hosts use, and the same one the other test files use: a
 // classic script, run with **no `chrome` global in sight**. That is the constraint the whole
-// skeleton is shaped by (D6) — a single `chrome.*` at module scope would take down every test here
+// skeleton is shaped by — a single `chrome.*` at module scope would take down every test here
 // and the 158 that came before.
 vm.runInThisContext(read('i18n.js'));
 for (const tag of ['en', 'ko', 'ja', 'zh-Hans', 'zh-Hant']) {
@@ -31,7 +31,7 @@ const {
   i18nText, applyDocumentLanguage, chromeMessageId,
   TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS,
 } = vm.runInThisContext('({ i18nText, applyDocumentLanguage, chromeMessageId, TC_I18N_LOCALES, TC_I18N_FALLBACK, TC_I18N_CATALOGUE_TAG_KEY, TC_I18N_METADATA_KEYS })');
-// Node has no `chrome`, so every lookup throws unless a backend is installed (D163). This one
+// Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
 const { catalogueBackend } = require('./chrome-messages.js');
@@ -62,7 +62,7 @@ const liveMessagesFor = tag => new Proxy({}, {
 test('every file has a role, and a role is what makes a file enter a gate', () => {
   // The universe, and the fact that being in it is the same thing as being read. A file with no role
   // fails here; a role with no files fails here; and a role whose files are not the ones the
-  // pipelines below take would be a third authority, which is what this replaced (review 38).
+  // pipelines below take would be a third authority, which is what this replaced.
   const unclassified = EXTENSION_FILES.filter(file => roleOf(file) === null);
   assert.deepEqual(
     unclassified, [],
@@ -153,7 +153,7 @@ test('the document language names the catalogue that answered, not the language 
   // **Attack step 4**, and the reason `<html lang>` moves in the same commit as the lookup. Chrome
   // may be set to a language we do not ship and still serve the English catalogue; writing what
   // Chrome is set to would then declare English text as French. So the tag is asked of the
-  // catalogue that answered (D172).
+  // catalogue that answered.
   const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const previous = installMessageBackend(catalogueBackend('ja'));
   try {
@@ -183,16 +183,16 @@ test('the key spaces are separate, whatever is in them', () => {
       assert.ok(key.startsWith('ext.'), `${tag} carries ${key}, which is not in the extension's space`);
     }
   }
-  // `chrome.i18n`'s namespace holds exactly the two keys a manifest cannot fill any other way (D9)
+  // `chrome.i18n`'s namespace holds exactly the two keys a manifest cannot fill any other way
   //
-  // **Five directories now, and that reverses item 17's decision to ship two.** Its reason was that
+  // **Five directories are required.** An empty `messages.json` is a shape nobody had measured, but
   // an *empty* `messages.json` is a shape nobody had measured, so creating three of them would have
   // added three unverified files to hold nothing. That reason expires the moment there are values to
   // put in them: a filled `messages.json` is the shape Chrome documents and the other two already
   // demonstrate. Leaving them out now would mean the extension's own name and description stay
   // English in three of the five languages it otherwise speaks.
   //
-  // **And `_locales` now carries the extension's own messages too** (A2). It holds two namespaces,
+  // **And `_locales` carries the extension's own messages too.** It holds two namespaces,
   // not one: the two keys a manifest cannot fill any other way, and one baseline-derived name per
   // logical id. They do not overlap and cannot — every baseline-derived name begins `ext_`, which is
   // what the dotted prefix becomes, and the two manifest keys have no dot to convert. New live `ext_`
@@ -250,7 +250,7 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
   // even though the property it names never changed. The property is that **loading these files in
   // a context with no `chrome` does not throw**, so that is what runs: the service worker, the
   // content script and the options page all load this file before any of them could install
-  // anything, and an old worker after a copy swap never installs at all (D163).
+  // anything, and an old worker after a copy swap never installs at all.
   const realm = vm.createContext({});
   vm.runInContext(read('i18n.js'), realm);
   for (const tag of TC_I18N_LOCALES) vm.runInContext(read(`_i18n/${tag}.js`), realm);
@@ -259,7 +259,7 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
   for (const tag of TC_I18N_LOCALES) {
     assert.ok(!/\bchrome\./.test(read(`_i18n/${tag}.js`)), `_i18n/${tag}.js reaches for chrome`);
   }
-  // **One statement names `chrome.i18n.getMessage` in the whole extension** (D163). More than one is
+  // **One statement names `chrome.i18n.getMessage` in the whole extension**. More than one is
   // a second lookup path, and a second lookup path is where the preprocessing gets skipped.
   // Prose is not a call: these files explain the seam at length, and the sentence above this one in
   // `i18n.js` names the function it is describing. Whole-line comments come out first.
@@ -270,7 +270,7 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
 
 // ---------------------------------------------------------------------------------------------
 // The cache reducer. Every case names what it asserts, because "the callback came back" is not an
-// assertion (D54) — what is checked is the **final cache value** and whether anything was written.
+// assertion — what is checked is the **final cache value** and whether anything was written.
 // ---------------------------------------------------------------------------------------------
 
 const { localeCacheUpdate, localeGenerationOf, isUsableLocaleCache, localeToRenderIn, createLocaleRenderer } =
@@ -319,7 +319,7 @@ test('the same installId with an equal epoch and a different locale is refused',
 });
 
 test('a response carrying no generation writes nothing and notifies nobody', () => {
-  // Not because it failed — a failure the app composed carries its publication now (R11 C) —
+  // Not because it failed — a failure the app composed carries its publication now —
   // but because nothing here has any to carry: a dead socket, an older app answering
   // `command_template is required`, an empty object. The absence is the whole signal.
   const start = cache();
@@ -378,7 +378,7 @@ test('an unknown locale in a response is not a generation', () => {
     null,
     'a response with no envelope was taken for one the app composed',
   );
-  // Origin, not outcome: both envelopes are accepted (D83)
+  // Origin, not outcome: both envelopes are accepted
   for (const success of [true, false]) {
     assert.deepEqual(
       localeGenerationOf({ success, locale: 'ko', locale_install_id: 'a', locale_epoch: 1 }, 1, WORKER),
@@ -465,7 +465,7 @@ test('a redraw does not detach a button whose click is in flight', async () => {
 });
 
 test('two redraws do not overlap, so the older language cannot land last', async () => {
-  // Found by sweeping for the class rather than reported: a redraw reads the cache and then assigns
+  // A redraw reads the cache and then assigns
   // the language it drew in, with an await between the two. Two of them at once can finish in the
   // order they did not start in, leaving the older language on screen — the same shape as the
   // unserialized cache write, in the other file.
@@ -519,10 +519,8 @@ test('a redraw does not invalidate a command already sent to the host', async ()
 });
 
 test('sendToNativeHost does not wait for locale bookkeeping', async () => {
-  // **This used to be a source lint, and that was the gap.** The composition it described lived in
-  // `background.js`, which needs `chrome` at module scope, so nothing ran it — the separated pieces
-  // were tested and their arrangement was read. Two reviews in a row found defects in exactly that
-  // sort of unrun arrangement, so the arrangement moved into a function that a test can drive.
+  // The composition lives in a function that a test can drive. `background.js` needs `chrome` at
+  // module scope, so testing separated pieces or reading their arrangement would not execute it.
   //
   // The storage here never settles. If the answer waited on it, this test would time out.
   const { createNativeRequester } = vm.runInThisContext('({ createNativeRequester })');
@@ -598,7 +596,7 @@ test('the transport failure path carries no metadata and raises (lint)', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The options page's own catalogue (item 21).
+// The options page's own catalogue.
 //
 // The page carries no prose: `options.html` names messages (`data-i18n`) and `options.js` asks for
 // them. Which means the two questions a catalogue gate has to answer — "is every key it can ask for
@@ -610,7 +608,7 @@ test('the transport failure path carries no metadata and raises (lint)', () => {
 // operations. The markup is not read by name anywhere any more — see `HTML_FILES`.
 const optionsJs = read('options.js');
 
-// **Every file that can name a message**, not only the options page: item 22 moved the presets, the
+// **Every file that can name a message**, not only the options page: the presets, the
 // button phase markers and the update notice's prose into the dictionaries too, and a gate that
 // scanned one file would have called all of those unreferenced.
 //
@@ -620,8 +618,8 @@ const optionsJs = read('options.js');
 // exactly the direction that shows a user a raw key (measured with a planted file).
 //
 // **And it descends.** `readdirSync` on its own reads immediate children, so "every file" was still
-// a promise about one level — the same defect the Swift source scan was fixed for in round 43,
-// left standing here by the same sweep (round 14 review, measured with a nested probe). A directory
+// a promise about one level — the same defect the Swift source scan was fixed for elsewhere,
+// left standing here by the same sweep. A directory
 // listing is not a source tree on either side of this repository.
 const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileTypes: true })
   .flatMap(entry => (entry.isDirectory()
@@ -630,7 +628,7 @@ const walkFiles = (dir, keep, prefix = '') => fs.readdirSync(dir, { withFileType
   .sort();
 // **One classifier, and every file set below comes out of it.** The version this replaces had two
 // authorities: a suffix list that decided whether a file was *accounted for*, and three more suffix
-// filters that decided what each pipeline actually *read*. Two ways through the gap (review 38): put
+// filters that decided what each pipeline actually *read*. Two ways through the gap: put
 // `.mjs` on the audited list with a real `.mjs` file — accounted for, read by nothing — or drop any
 // `probe.json` into the tree and have it classified as manifest-or-catalogue data on the strength of
 // a suffix, with no gate owning it. The verifier's words for the shape: the authored input
@@ -666,12 +664,12 @@ const filesInRole = role => EXTENSION_FILES.filter(file => roleOf(file) === role
 
 const SPEAKING_FILES = filesInRole('speakingSource');
 // The markup half on its own, for the checks whose subject is a page rather than the code that fills
-// one. **Read from the tree for the same reason** (round 17 review): there is one page today, so a
+// one. **Read from the tree for the same reason**: there is one page today, so a
 // scan of `options.html` and a scan of every page agree — by accident, and only until the second one.
 const HTML_FILES = filesInRole('markupSource');
 // Markup is written in both kinds of file — a page's own HTML and the scripts that build rows into
 // it — so a check about markup takes the union rather than the file that happened to hold the
-// example when it was written (round 16 review).
+// example when it was written.
 const MARKUP_FILES = [...SPEAKING_FILES, ...HTML_FILES].sort();
 const MANIFEST_FILES = filesInRole('manifest');
 const CATALOGUE_FILES = filesInRole('localeCatalogue');
@@ -682,7 +680,7 @@ assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
 // `data-i18n` attribute. Catalogue definitions are a separate role and never witness this set.
 // The shape of a message id, in one place. The attribute gate asks whether a call names one of
 // these, and this set is what such a name is checked against — written twice, the two would
-// agree by coincidence until the day one of them was widened (round 27 review).
+// agree by coincidence until the day one of them was widened.
 const MESSAGE_KEY = 'ext\\.[A-Za-z0-9.]+';
 
 // One lexical event stream, with separate semantic projections. Reference discovery needs literal
@@ -941,10 +939,8 @@ const tagsOf = value => (value.match(/<\/?[a-z][^>]*>/g) ?? []).map(tag => tag.r
 const codeSpansOf = value => (value.match(/<code>[^<]*<\/code>/g) ?? []).sort();
 
 test('every locale carries the same keys, and every value says something', () => {
-  // **This used to exempt ja and zh, and the exemption was the hole.** It asserted they were
-  // *empty*, which was true and useless: a catalogue filled with three keys would have passed it
-  // just as a complete one would have failed it. Now every shipped locale answers the same
-  // question, and the day a translation is missing one key it is that locale that goes red.
+  // Every shipped locale answers the same question; a missing key makes that locale go red rather
+  // than allowing an empty or partial catalogue to pass.
   const en = LIVE_CATALOGUES.en;
   assert.ok(Object.keys(en).length >= 89, `the catalogue shrank to ${Object.keys(en).length}`);
   for (const tag of TC_I18N_LOCALES) {
@@ -958,7 +954,7 @@ test('every locale carries the same keys, and every value says something', () =>
 });
 
 test('each catalogue says which one it is, and that key is metadata rather than a message', () => {
-  // **The tag is asked of the catalogue, not computed** (D172). At A3 the options page has to put a
+  // **The tag is asked of the catalogue, not computed**. The options page has to put a
   // language on `<html lang>`, and the honest answer is not Chrome's configured UI language —
   // Chrome may report `fr` and then serve the English catalogue, and `lang="fr"` over English text
   // is the accessibility defect we are fixing, reproduced in the other direction. A key whose value
@@ -966,15 +962,15 @@ test('each catalogue says which one it is, and that key is metadata rather than 
   // picked is the one that replies.
   //
   // It goes into `_i18n` **now**, before that store is pinned as the migration baseline, because of
-  // the general rule D178 states: anything the new side needs from the old store has to be in the
-  // baseline at the moment the baseline is pinned. A4's consumer asking an unpinned `i18n.js` for
+  // the general rule states: anything the new side needs from the old store has to be in the
+  // baseline at the moment the baseline is pinned. An adjacent consumer asking an unpinned `i18n.js` for
   // this key would otherwise get the raw key back.
   for (const tag of TC_I18N_LOCALES) {
     assert.equal(i18nText(TC_I18N_CATALOGUE_TAG_KEY, tag), tag, `${tag} does not name itself`);
   }
   // And it is **metadata**: not one of the 122 user-facing strings, so it stays out of the counts
   // that ask whether the extension is fully translated, and out of the gate that says every message
-  // in the catalogue is asked for by the page. Nothing asks for it until A3.
+  // in the catalogue is asked for by the page. Nothing asks for it until the current lookup runs.
   assert.ok(TC_I18N_METADATA_KEYS.includes(TC_I18N_CATALOGUE_TAG_KEY));
   // "Nothing draws it" is asked of the sets that mean drawn — `textKeys` and `markupKeys`. The
   // consumer-reference projection excludes this declaration too: a definition cannot witness the
@@ -1032,7 +1028,7 @@ const highestArgumentOf = value => Math.max(
   ...[...String(value ?? '').matchAll(/\$ARG(\d+)\$/g)].map(match => Number(match[1])),
 );
 
-// **Q21, as a gate rather than as a measurement** (D166). The two formats differ when a call supplies
+// **Argument coverage is a gate rather than a measurement.** The two formats differ when a call supplies
 // fewer arguments than its message asks for: today the compatibility formatter leaves `%2$s` standing
 // on screen, and `chrome.i18n` instead returns the live message with nothing substituted. That difference is
 // unreachable — every call site supplies exactly through the highest index — and the property is
@@ -1069,16 +1065,15 @@ const refuseArgumentMismatches = (file, rawSource, messages) => {
 
 test('every call supplies arguments through its message, and the gate says so when one does not', () => {
   // The corpus is the subject and cannot be the whole evidence: the property holds today, so nothing
-  // here can fail — the same dead-guard shape D154 names. The refusal is therefore entered from a
+  // here can fail — the same dead-guard shape seen elsewhere. The refusal is therefore entered from a
   // fixture too, one line per way it can be broken, and the corpus counts are stated so that a
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **100 after A4 removed the options page's second title write.** The 102 that first stood here
-  // was the third wrong number on this item's line: it counted
-  // a call written inside a comment in `i18n.js` — prose about the boundary conversion, added in
-  // A2 in the commit that deleted an unreproducible `157`. A sentence written to avoid a false
-  // number produced a false number in another gate (D206). What matters more than the digit is
+  // **100 sites are expected after the options page's second title write was removed.** The count is
+  // derived from the source reader rather than a work-log claim: a call written inside a comment in
+  // `i18n.js` must not enter the result, while a real zero-argument call must.
+  // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
   assert.equal(readSites, 100, `the scan read ${readSites} argument-supplying sites`);
@@ -1259,12 +1254,12 @@ test('_locales rejects a placeholder binding that moves from its source position
 });
 
 test('the derivation can only read, and that is a capability rather than a rule', () => {
-  // **A3 retires the generator** (D167). While `_i18n` was canonical, deriving `_locales` by program
+  // **The live catalogue is not generated here.** While `_i18n` was canonical, deriving `_locales` by program
   // was the thing that made a wrong edit impossible to make twice; now `_locales` is what Chrome
   // reads, and a program pointing the other way would be a path for the frozen store to overwrite
   // the live one.
   //
-  // **This used to be a blacklist of four spellings, and it was an overclaim** (review 39):
+  // **This used to be a blacklist of four spellings, and it was an overclaim**:
   // `fs.writeFile`, `fs.write`, `copyFileSync` and every rename-based replacement went straight
   // through it. An authored list of forbidden syntax standing in for a property is the class this
   // work keeps finding, so the property is structural now — the checker takes its file access from
@@ -1291,7 +1286,7 @@ test('the derivation can only read, and that is a capability rather than a rule'
 });
 
 test('the frozen compatibility formats render the same bytes for every argument-bearing message', () => {
-  // **Parity is not identity** (D159, P0-3 of the first design review). Five catalogues can agree on
+  // **Parity is not identity.** Five catalogues can agree on
   // placeholder names and counts while every one of them binds those names to the wrong argument —
   // all five saying `$ARG1$` where the source said `%2$d` passes every parity gate in this file. The
   // only oracle that can tell is the old dictionary itself, rendered. `_i18n` remains the frozen
@@ -1306,8 +1301,8 @@ test('the frozen compatibility formats render the same bytes for every argument-
   const SENTINELS = ['<<s1>>', '<<s2>>', '<<s3>>', '<<s4>>'];
   // Chrome's own substitution, as a double: `$NAME$` is replaced by the argument its `content`
   // names, and `$$` is a literal dollar. It is a second implementation of somebody else's rule and
-  // therefore proves nothing about Chrome — which is why the real-Chrome load is a release gate
-  // (D179, D184). What it does prove is that the two *of ours* say the same thing.
+  // therefore proves nothing about Chrome — the real-Chrome load is a release gate. What it does
+  // prove is that the two *of ours* say the same thing.
   const renderChromeStyle = (entry, args) => entry.message.replace(/\$([A-Za-z0-9_@]+)\$|\$\$/g, (whole, name) => {
     if (whole === '$$') return '$';
     const declared = entry.placeholders && entry.placeholders[name];
@@ -1351,7 +1346,7 @@ test('the seam: nothing answers without a backend, and both paths get the same p
   // **Attack step 1** (the verifier's order, taken as the order of these cases). Three realms,
   // built here rather than reused, because the hazard the lazy default carries is not in production
   // — it is Node global pollution: a `chrome` another test left behind would answer for code that
-  // forgot to inject, and "forgetting throws" would be quietly false (D163, D174).
+  // forgot to inject, and "forgetting throws" would be quietly false.
   const load = (globals) => {
     const realm = vm.createContext(globals);
     vm.runInContext(read('i18n.js'), realm);
@@ -1383,7 +1378,7 @@ test('the seam: nothing answers without a backend, and both paths get the same p
 test('a message whose arguments reorder puts them where its own language wants them', () => {
   // **Attack step 2.** Three numeric sentinels through the one key whose order differs from English
   // in every other catalogue — the case where a binding that is wrong in the same way everywhere
-  // would still read plausibly, which is why A2's oracle compares the formats and this compares the
+  // would still read plausibly, which is why the compatibility oracle compares the formats and this compares the
   // rendered text a user would see.
   const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const previous = installMessageBackend(catalogueBackend('en'));
@@ -1419,16 +1414,15 @@ test('a key the catalogue does not have comes back blank, and nothing shipped ca
 });
 
 test('the boundary conversion is legal for every key, and collides for none', () => {
-  // **The platform's grammar is satisfied at the boundary and nowhere else** (D162). A `_locales`
+  // **The platform's grammar is satisfied at the boundary and nowhere else**. A `_locales`
   // message name may hold `[A-Za-z0-9_@]` and is compared case-insensitively, so the dotted logical
   // id the source writes cannot be one; `.`→`_` is the whole conversion, and the source keeps its
   // dots — which is what makes "an old dictionary meeting a new consumer" a state that cannot be
   // written down rather than one a gate has to catch.
   //
-  // It lives in `i18n.js` because **the generator, the read-only checker and later the runtime all
-  // load this function from here** (D171, D177). "The same rule" written twice is two
-  // implementations that agree until they do not, and the way that would have happened is item
-  // ordering: a generator with its own copy now, a runtime copy at A3.
+  // It lives in `i18n.js` because **the generator, the read-only checker and the runtime all load
+  // this function from here**. "The same rule" written twice is two implementations that agree
+  // until they do not, so the checker and runtime share this function.
   assert.equal(chromeMessageId('ext.header.options'), 'ext_header_options');
   assert.equal(chromeMessageId('ext.migration.effect.behaviorChange'), 'ext_migration_effect_behaviorChange');
   // A name already legal is its own conversion — the two Chrome-namespace keys are the case
@@ -1452,8 +1446,8 @@ test('the page can only ask for keys the catalogue has, and asks for all of them
   const referencedPhysicalKeys = new Set([...referencedKeys].map(chromeMessageId));
   const missing = [...referencedPhysicalKeys].filter(key => !shipped.has(key));
   // Metadata is exempt **by name**, and the exemption is one line rather than a silence: a key whose
-  // value is the catalogue's own tag is not a message the page draws, and until A3 asks it for the
-  // document language nothing reads it at all (D178). Leaving it to pass on the accident that its
+  // value is the catalogue's own tag is not a message the page draws, and until the lookup asks it for the
+  // document language nothing reads it at all. Leaving it to pass on the accident that its
   // own declaration looks like a reference would be a gate agreeing for the wrong reason.
   assert.deepEqual(missing, [], 'the page names a message that is not in the catalogue');
   assertEveryCatalogueMessageIsReferenced(
@@ -1477,10 +1471,8 @@ test('placeholders match across locales, key by key', () => {
   // A translation that drops `%1$s` loses the label it was quoting; one that invents `%3$d` prints
   // the placeholder back at the user. Neither shows up as an error anywhere else.
   //
-  // **Every locale, and it used to check only `ko`** — written when there were two catalogues, so
-  // the three that arrived afterwards were never asked. Found by a toggle rather than by the run:
-  // adding `%1$s` to a Chinese value passed. That is the same two-locale shape the layout test and
-  // the refusal-wording tables carried, in a gate rather than in a fixture.
+  // **Every locale is checked.** A placeholder added to a Chinese value must be visible here, just
+  // as it is in the layout and refusal-wording tables.
   for (const tag of TC_I18N_LOCALES) {
     if (tag === 'en') continue;
     for (const key of livePhysicalKeysFor('en')) {
@@ -1528,10 +1520,9 @@ test('markup in a value is balanced, and the same in every locale', () => {
     assert.equal(tags.filter(t => t === '<b>').length, tags.filter(t => t === '</b>').length, `${key} <b>`);
     assert.equal(tags.filter(t => t === '<span>').length, tags.filter(t => t === '</span>').length, `${key} <span>`);
     assert.equal(tags.filter(t => t === '<code>').length, tags.filter(t => t === '</code>').length, `${key} <code>`);
-    // **Every locale, not `ko`.** Round 43 widened four loops in this file and left this one and
-    // the `<code>` check below on the original pair — so a malformed tag in `ja` or either Chinese
-    // catalogue passed (round 14 review, measured with `<b>⠿</b>` planted in `ja`). Those three are
-    // the machine-translated pass, which is where a stray tag is most likely to be.
+    // **Every locale, not `ko`.** All locale loops in this file use the same subject; keeping this
+    // check on the original pair would let a malformed tag in `ja` or either Chinese catalogue pass.
+    // Those three are the machine-translated pass, where a stray tag is most likely.
     for (const tag of TC_I18N_LOCALES) {
       assert.deepEqual(tagsOf(liveMessageFor(tag, key)), tags, `${tag}/${key} has a different tag set`);
     }
@@ -1549,7 +1540,7 @@ const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeho
 // absent by a pair of patterns that required the same thing. So `title = …` with spaces around the
 // `=` — how JavaScript assigns a property, and how all four such assignments in this repository are
 // written (two template literals, two bare expressions) — was read neither by the scan nor by the
-// guards, and neither was an uppercase name or `setAttribute` (round 17 review).
+// guards, and neither was an uppercase name or `setAttribute`.
 //
 // The arrangement that replaced it is the point of the change: **a form on the readable list is
 // read, and a name on the list written in a form that is not is a failure rather than a pass.**
@@ -1562,8 +1553,8 @@ const TEXT_BEARING = 'placeholder|title|aria-label|aria-description|aria-placeho
 // code it reads are the same repository with the same authors, so anyone able to write
 // `setAttribute('ti' + 'tle', …)` can also delete this file. So the readable list covers **the forms
 // people write when they are not thinking about this gate at all** — four ways of naming an
-// attribute, four ways of quoting a value (round 25 review, user scope ruling; the ledger row is
-// D147). A name the scan cannot read is not on the list, and what happens to those is decided at
+// attribute, four ways of quoting a value. A name the scan cannot read is not on the list, and what
+// happens to those is decided at
 // the two guards in the gate below rather than here: an assembled name is left alone, a name held
 // in a variable is refused where the site can be known to be an attribute write.
 //
@@ -1580,7 +1571,7 @@ const isAssignment = event => event?.type === 'punctuator' && ASSIGNMENT_OPERATO
 // **A call names a message when the key is there to read.** `t(dynamicKey)` is not a catalogue
 // lookup anybody can check — it is an expression whose text arrives at run time, which is the class
 // this gate calls undeclared — and accepting it because it *looks* like a lookup was the hole in the
-// acceptance added a round ago (round 27 review). The key has to be one of the static literal calls
+// acceptance added a round ago. The key has to be one of the static literal calls
 // the shared event stream projects, so this lint and the catalogue gate have one answer.
 const namesAMessage = (expression) => {
   const trimmed = expression.trim();
@@ -1686,11 +1677,11 @@ const attributeSitesIn = (source) => {
 // multiset: most of these sites share that pair with another one — **how many is asserted, not
 // written here** — so a trade between two of them leaves the expectation untouched: remove one,
 // leave a write the scan cannot read where it stood, add one back elsewhere, and the list is the
-// list (round 29 review; the swap is the fixture below). What fills the site is the thing that moves
+// list. What fills the site is the thing that moves
 // when text moves, so it belongs to the identity.
 //
 // Not the position: line numbers churn under every edit above them, and a gate that fires on
-// unrelated change is a gate somebody switches off (the criterion item 7 was written to; D145 chose
+  // unrelated change is a gate somebody switches off (the criterion was written to prevent that;
 // role over position for the same reason). What is left indistinguishable is two sites in one file
 // writing the same attribute with the **same** value, a trade that moves no text. How many of those
 // there are is asserted with the rest — this file has typed that family of numbers wrong twice.
@@ -1699,8 +1690,8 @@ const siteIdentity = (file, site) => `${file} ${site.name} = ${site.text}`;
 // **A receiver is any expression, and that sentence used to be false.** The pattern under it read a
 // chain of `.name`, `(…)` and `[…]` with nothing nested inside — so
 // `document.querySelector(selectorFor('#x'))[name]`, `(document.querySelector('#x'))[name]` and
-// `rows[indices[0]].node[name]` were all unread while the comment claimed otherwise (review 37).
-// Every one of them is a plausible accident, which is this lint's whole threat model (D147), so the
+// `rows[indices[0]].node[name]` were all unread while the comment claimed otherwise.
+// Every one of them is a plausible accident, which is this lint's whole threat model, so the
 // pattern moved rather than the promise.
 //
 // Reading them takes knowing which bracket closes which, which a regular expression cannot do — so
@@ -1753,7 +1744,7 @@ const receiverStart = (source, bracketAt, pairs) => {
 // Both shapes of "an attribute name this scan cannot read", in one function, so that what the gate
 // refuses is a value a fixture can produce rather than a `match(…)` inside a loop over the corpus —
 // the corpus has none of either (measured: 0 in 13 markup files), which is precisely why the guards
-// need a fixture to be alive at all (D154). The two are kept apart because their rules differ, and
+// need a fixture to be alive at all. The two are kept apart because their rules differ, and
 // unifying them would quietly give `setAttribute` the declaration escape it has never had.
 const computedNameWritesIn = source => ({
   setAttribute: (() => {
@@ -1773,7 +1764,7 @@ const computedNameWritesIn = source => ({
     });
   })(),
   bracket: (() => {
-    // **The name is balanced too, and it was not** (review 38). The receiver walked backwards through
+    // **The name is balanced too, and it was not**. The receiver walked backwards through
     // balanced groups while the *name* was still a character class that stops at the first `]` — so
     // `document.querySelector('#x')[names[index]] = 'prose'` never reached `receiverStart` at all:
     // the match ended inside the name and the assignment was not there to find. The nested-receiver
@@ -1792,7 +1783,7 @@ const computedNameWritesIn = source => ({
       if (opening === undefined) return [];
       const name = source.slice(opening + 1, closing).trim();
       // A name beginning with a quote or backtick is deliberately outside this refusal; it can
-      // continue as an assembled expression (`'ti' + suffix` or `` `title${suffix}` ``). D147
+      // continue as an assembled expression (`'ti' + suffix or `` `title${suffix}` ``).
       // excludes assembled names from this lint's mistake model. Exact quoted names are handled by
       // the readable-site scan separately.
       if (name.length === 0 || /^['"`]/.test(name)) return [];
@@ -1806,18 +1797,18 @@ const computedNameWritesIn = source => ({
 // **The refusal itself, so that removing it is red.** The predicate above can be exercised by a
 // fixture, but the check that acts on its answer could not: the corpus has nothing to refuse, so
 // deleting both asserts out of the loop left every test passing — the dead-guard class one level up
-// from the one D154 names, found by toggling the commit that added the fixture. The corpus loop and
+// from the dead-guard shape exposed by the fixture. The corpus loop and
 // the fixture now enter the gate through this one function.
 //
 // The two refusals are not the same rule. A bare identifier is the shape somebody arrives at by
 // accident — a name held in a variable — and `setAttribute` is where that can be said flatly, because
 // the call itself is the evidence that an attribute is being written; there is no declaration escape
-// and there never has been. **The same rule spelled with brackets** (round 27 review) refuses less:
+// and there never has been. **The same rule spelled with brackets** refuses less:
 // what can be established from outside is a **literal** written into a computed member, which is text
 // shipping through a name nobody can read. With the value an expression too there is nothing to
 // classify — no name, no words — and that is the line that also leaves `'ti' + 'tle'` alone, since
 // nobody writes that by mistake and against somebody writing it on purpose this gate has no standing
-// (D147). Deciding whether a receiver is an element would take knowing what `el` is, and a lint does
+// Deciding whether a receiver is an element would take knowing what `el` is, and a lint does
 // not get a parser — so the bracket rule keeps the escape the flat one lacks: a declared receiver.
 const refuseUnreadableComputedNames = (file, source, declared) => {
   const computed = computedNameWritesIn(source);
@@ -1835,10 +1826,9 @@ const refuseUnreadableComputedNames = (file, source, declared) => {
 };
 
 // **Everything this gate reads out of one source, as one operation.** The refusal runs and the
-// readable sites come back, from the same call — because with the refusal invoked from the corpus
-// loop and the sites collected beside it, the two were merely adjacent: deleting only the loop's
-// refusal call left the site list whole and every test green (review 37, measured). Predicate alive,
-// refusal alive, **connection to the corpus dead**.
+// readable sites come back from the same call. With the refusal invoked from the corpus loop and the
+// sites collected beside it, deleting only the refusal left both helpers alive while their
+// **connection to the corpus was dead**.
 //
 // Making them one call is the same move as `whileHeld` — a right that can only be read by executing
 // under it — and as the helper socket claimed by linking from a pin: two facts that have to imply
@@ -1942,7 +1932,7 @@ test('the attribute scan reads every form on its list, and says so when it canno
 });
 
 test('two sites in one file that write the same attribute are told apart by what fills them', () => {
-  // **`(file, attribute)` is not an identity** (round 29 review). Most of the sites in this extension
+  // **`(file, attribute)` is not an identity**. Most of the sites in this extension
   // share their pair with another one — the corpus test below counts them, because a number typed
   // into a comment is one nobody re-derives — and a count-preserving three-way swap moves text
   // through the list without moving the list: take a site out, leave in its place a write whose name
@@ -1976,8 +1966,8 @@ test('two sites in one file that write the same attribute are told apart by what
 test('a write whose attribute name the scan cannot read is refused, in every receiver shape', () => {
   // **The corpus cannot keep these guards alive.** Nothing in this extension writes an attribute
   // through a computed name — measured, 0 across the 13 markup files — so deleting either guard left
-  // the suite green: a guard nothing can fail is a dead guard, and this loop has been bitten by that
-  // class twice (D154). The fixture below is what fails without them, one line per refusal.
+  // the suite green: a guard nothing can fail is dead. The fixture below is what fails without them,
+  // one line per refusal.
   // **Through the gate's own refusal, not past it.** Asking `computedNameWritesIn` what it found
   // proves the predicate reads the shape; it says nothing about the check that acts on the answer,
   // and that check is unfailable from the corpus too — measured by toggling the commit that added
@@ -2000,21 +1990,20 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   assert.match(refused("el.setAttribute(name, 'prose');"), /sets an attribute whose name it computes/);
   // Brackets carry no such evidence — the receiver could be a plain object — so what is refused is
   // the part that can be established from outside: a **literal** going into a name nobody can read
-  // (D150). All four receiver shapes, because the reader that read only the first two is the finding,
+  // All four receiver shapes, because the reader that read only the first two is the finding,
   // and the message has to name the write it refused or the failure points at nothing:
   assert.match(refused("el[name] = 'prose';"), /writes a literal into el\[name\]/);
   assert.match(refused("page.form.el[name] = 'prose';"), /writes a literal into page\.form\.el\[name\]/);
   // The receiver is named whole: read as `node[name]`, this failure would send its reader to the
   // wrong expression.
   assert.match(refused("rows[0].node[name] = 'prose';"), /writes a literal into rows\[0\]\.node\[name\]/);
-  // **The one round 29 named**, and the reason this is not a paraphrase: a receiver that ends in a
+  // **A receiver that ends in a call is not a paraphrase of a simple receiver**, and a receiver that ends in a
   // call was read by neither pattern, so this exact line passed the gate.
   assert.match(
     refused("document.querySelector('#x')[name] = 'prose';"),
     /writes a literal into document\.querySelector\('#x'\)\[name\]/,
   );
-  // **And the three review 37 named**, every one of which the previous reader missed while the
-  // comment above it said "any expression": a call inside a call, a grouped receiver, and an index
+  // **The remaining receiver shapes** are a call inside a call, a grouped receiver, and an index
   // inside an index.
   assert.match(
     refused("document.querySelector(selectorFor('#x'))[name] = 'prose';"),
@@ -2028,7 +2017,7 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
     refused("rows[indices[0]].node[name] = 'prose';"),
     /writes a literal into rows\[indices\[0\]\]\.node\[name\]/,
   );
-  // **And a computed name that is itself an expression** (review 38): the reader balanced the
+  // **And a computed name that is itself an expression**: the reader balanced the
   // receiver and not the name, so this exact line was not seen at all.
   assert.match(
     refused("document.querySelector('#x')[names[index]] = 'user-facing prose';"),
@@ -2050,7 +2039,7 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
   assert.match(refused("= 'prose';\n[name] = 'prose';"), /<unreadable receiver>\[name\]/);
   // And the two shapes that are outside on purpose. A literal name is not computed at all — the scan
   // above reads it as an ordinary site — and a computed write with no literal in it carries no text
-  // to classify, which is the same line that leaves `'ti' + 'tle'` alone (D147).
+  // to classify, which is the same line that leaves `'ti' + 'tle'` alone.
   assert.equal(refused("el['title'] = 'read as a site, not as a computed name';"), null);
   assert.equal(refused('counts[key] = total;'), null);
   // A declared receiver is accepted, which is the escape the bracket rule has and `setAttribute`
@@ -2067,18 +2056,18 @@ test('a write whose attribute name the scan cannot read is refused, in every rec
 });
 
 test('every text-bearing attribute in the markup is a message or a declared literal', () => {
-  // **The scan looked at values and at interpolations, never at the static markup** (round 15
-  // review). A `placeholder`, `title`, `aria-label` or `alt` written straight into a tag is
+  // **The scan looked at values and at interpolations, never at the static markup.**
+  // A `placeholder`, `title`, `aria-label` or `alt` written straight into a tag is
   // invisible to every other check here: it is not a catalogue value, so the parity gates never see
   // it, and it is not built by `t(...)`, so the attribute-escaping gate never sees it either. A
   // sentence put there would ship untranslated in five languages with nothing red.
   //
-  // **It read one file, and the file it read was not the one with the instances** (round 16
-  // review): `options.js` builds rows into the page and had three static ones sitting in it the
+  // **It read one file, and the file it read was not the one with the instances.**
+  // `options.js` builds rows into the page and has static ones sitting in it; the
   // whole time, one of them the same branch-name class as the single declaration this list started
   // with. So the subject is every file that can carry markup, taken from the directory.
   //
-  // **And it read one spelling of the syntax** (round 17 review): the readable forms are pinned by
+  // **And it read one spelling of the syntax**: the readable forms are pinned by
   // the fixture above, and the four assignments this repository already writes with
   // spaces around the `=` had never been read by it. What that hole shows is not those four values,
   // which are fine — it is that a sentence written the same way would have been just as invisible.
@@ -2086,7 +2075,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // Each value is therefore one of three things. **A message**, filled in from a dictionary at
   // runtime — interpolated into the value, or the whole of it. A **declared literal**, named here
   // with the reason it is not prose — a name a command needs, or the product's own name, which is a
-  // stated non-goal of this work. Or a **declared expression**, where the words are not in front of
+  // stated product non-goal. Or a **declared expression**, where the words are not in front of
   // us at all and what is declared instead is whose they are.
   const DECLARED_LITERALS = {
     main: 'the default branch name — it goes into a command, so it is not prose',
@@ -2103,7 +2092,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // The one shape of a computed name that ships text we can see: `el[name] = 'Copy to clipboard'`.
   // Nothing writes one, and the day something does it is declared here with the reason its receiver
   // is not an element — a plain object keyed by a variable is ordinary code, and this list is where
-  // that gets said rather than argued about in a review.
+  // that gets declared with its reason.
   const DECLARED_COMPUTED_WRITES = {};
   // Every readable site in the tree, and the refusals that ran to produce them — one call per file,
   // so the list below cannot outlive the checks that guard it (`auditSource`).
@@ -2111,8 +2100,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // **The sites themselves, not how many there are.** A floor of twelve against sixteen let four of
   // them move into unread syntax in silence; an exact count closed that and still fixed only
   // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
-  // and sixteen is sixteen (round 27 review, measured: the suite stayed green through exactly that).
-  // **File and attribute name were not enough either** (round 29 review): that pair repeats, so a
+  // and sixteen is sixteen.
+  // **File and attribute name were not enough either**: that pair repeats, so a
   // trade between two sites sharing one left this list identical — the swap the fixture above runs is
   // exactly that trade, and how far the repetition goes is counted below. The identity
   // is `siteIdentity` — the same function the fixture above pins — and multiplicity stays, because a
@@ -2137,8 +2126,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   ]);
   // **The counts are executed, never typed.** Three sentences in this file used to carry "how many
   // sites share a `(file, attribute)` pair"; one of them said eleven when the answer is fourteen, and
-  // it survived the standing step that recorded it as fixed (D194). A ledger row got the neighbouring
-  // number wrong the same way (D187 → D189). So the numbers live here, computed from the list above,
+  // it survived the standing step that recorded it as fixed. A ledger row got the neighbouring
+  // number wrong the same way. So the numbers live here, computed from the list above,
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
@@ -2218,7 +2207,7 @@ test('what a <code> span holds is a literal, so it is identical in every locale'
 });
 
 test('prose that names a control receives the label, it does not spell it out again', () => {
-  // D28. The app found this class already broken — body text saying `[권한 요청]` next to a button
+  // The app found this class already broken — body text saying `[권한 요청]` next to a button
   // reading `iTerm2 권한 요청` — and the same drift was here: one paragraph called the field
   // `Face` and another called it `face`. A quotation is a relation between two messages now, so a
   // translator cannot make them disagree.
@@ -2265,7 +2254,7 @@ test('prose that names a control receives the label, it does not spell it out ag
 });
 
 test('a count sits behind a noun, and the two outcomes are two messages', () => {
-  // D31a. The English needed `command`/`commands` and `was`/`were` to agree with two counts, and a
+  // The English needed `command`/`commands` and `was`/`were` to agree with two counts, and a
   // translation cannot be assembled out of the pieces that made them agree — so the count moved
   // behind a noun and a colon, where nothing inflects, and each outcome became its own message.
   for (const tag of TC_I18N_LOCALES) {
@@ -2286,7 +2275,7 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
   // opens. English left in the markup would be painted first and translated afterwards for every
   // user whose language is not English — so the markup holds ids and the fill happens while the
   // parser is still blocked on options.js, from Chrome's catalogue, which answers without waiting.
-  // There is no cache correction or locale redraw in this consumer after A4.
+  // There is no cache correction or locale redraw in this consumer.
   let localizedNodes = 0;
   for (const file of HTML_FILES) {
     for (const match of read(file).matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
@@ -2295,8 +2284,7 @@ test('the markup ships no prose, so there is nothing to paint in the wrong langu
     }
   }
   // A loop over no matches is a test that says nothing while reading like one that says a lot — a
-  // failure this work has had twice already, once here (a pattern with a space in it) and once in a
-  // Swift gate (a filter that selected nothing). The count is what tells the two apart.
+  // A count distinguishes an empty scan from a scan that actually checked its subject.
   assert.ok(localizedNodes > 30, `only ${localizedNodes} localized nodes were read`);
   // The adjacent-generation compatibility branch and the synchronous fill, in that order. The
   // current skeleton bypasses the branch and asks Chrome; the baseline skeleton takes it.
@@ -2319,13 +2307,12 @@ test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The lifecycle the reducer lives in (R11).
+// The lifecycle the reducer lives in.
 //
-// The reducer's own tests all passed while three defects sat in the paths that own it: a fence that
+// The reducer's own tests can pass while defects sit in the paths that own it: a fence that
 // blocked the next service worker forever, a read-reduce-write that could interleave with itself,
-// and a first render that raced the cache read. That is the third harness shape this loop has found
-// — **a pure function or a source lint passes while the asynchronous, lifecycle-owning path around
-// it is never driven** — and these tests exist to drive it.
+// and a first render that races the cache read. These tests drive the asynchronous, lifecycle-owning
+// path rather than only its pure functions or source lints.
 // ---------------------------------------------------------------------------------------------
 
 test('a fresh worker is not fenced out by the sequence its predecessor persisted', () => {
@@ -2344,7 +2331,7 @@ test('a fresh worker is not fenced out by the sequence its predecessor persisted
 
 test('the fence still holds inside one worker', () => {
   // The half that must not be lost with the fix: within a lifetime the numbers are comparable, and
-  // an older request answering late is still refused (D50/D81).
+  // an older request answering late is still refused.
   const applied = localeCacheUpdate(cache(), generation({ installId: 'install-b', epoch: 0, seq: 11 }));
   assert.equal(applied.changed, true);
   const late = localeCacheUpdate(applied.cache, generation({ installId: 'install-c', epoch: 0, seq: 9 }));
@@ -2381,7 +2368,7 @@ test('a negative sequence is refused rather than compared', () => {
 });
 
 test('a refused command still tells us the language', () => {
-  // The reversal (R11 C): the app attaches its publication to everything it composes, including a
+  // The reversal: the app attaches its publication to everything it composes, including a
   // validation failure, because a failure can be the first successful contact with the running app
   // — the cold-start query never ran, or an older app answered it, and then the relay launches this
   // app and it refuses the command. Under the success-only rule that response said nothing.
@@ -2475,7 +2462,7 @@ test('initial render uses a valid cached locale', async () => {
   // The first draw waited for nothing, so a valid Korean cache lost to the English fallback — and
   // if the app's answer then equalled the cache, the reducer reported no change, no notification
   // went out, and nothing repaired the page. Reading `storage.local` is not waiting for the app,
-  // which is the only thing D15 forbids.
+  // which is the only thing the app-response rule forbids.
   //
   // The read is delayed here while a draw is attempted immediately, which is the shape of the race.
   let resolveRead;
@@ -2514,22 +2501,21 @@ test('a gate whose read fails still lets the page draw', async () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The rest of the extension's strings (item 22).
+// The rest of the extension's strings.
 //
 // The judgement this item turns on is **which strings a user actually sees**, and it has three
 // answers rather than two. Visible: drawn on a page or the options form. Diagnostic: `console.*`,
-// English by policy (D13/D27). And **latent** — written for a user, reaching only the console
+// English by policy. And **latent** — written for a user, reaching only the console
 // today, and locale-dependent the moment anything displays it. The refusal messages are that third
 // kind, and pretending they were either of the other two is what a trace prevented.
 // ---------------------------------------------------------------------------------------------
 
 test('a preset says its name when it is read, not the one it loaded with', () => {
-  // The class item 21 found in the options page's dropdown, closed at the source: the preset resolves
+  // The options page's dropdown is closed at the source: the preset resolves
   // when read, so no consumer has to remember to re-read it.
   //
-  // **What proves it changed with A3.** It used to move the extension's own locale and watch the name
-  // follow; the extension no longer has a locale to move — Chrome picks the catalogue and the lookup
-  // asks it every time. So the backend moves instead, which is the same question one layer down: is
+  // **The runtime source of the language.** Chrome picks the catalogue and the lookup asks it every
+  // time. The backend moves instead, which is the same question one layer down: is
   // the name being resolved now, or was it frozen when this file loaded?
   const { installMessageBackend } = vm.runInThisContext('({ installMessageBackend })');
   const { PR_PRESETS, REPO_PRESETS } = vm.runInThisContext('({ PR_PRESETS, REPO_PRESETS })');
@@ -2592,7 +2578,7 @@ test('the messages that only reach a console are not in the dictionaries', () =>
   // key for one of those would be a translation nobody reads — so the gate is that none of the
   // catalogue's values is one of these sentences.
   // Every locale, not English alone: the sweep that re-ran after these fixes found this one
-  // reading a single catalogue for no reason (D104's rule — a sweep run before the fixes does
+  // reading a single catalogue for no reason — a sweep run before the fixes does
   // not cover them). A translation that left one of these sentences in English would be the
   // case it misses, and widening costs one line.
   const values = new Set(TC_I18N_LOCALES.flatMap(liveValuesFor));
@@ -2610,10 +2596,10 @@ test('the messages that only reach a console are not in the dictionaries', () =>
 });
 
 // ---------------------------------------------------------------------------------------------
-// Bookkeeping may not decide what a click reports (R12).
+// Bookkeeping may not decide what a click reports.
 //
-// The worst defect this work has found was not a wrong cache value; it was that the cache write was
-// **reachable** from the answer a click gets. These pin the separation from both sides: the writer
+// The cache write must not be **reachable** from the answer a click gets. These pin the separation
+// from both sides: the writer
 // cannot fail, and the thing that decides the answer is never handed the writer at all.
 // ---------------------------------------------------------------------------------------------
 
@@ -2713,7 +2699,7 @@ test('a translation cannot break out of an HTML attribute', () => {
   // check tags and placeholders and would not notice a quote, and one `"` in a translation ends the
   // attribute and turns the rest of the sentence into markup.
   // **Read off the same scan the gate above uses**, rather than a second pattern that named three
-  // of the six attributes, one of the quotings and one file (round 17 review). Two patterns for one
+  // of the six attributes, one of the quotings and one file. Two patterns for one
   // subject drift, and this one had drifted already: it could not see a message interpolated into
   // an `alt`, into `title = ` with spaces, or into any file but `options.js`.
   const attributeKeys = new Set();
@@ -2726,12 +2712,9 @@ test('a translation cannot break out of an HTML attribute', () => {
     }
   }
   assert.ok(attributeKeys.size >= 5, `only ${attributeKeys.size} attribute interpolations found`);
-  // **Every shipped language, not the two this used to visit.** Four loops in this file walked
-  // `['en', 'ko']` because that is what existed when they were written, and three of the five are
-  // the machine-translated first pass — the values most likely to carry a stray quote and the ones
-  // nobody was checking. Measured: an English plural marker planted in `zh-Hant` passed the old
-  // scope and fails this one. Widening them caught nothing in the shipped values, which says they
-  // are clean, not that two of five was enough.
+  // **Every shipped language.** The machine-translated values are included because they are the
+  // most likely to carry a stray quote. A marker planted in `zh-Hant` must fail this gate rather
+  // than pass because only a subset of locales was checked.
   for (const key of attributeKeys) {
     for (const tag of TC_I18N_LOCALES) {
       const value = liveMessageFor(tag, key);
@@ -2742,10 +2725,10 @@ test('a translation cannot break out of an HTML attribute', () => {
 });
 
 test('no text ships in the markup without a message behind it', () => {
-  // Item 12's F class, on this side: a string nobody localized is invisible to a gate that only
+  // The source gate's F class, on this side: a string nobody localized is invisible to a gate that only
   // inspects the elements already carrying `data-i18n`. This reads the other direction — every text
   // node in the body — and refuses anything not on the whitelist below.
-  // Every page, taken from the directory — the same reason `keysInHtml` is (round 17 review).
+  // Every page, taken from the directory — the same reason `keysInHtml` is.
   const body = HTML_FILES.map((file) => {
     const html = read(file);
     // A fragment need not have one; what matters is that no markup is skipped for lacking it
@@ -2768,12 +2751,12 @@ test('no text ships in the markup without a message behind it', () => {
   }
   assert.deepEqual(stray, [], 'markup carries text that no message owns');
   // An empty list means either that the markup is clean or that the scan read nothing, and those
-  // two look identical from here (round 17 sweep)
+  // two look identical from here
   assert.ok(nodes > 100, `only ${nodes} text nodes were read`);
 });
 
 // ---------------------------------------------------------------------------------------------
-// The shape another gate depends on (item 20).
+// The shape another gate depends on.
 // ---------------------------------------------------------------------------------------------
 
 test('a dictionary file is one JSON object, so the ownership gate can read it', () => {
@@ -2809,7 +2792,7 @@ test('a dictionary file is one JSON object, so the ownership gate can read it', 
 // **Word boundaries, and the first version of this gate needed them.** Written as plain substrings
 // it counted `gh` inside the English word "ri`gh`t" and reported a Korean translation as having lost
 // a command — a false positive on its very first run. A gate that cries wolf is a gate somebody
-// switches off (the standard item 7 set), so the bare-word literals are matched as words.
+// switches off (the standard gate set), so the bare-word literals are matched as words.
 const COMMAND_LITERALS = [
   /\{cd\}/g, /\{repo\}/g, /\{owner\}/g, /\{number\}/g, /\{branch\}/g, /\{base\}/g,
   /\{main\}/g, /\{branch_underbar\}/g, /z \{repo\}/g,
@@ -2821,25 +2804,22 @@ test('a command literal reads the same in every language', () => {
   // The most dangerous thing a translator can do to this catalogue is translate `z {repo}`. It is
   // not a phrase; it is what the user's button will run. These sit in plain sentences with no
   // markup around them, so the `<code>` gate above cannot see them.
-  // **The expected count is not read off English.** It used to be, and `expected === 0 -> continue`
-  // meant English losing a literal switched the check off for that key rather than failing it:
-  // measured, deleting `{cd}` from `ext.migration.v1.describe`'s English value — a plain sentence
-  // with no markup, which is the case this gate's own comment says it exists for — passed. The
-  // locales are compared to **each other** instead, so whichever one drops a literal disagrees with
-  // the rest and English has no special standing.
+  // **The expected count is derived from all locales, not English.** Comparing locales to each other
+  // means a literal dropped from any one locale disagrees with the rest; English has no special
+  // standing and cannot switch the check off by omitting the literal.
   //
   // The remaining hole is deliberate and small: a literal deleted from all five at once leaves them
   // agreeing, and nothing here can tell that from a token that was never there. That is one act
   // across five files, not the slip this catches.
   // **What this compares is the multiset, and calling it "pinned identical" was an overstatement**
-  // (round 14 review, which was right to name it). Every locale must carry each literal the same
+  // Every locale must carry each literal the same
   // number of times; where in the sentence they sit is not compared.
   //
   // **Order is not asserted because translations do not preserve it — measured, not assumed.**
   // Strengthening this to a sequence comparison was tried and it failed on shipped, *correct*
   // Korean: `ext.migration.v1.describe` reads `{cd}, z {repo}, {repo}` in English and
   // `z {repo}, {repo}, {cd}` in Korean, because the clause naming the old form comes first there.
-  // A gate that fires on a good translation is one somebody switches off (the standard item 7 set),
+  // A gate that fires on a good translation is one somebody switches off (the standard gate set),
   // so the claim comes down rather than the gate going up. What is left uncovered is a translation
   // that keeps every token and reorders them into a different meaning; nothing here can tell that
   // from ordinary word order, and no rule over these strings can.
@@ -2937,9 +2917,9 @@ test('a translation that is still English is caught where English is not the ans
   // A value byte-identical to English is the fingerprint of a key that was skipped. It is also
   // legitimate for a product name, a command, or a bare number — so this counts rather than
   // forbids, and the threshold is what makes it a gate instead of a nuisance. **A gate people turn
-  // off is worse than no gate** (the standard item 7 set), and a per-key rule here would fire on
+  // off is worse than no gate** (the standard gate set), and a per-key rule here would fire on
   // `main branch` and `Terminal Checkout` forever.
-  // Metadata is out of both halves of the ratio (D178): `ext.meta.catalogueTag` is a tag, not a
+  // Metadata is out of both halves of the ratio: `ext.meta.catalogueTag` is a tag, not a
   // sentence, and counting it would let the denominator grow with values no translator ever sees.
   const metadata = new Set(TC_I18N_METADATA_KEYS.map(chromeMessageId));
   const en = Object.fromEntries(

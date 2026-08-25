@@ -4,8 +4,8 @@
 // The content script, the service worker, and the options page all load this file first.
 
 // Every preset opens with `{cd}` — the clause that moves into the repository. Its value comes from
-// the app, not from this file: with no base directory configured it is exactly `z {repo}` (what
-// these presets used to spell out), and with one configured it falls back to `cd <base>/<repo>` and
+// the app, not from this file: with no base directory configured it is exactly `z {repo}`, and with
+// one configured it falls back to `cd <base>/<repo>` and
 // then to cloning. A bare `z {repo}` exits non-zero on a cold zoxide DB, which kills the whole `&&`
 // chain with nothing to see anywhere (issue #30).
 //
@@ -21,15 +21,9 @@
 // A preset. Its `id` and `command` are fixed; its display text is resolved **when it is read**
 // rather than when this file loads.
 //
-// `name` and `face` are accessors over the dictionaries, and that is the whole mechanism. It exists
-// because the alternative kept going wrong: a value read at load time is the language the context
-// started in, and every consumer that copies it afterwards copies that language — the options page's
-// preset dropdown had exactly this shape, and so did the app's settings window.
-//
-// **Measured, and it cost a green test to find: object spread evaluates accessors.** The first
-// version of this built the pair separately and spread it into each preset literal, and `{ ...it }`
-// read both getters and wrote their values, so every name froze at load exactly as before — the
-// mechanism defeating itself in one character. A preset is therefore *built* here and never spread.
+// `name` and `face` are accessors over the dictionaries. A value read at load time would freeze the
+// language the context started in, so presets are built here and never spread: object spread
+// evaluates accessors and would store their current values.
 //
 // The face is a key only when it is **text on the page**. The PR and issue presets show an emoji,
 // which no language rewrites, so those keep a literal — and a literal is also what keeps `isTextFace`
@@ -356,7 +350,7 @@ const SYNC_QUOTA_BYTES_PER_ITEM = 8192;
 // The budget a single settings key may occupy, a quarter under the hard limit. The spare quarter is
 // not decoration: a measured real profile (the presets plus two overrides) is 1,978 bytes across all
 // keys, so this refuses nothing anyone has, while leaving room for whatever framing a future
-// generation puts around the same content (decision 9 clause 2 — if that clause packs a generation
+// generation puts around the same content (if that clause packs a generation
 // and its seed snapshot into one item, this budget has to be revisited with it).
 const MAX_STORED_ITEM_BYTES = 6144;
 
@@ -532,15 +526,15 @@ function clickMatchesWhatWasShown(button, shown) {
   return shown === undefined || buttonFingerprint(button) === shown;
 }
 
-// What a mismatch reports — **and where it actually goes, which is not where this used to claim**.
+// What a mismatch reports, and where it goes.
 //
-// The old wording here said it "reaches the user on the button itself". Traced: the content script
-// does inspect the `{success:false}` response and does throw, but both click handlers catch that
-// throw, put a phase marker on the button (`Error!` / `❌`) and send the message to `console.error`.
+// The content script inspects the `{success:false}` response and throws, but both click handlers
+// catch that throw, put a phase marker on the button (`Error!` / `❌`) and send the message to
+// `console.error`.
 // **No error text is drawn on a GitHub page at all** — the only strings a button ever shows are its
 // face, its tooltip and those phase markers.
 //
-// So this string is a diagnostic today, and it stays English (D13/D27) — but it is not an ordinary
+// So this string is a diagnostic today, and it stays English — but it is not an ordinary
 // one, because it is written as an instruction to a user and it will become locale-dependent the
 // moment anything displays it. What that would take is not a translation: the message is composed in
 // the **service worker**, which draws nothing and has no render locale, so displaying it properly
@@ -642,8 +636,7 @@ function toStoredButton(button) {
 // caller has nothing to change and must not report an edit.
 //
 // It is a function rather than the body of the click handler because the handler is a guard and
-// then a change, and that order is what a test has to be able to reach: [+ Add Button] used to push
-// the button onto the edit state and ask afterwards whether it was allowed to.
+// then a change; the guard must run before the edit state changes.
 function appendButton(buttons, { presets, defaults }) {
   if (buttons.length >= MAX_BUTTONS) return buttons;
   const used = new Set(buttons.map(button => button.face));
@@ -651,7 +644,7 @@ function appendButton(buttons, { presets, defaults }) {
   // The label is resolved now and **stored as text**, so it is a snapshot of the language the
   // button was created in — the same class as a saved command being a snapshot of the preset it came
   // from. Making it follow the language later would mean a persistent id in the stored schema, and
-  // that is a SETTINGS_VERSION bump this work deliberately does not make.
+  // that is a SETTINGS_VERSION bump this release does not make.
   return [...buttons, adoptButton({ face, label: tr('ext.button.newButton'), command: '' })];
 }
 

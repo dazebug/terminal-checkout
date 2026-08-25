@@ -12,7 +12,7 @@ enum AutomationStatus {
     /// Read where it is drawn, never stored: a value kept in a property would hold the language it
     /// was built in. The two cases that point at a button take its label from the catalogue as `%@`
     /// rather than spelling it out, so renaming the button cannot leave the sentence quoting a
-    /// button that is no longer there (D28).
+    /// button that is no longer there.
     var label: String {
         switch self {
         case .granted: return localized("app.automation.granted")

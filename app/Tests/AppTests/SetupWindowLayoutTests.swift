@@ -36,7 +36,7 @@ final class SetupWindowLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/App/Resources").path
     }
 
-    /// The catalogues that have bodies. **All five, now that item 24 filled the last three** — the
+    /// The catalogues that have bodies. **All five** — the
     /// list existed because a window drawn from an empty catalogue is a window of raw keys, and a
     /// key is shorter than every sentence it stands for, so measuring one would have been a pass
     /// that meant nothing. A layout that fits English and Korean is likewise not evidence about
@@ -78,10 +78,8 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// replaced, and a card that fits one can clip in another.
     ///
     /// It walks `populatedLocales`, which **is** `supportedLocales` and is declared four lines
-    /// above with the measurement that made it one. This paragraph used to say the opposite — that
-    /// it was a hardcoded list, kept next to the fix that had stopped it being one — and a sentence
-    /// wrong in that direction is the worse kind: it invites someone to re-fix what is fixed, or to
-    /// distrust a gate that works.
+    /// above with the measurement that made it one. The check therefore follows the source of truth
+    /// instead of maintaining a second locale list.
     func testTheWindowFitsItsContentInEveryPopulatedLocale() throws {
         for tag in Self.populatedLocales {
             AppLocalization.tagOverrideForTesting = tag
@@ -215,15 +213,15 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 
-    /// **Every sentence in the pipeline strip comes from the catalogue** (round 10 review).
+    /// **Every sentence in the pipeline strip comes from the catalogue**.
     ///
     /// The strip was assembling one of its own: `"Native Host: \(manifest.message)"` put an English
-    /// word in front of a translated status, and `"relay"` was a bare literal. Item 12's gate could
+    /// word in front of a translated status, and `"relay"` was a bare literal. The source gate could
     /// not see either of them — it counts `localized(…)` calls and catalogue keys, so a string
     /// nobody localised is invisible to it. That is the limit of a scan-shaped gate, and this case
     /// is what covers the shape it cannot.
     ///
-    /// What is checked is the **frame**, not the wording (D59): a node's text has to be a catalogue
+    /// What is checked is the **frame**, not the wording: a node's text has to be a catalogue
     /// value, or a catalogue value's frame with its `%@` filled in — the payload is allowed to be
     /// anything, including a product name. `iTerm2`, `WezTerm` and `Warp` are the declared
     /// exceptions, because a product name is the same word in every language.
@@ -287,8 +285,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
 /// The merge path needs `claude` to resolve to an executable, and when it does not the only thing
 /// the user notices is that delivery got slower — or, on Warp without the Accessibility
-/// permission, that the button now refuses outright. That reason has to be visible somewhere
-/// (independent reviewer, round 7).
+/// permission, that the button now refuses outright. That reason has to be visible somewhere.
 final class ClaudeWrapperAdviceTests: XCTestCase {
     func testAdviceAppearsOnlyForAReachableClaudeThatIsNotAnExecutable() {
         XCTAssertNotNil(claudeWrapperAdvice(available: ["claude": true], executable: ["claude": false]))
@@ -303,10 +300,10 @@ final class ClaudeWrapperAdviceTests: XCTestCase {
 
 /// The Accessibility card told users the command would still run without the permission — the
 /// opposite of what the app does since the precondition gate landed: the request is refused and no
-/// tab opens (round 8, Codex P2). A card that contradicts the behaviour is worse than no card.
+/// tab opens. A card that contradicts the behaviour is worse than no card.
 final class WarpAccessibilityHelpTextTests: XCTestCase {
     /// **The subject moved, so the test moved with it.** These sentences used to be literals in
-    /// `SetupWindowController.swift`, and this class read that file. After item 10 they live in the
+    /// `SetupWindowController.swift`, and this class read that file. They now live in the
     /// catalogues, and a check that still scanned the source would pass by finding nothing —
     /// vacuously green, which is worse than deleted.
     private func catalogue(_ tag: String) throws -> [String: String] {
@@ -327,7 +324,7 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
     }
 
     /// The same promise was made in two more places — the permission status line and the pipeline
-    /// row — and round 8 fixed only the card. **No value in any catalogue** may say the command
+    /// row. **No value in any catalogue** may say the command
     /// still runs without the permission; scanning every value is what keeps the next translation
     /// from reintroducing it in one locale only.
     func testNoWindowTextStillPromisesTheCommandRunsWithoutThePermission() throws {
@@ -353,12 +350,12 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
         }
     }
 
-    /// **A body quotes a label by receiving it, never by repeating it** (D28). Eight places in this
+    /// **A body quotes a label by receiving it, never by repeating it**. Eight places in this
     /// window and the extension name another control in their text; spelled out, each is a copy that
     /// goes stale the moment the label is reworded — in five locales independently, so four of them
     /// can be wrong while the one you read is right.
     ///
-    /// The relationship's real gate is item 12, which will check the placeholder against the key it
+    /// The relationship's real gate checks the placeholder against the key it
     /// receives. This is the half that can be checked from here: no value may contain another key's
     /// label as literal text.
     func testNoValueSpellsOutALabelInsteadOfReceivingIt() throws {
@@ -398,7 +395,7 @@ final class WarpAccessibilityHelpTextTests: XCTestCase {
 
 /// One catalogue, read from the source tree. File scope because two of the classes here need it:
 /// `swift test` has no app bundle, and a `Bundle` lookup would resolve through the host's language
-/// (D7) rather than through the tag being asked about.
+/// rather than through the tag being asked about.
 private func loadCatalogue(_ tag: String) throws -> [String: String] {
     let path = (SetupWindowLayoutTests.sourceResources as NSString)
         .appendingPathComponent("\(tag).lproj/Localizable.strings")

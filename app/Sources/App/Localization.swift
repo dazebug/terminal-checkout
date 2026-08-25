@@ -7,16 +7,16 @@ import Foundation
 /// tested against inputs instead of against this machine.
 ///
 /// **Catalogs are read with `Bundle(path:)`, not with SwiftPM `resources:` and `Bundle.module`.**
-/// Measured (D1): the generated accessor looks in `Bundle.main.bundleURL/<Name>.bundle` and in an
+/// Measured: the generated accessor looks in `Bundle.main.bundleURL/<Name>.bundle` and in an
 /// absolute `.build` path baked into the binary, and calls `fatalError` when neither is there — so
 /// on the machine that compiled it, a catalog missing from the app bundle still resolves, and the
 /// failure only appears on someone else's Mac. Reading `Contents/Resources/<tag>.lproj` directly
-/// fails in the same place for everyone, and item 7's gate compares the built bundle against these
+/// fails in the same place for everyone, and the bundle gate compares the built bundle against these
 /// sources so "someone else's Mac" stops being where it is discovered.
 ///
 /// **A tag is always injectable.** Nothing here asks the process what language it is in: a lookup
 /// that consulted `Bundle.main`'s own localization would answer differently on a ko-KR laptop than
-/// on an `en` CI runner, which is the same trap D7 recorded for test oracles.
+/// on an `en` CI runner, which is the same trap machine-dependent test oracles create.
 ///
 /// In particular, `Bundle.preferredLocalizations(from:)` — the overload that takes no preferences —
 /// is not a function of its argument. Measured on a host whose `AppleLanguages` is `["ko-KR"]`,
@@ -27,7 +27,7 @@ import Foundation
 /// the catalog is addressed by path.
 
 /// The `UserDefaults` key holding the language the user picked, or `auto`. The picker that writes
-/// it is item 8; this file only reads it, and reads it as an **object** so a value that is not a
+/// it is the picker; this file only reads it, and reads it as an **object** so a value that is not a
 /// string reaches `resolveLocale` intact rather than being quietly turned into "follow the system".
 let languagePreferenceKey = "language"
 
@@ -80,7 +80,7 @@ enum AppLocalization {
     /// The one lookup every user-facing string in the app goes through.
     ///
     /// A key the chosen catalog does not carry falls back to English and then to the key itself.
-    /// The fallback is a floor, not a feature — item 12's gate makes a missing key a red build, and
+    /// The fallback is a floor, not a feature — the catalogue gate makes a missing key a red build, and
     /// a raw key on screen is what that gate exists to prevent.
     static func string(
         _ key: String,
@@ -102,23 +102,22 @@ enum AppLocalization {
     /// items — at the language we render in.
     ///
     /// **The boundary is the first localization lookup in the process, not the existence of
-    /// AppKit.** Measured (D14): written after AppKit had come up, the same process kept its old
+    /// AppKit.** Measured: written after AppKit had come up, the same process kept its old
     /// language (`preferredLocalizations` stayed `["ko"]`, an `NSAlert` button stayed `확인`) and
     /// only the readback changed; written before, the same process picked it up (`zh-Hant`, `好`).
     /// That is why the call site is `main.swift`, ahead of `NSApplication.shared`.
     ///
-    /// **`auto` never writes the resolved tag** (D22). Writing it would turn "follow the system"
+    /// **`auto` never writes the resolved tag**. Writing it would turn "follow the system"
     /// into a permanent app-level override: the user changes the macOS language afterwards and
     /// every app follows except this one, with nothing on screen to say why. It removes an existing
     /// `AppleLanguages` value only when the app-local provenance record proves that this app wrote
     /// the same value; a value with no record, or one changed since our write, belongs to somebody
     /// else and is left alone. Everything that is not `auto` — including a stored value we cannot
     /// read — is written, because our own strings resolve such a value to English and chrome that
-    /// disagreed with them would be the split D14 rules out.
+    /// disagreed with them would split the app's own language from its chrome.
     ///
     /// Our own strings do not go through this key at all: they are read with `Bundle(path:)`, so
-    /// they change on the next redraw while AppKit's chrome changes on the next launch. Item 8
-    /// owns saying that difference out loud.
+    /// they change on the next redraw while AppKit's chrome changes on the next launch.
     @discardableResult
     static func applyStoredLanguageToAppKit(
         defaults: UserDefaults = .standard,
@@ -175,7 +174,7 @@ enum AppLocalization {
 /// so that **nothing can hold the result**: `localized` is called where the string is used, which is
 /// what makes a language change take effect on the next redraw rather than on the next launch.
 ///
-/// **The key is a `StaticString`, so it cannot be computed.** That is not a style rule: item 12's
+/// **The key is a `StaticString`, so it cannot be computed.** That is not a style rule: the catalogue
 /// gate answers "is every catalogue key referenced" and "is every referenced key in the catalogue"
 /// by reading the sources for literals, and both answers are only as good as the guarantee that a
 /// key never arrives from a variable. The type gives that guarantee — a concatenation, an
@@ -185,7 +184,7 @@ enum AppLocalization {
 /// computed value cannot reach a catalogue lookup.
 ///
 /// Picking between two keys stays possible and is written as a choice between two calls
-/// (`flag ? localized("a") : localized("b")`), which is also what D36 asks for: choose a finished
+/// (`flag ? localized("a") : localized("b")`), which means callers choose a finished
 /// message, never assemble one.
 func localized(_ key: StaticString) -> String {
     AppLocalization.string(key.description)
@@ -194,7 +193,7 @@ func localized(_ key: StaticString) -> String {
 /// The same lookup with arguments substituted.
 ///
 /// Formatting happens **here and only here**, because the alternative is building a sentence out of
-/// pieces at the call site — the one thing a catalogue cannot survive (D36). A translator can move
+/// pieces at the call site — the one thing a catalogue cannot survive. A translator can move
 /// `%1$@` and `%2$@` around each other; they cannot reorder two strings a `+` glued together.
 ///
 /// No locale is passed to `String(format:)` on purpose: every placeholder we use is `%@` or a
@@ -208,7 +207,7 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
 ///
 /// The distinction is load-bearing rather than tidy: `testCommand` is shown on screen *and* run in
 /// the user's terminal, so a translated apostrophe would break the `echo '…'` quoting and the test
-/// button would report a shell error (D29). The invariant that came out of that — a localized
+/// button would report a shell error. The invariant that came out of that — a localized
 /// catalogue value never reaches a shell, AppleScript, a TOML file or a terminal's input — is the
 /// same class as `{cd}` being exempt from the character whitelist.
 ///

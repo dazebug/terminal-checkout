@@ -43,7 +43,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(SupportedLocale(fallbackLocale), SupportedLocale.fallback)
     }
 
-    /// **A preference that is not a string reads as itself, not as `auto`** (round 8 review).
+    /// **A preference that is not a string reads as itself, not as `auto`**.
     ///
     /// The two sides have to agree about what an unreadable value means: the picker asks
     /// `Settings.languagePreference`, the window draws what `resolveLocale` says, and folding the

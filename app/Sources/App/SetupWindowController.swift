@@ -106,7 +106,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
     /// a title set here would be the one string in this window that kept its old language. The
     /// title is set in the builder instead, where a rebuild reads it again — and it lives in
-    /// exactly one place, so item 11 has one site to move rather than two to keep in step.
+    /// exactly one place, so a rebuild has one site to update rather than two to keep in step.
     private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
@@ -161,7 +161,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 "z", toolIsCritical("z", baseDirectoryConfigured: baseDirectoryConfigured),
                 // Two complete messages rather than a shared opening plus two tails: a
                 // sentence assembled from pieces cannot be reordered by a translator, and three of
-                // these did share an opening clause (D36)
+                // these did share an opening clause
                 localized(
                     baseDirectoryConfigured
                         ? "app.tools.z.adviceWithBaseDir" : "app.tools.z.adviceNoBaseDir"
@@ -181,7 +181,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let terminalRadioWidth: CGFloat = 120
     /// Shown on screen **and** run in the user's terminal, which is why it is a `ShellPayload`
     /// and not a catalogue key: a translated apostrophe breaks the `echo '…'` quoting and the test
-    /// button reports a shell error instead of opening a tab (D29). The type is what enforces it —
+    /// button reports a shell error instead of opening a tab. The type is what enforces it —
     /// `localized(…)` returns a `String`, and `ShellPayload` cannot be built from one.
     private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 
@@ -220,7 +220,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // Our own strings do not wait for a restart (D14) — a language change redraws this window
+        // Our own strings do not wait for a restart — a language change redraws this window
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildForLanguageChange() }
@@ -250,11 +250,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// else — card titles, section headings, help paragraphs, button and radio titles, the picker's
     /// `auto` entry — is created in `buildContent()` and never touched again, so a language change
     /// would leave the whole window in the old language while three labels moved. That is the shape
-    /// round 1 meant by "a lookup function alone does not switch anything": the lookup has to be
+    /// A lookup function alone does not switch anything: the lookup has to be
     /// *reached* again, and nothing reaches it.
     ///
     /// Rebuilding the content is the mechanism, rather than a second pass that re-sets each string:
-    /// a re-set pass has to name every string, so it is wrong the moment item 10 or 11 adds one,
+    /// a re-set pass has to name every string, so it is wrong the moment a new string is added,
     /// and it would be wrong silently. This is correct for strings that do not exist yet.
     ///
     /// It runs **only on a language change**, not on every `refresh()` — refresh runs on window
@@ -301,7 +301,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     ///
     /// **A hidden card keeps the frame it last had**, so it cannot be measured from — and skipping
     /// the restore because of that leaves the window at its first line, which is the whole defect
-    /// this machinery exists for, in the one case it did not cover (round 26 review). So the search
+    /// this machinery exists for, in the one case it did not cover. So the search
     /// falls through to the next card **down the stack**, and "next" means next in the order the
     /// cards are added rather than nearest in points: when a card collapses, the one below it moves
     /// up into the space, so its top edge is about where the measurement was taken. Falling upwards
@@ -361,8 +361,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // The text can have changed under the cursor — a stored value drawn over a field that held
         // this window's own text — so the range is clamped to what is there now.
         //
-        // **In the units `NSRange` is written in, which are UTF-16 and not characters** (round 26
-        // review). `String.count` counts what a reader would call characters, so for a path with an
+        // **In the units `NSRange` is written in, which are UTF-16 and not characters.** `String.count`
+        // counts what a reader would call characters, so for a path with an
         // emoji or a decomposed vowel in it the two disagree and clamping against the wrong one
         // moves the cursor to before where it was. Decomposition is not exotic here: this
         // repository already carries what re-encodes to NFD and what does not.
@@ -477,7 +477,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return card(localized("app.card.extension.title"), [
             extensionStatusLabel,
             // The button's own label, not a second copy of it: quoting a label by hand is how a
-            // body ends up naming a button that has since been renamed, and in five locales at once (D28)
+            // body ends up naming a button that has since been renamed, and in five locales at once
             helpLabel(localized("app.card.extension.help", localized("app.button.installInChrome"))),
             buttonRow([installButton]),
             guideBlock,
@@ -546,7 +546,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     ///
     /// The entries are each written in their own language, which is what a language menu does
     /// everywhere: a user who has landed in a language they cannot read has to be able to find
-    /// their way out of it. Only the `auto` line is in the window's language, and item 11 moves it
+    /// their way out of it. Only the `auto` line is in the window's language, and the catalogue
+    /// provides it with the rest of this window.
     /// into the catalogue with the rest of this window.
     private func languageCard() -> NSView {
         languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -560,7 +561,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         languagePopUp.action = #selector(languageChanged)
         languagePopUp.identifier = role(#selector(languageChanged))
 
-        // Half of the change lands now and half on the next launch (D14), so the button that closes
+        // Half of the change lands now and half on the next launch, so the button that closes
         // that gap sits next to the control that opens it rather than in a menu somewhere
         languageRestartButton = button(localized("app.button.restartNow"), #selector(restartForLanguage))
         languageNoteLabel = helpLabel("", width: setupContentWidth - 28)
@@ -963,7 +964,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         // Scheduled claude input is delivered only once claude is up, so it takes a while — and
         // anything the user types in the meantime mixes into it
-        // Two complete sentences, joined as sentences. That is the one join D36 leaves open:
+        // Two complete sentences, joined as sentences. Each part is a message
         // each part is a message a translator can write on its own, and neither is a clause of the other
         var note = localized("app.terminal.note.common")
         // Warp shows only the focused tab, so the app submits only while it can see its own
@@ -1064,7 +1065,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// request, and overwriting a half-typed path would be maddening.
     ///
     /// **"Is being typed into" was a proxy for "holds the user's text", and the two came apart on
-    /// the path this work added** (round 26 review). A language change through the picker ends the
+    /// the current path**. A language change through the picker ends the
     /// edit *before* the rebuild, so the field editor is gone by the time this runs and the
     /// condition let the stored value overwrite a draft the user had just been refused — type a
     /// path, change the language, lose the typing. The condition asks the question it meant to ask
@@ -1200,10 +1201,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             ),
             .init(
                 label: localized("app.pipeline.node.relay"), color: color(manifest),
-                // The frame comes from the catalogue and only the payload is free (D59). This one
+                // The frame comes from the catalogue and only the payload is free. This one
                 // was assembled here — `"Native Host: \(manifest.message)"` — which put an English
                 // word in front of a translated status and, being a literal, was invisible to
-                // item 12's gate: it counts `localized(…)` calls, not strings nobody localised.
+                // the source gate: it counts `localized(…)` calls, not strings nobody localised.
                 detail: localized("app.pipeline.relay.detail", manifest.message)
             ),
             .init(
@@ -1217,7 +1218,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// `format` is a **key**, not a prefix. Gluing a translated label in front of a translated
-    /// status is the assembly D36 rules out — in a language that puts the subject last, the pieces
+    /// status is the assembly rule against — in a language that puts the subject last, the pieces
     /// end up in the wrong order and no translator can fix it from inside either half. A whole
     /// message with `%@` can be written the way the language wants.
     private func apply(_ state: SetupState, to label: NSTextField, format: StaticString? = nil) {
@@ -1429,18 +1430,18 @@ func scrollOrigin(anchorTop: CGFloat, offset: CGFloat, clip: CGFloat) -> CGFloat
 /// The merge path launches `command claude`, which skips functions and aliases, so those setups
 /// take the typed route instead. All the user sees otherwise is that delivery got slower, or — on
 /// Warp without the Accessibility permission — that the button now refuses outright, with the
-/// reason nowhere on screen (independent reviewer, round 7).
+/// reason nowhere on screen.
 ///
 /// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
 /// line already says that one, and saying it twice reads as two different problems.
 ///
 /// It does **not** name the cause as "a function or an alias": the same answer comes from a
 /// relative `PATH` entry and from a file without the executable bit (both measured), and a card
-/// that asserts the wrong cause sends people to fix the wrong thing (round 8).
+/// that asserts the wrong cause sends people to fix the wrong thing.
 /// Which entry the language picker points at.
 ///
 /// Three cases, and the third is the one that had a defect. A stored preference that matches an
-/// entry selects it. A stored preference that matches nothing is the **third state** round 8 found —
+  /// entry selects it. A stored preference that matches nothing is a **third state** —
 /// not `auto`, not a language we ship — and pointing at the first entry there would have the picker
 /// claim "follow the system" while the window draws English. It points at the language actually
 /// being drawn instead, which `resolveLocale` has already decided; picking anything writes a clean
@@ -1460,7 +1461,7 @@ func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?
 /// What the Accessibility card says. It used to promise that the command would still run without
 /// the permission and only the claude input would be missing — the app does the opposite: a button
 /// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
-/// A card that contradicts the behaviour sends people looking for the wrong problem (round 8).
+/// A card that contradicts the behaviour sends people looking for the wrong problem.
 func warpAccessibilityHelpText() -> String {
     // The `**…**` and the backticks are gone: `NSTextField` renders neither, so they were
     // showing up as literal asterisks on screen — and translating them would have copied that into

@@ -31,7 +31,7 @@ public func loginShellPath() -> String {
 ///
 /// `TC_OK` means "typing that name calls something" and **includes functions and aliases** (`z` is exactly that case). `TC_EXE` means **`command <name>` has an actual file to run**. Why they are separate: the merge path invokes `command claude`, and `command` skips functions and aliases, so on an install like `alias claude='npx …'` `TC_OK` is true while the merged command dies with command not found.
 ///
-/// Why `TC_EXE` is asked of a **child `/bin/sh`** (round 7, all measured):
+/// Why `TC_EXE` is asked of a **child `/bin/sh`** (measured):
 ///  - In the login shell, `command -v` returns just the name when a function or alias shadows it. But if that is a **wrapper around a real file**, `command claude` runs that file — a case where merging is fine. A child shell, which reads no rc, answers with the file itself.
 ///  - Why `[ -x ]` is needed: bash's and dash's `command -v` return an absolute path even for a file **without the executable bit** (zsh and /bin/sh do not). Going by the shape of the path alone, the merge would fail afterwards.
 ///  - Why it is asked from `cd /`: if PATH holds a **relative** entry, the resolution depends on the cwd. The pane's cwd (after the command has `cd`ed) is unknowable, so if it does not resolve from `/` we do not merge.
@@ -52,13 +52,13 @@ public func toolCheckScript(_ tools: [String]) -> String {
     // comes back. So the cwd entry can only decide the answer for a name that exists in *no*
     // absolute entry, which for `claude` means a file at the filesystem root.
     //
-    // One leg of that argument does **not** hold, and saying so is the point of writing it down:
+    // One leg of that argument does **not** hold:
     // "asked from `/`, a cwd hit answers with a relative path and the `/*` gate filters it" is
     // false for the shell we ask — `/bin/sh` (bash 3.2 here) absolutises it (`/./claude`), while
     // bash, zsh and dash return `./claude` or `claude`. So the residual is real: with `/claude`
     // present and `claude` nowhere on the absolute PATH, we would answer "executable" and the pane
-    // would fail. A reviewer added the mirror case: the pane `z`es into a repository that happens
-    // to contain an executable `./claude`, so the check and the run resolve **different files** —
+    // would fail. The mirror case is a pane whose `z` command enters a repository that happens to
+    // contain an executable `./claude`, so the check and the run resolve **different files** —
     // it needs a PATH ending in `:` *and* that file, and it does not hold otherwise.
     // Both failures are visible `command not found` or a wrong-but-user-owned program (a lost
     // input, not a misdelivered one), whereas treating every trailing colon as relative would
@@ -123,7 +123,9 @@ public struct ToolCheckResult: Equatable {
 ///
 /// Measured (by planting rc files in an empty HOME): `bash -l -i -c` → `.bash_profile`, `bash -i -c` → `.bashrc`, `zsh -l -i -c` → `.zshenv .zprofile .zshrc` (so zsh is a superset and does not distinguish them).
 ///
-/// **The union from round 8 was reverted.** A union answers "present if it is in any rc", which is not the question we have to answer ("does this name run in that pane") — because of the union a claude that the login shell does not have was judged present, the merge turned on, and the pane produced `command not found` (reproduced by the reviewer). Conversely, a bash user whose tool is only in `.bashrc` now comes out as "missing", and that answer is **right**: their tab is a login shell and does not read `.bashrc`, so the button's `z …` command genuinely fails too. The remaining false negative is a user who **changed their configuration** to open tabs non-login, and the outcome there is the merge turning off and a warning on the tools card (a visible failure).
+/// **Use the exact shell form, not a union of startup files.** A union answers "present if it is in
+/// any rc", not "does this name run in that pane". It can enable merging for a command that the
+/// login shell cannot run, while a non-login pane remains a known limitation shown on the tools card.
 ///
 /// The second candidate is only a fallback for a shell that does not know `-l` (dash) — it is used **only when the first candidate produced no answer at all**. The first candidate answering "the tool is missing" is an answer, so the fallback does not run.
 public func toolCheckShellArgumentCandidates(_ script: String) -> [[String]] {

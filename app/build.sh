@@ -21,8 +21,8 @@ cp Info.plist "$APP/Contents/Info.plist"
 
 # The string catalogs. They are copied here rather than declared as SwiftPM `resources:` because
 # the generated `Bundle.module` accessor resolves through an absolute .build path on the machine
-# that compiled it, which hides a missing copy exactly where it would be caught (D1). `cp -R` of
-# the directories keeps `<tag>.lproj/<file>` intact; item 7's gate compares what landed here
+# that compiled it, which hides a missing copy exactly where it would be caught. `cp -R` of
+# the directories keeps `<tag>.lproj/<file>` intact; the bundle gate compares what landed here
 # against these sources, file set included, so a catalog added to the sources and not to the
 # bundle is a red build rather than a language that silently falls back.
 cp -R Sources/App/Resources/*.lproj "$APP/Contents/Resources/"
@@ -39,7 +39,7 @@ codesign --force --sign - "$APP"
 # The last step, so that "the build succeeded" means "the bundle carries exactly the resources the
 # sources declare". Copying catalogues by hand is what makes a missed copy possible at all, and the
 # failure it produces — one language silently falling back — is invisible on the machine that built
-# it (D1). CI names this script as its own step as well, so deleting the call from here does not
+# it. CI names this script as its own step as well, so deleting the call from here does not
 # quietly delete the gate.
 ./verify-bundle.sh "$APP"
 

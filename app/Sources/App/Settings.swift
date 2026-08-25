@@ -114,7 +114,7 @@ extension Notification.Name {
     static let terminalCheckoutRequestHandled = Notification.Name("TerminalCheckoutRequestHandled")
     /// Posted when the tool check finishes — it runs in the background, so the window can be up first
     static let terminalCheckoutToolsChecked = Notification.Name("TerminalCheckoutToolsChecked")
-    /// Posted after the language choice changes — our own strings redraw immediately, with no restart (D14)
+    /// Posted after the language choice changes — our own strings redraw immediately, with no restart
     static let terminalCheckoutLanguageChanged = Notification.Name("TerminalCheckoutLanguageChanged")
 }
 

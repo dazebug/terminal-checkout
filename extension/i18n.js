@@ -1,36 +1,7 @@
-// The extension's lookup, and the compatibility machinery that is on its way out. Loaded first, in
-// the content script, the service worker and the options page alike.
-//
-// **`chrome.i18n` is where the strings come from now.** `tr` converts the logical id, stringifies
-// the substitutions and asks a backend whose default is `chrome.i18n.getMessage`, so the language is
-// whichever catalogue Chrome selected. The extension has no locale of its own to resolve.
-//
-// **The header this replaces said the opposite, and said it for four promotions after it stopped
-// being true** — that `chrome.i18n` was rejected for these strings, that the app owns the language
-// and hands it down, and that `chrome.i18n` holds exactly two keys when `_locales` now holds 125.
-// It survived because the standing question was read against the lines a diff touched, and this
-// header was not one of them (review 39, and the rule is now stated where it can be applied: when a
-// file's behaviour changes, its whole header is in scope).
-//
-// **What the old answer cost, kept because it is the reason not to rebuild it**: one language across
-// both surfaces was eventually consistent by construction, and the machinery for it was a locale
-// query on the native socket, a cache with a generation and an install identity, a per-worker
-// sequence fence, a serialized writer and a redraw queue. What replaced it is two platforms
-// answering separately, and the price is that they can disagree — Japanese macOS with English Chrome
-// shows a Japanese app and English buttons, with nowhere to change both.
-//
-// **Everything below the lookup is temporary.** The locale cache, its reducer, the fence, the
-// first-render gate and the renderer are **compatibility implementations**: the current skeleton and
-// current consumers execute none of them. A current consumer paired with the adjacent old skeleton
-// takes a feature-detected locale-seed branch because that old lookup still needs its holder; the
-// previous consumers call the rest. They leave together after a generation-consistent deployment,
-// which is a follow-up issue. Read them as machinery being carried, not as design.
-//
-// **Nothing here touches `chrome` at load time, and nothing looks anything up at load time.** Both
-// rules come from the same measurement (D6): the test files run these scripts with no `chrome`
-// global at all, and a single `chrome.*` at module scope takes every one of them down. The lookup
-// names `chrome.i18n.getMessage` inside a function for exactly that reason, and a test loads this
-// file in a `chrome`-less realm rather than grepping for the string (D199).
+// Chrome chooses the extension language through `chrome.i18n`; the app chooses its own, so the two
+// surfaces may differ. Compatibility implementations remain below for adjacent generations; see
+// `docs/context/localization.md` for that boundary. Keep this script chrome-free at load time: the
+// lookup names `chrome.i18n.getMessage` inside a function because tests load it without `chrome`.
 
 // The tags the compatibility dictionaries use. They retain the app-era spelling because changing
 // that ABI while an adjacent consumer can still load `_i18n` would defeat the compatibility copy.
@@ -44,15 +15,15 @@ const TC_I18N_FALLBACK = 'en';
 
 // The key every catalogue answers with its own tag, and the list of keys that are **not** messages.
 //
-// A catalogue that names itself is how the document language stops being a guess (D172). Chrome
+// A catalogue that names itself is how the document language stops being a guess. Chrome
 // picks which catalogue answers, including when its UI language is one we do not ship and it falls
 // back; asking the catalogue rather than asking Chrome means the answer is the language actually on
 // screen. Reimplementing Chrome's fallback here would be a second copy of somebody else's
 // algorithm — the shape this project has lost to before.
 //
 // Metadata, not one of the strings a person reads: it stays out of "is this locale fully
-// translated" counts and out of the gate that every message in the catalogue is drawn somewhere
-// (D178). It is in the dictionaries **before** they are pinned as the migration baseline, because
+// translated" counts and out of the gate that every message in the catalogue is drawn somewhere.
+// It is in the dictionaries **before** they are pinned as the migration baseline, because
 // anything the new side needs from the old store has to be there at the moment of the pin.
 const TC_I18N_CATALOGUE_TAG_KEY = 'ext.meta.catalogueTag';
 const TC_I18N_METADATA_KEYS = [TC_I18N_CATALOGUE_TAG_KEY];
@@ -62,19 +33,18 @@ const TC_I18N_METADATA_KEYS = [TC_I18N_CATALOGUE_TAG_KEY];
 // `_locales` message names may contain `[A-Za-z0-9_@]` and are matched **case-insensitively**
 // (measured against every extension installed on this machine: 739 `messages.json` files, 25,510
 // names, not one with a dot). Our ids are dotted, so something has to give — and what gives is the
-// **boundary**, not the source (D162). `tr('ext.header.options')` stays exactly that everywhere it
+// **boundary**, not the source. `tr('ext.header.options')` stays exactly that everywhere it
 // is written, and `ext_header_options` exists only where the platform is looking.
 // The alternative was renaming the source, which would have made "an old dictionary in memory
 // meeting a new consumer" produce raw keys on screen; with the conversion at the edge that state
 // cannot be written down at all.
 //
-// **It is here so that there is one of it** (D171, D177). The derivation that writes `_locales`, the
-// read-only checker that verifies it, and — from A3 — the runtime lookup all load this function from
+// **It is here so that there is one of it.** The derivation that writes `_locales`, the
+// read-only checker that verifies it, and the runtime lookup all load this function from
 // this file. A generator with its own copy of "the same rule" is two implementations, and the way
-// this project would have got there is item ordering rather than disagreement: the generator needs
-// the rule before the runtime does.
+// to avoid that is for every consumer to load the same rule.
 //
-// A2 introduced it before any runtime call used it; the checker and the runtime now share it.
+// The checker and the runtime share it.
 function chromeMessageId(key) {
   return String(key).replace(/\./g, '_');
 }
@@ -87,7 +57,7 @@ globalThis.TC_I18N = globalThis.TC_I18N || {};
 // One message, in one language.
 //
 // The chain is the app's: the asked-for locale, then English, then the key itself. The last step is
-// a floor rather than a feature — item 20's registry gate turns a missing key into a red build, and
+// a floor rather than a feature — the registry gate turns a missing key into a red build, and
 // a raw key on screen is what that gate exists to prevent.
 //
 // `dictionaries` is a parameter so a test can hand in its own, and it is read **when called**: a
@@ -119,9 +89,8 @@ function i18nText(key, locale, dictionaries = globalThis.TC_I18N) {
 // `undefined`: `%2$s` on screen is a hole somebody reports, and `undefined` is one they screenshot
 // without knowing what it means.
 //
-// It lives here rather than beside its first caller so that there is one of it. A second formatter
-// written for the next caller is the same defect class as the second normalization the button
-// fingerprint used to carry — two implementations of one rule, agreeing until they do not.
+// It lives here rather than beside its first caller so every caller uses the same formatter. A
+// second implementation of this rule could agree until the two copies drift.
 function formatMessage(template, args = []) {
   return String(template).replace(/%(\d+)\$[sd]/g, (whole, position) => {
     const value = args[Number(position) - 1];
@@ -158,8 +127,8 @@ function currentLocale() {
 // The lookup, and the one seam in it.
 // ---------------------------------------------------------------------------------------------
 
-// **One chain, and only its last link is replaceable** (D171). `tr` converts the logical id to the
-// physical one with the function A2 already put in this file, turns every substitution into a
+// **One chain, and only its last link is replaceable**. `tr` converts the logical id to the
+// physical one with the function in this file, turns every substitution into a
 // string, and hands both to a backend. A test that swaps the backend therefore still goes through
 // `chromeMessageId` and through the stringification — swap the *whole* function, as the first
 // design of this seam did, and every test in Node passes while production maps keys wrongly or
@@ -173,7 +142,7 @@ function installMessageBackend(backend) {
   return previous;
 }
 
-// **The default is lazy, and in Node it throws** (D163, D174). Lazy because an old service worker
+// **The default is lazy, and in Node it throws.** Lazy because an old service worker
 // that opens this file after a copy swap never calls the installer, and a lookup that failed there
 // would take the worker down — the file is loaded by `importScripts`, so "no adapter installed" has
 // to be a normal state rather than an error. Throwing in Node is the other half: there is no
@@ -190,31 +159,23 @@ function messageFor(physicalId, substitutions) {
 // loads** — a value captured at load time is the language that context started in, which is the
 // defect the options page's preset dropdown had and the app's settings window had before it.
 //
-// `String(value)` and not the value: `chrome.i18n.getMessage` takes strings, and the count this
-// page passes is a number. The old formatter took `%2$d` and called `String` itself, so the
-// conversion did not disappear — it moved to the one place both paths share.
+// `String(value)` and not the value: `chrome.i18n.getMessage` takes strings, while the count this
+// page passes is a number. Both formatting paths therefore convert substitutions at this boundary.
 function tr(key, ...args) {
   return messageFor(chromeMessageId(key), args.map(String));
 }
 
 // The document's own language attribute — **the catalogue Chrome actually served, asked rather than
-// computed** (D172).
+// computed**.
 //
-// The obvious source is Chrome's configured UI language, and it is wrong. Chrome may report `fr`
-// while `getMessage` falls back to the English catalogue, and `lang="fr"` over English text tells a
-// screen reader something false — the same defect this work exists to remove, pointing the other
-// way. Reimplementing Chrome's fallback here would be a second copy of somebody else's algorithm,
-// the shape this project has lost to before, so the answer comes from **a message every catalogue
-// carries whose value is its own tag**: whichever catalogue answered is the one that names itself.
+// Chrome may report `fr` while `getMessage` falls back to the English catalogue, and `lang="fr"`
+// over English text tells a screen reader something false. The answer comes from **a message every
+// catalogue carries whose value is its own tag**: whichever catalogue answered is the one that
+// names itself. Reimplementing Chrome's fallback here would create a second fallback algorithm.
 //
-// **It still takes the old locale argument, and ignores it.** That is not a leftover: the previous
-// generation's `options.js` calls `applyDocumentLanguage(uiLocale)`, and a signature is as much a
-// part of the ABI an adjacent consumer invokes as a symbol name is (A4's rule, generalised — review
-// 39 found this by reading the two files side by side). Dropping the parameter broke the mixture in
-// both directions: the old function called with nothing treated the locale as absent and wrote `en`
-// over Japanese text, and the new function handed `"ja"` as its *document* returned null and left
-// `lang` as it was. So the parameter stays for the compatibility release's lifetime, current
-// consumers keep passing it, and it takes no part in choosing the tag — the catalogue does that.
+// **It still takes a locale argument, and ignores it.** Adjacent-generation `options.js` calls
+// `applyDocumentLanguage(uiLocale)`, so the parameter is part of the compatibility ABI. It takes no
+// part in choosing the tag; the catalogue does that.
 function applyDocumentLanguage(legacyLocale, documentRef = globalThis.document) {
   if (!documentRef || !documentRef.documentElement) return null;
   const tag = tr(TC_I18N_CATALOGUE_TAG_KEY);
@@ -228,7 +189,7 @@ function applyDocumentLanguage(legacyLocale, documentRef = globalThis.document) 
 //
 // **Compatibility machinery.** Nothing in this generation reads it — the lookup asks Chrome — and
 // it is here because the previous release's service worker and content script do. It leaves with
-// them, not before (A4 keeps the implementations, the follow-up issue on generation-consistent
+// them, not before (the compatibility implementation remains until generation-consistent
 // deployment removes them).
 // ---------------------------------------------------------------------------------------------
 
@@ -261,9 +222,8 @@ function isUsableLocaleCache(value) {
 
 // The metadata a response carries, paired with the request of ours it answers.
 //
-// **The test is whether the app produced the response, not whether the app liked the request.** That
-// is a correction: item 15 attached the generation to successful responses only, and it was wrong.
-// A validation failure can be the **first successful contact with the running app** — the cold-start
+// **The test is whether the app produced the response, not whether the app liked the request.** A
+// validation failure can be the **first successful contact with the running app** — the cold-start
 // query never ran, or failed, or an older app answered it, and then the user presses a button, the
 // relay launches the app, and the app refuses the command. The app is running and has a language;
 // the response that says so is a failure. Under a success-only rule the extension stays in the wrong
@@ -285,8 +245,8 @@ function localeGenerationOf(response, seq, scope) {
   // **The envelope is part of "the app composed it".** Without this the rule was only checking the
   // *shape of the metadata*, and a bare `{locale, locale_install_id, locale_epoch}` — a response
   // the app cannot produce, because every valid response carries `success` — was accepted
-  // and cached. A test used to bless exactly that object. Both values are welcome: a refusal is a
-  // statement about the language too (D83). What is refused is something that never came from a
+  // and cached. A shape-only check would accept exactly that object. Both values are welcome: a refusal is a
+  // statement about the language too. What is refused is something that never came from a
   // response at all.
   if (typeof response.success !== 'boolean') return null;
   const locale = response.locale;
@@ -302,29 +262,21 @@ function localeGenerationOf(response, seq, scope) {
 
 // The whole cache decision, as one pure function: what to keep, and whether anything changed.
 //
-// **Whose path this is.** No consumer shipping today reaches it: the app publishes no locale, and
-// this extension resolves its language from `chrome.i18n` alone. What keeps it here is the adjacent
-// generation — a service worker from the previous release, left running by a folder swap, still
-// calls this. So the rules below describe an ABI held for that consumer, not behaviour the current
-// one exercises; read them as a contract that must not change, rather than as a description of what
-// happens when you press a button. Its per-worker limit is recorded as a residual in
-// `docs/context/localization.md`, and it retires with the `_i18n` passengers.
+// This is compatibility ABI for an adjacent generation, not a current-consumer path; its residual
+// and retirement condition are recorded in `docs/context/localization.md`.
 //
 // Three rules, in this order, and the order is the point.
 //
-// **1. Our own sequence fence, and only within the worker that minted it** (D50). Every request this
+// **1. Our own sequence fence, and only within the worker that minted it**. Every request this
 // extension sends takes the next number, and a response is ignored when its request is older than
 // the newest one already applied **by the same worker**. The number never goes on the wire:
 // `sendNativeMessage` resolves per call, so the extension already knows which request each response
 // answers, and ordering by **what we sent** rather than by anything the app says is what makes the
 // fence work against an older app that knows nothing about any of this.
 //
-// The scope is the correction, and the defect it repairs was ours. `appliedSeq` is persisted and the
-// counter is not: it restarts at zero with every service worker, so a cache holding `appliedSeq: 10`
-// refused the next worker's perfectly good `seq: 1` **forever**, whatever its epoch or install id
-// said. The comment that used to sit on that counter argued the opposite — that a fresh worker was
-// safe *because* the cache carries the last applied sequence — which is the cause presented as the
-// reassurance. It is the class this loop keeps sweeping for, committed by us.
+// `appliedSeq` is persisted but the counter is not: it restarts at zero with every service worker.
+// A cache holding `appliedSeq: 10` must therefore accept the next worker's `seq: 1`, whatever its
+// epoch or install id says.
 //
 // **Why a worker-scoped fence is enough, and where that stands as evidence.** The fence orders
 // *writes to the cache*, and every such write is made by `applyLocaleGeneration`, which runs in the
@@ -340,7 +292,7 @@ function localeGenerationOf(response, seq, scope) {
 // were delivered it would rank a dead worker's high sequence above a live worker's low one — the
 // regression this fence exists to prevent, reintroduced by the repair.
 //
-// **2. A different `installId` is accepted unconditionally** (D32). That is what makes a reset
+// **2. A different `installId` is accepted unconditionally**. That is what makes a reset
 // distinguishable from a stale message — a single counter cannot express "the app's data is new
 // now, start over", and an app that reset to epoch 0 would otherwise lose to the cached higher one
 // forever.
@@ -375,12 +327,9 @@ function localeCacheUpdate(cached, incoming) {
 
 // Read, reduce, write, notify — as one step that cannot interleave with another of itself.
 //
-// The reducer is pure and its fence is exact, and neither helps if two calls read the same cache
-// before either writes. That is what the caller used to do: `storage.local.get`, reduce, `set`, with
-// awaits in between and nothing holding the door. Request 12 reads and writes first; request 11 read
-// the same old value and writes second; the fence in the reducer never saw request 12 because it was
-// handed the cache as it was *before* it. The cache goes backwards, and every open page is told to
-// redraw in the older language.
+// The reducer and its fence only work if calls serialize their read, reduce and write. This queue
+// holds that critical section across awaits; without it, two reads can observe one cache and a later
+// write can move it backwards.
 //
 // The queue is a promise chain rather than a lock because there is exactly one place that needs it:
 // a service worker is **one per extension**, so two tabs clicking at once are two messages handled by
@@ -402,18 +351,14 @@ function createLocaleCacheWriter({ read, write, notify, log = console.log }) {
       await notify(cache.locale);
       return cache;
     }).catch((error) => {
-      // **This never rejects, and that is the fix to the worst defect this work has found.**
+      // **This never rejects.** A command result already exists, so a bookkeeping failure must not
+      // turn an executed command into a reported failure.
       //
-      // It used to propagate a `storage.local` failure to its caller, and its caller was
-      // `sendToNativeHost`, which awaited it *before* deciding what to tell the page. So a storage
-      // error arriving after the app had already returned success turned an executed command into a
-      // reported failure: the terminal was open, the page said it had failed, and the obvious thing
-      // for a person to do next was press the button again. For a button with scheduled claude
+      // Propagating a `storage.local` failure to `sendToNativeHost`, which awaited it *before*
+      // deciding what to tell the page, would produce that false failure. For a button with scheduled claude
       // input, delivery was already under way — the second press is a duplicate submission, which
-      // is the exact outcome CLAUDE.md spends two separate rules preventing on the app side ("after
-      // a CR has gone out, that input is never typed again"). Bookkeeping had found a way around
-      // them. When the app returned a real failure it was worse in a quieter way: the storage error
-      // replaced the app's own diagnostic.
+      // the app-side rule against retyping after a CR is meant to prevent. A real app failure would
+      // also lose its diagnostic if the storage error replaced it.
       //
       // So the failure is swallowed **here**, where there is exactly one thing it could mean and
       // nothing that could be done about it, rather than at each call site — a rule kept by
@@ -431,18 +376,8 @@ function createLocaleCacheWriter({ read, write, notify, log = console.log }) {
 
 // The first draw waits for the cached locale — and for nothing else.
 //
-// D15 says rendering does not wait for **the app's answer**, and that is the whole of it: a relay
-// that has to launch the app blocks for up to 25 seconds, and a page that waited would show no
-// buttons at all for that long. A `storage.local` read is not that. It is local, it answers in
-// microseconds, and it is the only thing that knows the language the user already has. Drawing
-// before it lands means a valid Korean cache loses to the English fallback — and if the app's answer
-// then equals the cache, the reducer reports no change, no notification goes out, and nothing ever
-// repairs the page. Our own wording was the reason that looked acceptable: "rendering does not wait
-// for the locale query" was written broadly enough to read as "does not wait for anything".
-//
-// Resolved once and shared: every insertion path awaits the same promise, so the read happens once
-// however many times the page tries to draw. It never rejects — a cache that cannot be read leaves
-// the fallback in place, which is a language, whereas a rejected gate would be no buttons forever.
+// The local storage read is fast and preserves a known language; a failure leaves the English
+// fallback in place. Every insertion path awaits one shared, non-rejecting promise.
 function createFirstRenderGate(prepare) {
   let pending = null;
   return function ready() {
@@ -452,7 +387,7 @@ function createFirstRenderGate(prepare) {
 }
 
 // Which language to draw in before the app has answered — and it is asked **every render**, never
-// resolved once. Rendering waits for nothing (D15): a relay that has to launch the app blocks for up
+// resolved once. Rendering waits for nothing: a relay that has to launch the app blocks for up
 // to 25 seconds, and a page that waited for that would show no buttons at all.
 //
 // With no usable cache the fallback is Chrome's own UI language, folded to something we ship. That
@@ -475,10 +410,8 @@ function localeToRenderIn(cached, uiLanguage) {
 // What a native response means for the page that asked.
 // ---------------------------------------------------------------------------------------------
 
-// **It takes the response and nothing else, and that is the whole point.** The defect above was not
-// that the bookkeeping was wrong; it was that the bookkeeping was *reachable* from the decision. A
-// function that is never handed the cache, the storage, or the writer's result cannot let any of
-// them change what a click reports — the dependency is not guarded, it is unstateable.
+// **It takes the response and nothing else.** The cache, storage and writer result cannot change
+// what a click reports because none is an input to this function.
 //
 // `success !== true` rather than `!success`: a response with no envelope is not a failure of the
 // command, it is not a response from this app at all, and it lands here as one anyway because there
@@ -509,22 +442,16 @@ function startBookkeeping(work, describe, log = console.log) {
 // One request to the app, and the answer it produces.
 //
 // The send, the bookkeeping and the verdict are composed **here** rather than in the service worker,
-// because the ordering between them is the property that matters and a property nobody can run is a
-// property nobody has checked. `background.js` needs `chrome` at module scope, so the worker's own
-// copy of this composition could only ever be inspected by reading it — which is the harness shape
-// this work has already been caught by twice.
+// because their ordering is the property that matters. `background.js` needs `chrome` at module
+// scope, so this composition is kept as a callable seam rather than duplicated in the worker.
 //
 // What the ordering guarantees: the answer is computed from the response and returned without
 // waiting for the bookkeeping. A storage failure therefore cannot turn a command that already ran
 // into a reported failure, and a slow storage cannot delay the click.
 //
-// **Narrower than the earlier claim.** This used to be described as making the dependency
-// "unstateable". It is not: `nativeOutcome` is reachable from module scope like anything else in a
-// classic script, an argument count does not stop a future author consulting the cache inside it,
-// and `startBookkeeping` still calls its work synchronously — a future synchronous step in there
-// would delay this. What is true is narrower and worth stating exactly: **no such path exists
-// today**, the verdict is computed from the response alone, and a test drives this composition
-// rather than reading it.
+// The verdict is computed from the response alone today. That is an execution property, so the
+// test drives this composition rather than relying on a source-text assertion; a future synchronous
+// bookkeeping step would need to preserve the same boundary.
 function createNativeRequester({ send, record, outcome = nativeOutcome, log = console.log }) {
   let sequence = 0;
   return async function request(message, scope) {
@@ -552,7 +479,7 @@ function createNativeRequester({ send, record, outcome = nativeOutcome, log = co
 //
 // It exists as its own object because the three contracts a redraw has to keep are countable rather
 // than visual, and counting them through a real DOM would mean asserting on connectivity — which is
-// what the earlier review said proves nothing about the failure people actually hit:
+// which would not exercise the failure people actually hit:
 //
 //   * **the subscription is made once**, not once per redraw. A listener registered inside the
 //     redraw path is the classic leak: after five language changes a single click sends five
@@ -568,15 +495,13 @@ function createLocaleRenderer({ subscribe, redraw, log = console.log }) {
   // How many times `redraw` returned something unwaitable. **The queue below can only serialize
   // work it can wait for**, so an adapter that starts an asynchronous redraw and returns nothing
   // silently opts out of the serialization it looks like it has — which is what the options page
-  // did, one promotion after this queue was added for exactly that defect. It stayed invisible
-  // because the test's injected `redraw` returned a promise: the double was better behaved than the
-  // adapter. Counting it turns a silent opt-out into something a test can see.
+  // did. A test double that returns a promise would be better behaved than the adapter. Counting
+  // unwaitable redraws turns that silent opt-out into something a test can see.
   let unwaitableRedraws = 0;
   // Redraws do not overlap. A redraw reads the cache and then assigns the language it drew in, with
   // an await in between, so two of them running at once can finish in the order they did not start
-  // in and leave the **older** language on screen — the same shape as the unserialized cache write,
-  // found by sweeping for it rather than by being reported. Two notifications in quick succession is
-  // all it takes, and the app sends one per accepted response.
+  // in and leave the **older** language on screen — the same shape as an unserialized cache write.
+  // Two notifications in quick succession are enough, and the app sends one per accepted response.
   let queue = Promise.resolve();
   return {
     // Returns whether it registered, so a caller (and a test) can tell a first call from a repeat.

@@ -57,7 +57,7 @@ final class RelayAtTheDoor {
 /// The request path has no protocol branch left between JSON decoding and Core's response.
 final class HostProtocolTests: XCTestCase {
     /// `#filePath` and not `Bundle`: the sources are what this asserts about, and a bundle would
-    /// answer with whatever the build happened to copy (D7).
+    /// answer with whatever the build happened to copy.
     private var hostServerSourcePath: String {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // AppTests

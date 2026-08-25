@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Does the built app carry exactly the resources the sources declare?
 #
-# This is the one check that closes D1's silent failure. Catalogues are read with `Bundle(path:)`
+# This check closes the silent failure. Catalogues are read with `Bundle(path:)`
 # instead of SwiftPM's `Bundle.module` because the generated accessor resolves through an absolute
 # `.build` path on the machine that compiled it, so a catalogue missing from the bundle still
 # answers there and fails only on someone else's Mac. Reading by path moves the failure to runtime
@@ -20,13 +20,13 @@ set -euo pipefail
 # the app is still broken:
 #   1. every source resource file exists in the bundle at the same relative path
 #   2. byte for byte — an existence check would pass a truncated or stale `InfoPlist.strings`,
-#      which is exactly the hole the round-1 review found in our own specification
+#      which is exactly the hole an existence-only specification leaves open
 #   3. the file **sets** match: a `.lproj` file in the bundle with no source is reported too, and a
 #      run that compared nothing fails rather than passes
 #   4. the `.lproj` **directory** sets match, and every entry in them is a regular file. `find -type f`
 #      cannot see an empty extra `.lproj` (no files to walk) or a symlink standing in for one, and an
 #      empty `fr.lproj` is enough for macOS to advertise a localization the app has no strings for
-#   5. the built `Info.plist` still says `CFBundleDevelopmentRegion` — measured (D2): with the region
+#   5. the built `Info.plist` still says `CFBundleDevelopmentRegion` — measured: with the region
 #      at `ko`, a process asking for a language we do not ship resolved to Korean, so a wrong value
 #      here puts unshipped languages into the wrong one while every byte above matches
 #      Each catalogue is also parsed, not just compared: two files can be byte-identical to each
@@ -98,7 +98,7 @@ done < <(find "$BUNDLED" -maxdepth 2 -path '*.lproj/*' ! -name '.DS_Store' | sor
 # Every catalogue has to parse. Byte-equality says the two copies agree; it does not say either one
 # can be read, and a `.strings` file that `PropertyListSerialization` rejects silently yields no
 # keys at runtime. `plutil` answers this without a Swift toolchain in the loop — the full
-# `Bundle(path:)` load stays in the test suite (item 6), where the source tree is the subject and no
+# `Bundle(path:)` load stays in the test suite, where the source tree is the subject and no
 # build is required to run it.
 while IFS= read -r catalogue; do
     if ! plutil -lint "$catalogue" >/dev/null 2>&1; then
@@ -109,7 +109,7 @@ done < <(find "$BUNDLED" -maxdepth 2 -path '*.lproj/*' -name '*.strings' | sort)
 # **The catalogue set is closed.** Everything above compares the two sides to each other, which is
 # silent about a language we do not ship: an `fr.lproj` added to the sources is copied by `build.sh`,
 # matches byte for byte, has equal directory sets, and parses — so every check passed while macOS
-# advertised a localization nothing resolves to (round 15 review). The list is spelled out because a
+# advertised a localization nothing resolves to. The list is spelled out because a
 # shell script cannot read `supportedLocales`, and `LocalizationBundleTests` fails if the two drift,
 # which is the same arrangement `CFBundleDevelopmentRegion` below already has.
 SUPPORTED_LPROJ="en ko ja zh-Hans zh-Hant"

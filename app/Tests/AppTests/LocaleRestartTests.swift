@@ -14,7 +14,7 @@ import XCTest
 /// a string: shutting the gate withdraws it by binding it, so a fixed name in `/tmp` survives the
 /// process and the next run finds its own leftover already there — which flips the withdrawal's
 /// answer and makes a case pass for a reason that has nothing to do with what it asserts (observed
-/// while writing round 17's fix: `testTerminationClosesTheGateBeforeSayingGoodbye` went green
+/// while writing the fix: `testTerminationClosesTheGateBeforeSayingGoodbye` went green
 /// against a socket file the previous run had left).
 final class SocketFixtures {
     let directory = "/tmp/tc-fix-" + String(UUID().uuidString.prefix(8))
@@ -107,7 +107,7 @@ final class LocaleRestartTests: XCTestCase {
         restoredWithdraw = LocaleRestartGate.withdrawAdmission
         // No draining here, and the first version of this file pretended otherwise: `endEveryHelper`
         // dismisses helpers, it does not empty the register, so the line that called it "cleanup"
-        // was a comment describing something the code does not do — the class this work keeps
+        // was a comment describing something the code does not do — the class keeps
         // sweeping for, committed in its own test. Each test balances its own tokens with `defer`
         // instead, and the assertion below is the canary for one that did not.
     }
@@ -143,7 +143,7 @@ final class LocaleRestartTests: XCTestCase {
         ClaudeDelivery.withdrawRestartAdmission()
     }
 
-    /// **The P0 this protocol exists for** (round 14 review, which named this case).
+    /// **The race this protocol exists for.**
     ///
     /// The old gate answered "is a delivery running" and closed nothing behind itself. A request
     /// already on its way could pass `runInWarp`, write its Tab Config and **launch a helper** after
@@ -332,9 +332,9 @@ final class LocaleRestartTests: XCTestCase {
     private static func coreSource(_ name: String) -> String { source("Sources/Core/\(name)") }
 }
 
-/// **Going away is one decision, and both ways of going away take it** (round 15 review).
+/// **Going away is one decision, and both ways of going away take it**.
 ///
-/// Round 14 gave the language restart an admission gate. Normal termination — the user quitting, or
+/// Normal termination — the user quitting, or
 /// macOS shutting the app down — called `endEveryHelper` and stopped the listener with the gate
 /// still open, so a request already accepted on the socket queue could reach `runInTerminal` and
 /// launch a Warp helper *after* the farewells had gone out. That helper would outlive the app with
@@ -385,10 +385,9 @@ final class AppTerminationAdmissionTests: XCTestCase {
         after.end()
     }
 
-    /// **A reservation made before the gate closed must not become a helper after it** (round 16
-    /// review, P0 — which named this case).
+    /// **A reservation made before the gate closed must not become a helper after it.**
     ///
-    /// Round 15 closed the gate against *new* admissions and left the ones already inside it
+    /// Closing the gate against *new* admissions while leaving existing reservations
     /// untouched, so this order stood: a request reserves its slot, the user quits, the farewells go
     /// out and find a slot with no address in it, and only then does the launch produce one. The app
     /// leaves; the helper is still listening in the pane, reachable by anything with the same uid.
@@ -460,7 +459,7 @@ final class AppTerminationAdmissionTests: XCTestCase {
     ///
     /// Read as a **count** rather than as two lines of source. The source-count half is a lint, not
     /// a runtime proof of every termination route. The lines were pinned verbatim and went red the
-    /// moment the decision grew a second job (round 17: shutting the gate also withdraws the
+    /// moment the decision grew a second job: shutting the gate also withdraws the
     /// addresses of helpers that are not there yet) — a gate that fails when the thing it guards is
     /// improved is a gate people delete. What has to stay true is that there is one place, and that
     /// both ways of leaving arrive at it.

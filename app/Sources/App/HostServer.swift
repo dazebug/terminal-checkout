@@ -13,7 +13,7 @@ private struct BoundSocket {
 /// The unix socket server that takes the relay's requests and runs them in the terminal.
 final class HostServer {
     /// A diagnostic surface and not a message to the user: the only reader is `AppDelegate`, which
-    /// writes it to the log. English for the same reason Core's strings are (D27).
+    /// writes it to the log. English for the same reason Core's strings are.
     enum ServerError: Error, CustomStringConvertible {
         case alreadyRunning
         case socketFailed(String)
@@ -27,15 +27,11 @@ final class HostServer {
 
     private let socketPath: String
     /// Everything this instance owns, or nothing. Three separate properties is what let a teardown
-    /// see half of a startup (round 20 review).
+    /// see half of a startup.
     private var bound: BoundSocket?
-    /// **Starting and stopping are one transition each, and they do not interleave.** The window was
-    /// not between two lines that could be swapped: it ran from the moment the socket existed to the
-    /// moment the server was answering, and a `stop()` could land anywhere in it. So both take this;
-    /// `stop()` calls the lock-held teardown half rather than recursively acquiring `NSLock`.
-    ///
-    /// This lock is the only ordering boundary: startup and teardown cannot observe half of the
-    /// other transition.
+    /// **Starting and stopping are one transition each, and they do not interleave.** Both take this
+    /// lock; `stop()` calls the lock-held teardown half rather than recursively acquiring `NSLock`.
+    /// Startup and teardown therefore cannot observe half of the other transition.
     private let lifecycle = NSLock()
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
@@ -80,11 +76,8 @@ final class HostServer {
     }
 
     /// **Only what this instance owns is taken down.** The path is removed only while it still names
-    /// the file this bind created. It used to be
-    /// unlinked unconditionally, which is a deletion by name: an instance that closed its listener
-    /// while another was binding the same path would remove **the new owner's** socket, leaving a
-    /// process that believes it owns the machine and a relay that cannot connect to it (round 16
-    /// review). Nothing is deleted when this server never bound, for the same reason.
+    /// the file this bind created; deleting by name could remove a replacement listener. Nothing is
+    /// deleted when this server never bound.
     ///
     /// Between the comparison and the `unlink` the file can still be replaced — macOS has no
     /// `funlinkat`, so the last step is by path. That is the same residual the Warp helper's preamble
@@ -186,12 +179,12 @@ final class HostServer {
                     // **The slot is reserved before anything can launch a helper**, not when the
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
                     // below runs asynchronously, so a registration taken there is late by that whole
-                    // interval — the window a restart used to be admitted through (round 14, P0).
+                    // interval — a restart could otherwise be admitted through it.
                     // Refused means the app is already leaving, and the request fails rather than
                     // opening a tab whose input would be dropped. The slot is then handed to the
                     // launch, which writes the helper's address into it before creating anything —
                     // this side no longer records after the fact, because there is no moment at
-                    // which it could that the launch has not already passed (round 16, P0)
+                    // which it could know that the launch has not already passed.
                     var admission: ClaudeDelivery.Admission?
                     if !prepared.claudeInputs.isEmpty {
                         guard let token = ClaudeDelivery.admit() else { throw TerminalError.goingAway }

@@ -9,11 +9,8 @@ public enum TerminalError: Error, CustomStringConvertible {
     /// The app is leaving, so no new delivery may be started. Transient by nature — which is why it
     /// is not a `ClaudeInputBlocker`: those name a state the user has to go and fix.
     ///
-    /// **Both ways of leaving arrive here**, and the name and the sentence say so. It was
-    /// `restarting`, worded "restarting to change language", from the round where a language restart
-    /// was the only thing that closed the gate; termination began closing the same gate one round
-    /// later and the message went on naming the restart, telling a user who had just pressed Quit
-    /// that their language was changing.
+    /// **Both ways of leaving arrive here**, and the name and the sentence say so. The value is
+    /// shared by language restart and termination, so neither path is described as the other.
     case goingAway
     /// An undeliverable input we already know about **before** creating a tab. Identified by
     /// type, not by string — it reaches the extension as an `error` string, but inside the app
@@ -78,7 +75,7 @@ public enum ClaudeInputBlocker: Equatable, CaseIterable {
 
 /// Must this run be rejected **before it is even attempted**? `injectsClaudeInput` is not "were
 /// claude inputs scheduled" but **"will anything be typed into the session"**
-/// (`PreparedRequest.claudeInputs`). **Every shipped preset reaches this** since round 10: their
+/// (`PreparedRequest.claudeInputs`). **Every shipped preset reaches this**: their
 /// inputs are all `!`, and a `!` only runs as a command when it is typed into claude's shell mode.
 ///
 /// The state probes are `@autoclosure` because this runs inside the execQueue that holds up the
@@ -222,7 +219,7 @@ public func runProcess(
 
 /// `claudeInput` is the slot this run reserved for its delivery, and its presence is what says input is scheduled. Only Warp goes further with it — injecting requires launching the injection helper inside the pane as well, and doing that for buttons with no input adds one more command block the user can see and leaves a useless process behind.
 ///
-/// It replaced a `Bool` (round 16 review): the boolean and the reservation were two values saying the same thing, kept in step by the one call site that set both, and only a reservation can be checked against the gate that says whether a helper may still be created. Nothing outside `ClaudeInjector.swift` can make one, so "this run injects" is now the same fact as "this run has been admitted".
+/// It replaced a `Bool`: the boolean and the reservation were two values saying the same thing, kept in step by the one call site that set both, and only a reservation can be checked against the gate that says whether a helper may still be created. Nothing outside `ClaudeInjector.swift` can make one, so "this run injects" is now the same fact as "this run has been admitted".
 @discardableResult
 public func runInTerminal(
     command: String, terminal: Terminal, claudeInput: ClaudeDelivery.Admission? = nil
@@ -268,7 +265,7 @@ public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
 ///
 /// The Tab Config file name carries a per-request token (`warpTabConfigStem`) — a fixed name overwrites the user's own file, and since Warp reads the file only after `open` has returned, consecutive requests swap each other's commands. In exchange, our file is deleted after giving the tab time to open.
 ///
-/// **The helper's address is written into the register before the file is** (round 16 review, P0). This is the only place a Warp injection helper is brought into existence, and the address it will answer on is known one line earlier — so recording it here, through the same lock that closes the admission gate, is what makes "a helper exists outside the register" unreachable rather than merely unlikely. A refusal means the app is going away and nothing is created: no Tab Config, no `open`, no tab.
+/// **The helper's address is written into the register before the file is**. This is the only place a Warp injection helper is brought into existence, and the address it will answer on is known one line earlier — so recording it here, through the same lock that closes the admission gate, is what makes "a helper exists outside the register" unreachable rather than merely unlikely. A refusal means the app is going away and nothing is created: no Tab Config, no `open`, no tab.
 @discardableResult
 public func runInWarp(
     _ command: String, claudeInput: ClaudeDelivery.Admission? = nil
@@ -295,11 +292,11 @@ public func runInWarp(
         guard let socketPath else { throw claudeInputRejection(.warpHelperUnavailable) }
         // The file the app will link from if it has to take this address back. Made **here**, with
         // the register entry, because making it at termination would put an allocation into the one
-        // moment that must not fail — which is the sliver `mkdir` left (round 21 review).
+        // moment that must not fail — which is the sliver `mkdir` left.
         //
         // **And the request is refused when it cannot be made.** Without the pin there is nothing to
         // link from, so the address could not be taken back and a late helper would answer with
-        // nothing left to dismiss it — the P0 itself, arrived at by carrying on. Refusing costs the
+        // nothing left to dismiss it — the failure this guard prevents. Refusing costs the
         // user this delivery; not refusing costs them a helper the app cannot reach
         guard createWarpHelperPin(forAdvertised: socketPath) else {
             throw claudeInputRejection(.warpHelperUnavailable)

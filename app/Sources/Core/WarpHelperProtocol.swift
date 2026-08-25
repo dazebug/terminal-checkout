@@ -28,7 +28,10 @@ public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int
 
 /// The verdict reached **from a single sample** while watching whether the injected bytes get read.
 ///
-/// Taking no history as an argument is the whole point of this function. There used to be a comparison against the previous sample: "the queue grew, so the user's keys got mixed in", and if it had not grown the remaining bytes were treated as ours and discarded with `tcflush`. That inference breaks in two places (reproduced by the reviewer): the **first sample** has nothing to compare against, so it can never establish that anything was mixed in, and even afterwards, if the user types 4 bytes while claude reads 5, the total **shrinks** from 10 to 9 and produces the same misjudgement. `FIONREAD` is an unattributed total, so there was never a way to prove "what remains is our bytes" — which is why, instead of strengthening the proof, **the discarding was removed altogether.**
+/// Taking no history as an argument is the whole point of this function. `FIONREAD` is an
+/// unattributed total: the first sample has nothing to compare against, and a user typing 4 bytes
+/// while claude reads 5 can shrink 10 to 9 and produce the same misjudgement as no user input.
+/// Nothing can prove that the remaining bytes are ours, so they are never discarded with `tcflush`.
 ///
 /// The price is that the window in which our bytes **linger as residue** in the shell's line buffer widens again. This side is still chosen because residue is something the user can see and erase, whereas a wrong `tcflush` **silently** deletes the keys they just typed.
 public enum WarpInjectWatch: Equatable {
@@ -54,8 +57,8 @@ public func warpInjectWatchDecision(
     pending: Int, foreground: WarpForeground, budgetExpired: Bool
 ) -> WarpInjectWatch {
     // `== 0` and not `<= 0`: a negative count is a malformed answer, not an empty queue, and
-    // reading it as success would report delivery from a number that means nothing (round 7
-    // review). It falls through to the branches below, which is the fail-closed direction.
+    // reading it as success would report delivery from a number that means nothing. It falls through
+    // to the branches below, which is the fail-closed direction.
     if pending == 0 { return foreground == .expected ? .delivered : .drainedWithoutConfirmedReader }
     if foreground != .expected { return .readerUnconfirmed(pending: pending) }
     return budgetExpired ? .queueNotEmptyAtDeadline(pending: pending) : .keepWaiting
@@ -72,7 +75,7 @@ public let warpHelperRequestTimeout: TimeInterval = warpHelperWorkBudget * 3
 ///
 /// `TIOCSTI` only checks whether the caller shares the controlling session; **it does not decide who reads the bytes put into the queue**. If claude dies and the shell becomes the foreground, the shell reads the remaining CR and runs whatever draft the user was typing — which is why app-side gates that look only "before sending" are not enough, and why the window narrows only when the foreground is checked from the same process that injects.
 ///
-/// **Three states and not two.** This used to answer `Bool`, and a failed `tcgetpgrp` or `getpgid`
+/// **Three states and not two.** A failed `tcgetpgrp` or `getpgid`
 /// lookup came back as `false` — the same value as "somebody else is attached". Both must refuse to
 /// inject, so the *decision* was right, but everything downstream then reported a fact nobody had
 /// established: an unreadable foreground was logged and replied to as a different reader. Wording
@@ -90,11 +93,10 @@ public enum WarpForeground: Equatable {
     /// the same reason — what cannot be told apart must not be injected into.
     case unknown
 
-    /// How a diagnostic words this state. Exhaustive on purpose: the caller used to spell it as
-    /// `foreground == .different ? … : …`, which maps `.expected` onto "could not be read" and was
-    /// only correct because no reachable branch passed `.expected` to it. **A switch keeps that
+    /// How a diagnostic words this state. Exhaustive on purpose: a conditional that treats every
+    /// non-`.different` value as "could not be read" would mislabel `.expected`. **A switch keeps that
     /// from being an argument about reachability** — adding a fourth state, or reaching this from a
-    /// new site, becomes a compile error instead of a wrong sentence (round 7 review).
+    /// new site, becomes a compile error instead of a wrong sentence.
     public var diagnosis: String {
         switch self {
         case .expected: return "the foreground is the reader we aimed at"
@@ -107,8 +109,8 @@ public enum WarpForeground: Equatable {
 /// Is this tty still the one our session owns?
 ///
 /// The raw comparison was `tcgetsid(ttyFD) == getsid(0)`, and both calls return **-1 on failure** —
-/// so two failed lookups compared equal and the helper concluded the tty was still ours (round 7
-/// review). Requiring both to be positive is what makes the failure fail-closed; the name says
+/// so two failed lookups compared equal and the helper concluded the tty was still ours. Requiring
+/// both to be positive is what makes the failure fail-closed; the name says
 /// "ours" rather than "changed" because an unreadable pair is not evidence of a change.
 public func warpTTYSessionIsOurs(ttySID: pid_t, ourSID: pid_t) -> Bool {
     ttySID > 0 && ourSID > 0 && ttySID == ourSID

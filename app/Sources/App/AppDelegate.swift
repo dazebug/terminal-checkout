@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.refreshToolAvailability()
         setupMainMenu()
         // The menu bar is built once, so its titles keep whatever language they were built in
-        // until something rebuilds them (item 9). Registered here rather than inside
+        // until something rebuilds them. Registered here rather than inside
         // `setupMainMenu` so that building and re-building stay one call each
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
@@ -50,12 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// made and ordered first, not that it always finishes.
     /// **The gate closes before the farewells go out**, and that order is the point.
     ///
-    /// Round 14 gave the language restart an admission gate and left this path calling cleanup
-    /// without it: a request already accepted on the socket queue could reach `runInTerminal` and
-    /// launch a Warp helper *after* `endEveryHelper` had said goodbye to everyone it could see, and
-    /// that helper would outlive the app with nobody to dismiss it (round 15 review). Termination is
-    /// not refusable, so `depart()` shuts the gate whatever is in flight — and hands back the proof
-    /// the farewell asks for, which is why the two lines below cannot be written the other way round.
+    /// `depart()` shuts the delivery gate before dismissing helpers. Termination is not refusable, so
+    /// a request already accepted on the socket queue must not launch a helper after cleanup has run;
+    /// the gate and cleanup preserve that ordering and hand back the proof the farewell asks for.
     func applicationWillTerminate(_ notification: Notification) {
         let departure = ClaudeDelivery.depart()
         ClaudeDelivery.endEveryHelper(departure)

@@ -34,13 +34,13 @@ private final class StagedGlobalDefaults: UserDefaults {
 /// The bundle skeleton: five catalogs that each answer in their own language, and the one write
 /// that points AppKit's chrome at the same language.
 ///
-/// Every lookup here names its `.lproj` **directly**. Measured (D7): `Bundle(url:)` on the folder
+/// Every lookup here names its `.lproj` **directly**. Measured: `Bundle(url:)` on the folder
 /// holding them resolves through the *host machine's* language, so a lookup aimed at `en` returned
 /// the Korean string on a ko-KR Mac — an oracle that would pass here and fail in CI, or worse,
 /// pass in both while testing nothing. `Bundle(path: <…>/<tag>.lproj)` is the only form that
 /// answers the same way everywhere.
 ///
-/// The subject is the **source** tree, not the built app. Whether `build.sh` copied it is item 7's
+/// The subject is the **source** tree, not the built app. Whether `build.sh` copied it is the bundle
 /// question, and `swift test` runs with no app bundle in sight.
 final class LocalizationBundleTests: XCTestCase {
     private var resources: String {
@@ -52,8 +52,7 @@ final class LocalizationBundleTests: XCTestCase {
             .path
     }
 
-    /// The key this file probes with. It was a skeleton key (`app.setup.window.title`) until item 10
-    /// moved the window's strings in and the window title got its real one. All five catalogues are
+    /// The key this file probes with. All five catalogues are
     /// full now, so it is a probe by choice rather than by necessity: one key every catalogue is
     /// certain to carry, which is all these cases need to tell five files apart.
     private let probeKey = "app.window.title"
@@ -82,7 +81,7 @@ final class LocalizationBundleTests: XCTestCase {
     }
 
     /// The lookup asks the requested catalog, then English, then gives back the key. The last step
-    /// is a floor and not a feature: item 12's gate turns a missing key into a red build, and a raw
+    /// is a floor and not a feature: the catalogue gate turns a missing key into a red build, and a raw
     /// key on screen is the failure that gate exists to prevent.
     func testAMissingKeyFallsBackToEnglishAndThenToTheKey() {
         XCTAssertEqual(
@@ -181,7 +180,7 @@ final class LocalizationBundleTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "TerminalCheckoutAppleLanguagesProvenance"))
     }
 
-    /// **The value that answers afterwards is the one that answered before** (round 7 review).
+    /// **The value that answers afterwards is the one that answered before**.
     ///
     /// The test above proves our own copy of the key is gone, which is not the same claim: a
     /// removal that also lost whatever the domain below was saying would satisfy it just as well.
@@ -192,7 +191,7 @@ final class LocalizationBundleTests: XCTestCase {
     /// It also fixes the boundary of that promise. `auto` removes the **app-owned** override and
     /// nothing else: an `-AppleLanguages` argument on the command line, or any domain with higher
     /// precedence, still wins, and no amount of removing our key changes that. Users need to know
-    /// it (item 25 lists it in the README), and a future reader needs to know this test does not
+    /// it, and a future reader needs to know this test does not
     /// claim otherwise.
     func testAutomaticRestoresTheEffectiveValueItFound() throws {
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
@@ -254,7 +253,7 @@ final class LocalizationBundleTests: XCTestCase {
 
     /// The other half of the same rule: an explicit choice **is** written, and so is a stored value
     /// we cannot read — our own strings resolve that one to English, and chrome that disagreed with
-    /// them would be exactly the split-language window D14 rules out.
+    /// them would split the app's language from its chrome.
     func testAnExplicitChoiceIsWrittenAndSoIsAValueWeCannotRead() throws {
         let suiteName = "com.dazebug.terminal-checkout.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -316,7 +315,7 @@ final class LocalizationBundleTests: XCTestCase {
     }
 
     /// `CFBundleDevelopmentRegion` is what macOS answers with when it can match nothing else.
-    /// Measured (D2): with the region at `ko`, a process asking for `fr` resolved to `["ko"]`; with
+    /// Measured: with the region at `ko`, a process asking for `fr` resolved to `["ko"]`; with
     /// it at `en`, to `["en"]`. Leaving it at `ko` would put a French user in Korean while our own
     /// strings gave them English.
     func testTheDevelopmentRegionIsTheLanguageWeFallBackTo() throws {

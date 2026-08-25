@@ -27,7 +27,7 @@ const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
   vm.runInThisContext('({ PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS })');
 const { presetById, presetOptions } = vm.runInThisContext('({ presetById, presetOptions })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
-// Node has no `chrome`, so every lookup throws unless a backend is installed (D163). This one
+// Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
 const { catalogueBackend } = require('./chrome-messages.js');
@@ -475,14 +475,14 @@ test('buttonFingerprint: a remote reorder is caught at the index that was clicke
   assert.notEqual(buttonFingerprint(drawn[0]), buttonFingerprint(inputsChanged));
   // ...and renaming a button is not one of them. This assertion used to read `notEqual`, and that
   // was the whole defect: a tooltip is display text, so the moment the two contexts can resolve it
-  // in different languages, a rename nobody made refuses a command that never changed (D18, P0).
+  // in different languages, a rename nobody made refuses a command that never changed.
   // What a rename costs now is that the refusal no longer fires for it — which is correct, because
   // the same command with the same inputs runs either way.
   const { buttons: [labelChanged] } = adoptStoredButtons([{ ...A, label: 'A renamed' }]);
   assert.equal(buttonFingerprint(drawn[0]), buttonFingerprint(labelChanged));
 });
 
-// --- The fingerprint answers "is the same thing executed", not "is it the same button" (D33) ---
+// --- The fingerprint answers "is the same thing executed", not "is it the same button" ---
 // Which button was clicked is answered by its index in its section; what a click will run is
 // answered by the fingerprint, and identity is the pair `(kind, index, executionFingerprint)`.
 // This is execution identity. It is not a security or a UX identity: two buttons that run the same
@@ -496,7 +496,7 @@ test('a fingerprint check cannot fail because two contexts resolved different lo
   const { clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR } =
     vm.runInThisContext('({ clickMatchesWhatWasShown, BUTTON_CHANGED_ERROR })');
   const english = BUTTON_KINDS.repo.defaults[0];
-  // The same default once item 22 has moved the preset name and face into the dictionaries
+  // The default has its preset name and face in the dictionaries
   const korean = { ...english, face: '터미널에서 열기', label: '터미널에서 열기' };
   assert.equal(english.command, korean.command, 'the repro is a display-only difference');
 
@@ -512,7 +512,7 @@ test('two buttons whose native message is byte-identical fingerprint the same', 
   // The normalization has to be the send's own: `runButton` trims each claude input and drops the
   // empty ones before the message goes out, so a button carrying `['!a ', '']` and one carrying
   // `['!a']` hand the app the same bytes. Fingerprinting the un-normalized fields made those two
-  // different buttons — a refusal with no difference behind it (D52).
+  // different buttons — a refusal with no difference behind it.
   const { executionPayload } = vm.runInThisContext('({ executionPayload })');
   const loose = { face: 'x', label: 'A', command: '{cd} && claude', claudeInputs: ['!a ', '', ' !b'] };
   const tight = { face: 'y', label: 'B', command: '{cd} && claude', claudeInputs: ['!a', '!b'] };
@@ -534,14 +534,14 @@ test('the wire message is built from the payload the fingerprint is taken of', (
 });
 
 test('the refusal a mismatch produces is a diagnostic, and says what a user would need', () => {
-  // Item 21 handed this over as a test that would break the day the string moved into the
+  // This test would break if the string moved into the
   // dictionaries. Tracing where the string actually goes answered it instead: **nowhere the user
   // can see**. The content script inspects the `{success:false}` response and throws; both click
   // handlers catch that throw, put `Error!` or `❌` on the button and send the message to
   // `console.error`. The only strings a button ever draws are its face, its tooltip and those
   // markers.
   //
-  // So it stays English (D13/D27) and this assertion is safe — but it is asserting about a
+  // So it stays English and this assertion is safe — but it is asserting about a
   // **diagnostic**, and the wording check is kept because the sentence is still what a developer
   // reads in the console when a click is refused.
   const { BUTTON_CHANGED_ERROR } = vm.runInThisContext('({ BUTTON_CHANGED_ERROR })');
@@ -556,7 +556,7 @@ test('nothing a button draws comes from an error message', () => {
   // next to both messages. This is a source lint, not a runtime rendering proof: the content page
   // has no browser harness here.
   const source = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
-  // **Every receiver, every spacing, every way of writing text into a node** (round 17 sweep): this
+  // **Every receiver, every spacing, every way of writing text into a node**: this
   // read `button.` with exactly one space on each side of the `=`, so the same statement written
   // `el.textContent=x`, `button.title +=` or through `innerText` drew whatever it liked with the
   // gate still green. The names are what the subject is about; the variable in front of them is not.
@@ -584,7 +584,7 @@ test('adoptStoredButtons: a hole hidden behind an extra property is still a hole
   assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs }]).skipped, 1);
 });
 
-// --- Who pressed it, and on what page (R9) ---
+// --- Who pressed it, and on what page ---
 // The fingerprint answers "which button"; these answer "who pressed it" and "where". A command that
 // runs is the end of a chain that starts with a person clicking something they can see.
 
@@ -651,8 +651,8 @@ test('storedItemBytes: an item is its key plus the UTF-8 bytes of its JSON', () 
   assert.equal(SYNC_QUOTA_BYTES_PER_ITEM, 8192);
 });
 
-// --- One final gate, not a check after every await (R10) ---
-// R9 put a target check after each await it could see, and the next await was the one it could not:
+// --- One final gate, not a check after every await ---
+// Checking a target after each visible await is not enough: the next await may be the one it cannot:
 // a fetch that resolved after a navigation reported the page it had left, an executeScript failure
 // returned before reaching its check, the icon path sent no target at all, and the storage read
 // before the command went out had nothing after it. Enumerating await points misses the next one.
@@ -740,14 +740,14 @@ test('an http:// GitHub page is not a page of ours', () => {
     { kind: 'pr', owner: 'o', repo: 'r', number: '1' });
 });
 
-// --- The origin has to survive being observed, not just being parsed (R14) ---
-// R12 and R13 closed the origin on the way *in* (`pageTargetOfUrl`). Every observation the gate
+// --- The origin has to survive being observed, not just being parsed ---
+// The origin is closed on the way *in* (`pageTargetOfUrl`). Every observation the gate
 // makes went a different way: `location.pathname` through `pageTargetOf`, which by construction has
 // no origin to check. Two functions answering "which page is this" is the same defect this loop
 // keeps closing elsewhere — one judgment, one function.
 
 test('an observation that dropped the origin folds a look-alike into the clicked page', () => {
-  // Codex's combination, exactly. The tab moved to a non-standard port mid-flight; the branch was
+  // The tab moved to a non-standard port mid-flight; the branch was
   // read out of *that* document, and the gate compared pathnames and saw the same PR.
   const { pageTargetOf, pageTargetOfUrl, requestIsCoherent, sameTarget } =
     vm.runInThisContext('({ pageTargetOf, pageTargetOfUrl, requestIsCoherent, sameTarget })');
@@ -790,7 +790,7 @@ test('the gate and the DOM reads judge an href, the same way the click did', () 
 });
 
 test('nothing in the execution path judges a page without its origin', () => {
-  // The rule this loop keeps arriving at: one question, one function. `pageTargetOf` answers "which
+  // One question, one function. `pageTargetOf` answers "which
   // page is this pathname", and a pathname has no origin — so calling it directly is how an
   // observation escapes the origin check that `pageTargetOfUrl` performs. It is a helper *inside*
   // that function and nowhere else.

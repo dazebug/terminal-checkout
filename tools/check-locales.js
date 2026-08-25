@@ -3,12 +3,9 @@
 //
 //     node tools/check-locales.js   # exit 1 if a baseline or live machine contract has changed
 //
-// **It used to write, and A3 is where that stopped** (D167). While `_i18n` was canonical, deriving
-// the second store by program was what kept a wrong edit from being made identically in both. A3
-// moved the authority: `_locales` is what Chrome reads and what the extension draws from, so a
-// generator pointed at it would be a path for the frozen compatibility store to overwrite the live
-// one. The derivation survives only as a read-only name, entry-shape and argument-identity check —
-// the same code, no `writeFileSync`, and a test holds it to that.
+// `_locales` is what Chrome reads and what the extension draws from. `_i18n` is the frozen
+// compatibility passenger, so this command only checks the baseline, live name and entry shape,
+// and argument identity; it never writes either store.
 //
 // **What the baseline means now.** `_i18n` is pinned at the migration baseline and `_locales` is
 // canonical, so the command pins the compatibility passenger without treating a later canonical
@@ -16,7 +13,7 @@
 // tests, while machine-checkable placeholder identity stays a live gate: a changed byte may be an
 // intentional translation edit or an unintended structural change, and the pin cannot decide which.
 //
-// **It loads the extension's own function rather than restating the rule** (D171, D177):
+// **It loads the extension's own function rather than restating the rule**:
 // `chromeMessageId`, the locale list and the metadata list all come out of `extension/i18n.js` by
 // running it. "The same rule" in a generator and in a runtime is two implementations that agree
 // until they do not, and the generator is where that divergence would begin, because it needs the
@@ -52,12 +49,9 @@ const CATALOGUE_BASELINE_HASHES = {
   },
 };
 
-// **The only file capability this module has is reading, and it is injected.** The gate that used to
-// hold this file to being read-only listed four spellings of writing and missed `fs.writeFile`,
-// `fs.write`, `copyFileSync` and every rename-based replacement (review 39) — an authored blacklist
-// standing in for a property, which is the class this work keeps finding. So the property is
-// structural instead: everything here reads through one reader, and a test can swap it to see that
-// nothing else is reachable.
+// **The only file capability this module has is reading, and it is injected.** Every file access
+// goes through one reader, so a test can replace that capability and verify that no writer is
+// reachable.
 const readOnlyFiles = { read: (file, encoding = 'utf8') => fs.readFileSync(file, encoding) };
 const read = name => readOnlyFiles.read(path.join(extension, name), 'utf8');
 const readBytes = name => {
@@ -244,7 +238,7 @@ const checkCompatibilityBaseline = () => {
     // compatibility file cannot silently lose a passenger, but the live store may carry additional
     // `ext_` names for reviewed messages added before the compatibility passenger retires. The
     // command checks machine structure and baseline argument identity without comparing translated
-    // prose: a reviewed canonical translation is precisely the edit A7 permits, but a translator
+    // prose: a reviewed canonical translation is precisely the edit this live store permits, but a translator
     // cannot choose a different source position.
     const { directory, messages } = deriveCatalogue(tag, context);
     const actual = JSON.parse(read(`_locales/${directory}/messages.json`));

@@ -1,13 +1,13 @@
-// The mixed-generation execution matrix: A3's lookup boundary and A4's final-state completion
-// condition, and the implementation evidence for the class that took four design reviews to state.
+// The mixed-generation execution matrix: the lookup boundary and the final-state compatibility
+// condition are exercised through actual loading and lifecycle events.
 //
 // **Why existence checks were not enough.** Compatibility was scoped to "the files the old reader
 // imports are still there", then to "the file names match", then to "`tr` still exists" — each true
 // for the set it named and silent about the next set out. What an adjacent generation needs is
 // **behaviour**: the interface between those files. So this runs them, both ways round, and lets a
-// missing symbol surface as a throw instead of as an omission from somebody's list (D164, D170).
+// missing symbol surface as a throw instead of as an omission from somebody's list.
 //
-// **And running the top of each file was not enough either** (D175). Two of the symbols an old
+// **And running the top of each file was not enough either**. Two of the symbols an old
 // consumer reaches for are referenced only from deferred code — a callback handed to a requester, a
 // cache read inside a first-render gate — so initialization alone passes against a stub that throws
 // and against a symbol that is not there at all. Every named lifecycle boundary is driven here:
@@ -15,13 +15,13 @@
 // notification, and the options page's initial paint and storage notification. Initialization,
 // command results, first render and initial paint run in all four pairings. The retired bookkeeping
 // and locale-notification work runs in the two baseline-consumer pairings; the two current-consumer
-// pairings assert that the same platform events start none of it. That difference is A4's subject,
-// not a reason to narrow the matrix to one pairing.
+// pairings assert that the same platform events start none of it. That difference is the compatibility
+// boundary, not a reason to narrow the matrix to one pairing.
 //
 // **The old side is the real artifact.** `tests/fixtures/baseline/` holds the scripts as they were at
 // the last commit before the lookup changed, and the hashes below pin them — computed over the exact
 // bytes the realm executes, because hashing the file while feeding something else makes the pin
-// decorative (D186).
+// decorative.
 'use strict';
 
 const assert = require('node:assert/strict');
@@ -42,7 +42,7 @@ const BASELINE_HASHES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture
 // **Read through the realm, so the inputs that decide the order are pinned like the ones that run.**
 // These two were being read straight off the disk, which left their recorded hashes unused — a
 // changed script order or a stray space would have altered the fixture with nothing to say so
-// (review 39). `realm.read` records the same way `realm.feed` does; it just does not evaluate.
+// `realm.read` records the same way `realm.feed` does; it just does not evaluate.
 const loadOrder = (realm, consumer) => {
   if (consumer === 'background.js') return ['background.js'];  // it imports its own dependencies
   if (consumer === 'content.js') {
@@ -59,7 +59,7 @@ const load = (realm, consumer, { poisonCurrentCacheSelector = false } = {}) => {
       // One boundary, named exactly: the current consumer must not ask the compatibility cache
       // selector. Storage/native/event observations below cover the rest of the retired pipeline.
       // Calling this an oracle for every compatibility symbol would turn one hand-authored list
-      // into the ABI authority that D170 explicitly rejects.
+      // into the ABI authority that this matrix deliberately does not provide.
       realm.run("localeToRenderIn = () => { throw new Error('current consumer called localeToRenderIn'); };");
     }
     realm.feed(file);
@@ -128,7 +128,7 @@ test('every generation pairing loads, and the baseline it loads is the pinned ar
     }
   }
   // ...and every pinned artifact was **verified**, not merely present. Existence was the old check and
-  // says nothing about the bytes (review 39): a fixture could drift while its hash sat unread. So the
+  // says nothing about the bytes: a fixture could drift while its hash sat unread. So the
   // pin is walked and each entry compared against what a realm hands out.
   const auditor = generationRealm({ skeleton: 'baseline', consumers: 'baseline', platform: platformFor() });
   for (const [file, hash] of Object.entries(BASELINE_HASHES)) {
@@ -142,7 +142,7 @@ test('every generation pairing loads, and the baseline it loads is the pinned ar
 });
 
 test('a native response settles independently of bookkeeping in every pairing', async () => {
-  // **The oracle inverts here, and this is the one that came from our own mistake** (D180). An
+  // **The oracle inverts here, and this is the one that came from our own mistake**. An
   // earlier revision of the plan required the matrix to drain every promise it started; the code says
   // the opposite in plain words — "the bookkeeping is started, not awaited, and it cannot fail this
   // call" — because awaiting it once turned an already-executed command into a reported failure, and
@@ -151,7 +151,7 @@ test('a native response settles independently of bookkeeping in every pairing', 
   // So the bookkeeping is **held** while the result is observed, and only then released.
   // All four pairings assert the command result. Only pairings with the baseline consumer own the
   // retired bookkeeping boundary; there it is held and released. Current consumers instead assert
-  // that neither a startup query nor bookkeeping happened — A4 removes their use, not the adjacent
+    // that neither a startup query nor bookkeeping happened — current consumers do not use the adjacent
   // skeleton's implementation.
   for (const { skeleton, consumers, what } of PAIRINGS) {
     let release;
@@ -250,7 +250,7 @@ test('bookkeeping failures change and delay nothing in every pairing', async () 
 
 test('deferred platform events exercise every boundary its consumer generation owns', async () => {
   for (const { skeleton, consumers, what } of PAIRINGS) {
-    // The baseline content consumer owns a locale notification; A4's current consumer does not. In
+    // The baseline content consumer owns a locale notification; the current consumer does not. In
     // both cases the platform event is driven, and a local read says whether the retired path ran.
     let contentReads = 0;
     const content = generationRealm({
@@ -300,12 +300,8 @@ test('deferred platform events exercise every boundary its consumer generation o
 });
 
 test('every pairing draws the requested catalogue and names its expected tag', async () => {
-  // **The oracle used to run on one pairing while the load matrix ran on four** (review 39), and both
-  // mixed combinations were broken underneath it: the signature of `applyDocumentLanguage` and its
-  // call site had moved in opposite directions, so one wrote `en` over Japanese text and the other
-  // left the tag untouched. Four pairings loaded and one pairing asserted is the same disease this
-  // matrix exists for — a check whose scope is narrower than the set its name promises — arriving
-  // **inside the instrument**. So the assertion dimension is generalised to match the load dimension.
+  // Every pairing loads and asserts its own result. A check whose assertion scope is narrower than
+  // its load scope can otherwise leave a broken mixed combination unobserved.
   //
   // **And it reads `document.title`, not a call of its own.** Asking `tr` here would prove that *this
   // test* can look a message up; the title is what the page actually drew. It is the same distinction
@@ -344,7 +340,7 @@ test('every pairing draws the requested catalogue and names its expected tag', a
 });
 
 test('with our buttons absent, a failing cache read still draws one in the chosen catalogue', async () => {
-  // **Documenting the swallow was not enough** (review 39, answering our own residual). The
+  // **Documenting the swallow was not enough**. The
   // first-render gate turns every preparation failure into success, so "driven and nothing escaped"
   // proves neither compatibility nor rendering — and the DOM double compounded it by answering every
   // query, so the content script always saw a button of ours and never took the insertion path at
@@ -401,7 +397,7 @@ test('the old manifest and service worker find every file they name in the migra
   // **Attack step 5.** A user on the pre-migration release whose extension folder is replaced with
   // this tree: the old `manifest.json` and the old `background.js` name files by hand, and one
   // missing script stops the service worker — commands stop, which is louder than a blank string and
-  // cannot be prevented by commit ordering (D157).
+  // cannot be prevented by commit ordering.
   const baseline = path.join(__dirname, 'fixtures', 'baseline');
   const manifest = JSON.parse(fs.readFileSync(path.join(baseline, 'manifest.json'), 'utf8'));
   const named = [

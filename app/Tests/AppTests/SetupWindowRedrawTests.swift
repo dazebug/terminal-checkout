@@ -3,8 +3,8 @@ import Core
 import XCTest
 @testable import App
 
-/// **When the window redraws**, which is a different question from what it draws (item 10 owns
-/// that). The premise round 1 set out is that a lookup function alone switches nothing: this window
+/// **When the window redraws**, which is a different question from what it draws. A lookup function
+/// alone switches nothing: this window
 /// is built once and `refresh()` rewrites only the status lines, so every title, heading, help
 /// paragraph and button label keeps the language it was created in until something builds them
 /// again.
@@ -164,7 +164,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// saved — it stays in the field so it can be fixed — and `refresh()` runs after the rebuild,
     /// where `updateBaseDirCard` draws the stored value over any field that is not being edited.
     /// Changing the language *through the picker* ends the edit first, so that condition holds and
-    /// the typing is gone: type a path, change the language, lose it (round 26 review).
+    /// the typing is gone: type a path, change the language, lose it.
     func testALanguageChangeKeepsTheDraftNobodyStored() throws {
         Settings.baseDirectory = NSTemporaryDirectory()
         let controller = makeController()
@@ -194,7 +194,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// an emoji or a decomposed character in it makes the two differ, so clamping the restored
     /// selection against `String.count` lands the cursor before where it was. This repository knows
     /// the neighbouring hazard already — which carriers re-encode to NFD — so a decomposed path
-    /// here is not exotic (round 26 review).
+    /// here is not exotic.
     func testTheRestoredSelectionIsClampedInTheUnitsItIsMeasuredIn() throws {
         // Stored rather than typed, which is the state a hand-edited plist leaves: the field draws
         // it, the status line says it is unusable, and none of that moves the cursor
@@ -224,7 +224,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// **The anchor card can be gone by the time the position is restored.** `refresh()` decides
     /// which cards are hidden, and it runs after the rebuild — so a card that was the anchor can be
     /// collapsed a moment later, and skipping the restore leaves the window at its first line,
-    /// which is this item's whole defect in the one case its fix did not cover (round 26 review).
+    /// which is this item's whole defect in the one case its fix did not cover.
     func testAHiddenAnchorFallsBackToTheCardBelowIt() throws {
         Settings.lastRequestAt = nil // nothing has connected yet, so the extension card is showing
         let (controller, window, scroll) = try makeScrollingController()
@@ -298,7 +298,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// than the sentence it replaces, so the document is a different height afterwards and no
     /// absolute offset can mean the same thing. What is kept is **a card's top edge and the
     /// distance below it** — not the sentence or the line that was there, which the translation
-    /// rewrote (round 26 review: the contract is the edge, and the name should not promise finer).
+    /// rewrote.
     func testTheAnchorCardsEdgeAndOffsetSurviveAReflow() throws {
         AppLocalization.tagOverrideForTesting = "ko"
         let (controller, window, scroll) = try makeScrollingController()
@@ -354,12 +354,12 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// control added later would silently lose its focus across a rebuild, or take the focus meant
     /// for another.
     ///
-    /// **The gate recomputes the role rather than checking that there is one** (round 26 review).
+    /// **The gate recomputes the role rather than checking that there is one**.
     /// Non-empty and unique was weaker than the sentence it stood for: a hardcoded identifier that
     /// named nothing in particular passed it, and then the invariant — *derived from the action, so
     /// it cannot go stale on its own* — was true of the code and not of the check. Here that is a
     /// one-line recomputation, so the check says what the sentence says. (The attribute lint next
-    /// door is the opposite case: what it would take to close is a parser, and D147 says why a lint
+    /// door is the opposite case: what it would take to close is a parser, and a lint
     /// stops short of one.)
     func testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames() throws {
         let controller = makeController()

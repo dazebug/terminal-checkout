@@ -112,7 +112,7 @@ final class CatalogueOwnershipTests: XCTestCase {
     ]
 
     /// The `_locales/` directories, read rather than listed. A hardcoded pair is what let three of
-    /// them go unchecked when D95 took this from two locales to five.
+    /// them go unchecked when the supported set grew from two locales to five.
     private func chromeLocaleTags() throws -> [String] {
         try FileManager.default
             .contentsOfDirectory(atPath: Self.repositoryRoot.appendingPathComponent("extension/_locales").path)
@@ -144,14 +144,14 @@ final class CatalogueOwnershipTests: XCTestCase {
             XCTAssertEqual(app.intersection(ext), [], "\(locale): a key lives in two catalogues")
         }
 
-        // Chrome's own namespace holds those two names and nothing from ours. The *count* is item
-        // 17's assertion, on the side that owns the file; what is checked here is ownership.
+        // Chrome's own namespace holds those two names and nothing from ours. The count is checked
+        // on the side that owns the file; what is checked here is ownership.
         //
-        // **Every directory that is there, not a pair named here.** This visited `en` and `ko`
-        // because that is what existed when it was written; D95 took `_locales/` to five and the
+        // **Every directory that is there, not a pair named here.** This visits every directory;
+        // the supported set grew to five and the
         // loop did not follow, so a foreign key in `ja`, `zh_CN` or `zh_TW` passed unseen
         // (measured). Reading the directory means the next one is covered by existing.
-        // **The mapping, not the count** (round 14 review). Comparing sizes says five directories
+        // **The mapping, not the count**. Comparing sizes says five directories
         // exist; it does not say they are the five that answer for the languages we ship, so
         // renaming `zh_TW` to `zh_HK` — which Chrome would then not use for our Traditional
         // Chinese — kept the arithmetic true and the extension's name untranslated.
@@ -193,7 +193,7 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// Everything else here compares the stores to each other, which says nothing about a language
     /// we do not ship: an `fr.lproj` dropped into the sources was copied into the bundle, matched
     /// byte for byte and parsed, and every check stayed green while macOS advertised a localization
-    /// the app cannot resolve to (round 15 review). The same rule is enforced on the built bundle by
+    /// the app cannot resolve to. The same rule is enforced on the built bundle by
     /// `verify-bundle.sh`; this is the source side, where it is cheaper to notice.
     func testNoCatalogueExistsForALanguageWeDoNotShip() throws {
         let resources = Self.repositoryRoot.appendingPathComponent("app/Sources/App/Resources")
@@ -243,8 +243,7 @@ final class CatalogueOwnershipTests: XCTestCase {
         // Merging them would tie a heading's wording to a table column's.
         ["ext_section_main_title", "ext_table_mainBranch"]:
             "a section heading and a table column that happen to name the same thing",
-        // **Found by this gate when Japanese landed, and kept rather than worked around.** English
-        // distinguishes removing a row ("Remove") from deleting a button ("Delete"); Japanese uses
+        // English distinguishes removing a row ("Remove") from deleting a button ("Delete"); Japanese uses
         // 削除 for both, and Korean and both Chinese catalogues keep them apart. Inventing a second
         // Japanese word to satisfy a check would make that screen read worse than it does now — the
         // gate's job here was to make the collapse visible, and it is.
@@ -288,18 +287,17 @@ final class CatalogueOwnershipTests: XCTestCase {
     }
 
     /// One message contained whole inside another. This is the check that exact matching cannot make
-    /// — the shape the plan recorded as a known limit (D37) and that item 21 found an instance of by
-    /// hand — so it is made here, with its two present cases judged.
+    /// — a known limit — so it is made here, with its two present cases judged.
     private let declaredContainment: [String: String] = [
-        // Item 21 split one status message into two complete ones so that neither had a clause
-        // substituted into it (D31a/D46). The shorter is necessarily a prefix of the longer; that is
+        // The status message was split into two complete ones so that neither had a clause
+        // substituted into it. The shorter is necessarily a prefix of the longer; that is
         // the shape of the fix, not a duplicate.
         "ext_status_imported": "the two-message split that replaced a substituted clause",
         // **Recorded as debt, not as correct.** The z advice spells the base-directory card's title
         // out — `“Repository base folder”` — instead of receiving it as a `%@` the way the other
-        // eight quotations do (D28). It was missed because that convention was found by looking for
-        // square brackets and this one uses typographic quotes. Changing a string value is outside
-        // the item that found it; the follow-up is to make it a quotation like the rest.
+        // eight quotations do. The typographic quotes are not covered by the square-bracket
+        // convention. Changing a string value is outside this gate; the follow-up is to make it a
+        // quotation like the rest.
         "app.card.baseDir.title": "a label quotation still spelled out — known debt, see the plan",
     ]
 
@@ -330,7 +328,7 @@ final class CatalogueOwnershipTests: XCTestCase {
     }
 
     /// The reader itself, because a gate that reads nothing passes everything. This is the failure
-    /// mode item 7 named for the bundle check, in a different file.
+    /// mode the bundle check uses in a different file.
     func testTheStoresAreActuallyBeingRead() throws {
         // Against the constant, not against a literal: with a literal on both sides this compared a
         // list to itself and a shipped locale missing a catalogue produced a shorter loop rather

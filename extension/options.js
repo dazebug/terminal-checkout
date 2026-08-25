@@ -14,29 +14,9 @@ const SECTIONS = [
 // Emoji commonly used as a face — clicking one appends it to the face field (they can be combined)
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
-// --- What this page says ---
-// Every sentence comes from a message id, and `options.html` carries those ids (`data-i18n`) rather
-// than prose. One copy of each sentence, therefore, instead of one in the markup and one in a
-// catalogue kept equal by hand — which is also what keeps the ownership gate answerable about this
-// page.
-//
-// **Which catalogue, and when.** Chrome decides, and it answers synchronously: `tr` asks
-// `chrome.i18n.getMessage` at the moment of the call, so the first paint is already in the right
-// language and there is nothing to correct afterwards. Leaving the English in the markup would have
-// meant the opposite order — English painted first and translated afterwards — for every user whose
-// language is not English.
-//
-// **What this paragraph said until review 39** was that the dictionaries in `_i18n/` supply every
-// sentence and that the app's cache decides the paint. Both stopped being true when the lookup moved,
-// and the sentence outlived the change by four promotions because the standing question was read
-// against the diff's own lines. A4 removes the cache read and locale redraw from this consumer; their
-// implementations remain in `i18n.js` only for an adjacent consumer generation.
-//
-// What this removes is the **asynchronous** gap, the one that lasts a storage round trip. Whether
-// Chrome paints a half-parsed document before a parser-blocking script at the end of `<body>` runs
-// is not something this repository can measure, and it is not claimed here.
-// The compatibility holder lives in `i18n.js` so a baseline skeleton under this consumer still gives
-// `defaults.js`, `migrations.js` and this page one catalogue. The current lookup does not consult it.
+// This page stores message ids in `data-i18n`, not prose, and resolves them synchronously through
+// `chrome.i18n` before drawing. The compatibility holder in `i18n.js` serves adjacent-generation
+// consumers; current lookup does not consult it.
 
 function browserLanguage() {
   return chrome.i18n?.getUILanguage?.() || '';
@@ -65,7 +45,7 @@ function tHTML(key, ...args) {
 // page" is a list to read rather than a search to run. Thunks rather than values: the labels they
 // quote are themselves messages and must resolve in the same paint as the containing sentence.
 //
-// The quotations are D28 relations. Prose that names another control used to spell that control's
+// The quotations are message relations. Prose that names another control used to spell that control's
 // label out again — and the two had already drifted apart here, with one paragraph calling the
 // field `Face` and another calling it `face`. Naming the message instead of the string means a
 // translator cannot make them disagree. Thunks resolve the quoted labels in the same paint as the
@@ -95,7 +75,7 @@ function applyStaticText(root = document) {
 // Prime only an adjacent old dictionary skeleton. The current skeleton exposes
 // `installMessageBackend` and ignores the legacy locale argument; the baseline skeleton lacks that
 // backend and still needs its UI-language fallback. Keeping the old argument shape preserves both
-// sides of the mixed-generation call (D210) without executing retired machinery in current×current.
+// sides of the mixed-generation call without executing retired machinery in current×current.
 const compatibilityLocale = typeof installMessageBackend === 'function'
   ? TC_I18N_FALLBACK
   : setCurrentLocale(localeToRenderIn(null, browserLanguage()));
@@ -554,7 +534,7 @@ function applyPreset(select) {
 
 // A complete sentence per field, not a noun phrase spliced into one. `enter ${label}.` needed
 // `a face` to carry an English article, and an article is a fact about English grammar that no
-// other language here inflects the same way (D36: never assemble a translated clause).
+// other language here inflects the same way, so never assemble a translated clause.
 const REQUIRED_FIELDS = [
   { field: 'face', describe: (key, index) => t('ext.validate.face', key, index) },
   { field: 'label', describe: (key, index) => t('ext.validate.tooltip', key, index) },
@@ -787,7 +767,8 @@ async function saveSettings() {
       // remote write committed.
       storeMovedSinceLoad: staleAtStart || state.changedDuringSave,
       // Settings from a generation we do not understand are readable and exportable, never
-      // writable. Decision 9 should keep this unreachable; it is the insurance if it is not.
+      // writable. The storage-version contract should keep this unreachable; it is insurance if it
+      // does not.
       loadedVersion: state.loadedVersion,
     });
     if (outcome.refused) {
@@ -932,8 +913,8 @@ function migrationItemRow(item, { checkbox }) {
     //
     // **A visible machine identifier**, and filed as one rather than left in the gap between "shown"
     // and "translated". It is drawn on screen, next to the `- old` / `+ new` diff, and it is *not*
-    // translated: it is a discriminator of the same kind as the command text beside it (D59), and
-    // rendering it in five languages would mean inventing UX copy this work has no basis for. The
+    // translated: it is a discriminator of the same kind as the command text beside it, and
+    // rendering it in five languages would mean inventing UX copy the product has no basis for. The
     // residual is stated rather than implied — a Korean screen shows an English discriminator — and
     // what it is not is invisible.
     row.querySelector('.mig-source').textContent = item.source;
@@ -1032,7 +1013,7 @@ function applyMigration() {
     markReviewed();
     // Two complete messages, not one message with a clause bolted on. The English needed
     // `command`/`commands` and `was`/`were` to agree with two different counts, and a translation
-    // cannot be assembled out of the pieces that made those agree (D31a/D46) — so the count moved
+    // cannot be assembled out of the pieces that made those agree — so the count moved
     // behind a noun and a colon, where no language here inflects anything, and the two states each
     // became a message of their own.
     showStatus('info', declined > 0

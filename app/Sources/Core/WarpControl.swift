@@ -26,7 +26,7 @@ public let warpTabConfigHeader = "#!terminal-checkout/tab-config/v1"
 /// The header earlier builds wrote, kept **only** so their files stay reclaimable. It is Korean,
 /// which is exactly why the token above replaced it.
 ///
-/// **Rollback is forward-only, and that is accepted rather than solved** (D25): an older binary
+/// **Rollback is forward-only, and that is accepted rather than solved**: an older binary
 /// cannot recognise a file written with the new token, so rolling back leaves those files in
 /// `~/.warp/tab_configs/` for nobody to collect. The damage is bounded to clutter in Warp's `+`
 /// menu — no data is lost — which is why it is documented instead of engineered around.
@@ -68,7 +68,7 @@ public func warpTabConfigIsOurs(contents: String) -> Bool {
     // anything as ours — `…/v10`, the shape the next format version takes, and any user line that
     // happens to start the same way — and the verdict's one job is to keep a user file from being
     // deleted. We had made this exact match possible ourselves by moving the explanation onto its
-    // own line and then kept matching by prefix (round 5 review).
+    // own line and then kept matching by prefix.
     if contents.prefix(while: { $0 != "\n" }) == warpTabConfigHeader { return true }
     // The legacy header keeps its prefix match because earlier builds wrote the explanation on the
     // **same** line, so there is no exact string on those disks to match.
@@ -144,7 +144,7 @@ public func shellSingleQuoted(_ text: String) -> String {
 ///
 /// The third word is the **deadline**: seconds since the epoch, past which the helper does not take
 /// its address. We write this line, so what the helper is told at birth is ours to choose, and this
-/// is the one thing it needs that nothing later can take away from it (round 23 review).
+/// is the one thing it needs that nothing later can take away from it.
 public func warpHelperCommand(
     executable: String, socketPath: String, deadline: Date = Date().addingTimeInterval(warpHelperClaimWindow)
 ) -> String {
@@ -162,7 +162,7 @@ public func warpInjectionHelperIsReady() -> Bool {
 /// Is this the token **we** put in a name? One rule for every name we reclaim, because the
 /// reclaim side used to be wider than the creation side: `%08x` writes exactly eight lower-case
 /// ASCII hex digits, so anything else — upper case, a different length, a Unicode digit — is a
-/// name we never wrote, and deleting one of those is deleting somebody else's file (round 8).
+/// name we never wrote, and deleting one of those is deleting somebody else's file.
 func isOurRequestToken(_ token: Substring) -> Bool {
     token.count == requestTokenLength && token.allSatisfy(\.isASCIIHexLower)
 }
@@ -238,26 +238,23 @@ public func warpHelperSocketPath(token: String) -> String? {
 // launch can take fifteen seconds and Warp brings the pane up 0.5∼0.7s after `open` returns
 // (measured). So the app can decide to go away between admitting a request and that helper being
 // born, and the farewell it sends on the way out then reaches a socket nobody is listening on.
-// Round 16 recorded that as a residual; round 17's review found the residual understated — the
-// window opens at `record`, not at `open`.
+// The window opens at `record`, not at `open`.
 //
 // It is closed by making the two sides race for **one name**, one operation each, with both
 // outcomes safe.
 //
-// **The app occupies the name with the same operation the helper claims it with — `link`** (round
-// 21 review). `bind` and then `mkdir` were each better than the last and each left the same shape of
-// gap, which is what this decides against:
+// **The app occupies the name with the same operation the helper claims it with — `link`.** `bind`
+// and `mkdir` each leave a failure path in which the helper can still claim:
 //  - `bind` needs a descriptor, so it failed where `socket()` failed, and every such failure read as
 //    "the helper won" — a farewell to nobody while the delayed helper's `link` still succeeded;
 //  - `mkdir` needs no descriptor but it does need an **inode**, and `link` reuses the socket's. The
-//    previous round wrote that sliver down and then took the unsafe branch inside it: an inode
-//    shortage answered `.failed`, which sends no farewell, while the helper's `link` went through.
-//    "Shares some failure modes" had been allowed to stand for "shares all of them".
+//    an inode shortage answers `.failed`, which sends no farewell, while the helper's `link` goes
+//    through.
 // Linking from a file the app already holds removes the argument instead of narrowing it: both sides
 // create a directory entry in the **same parent** and neither allocates an inode, so *the app could
 // not occupy* implies *the helper cannot claim* — **while the source entry and the filesystem
-// conditions are unchanged between the two calls**. That qualifier is not decoration (round 23
-// review): the same two syscalls at different moments are not the same outcome, and this file
+// conditions are unchanged between the two calls**. The same two syscalls at different moments are
+// not the same outcome, and this file
 // documents the counterexample a few paragraphs down — a same-uid process deleting the pin makes the
 // app's `link` answer `ENOENT` while the helper's later one succeeds. Neither side retries a
 // transient either. What the construction removes is the *class* of divergence that came from the
@@ -303,17 +300,14 @@ public func warpHelperPinPath(advertised: String) -> String {
 /// at the same name, and a name cannot do that: the socket sweeps are narrow on purpose ("anyone can
 /// drop a regular file or a symlink under the same name"), and widening one to regular files would
 /// have given that away. Content is how `warpTabConfigIsOurs` already answers the same question. A
-/// language-neutral token, for the reason D25 gives — nothing here is ever translated.
+/// language-neutral token because nothing here is ever translated.
 public let warpHelperPinMarker = "terminal-checkout/warp-helper-pin v1\n"
 
 /// Makes that file. Called once per Warp request that schedules claude input, next to the register
 /// entry it belongs to.
 ///
 /// False means the request is refused — `runInWarp` throws on it, because a helper whose address
-/// cannot be taken back is the defect this whole mechanism exists for. **The comment here used to
-/// say the caller runs anyway, and it was born false in the commit that made the caller refuse**
-/// (round 23 review): both lines were written together, so no re-reading of what the change
-/// *falsified* could have caught it.
+/// cannot be taken back is the defect this whole mechanism exists for.
 ///
 /// **A partial pin is worse than none**, so a failed write takes the file with it: the sweep removes
 /// only files carrying the whole marker, so a half-written one would be collected by nothing, ever.
@@ -364,18 +358,15 @@ public func claimWarpHelperAddress(from staging: String, as advertised: String) 
 
 /// **What became of an address the app tried to take back on its way out.**
 ///
-/// Three, and the third is the point (round 19 review, P0). The answer used to be a `Bool` whose
-/// false covered both "a helper already has it" and "this process could not take it", and every
-/// false became an address to say goodbye to. The comment defending that argued the cost of a
-/// farewell to nobody is a refused connection — true when the outcomes are two. They are three: if
-/// nothing was withdrawn *and* nobody holds the name, the farewell reaches nobody, the delayed
-/// helper's `link` succeeds, and it outlives the app.
+/// Three outcomes are distinct: an occupied address can receive a farewell, a withdrawn address
+/// needs none, and a failed withdrawal leaves the name free for a delayed helper to claim. The
+/// last case is kept separate so it cannot be mistaken for an occupied address.
 public enum WarpHelperAddressWithdrawal: Equatable {
     /// Taken. No helper can ever answer there, and there is nothing to dismiss.
     case withdrawn
     /// **Something is at that name.** Not "a helper is listening": `EEXIST` is returned for a helper
     /// socket, for a leftover from an earlier run, and for anything else the same uid put there, and
-    /// nothing in an errno separates them (round 21 review). The farewell is attempted because the
+    /// nothing in an errno separates them. The farewell is attempted because the
     /// occupant may be a helper; a refused connection is the expected outcome when it is not.
     case occupied
     /// Neither, and **this is not an address to say goodbye to**. What it is instead is a fact to
@@ -388,11 +379,10 @@ public enum WarpHelperAddressWithdrawal: Equatable {
 /// Why a claim was refused, in words that are true for **that** errno.
 ///
 /// It lives here rather than at the one `fail(...)` in the helper because a diagnostic nobody can
-/// exercise is a diagnostic that goes wrong quietly: an earlier one named the withdrawal for every
-/// errno, so a vanished temporary directory was reported as a decision the app had made (round 19
-/// review) — the class this work has swept since round 1, committed by the round that swept it.
+/// exercise is a diagnostic that goes wrong quietly: a vanished temporary directory must not be
+/// reported as a decision the app made.
 ///
-/// **`EEXIST` says occupied, not who by** (round 21 review). The app taking the address back is one
+/// **`EEXIST` says occupied, not who by**. The app taking the address back is one
 /// way the name comes to be occupied; a leftover from an earlier run and anything else with this
 /// uid are others, and this process cannot tell them apart from an errno. The sentence says what is
 /// known.
@@ -408,8 +398,8 @@ public func warpHelperClaimFailure(_ code: Int32) -> String {
 ///
 /// `link` from the pin, for the reason in the section preamble: it is the same operation the helper
 /// claims with, into the same parent, and neither allocates an inode — so **whatever stops this
-/// stops that**. `mkdir` was the previous answer and left a sliver it named and then took the unsafe
-/// branch inside; there is no enumeration of shared failure modes here to be incomplete.
+/// stops that**. A separate directory allocation would leave a failure window between taking the
+/// name and entering the guard inside it.
 ///
 /// A missing pin is itself a `.failed`, with `ENOENT` — and the same `ENOENT` is what the helper's
 /// `link` would get if the parent were gone, which is the only way the pin can be missing without
@@ -505,11 +495,11 @@ public func warpScreenText() -> String? {
 
 /// What one Accessibility screen read costs, for the first few reads of a process.
 ///
-/// Round 10 set `screenPollInterval` (0.15s) so that every known reader stays under half the
-/// interval — osascript 59ms, wezterm cli 14ms, ps+stty 9ms — and had to **assume** Warp's read was
+/// `screenPollInterval` (0.15s) keeps every known reader under half the interval — osascript 59ms,
+/// wezterm cli 14ms, ps+stty 9ms — and Warp's read was
 /// "no cheaper than osascript", because measuring it needs Warp running and the permission granted.
 /// Both hold now, so the reads report themselves. If this turns out to be hundreds of milliseconds,
-/// the poll interval is resting on a false premise and the next round has its input.
+/// the poll interval rests on a false premise and needs revisiting.
 ///
 /// Only the first reads are logged: the first one carries process-attach and AX-tree warm-up, the
 /// next few are the steady state, and after that it would be noise on every poll. The normal log
@@ -611,14 +601,13 @@ func reclaimDeadWarpHelperSockets(
 
 /// **How long after the launch line is written a helper may still take its address.**
 ///
-/// The previous number was derived from Tab Config lifetime + `open` timeout + how long the pane
-/// takes to appear, and **that is not a bound** (round 23 review): "the instruction after `listen`"
-/// is not a time, and a suspended process can be anywhere. The helper's own caps do not close it
+/// A launch timeout is not a bound: "the instruction after `listen`" is not a time, and a suspended
+/// process can be anywhere. The helper's own caps do not close it
 /// either — the 180-second idle cap and the 900-second lifetime cap both start once it is *serving*,
 /// which is after the claim, so a helper suspended before the claim had no cap at all.
 ///
 /// So the helper is handed this at birth and refuses to claim past it. That is not a check on app
-/// state — the shape round 17 ruled out — but the helper bounding itself against a constant it was
+/// state, but the helper bounding itself against a constant it was
 /// given, which needs nothing to be reachable and nothing to still be true.
 ///
 /// Two minutes: `open` alone is allowed fifteen seconds, the pane follows 0.5∼0.7s after it returns
@@ -664,7 +653,7 @@ func removeWarpHelperFileIfOurs(path: String) {
 
     // **The whole file, not a prefix of it.** Reading the marker's length and comparing says the file
     // *begins* our way, which a user file that starts with the same line also does — and this deletes
-    // what it matches (round 23 review). The size is the other half of "this is our file".
+    // what it matches. The size is the other half of "this is our file".
     let expected = Array(warpHelperPinMarker.utf8)
     var opened = stat()
     guard fstat(fd, &opened) == 0,

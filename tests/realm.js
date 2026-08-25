@@ -1,12 +1,12 @@
 // A realm for running one generation of the extension, and the record of what was fed to it.
 //
-// **It stubs platform boundaries and nothing else** (D176). `chrome.*`, the DOM, timers, the
+// **It stubs platform boundaries and nothing else**. `chrome.*`, the DOM, timers, the
 // observer, `history`: those are the browser. Our own symbols are never predefined — if a consumer
 // reaches for something its generation of `i18n.js` does not export, that is a `ReferenceError` and
 // the point of the exercise. Predefining one would make this double more generous than Chrome, which
-// is the class this repository named D89: the matrix passes and the browser does not.
+// is the class this repository has seen before: the matrix passes and the browser does not.
 //
-// **What was fed is hashed here** (D186). The pin is not "the file on disk is unchanged" — it is
+// **What was fed is hashed here**. The pin is not "the file on disk is unchanged" — it is
 // "the bytes this realm executed are the ones the baseline was pinned at", and those are only the
 // same thing while nothing transforms the source on the way in. Nothing does today; the hash is
 // taken of the string handed to `vm.runInContext` so that stays true by construction rather than by
@@ -92,7 +92,7 @@ const domElement = (id = '') => {
 // **Whether our own buttons are already on the page is a mode, not a constant.** The double answered
 // every `querySelector`, so the content script always saw a button of ours and never took the path
 // that inserts one — which is the *normal* first-render condition and the one the mixed generations
-// have to survive (review 39). `ourButtonsPresent: false` makes the selectors we use for our own
+// have to survive. `ourButtonsPresent: false` makes the selectors we use for our own
 // nodes answer null while the page's own structure still answers.
 // Read out of `content.js` rather than guessed: the first version of this pattern matched none of
 // the classes this extension actually uses, so every run still answered "a button of mine is
@@ -212,7 +212,7 @@ const generationRealm = ({ skeleton = 'current', consumers = 'current', platform
   // **Every byte that goes into a decision is recorded, not only the ones that go into the VM.**
   // `manifest.json` and `options.html` decide the load *order*, and the caller was reading them
   // directly — so their recorded hashes sat unused while a changed script order or a stray space
-  // would have altered the fixture silently (review 39). D186 is about the bytes that were used;
+  // would have altered the fixture silently. The pin is about the bytes that were used;
   // consulting a file is using it.
   const readFed = (name) => {
     const file = resolve(name);

@@ -4,7 +4,7 @@ import Foundation
 //
 // **A `!` input is typed into claude's own shell mode — never pre-run and pasted.** The app used
 // to run those lines in the pane's shell and hand claude the captured output as its opening
-// message; that is gone (user decision, round 10). Measured on 2.1.238 in a pty: `claude --
+// message; the current path types them into claude's shell mode. Measured on 2.1.238 in a pty: `claude --
 // '!echo x'` does **not** enter shell mode. The line arrives as an ordinary message and claude
 // then runs it through its Bash tool — which can stop for a permission prompt, is a model
 // judgement rather than a shell fact, and spends a turn. Typing it means the command really runs
@@ -84,8 +84,8 @@ let shellCompoundCommandKeywords: Set<String> = [
 /// anywhere in the body, for the same reason the append scanner reads every word: this scan does
 /// not model command positions, and over-folding only costs a cycle.
 ///
-/// Grouped by what leaks, because that is the only way to see a gap: round 13 found `setopt`
-/// without `unsetopt`, `hash` without `unhash`, and the whole name-binding family missing. Any
+/// Grouped by what leaks, because that is the only way to see a gap: paired state-changing words
+/// must be considered together. Any
 /// word added here should bring its partner.
 ///
 /// **Not a completeness claim.** It is the second line — the first is "anything the scan cannot
@@ -120,8 +120,8 @@ private let claudeJoinBreakingFirstCharacters: Set<Character> = ["&", "|", ";"]
 /// A **whitelist walk, not a shell parser** — parsing the user's shell is a road this repository
 /// has refused twice. The body passes only if the scan reaches its end seeing nothing that could
 /// reach past it, and **the scan makes no judgement about where in the body a character sits**.
-/// That last part is the lesson of round 13: the rule used to be "a `#` is a comment only when a
-/// space comes before it", which reads `!echo one;# note` as literal text — and there the `#` is a
+/// The rule is deliberately position-blind: treating `#` as a comment only when a space comes before
+/// it reads `!echo one;# note` as literal text — and there the `#` is a
 /// comment too, so it swallowed the rest of the merged line and the second input vanished with
 /// exit 0 (measured in zsh, bash and dash). A whitelist has no business proving that a character
 /// is harmless *here*; if it cannot be waved through everywhere, it folds. Over-folding costs a
@@ -144,7 +144,7 @@ private let claudeJoinBreakingFirstCharacters: Set<Character> = ["&", "|", ";"]
 ///    on the line (measured; zsh alone tolerates a leading `;`, and the gate is conservative across
 ///    shells for the same reason the `=` rule is)
 ///  - a word that **changes shell state** (`cd`, `export`, `set`, `alias`, `source` …). Measured
-///    (Q2b): separate `!` submissions share no state — `!export X=1` then `!echo $X` prints
+///    Separate `!` submissions share no state — `!export X=1` then `!echo $X` prints
 ///    nothing, because each `!` is a fresh eval — while a merged line does share it. That is a
 ///    difference in what runs, not in speed: `["!cd sub", "!rm -rf build"]` removes `./build` typed
 ///    separately and `sub/build` merged. Deleting the wrong directory is the failure class this
@@ -160,7 +160,7 @@ private let claudeJoinBreakingFirstCharacters: Set<Character> = ["&", "|", ";"]
 /// Anything unrecognised is *rejected*: that run is typed one input at a time, exactly as it was
 /// before merging existed.
 ///
-/// **A known residual, left in on purpose** (measured, round 14): in zsh, a *builtin* with an
+/// **A known residual, left in on purpose** (measured): in zsh, a *builtin* with an
 /// unquoted glob that matches nothing aborts the whole line — `echo A; echo *.nomatch; echo B`
 /// prints `A` and never reaches `B`, while the same line with `/bin/echo` runs to the end and bash
 /// does not do it at all. Folding on glob characters would fold every ordinary `gh … *`, which is
@@ -175,7 +175,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
     var word = ""
     var wordIsOpaque = false
     var foldsTheRun = false
-    // A separator is only valid **after a command word** (PR #36 review, Codex): the old cases
+    // A separator is only valid **after a command word**: the old cases
     // consumed `;` and `|` one character at a time, so `|||`, `||;`, `; ;` — an empty command
     // between separators — passed the gate, and the merged line died as a parse error in zsh,
     // bash and dash (measured), taking every later body with it. Separate submissions run them.
@@ -290,7 +290,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
 /// 24 characters at 4,000, measured) but because the Warp helper refuses an injection payload over
 /// 8 KiB. Merging is the optimisation, so it is what gives way: past the cap the run is typed input
 /// by input. **Nothing is ever truncated** — truncating would silently change a command the user
-/// wrote, which is the failure this loop exists to remove.
+/// wrote, which would silently change the command.
 public func claudeTypedInputs(_ inputs: [String]) -> [String] {
     var typed: [String] = []
     var run: [String] = []
@@ -331,13 +331,13 @@ public func claudeTypedInputs(_ inputs: [String]) -> [String] {
 /// **Exactly one** plain-text input, and nothing else in the list.
 ///
 /// Two reasons, and they are different:
-///  - *Nothing else in the list*: mixing argv with typing in one session is the combination round 4
+///  - *Nothing else in the list*: mixing argv with typing in one session is the combination
 ///    removed on a measurement — submitting the argv message clears the input box, and it renders
 ///    2.06∼3.41s after start while "claude accepts input" is true from 0.1s, so anything typed in
-///    between is wiped (3/3). No gate over that race survived review.
+///    between is wiped (3/3). No gate can remove that TUI timing window.
 ///  - *Exactly one*: several plain inputs used to be joined with blank lines, and the newline guard
 ///    in `prepareRequest` then rejected the result — so they could never ride argv anyway; the join
-///    was dead code wearing a feature's clothes (round 11). Carrying a newline through would mean
+///    was dead code wearing a feature's clothes. Carrying a newline through would mean
 ///    shell-specific quoting (`$'…'` is not POSIX) and a new way to be wrong about the pane's
 ///    shell, to save typing on a shape the shipped presets do not have. They are typed instead.
 public func claudeArgvOpeningMessage(_ inputs: [String]) -> String? {
@@ -363,14 +363,13 @@ private struct ShellWord {
 ///
 /// This list is the *second* layer, and it is not claimed to be complete. The first layer is
 /// structural: the append invokes `command claude`, which runs the executable past any function or
-/// alias (`appendedPromptCommand`), so the wrapper class this list used to be the only defence
-/// against cannot receive our prompt at all. What is left for the list is the shell being able to
-/// rebind `command` itself, plus grammar we do not model.
+/// alias (`appendedPromptCommand`), so wrappers cannot receive our prompt. What is left for the list
+/// is shell rebinding of `command` and grammar we do not model.
 ///
 /// Why every word and not just the first. Reading only the first word of a segment was wrong: a
 /// **redirection** (`> /dev/null eval …`) and a **precommand modifier** (zsh's `noglob`,
 /// `nocorrect`, `-`) both sit in front of the command name, and both were used to hide an `eval`
-/// (reproduced by two independent reviewers, sentinel confirmed). Neither list is closed across
+/// (reproduced with a sentinel). Neither list is closed across
 /// shells, so instead of locating the command position we require **every** word to be one that
 /// would be safe there. Wherever the command position turns out to be, that word has been checked.
 /// The price is over-folding on arguments spelled like these words (`git add .`) or on words we
@@ -380,7 +379,7 @@ private struct ShellWord {
 /// The named groups:
 ///
 ///  - **Definition and rebinding**: `function` (the keyword form has no `(` — this is what both
-///    reviewers used), `alias`/`unalias`, `hash` (rewrites the lookup table), `autoload`
+///    `alias`/`unalias`, `hash` (rewrites the lookup table), `autoload`
 ///    (zsh/ksh: declares a function loaded from `fpath`), `enable` (bash: loads builtins).
 ///  - **Evaluating text we cannot see**: `eval`, `source`, `.`, `trap` (its handler runs later in
 ///    this shell, `DEBUG` before every command).
@@ -403,7 +402,7 @@ private struct ShellWord {
 ///    structural partner relies on. It is not in the command text, so nothing here can see it.
 /// Both are recorded as residuals in `README.md` and `docs/new-terminal-checklist.md`.
 /// The compound keywords come in from the shared constant, which the join gate reads too — the two
-/// scanners folded different sets until round 14.
+/// scanners use the same compound-keyword set.
 private let commandPositionWordsThatFold: Set<String> = shellCompoundCommandKeywords.union([
     "function", "alias", "unalias", "hash", "autoload", "enable", "zmodload",
     "eval", "source", ".", "trap",
@@ -431,7 +430,7 @@ private func looksLikeAnAssignment(_ word: String) -> Bool {
 ///
 /// The previous rule looked only at "is the last segment's token `claude`", justified by "the
 /// worst a misjudgement can do is drop the prompt silently". **Reproductions proved that false**
-/// (external reviewers):
+/// (measured with shell sentinels):
 ///  - `echo ready # && claude` → the last token is `claude`, but all of it is a comment (silent loss)
 ///  - `cat <<claude` … `claude` → that `claude` is the heredoc **terminator**. Appending an
 ///    argument changes the terminator and the shell hangs waiting for input (breakage)
@@ -595,12 +594,10 @@ public func commandAcceptsAppendedClaudePrompt(_ command: String) -> Bool {
 /// everything else uses, and the rule this list serves is that appending must not be able to break
 /// a command that works today.
 ///
-/// **The list is about the whole command, not only the tail we add** — and the tail stopped being
-/// the reason in round 10. The append used to carry `$( )`, which csh and tcsh do not have, and the
-/// parse error there threw away the whole line, the part in front of `&&` included; that
-/// measurement still reproduces (`/bin/tcsh -c 'echo START; echo -- "$(/bin/echo hi)"'` prints no
-/// START, exit 1). But the append is now `command claude -- '<message>'`, and **that shape runs in
-/// tcsh** — measured, exit 0, `command` and `--` both fine there.
+/// **The list is about the whole command, not only the tail we add.** The append is
+/// `command claude -- '<message>'`, and that shape runs in tcsh, but the shipped presets use `&&`
+/// chains with `{ …; }` grouping that csh does not support. The measured csh parse failure discards
+/// the whole line, including the part before `&&`.
 ///
 /// What keeps csh out is the command being appended **to**: the shipped presets are `&&` chains
 /// with `{ …; }` grouping, the same reason fish is left out (`{ }` and `[ … ]` differ enough there
@@ -619,8 +616,8 @@ public func shellCanRunAppendedPrompt(_ shellPath: String) -> Bool {
     posixFamilyShellNames.contains((shellPath as NSString).lastPathComponent)
 }
 
-/// **Legacy names.** Until round 10 a request owned a directory here: a script that pre-ran the
-/// `!` inputs and the context file it assembled. Nothing creates those any more — `!` is typed
+/// **Legacy names.** Older requests owned a directory here for a script and context file. Nothing
+/// creates those now — `!` is typed
 /// into claude's shell mode instead — but installations that ran the older build left directories
 /// behind, so the sweep below (and `uninstall.sh`) still recognises and clears them.
 let claudePromptDirectoryPrefix = "tc-prompt-"
@@ -634,7 +631,7 @@ let claudePromptHandoffName = "handed-to-claude"
 /// that word.
 ///
 /// **This is the structural half of "our prompt is never executed as shell code".** A `claude`
-/// **function or alias** — the shape both reviewers used to get a plain-text input executed, and
+/// **function or alias** — a shape that can make a plain-text input execute, and
 /// the shape that is invisible to any scanner when it comes from the user's rc — receives our
 /// prompt as `$1` and can do what it likes with it. `command` is POSIX for "skip functions and
 /// aliases, run the executable", and the name after it is not in alias-expansion position either.
@@ -643,8 +640,8 @@ let claudePromptHandoffName = "handed-to-claude"
 /// The cost, accepted deliberately: someone who wraps `claude` on purpose (extra flags, an env
 /// var) loses that wrapper **on the merge path only** — commands with no claude input, and the
 /// typed route, are untouched, and naming the wrapper anything else keeps it. The alternative was
-/// to keep feeding wrappers and rely on spotting the dangerous ones, which is the blacklist this
-/// round removed. What it does not cover: `command` itself rebound in the rc, and a PATH that
+/// to keep feeding wrappers and rely on spotting the dangerous ones, which would be a blacklist.
+/// What it does not cover: `command` itself rebound in the rc, and a PATH that
 /// resolves `claude` to another program.
 private func invokingClaudeDirectly(_ trimmed: String) -> String? {
     guard trimmed.hasSuffix(claudeExecutableName) else { return nil }
@@ -656,11 +653,11 @@ private func invokingClaudeDirectly(_ trimmed: String) -> String? {
 
 /// Appends the opening message to the command as claude's first positional argument.
 ///
-/// There is no command substitution and no temporary file any more: the message is plain text the
-/// user wrote, so it goes in single-quoted and nothing in it is ever evaluated by the shell
-/// (`shellSingleQuoted` escapes the quotes themselves). What survives from the earlier design is
-/// the invocation: **`command claude`** so a wrapper of that name cannot receive the message, and
-/// the **`--`** so no flag can swallow it (measured: variadic flags do).
+/// There is no command substitution or temporary file: the message is plain text the user wrote,
+/// so it goes in single quotes and nothing in it is ever evaluated by the shell
+/// (`shellSingleQuoted` escapes the quotes themselves). The invocation uses **`command claude`** so
+/// a wrapper of that name cannot receive the message, and **`--`** so no flag can swallow it
+/// (measured: variadic flags do).
 public func appendedPromptCommand(_ command: String, message: String) -> String {
     let trimmed = command.replacingOccurrences(
         of: "[ \t]+$", with: "", options: .regularExpression
@@ -676,7 +673,7 @@ public struct PreparedRequest {
     /// appended to it)
     public let command: String
     /// Inputs for the typing path, `!` runs already merged. **Empty means neither the Warp helper
-    /// nor the Accessibility permission is needed** — which, since round 10, is true only for
+    /// nor the Accessibility permission is needed** — which is true only for
     /// buttons scheduling **exactly one** plain-text input, or none at all. "All plain text" is not
     /// the condition: two plain lines cannot ride argv together (`claudeArgvOpeningMessage`), so
     /// they are typed, and then both are needed
@@ -757,8 +754,7 @@ func reclaimStaleClaudePromptDirectories(
 /// `!` inputs are always typed (see the top of this file). A list holding **exactly one plain-text
 /// input** can instead ride in claude's argv, and then there is nothing left to type — the two are
 /// never mixed, because the argv message's own submission clears the input box seconds after
-/// claude starts and would wipe whatever we typed in the meantime (measured; round 4 removed the
-/// combination and no gate over it survived review).
+/// claude starts and would wipe whatever we typed in the meantime (measured).
 ///
 /// It does not throw: this conversion cannot fail a request.
 public func prepareRequest(
