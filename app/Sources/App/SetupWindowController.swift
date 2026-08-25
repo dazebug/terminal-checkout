@@ -69,7 +69,9 @@ final class FittedContentStackView: NSStackView {
     }
 
     /// Geometry can be unchanged while the main-queue update or a rebuild's restore callback is
-    /// still waiting. The shared test settle reads both parts before declaring a fixed point.
+    /// still waiting. The shared test settle reads these two and the view's own `needsLayout`
+    /// before declaring a fixed point — a new deferred mechanism has to join that set, because
+    /// unchanged geometry has already been mistaken for a settled tree once per signal.
     var deferredWindowUpdatePendingForTesting: Bool { windowUpdateScheduled }
     var deferredWindowCompletionPendingForTesting: Bool { afterWindowUpdate != nil }
 
