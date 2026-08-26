@@ -43,9 +43,11 @@ enum CmuxAutomation {
     private static let backupNameAttemptLimit = 1000
     private static let symlinkResolutionLimit = 32
 
-    private static func backupCandidateName(timestamp: String, suffix: Int) -> String {
-        if suffix == 1 { return "cmux.json.\(timestamp).bak" }
-        return "cmux.json.\(timestamp)-\(suffix).bak"
+    private static func backupCandidateName(
+        timestamp: String, randomToken: String, suffix: Int
+    ) -> String {
+        let collisionSuffix = suffix == 1 ? "" : "-\(suffix)"
+        return "cmux.json.\(timestamp).\(randomToken)\(collisionSuffix).bak"
     }
 
     private static func errorIsFileExists(_ error: Error) -> Bool {
@@ -96,12 +98,21 @@ enum CmuxAutomation {
     /// `backupItemName` removes an existing item with that name during replacement, so checking
     /// then using a path leaves a TOCTOU window. O_EXCL reservation makes the placeholder ours;
     /// Foundation replaces that placeholder with the bytes it evicts, and failures remove it only
-    /// while its recorded inode/device and zero size still prove that it is ours.
+    /// while its recorded inode/device and zero size still prove that it is ours. Swift's Darwin
+    /// module exposes no `funlinkat` (`import Darwin; _ = funlinkat` fails to compile), so the
+    /// reservation name also carries eight random hex digits. A path that cannot be predicted can
+    /// only have been moved there deliberately by a same-uid actor; identity checking remains a
+    /// defense-in-depth guard, and the unlink primitive can be revisited if Swift exposes it.
     private static func reserveBackupURL(
         timestamp: String, directory: URL, reserve: (URL) throws -> ReservedBackup
     ) throws -> ReservedBackup {
+        let randomToken = String(
+            UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
+        ).lowercased()
         for suffix in 1...backupNameAttemptLimit {
-            let name = backupCandidateName(timestamp: timestamp, suffix: suffix)
+            let name = backupCandidateName(
+                timestamp: timestamp, randomToken: randomToken, suffix: suffix
+            )
             let url = directory.appendingPathComponent(name)
             do {
                 let reserved = try reserve(url)
@@ -187,6 +198,41 @@ enum CmuxAutomation {
         removeReservedPlaceholder(reservation)
     }
 
+    /// Narrow a real backup through an O_NOFOLLOW descriptor. A symlink is rejected by open and a
+    /// non-regular file is rejected after fstat, so this operation cannot chmod a target selected
+    /// by a path swap.
+    private static func narrowBackupPermissions(at url: URL) throws {
+        let descriptor = url.path.withCString { path in
+            Darwin.open(path, O_RDONLY | O_NOFOLLOW)
+        }
+        guard descriptor >= 0 else {
+            let code = errno
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        defer { _ = Darwin.close(descriptor) }
+
+        var info = stat()
+        guard Darwin.fstat(descriptor, &info) == 0 else {
+            let code = errno
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        guard (info.st_mode & S_IFMT) == S_IFREG else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain, code: Int(EINVAL),
+                userInfo: [NSLocalizedDescriptionKey: "cmux backup is not a regular file"]
+            )
+        }
+        guard Darwin.fchmod(descriptor, mode_t(0o600)) == 0 else {
+            let code = errno
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+    }
+
+    /// Test-only access to the descriptor-based chmod seam.
+    static func testOnlyNarrowBackupPermissions(at url: URL) throws {
+        try narrowBackupPermissions(at: url)
+    }
+
     /// The synchronous file operation is injectable for tests; the button calls the asynchronous
     /// wrapper below so backup, disk I/O, and the bounded live probe never block AppKit.
     static func writeAutomation(
@@ -196,7 +242,8 @@ enum CmuxAutomation {
         status: @escaping () -> CmuxSocketStatus = { PermissionChecker.cmuxSocketStatus() },
         sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         replaceItem: ((_ original: URL, _ replacement: URL, _ backupItemName: String?) throws -> Void)? = nil,
-        reserveBackup: ((_ url: URL) throws -> ReservedBackup)? = nil
+        reserveBackup: ((_ url: URL) throws -> ReservedBackup)? = nil,
+        narrowBackup: ((_ url: URL) throws -> Void)? = nil
     ) throws -> CmuxAutomationWriteResult {
         let requestedConfigURL = suppliedURL ?? defaultConfigURL()
         let configURL = try resolvedConfigURL(requestedConfigURL, fileManager: fileManager)
@@ -276,6 +323,9 @@ enum CmuxAutomation {
                 options: [.withoutDeletingBackupItem]
             )
         }
+        let narrowBackupOperation: (URL) throws -> Void = narrowBackup ?? { url in
+            try narrowBackupPermissions(at: url)
+        }
         do {
             try Data(contents.utf8).write(to: temporaryURL, options: [])
             try fileManager.setAttributes(
@@ -299,9 +349,7 @@ enum CmuxAutomation {
             let replacementError = errorMessage(error)
             if let backupURL, !ownsEmptyBackupPlaceholder(backupURL) {
                 do {
-                    try fileManager.setAttributes(
-                        [.posixPermissions: 0o600], ofItemAtPath: backupURL.url.path
-                    )
+                    try narrowBackupOperation(backupURL.url)
                 } catch {
                     throw CmuxConfigurationError.writeFailedWithUnsecuredBackup(
                         "\(replacementError); backup chmod failed: \(errorMessage(error))",
@@ -323,9 +371,7 @@ enum CmuxAutomation {
         var backupSecured = true
         if let backupURL {
             do {
-                try fileManager.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: backupURL.url.path
-                )
+                try narrowBackupOperation(backupURL.url)
             } catch {
                 backupSecured = false
                 // Replacement already applied the new config; reporting this as a write

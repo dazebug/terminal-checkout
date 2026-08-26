@@ -131,6 +131,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] When `cmux.json` is a symlink, [Allow Automation] edits its resolved target, leaves the symlink in place, and writes the backup beside that target.
 - [ ] If narrowing the backup permissions fails after the setting is applied, the card shows a backup-protection warning while retaining the live status diagnosis.
 - [ ] After backup chmod fails, [Check Again], switching terminals, and pressing [Allow Automation] again keep the warning until that backup is mode 0600 or gone.
+- [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery.
 - [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).
 - [ ] A `!` input enters claude's shell mode, and the clear sequence uses two separate `surface.send_text` calls, `0x15` then `0x7F`, to remove the shell-mode prefix as well as the text.

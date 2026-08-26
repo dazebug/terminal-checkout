@@ -263,6 +263,11 @@ final class CmuxAutomationTests: XCTestCase {
                     try FileManager.default.removeItem(at: destination)
                     try FileManager.default.moveItem(at: originalURL, to: destination)
                     throw NSError(domain: "CmuxAutomationTests", code: 8)
+                },
+                narrowBackup: { url in
+                    try fileManager.setAttributes(
+                        [.posixPermissions: 0o600], ofItemAtPath: url.path
+                    )
                 }
             )
         } catch {
@@ -296,6 +301,24 @@ final class CmuxAutomationTests: XCTestCase {
         let sameReservation = reservedBackup(at: same)
         CmuxAutomation.testOnlyRemoveReservedPlaceholder(sameReservation)
         XCTAssertFalse(FileManager.default.fileExists(atPath: same.path))
+    }
+
+    /// N3 red reproduction: path-based chmod follows a backup symlink and changes an unrelated
+    /// file. The deletion race is not reproduced here; the green fd transition removes that
+    /// identity-to-path window rather than relying on a timing test.
+    func testItem22NarrowBackupPermissionsRejectsSymlinkWithoutChangingTarget() throws {
+        let target = directory.appendingPathComponent("unrelated")
+        let backupLink = directory.appendingPathComponent("cmux.json.link.bak")
+        try Data("unrelated".utf8).write(to: target)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: target.path
+        )
+        XCTAssertEqual(symlink(target.path, backupLink.path), 0)
+
+        XCTAssertThrowsError(
+            try CmuxAutomation.testOnlyNarrowBackupPermissions(at: backupLink)
+        )
+        XCTAssertEqual(try permissions(of: target), 0o644)
     }
 
     /// J7 red reproduction: a dotfiles-style symlink must remain the live configuration path while
@@ -406,7 +429,12 @@ final class CmuxAutomationTests: XCTestCase {
                     configURL: config,
                     fileManager: fileManager,
                     status: { liveStatus },
-                    sleep: { _ in }
+                    sleep: { _ in },
+                    narrowBackup: { url in
+                        try fileManager.setAttributes(
+                            [.posixPermissions: 0o600], ofItemAtPath: url.path
+                        )
+                    }
                 )
             } catch {
                 thrown = error
@@ -445,8 +473,6 @@ final class CmuxAutomationTests: XCTestCase {
         try Data(original.utf8).write(to: config)
         let now = Date(timeIntervalSince1970: 1_756_000_000)
         let timestamp = backupTimestamp(now)
-        let first = "cmux.json.\(timestamp).bak"
-        let second = "cmux.json.\(timestamp)-2.bak"
         var reservationAttempts: [String] = []
         var replacementBackupName: String?
 
@@ -463,7 +489,7 @@ final class CmuxAutomationTests: XCTestCase {
             },
             reserveBackup: { url in
                 reservationAttempts.append(url.lastPathComponent)
-                if url.lastPathComponent == first {
+                if reservationAttempts.count == 1 {
                     throw NSError(domain: NSPOSIXErrorDomain, code: Int(EEXIST))
                 }
                 try Data("placeholder".utf8).write(to: url, options: .withoutOverwriting)
@@ -472,7 +498,14 @@ final class CmuxAutomationTests: XCTestCase {
         )
 
         assertAppliedResult(result, backupSecured: true)
-        XCTAssertEqual(reservationAttempts, [first, second])
+        XCTAssertEqual(reservationAttempts.count, 2)
+        let first = try XCTUnwrap(reservationAttempts.first)
+        let second = try XCTUnwrap(reservationAttempts.last)
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(first.hasPrefix("cmux.json.\(timestamp)."))
+        XCTAssertTrue(first.hasSuffix(".bak"))
+        XCTAssertTrue(second.hasPrefix("cmux.json.\(timestamp)."))
+        XCTAssertTrue(second.hasSuffix("-2.bak"))
         XCTAssertEqual(replacementBackupName, second)
         XCTAssertEqual(
             try String(contentsOf: directory.appendingPathComponent(second), encoding: .utf8),

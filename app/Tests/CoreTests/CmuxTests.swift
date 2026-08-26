@@ -111,6 +111,23 @@ final class CmuxTests: XCTestCase {
         }
     }
 
+    /// N2 red reproduction: the CLI's `Error: ` prefix is part of the measured connection
+    /// evidence. A prefixless message is not an anchor; if cmux changes its output, retry must
+    /// close conservatively rather than claim that the request never reached the server.
+    func testCmuxCLIFailureClassifierRequiresTheMeasuredErrorPrefix() {
+        let unprefixedErrors = [
+            "Failed to connect to socket at /tmp/x",
+            "Socket not found at /tmp/x",
+        ]
+        for message in unprefixedErrors {
+            let classified = classifyCmuxCLIFailure(message)
+            guard case .cmuxRPCFailed = classified else {
+                XCTFail("an unmeasured prefixless error authorized a retry")
+                continue
+            }
+        }
+    }
+
     /// L2: a post-create hook can contain the same filesystem words after the server already made
     /// a workspace, so it must remain an ordinary RPC failure and never authorize a retry.
     func testCmuxCLIFailureDoesNotTreatPostCreateHookFailureAsConnectionLoss() {

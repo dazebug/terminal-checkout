@@ -125,18 +125,15 @@ func cmuxRecoveryAction(
 /// `Error: Failed to connect to socket at /tmp/…/dead.sock (Connection refused, errno 61)` means
 /// the socket file exists but its listener is gone after cmux stopped; `Error: Socket not found at
 /// /tmp/…/nonexistent.sock` means the socket file is absent. The `Error: ` prefix is part of the
-/// CLI output. An earlier test omitted that prefix and passed while blocking the real auto-launch
-/// path, so the tests must retain the measured raw forms. These anchors are tied to the measured
-/// cmux CLI version; anchoring prevents `workspace.create: post-create hook: no such file or
-/// directory` from authorizing a duplicate workspace retry merely because of a substring match.
+/// CLI output and is required: if a future CLI stops emitting it, this classifier fails closed and
+/// rethrows rather than treating an unmeasured string as proof that no request reached the server.
+/// An earlier test omitted that prefix and passed while blocking the real auto-launch path. These
+/// anchors are tied to the measured cmux CLI version; anchoring prevents `workspace.create:
+/// post-create hook: no such file or directory` from authorizing a duplicate workspace retry just
+/// because of a substring match.
 func classifyCmuxCLIFailure(_ message: String) -> TerminalError {
-    let cliPrefix = "Error: "
-    let unprefixed = message.hasPrefix(cliPrefix)
-        ? String(message.dropFirst(cliPrefix.count))
-        : message
-
-    if unprefixed.hasPrefix("Failed to connect to socket at ")
-        || unprefixed.hasPrefix("Socket not found at ") {
+    if message.hasPrefix("Error: Failed to connect to socket at ")
+        || message.hasPrefix("Error: Socket not found at ") {
         return .cmuxNotReachable(message)
     }
 

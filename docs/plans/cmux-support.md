@@ -268,15 +268,23 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 **[채택 — 2026-08-26]** 렌더링과 바깥 공백 제거 뒤 `claude_inputs`의 LF·CR을 거부한다. 모든 typed carrier에서 개행은 marker·화면 반영 확인·최종 CR보다 먼저 제출되므로 조용한 우회가 된다. `command_template`은 실행 계약상 CR을 붙이고 개행을 별도 shell command로 실행하므로 이 제한을 적용하지 않는다.
 
+**N1 보강 — 2026-08-27:** `claude_inputs`는 NUL·개행의 기존 진단을 먼저 거친 뒤 나머지 C0 제어 문자와 DEL도 거부한다. 이 바이트들은 타이핑되고 DEL은 Backspace로 동작하며 반영 확인은 앞 24자만 보므로, 뒤의 제어 문자가 CR 전에 명령을 바꿀 수 있다. `command_template`에는 적용하지 않는다.
+
 ### D11. cmux.json은 백업 뒤 교체 직전 재읽기
 
 **[채택 — 2026-08-26]** timestamp 백업 이름을 정한 뒤 원자적 교체 직전에 설정 파일 바이트를 다시 읽어 최초 읽기와 비교한다. 불일치하면 백업 경로를 포함해 던지고 stale 결과를 덮어쓰지 않는다. 비교로 탐지한 경합은 거부하고, 탐지하지 못한 경합도 `replaceItem`의 `backupItemName`이 교체된 바이트를 보존하게 한다. 백업 이름이 이미 있으면 건너뛴다 — `backupItemName`은 동명 항목을 제거한다(H1). 병합은 어느 편집자의 의도를 보존할지 추측하게 되므로 하지 않는다. 백업과 새로 생성하는 설정 파일은 0600으로 만들고, 이미 있던 설정 파일의 권한은 그대로 보존한다(cmux가 만든 파일이면 0600이며 `socketPassword`를 담을 수 있다). 백업 권한 좁히기는 교체 뒤 마무리이므로 실패해도 라이브 상태를 거짓으로 만들지 않는다(H2). I1에서는 그 실패를 `backupSecured: false`로 결과에 실어 UI가 라이브 상태와 별도로 경고한다. I2에서는 이름을 확인 후 사용하는 대신 후보를 `O_EXCL` placeholder로 원자 예약한다 — `backupItemName`의 동명 항목 제거 창을 예약 자체로 닫는다. J1은 교체가 원본을 backup으로 옮긴 뒤 던지는 경로에서 inode·device와 크기 0이 맞을 때만 placeholder를 정리하고, J6은 예약 직후부터 정리한다. J7은 심링크 위 `replaceItemAt`의 실측 오류 `NSCocoaErrorDomain Code=4` 때문에 유한하게 실제 target을 해석해 그 경로를 편집한다.
 
 **L3/L4 보강 — 2026-08-27:** 교체 중간 실패 때 실제 백업을 먼저 0600으로 좁히고, 그 chmod까지 실패했을 때만 경로를 담은 보호 실패를 던진다. 예약 identity는 닫기 전 `fstat`으로 얻고 모든 placeholder 삭제는 identity·빈 크기 확인 뒤에만 한다.
 
+**N3 보강 — 2026-08-27:** 백업 chmod는 `O_RDONLY|O_NOFOLLOW`로 연 정규 파일 descriptor의 `fstat`·`fchmod`로 수행한다. Swift Darwin에 `funlinkat`이 없어 예약 이름에 난수 성분을 넣어 예측 가능한 경로 교체를 막고 identity 확인은 유지한다.
+
+**N4 보강 — 2026-08-27:** 백업 보안 경고는 `lstat`의 ENOENT·ENOTDIR만 파일 없음으로 해제하며, EACCES 같은 확인 불가는 유지한다. 성공한 `0600` 확인만 보호 완료의 근거다.
+
 ### D12. cmux ping PONG/거부가 기본 소켓 파일보다 우선
 
-**L2 보강 — 2026-08-27:** 재시도 지점은 문자열 마커가 아니라 선택적 `Error: ` 접두사를 벗긴 뒤 `Failed to connect to socket at ` 또는 `Socket not found at `으로 시작하는 실측 CLI 오류 타입만 허용한다. 두 형태 모두 드라이버가 측정한 원문이고 `Error: `는 CLI 출력의 일부다. 접두사를 뺀 문자열로 고정했던 이전 테스트는 통과하면서도 실제 자동 기동 경로를 막았다. 부분 문자열은 `workspace.create: post-create hook: no such file or directory`처럼 서버가 만든 뒤의 실패를 구별하지 못한다.
+**L2 보강 — 2026-08-27:** 재시도 지점은 문자열 마커가 아니라 `Error: Failed to connect to socket at ` 또는 `Error: Socket not found at `으로 **시작하는** 실측 CLI 오류 타입만 허용한다. 두 형태 모두 드라이버가 측정한 원문이고 `Error: `는 CLI 출력의 일부다. 접두사를 뺀 문자열로 고정했던 이전 테스트는 통과하면서도 실제 자동 기동 경로를 막았고, 이제 접두사가 사라지면 닫히는 방향으로 실패한다. 부분 문자열은 `workspace.create: post-create hook: no such file or directory`처럼 서버가 만든 뒤의 실패를 구별하지 못한다.
+
+**N2 보강 — 2026-08-27:** 두 실측 형태는 `Error: ` 접두사까지 필수로 앵커한다. 접두사를 뺀 테스트가 초록이면서 실경로의 자동 기동을 막았던 사실을 기록한다.
 
 **[채택 — 2026-08-26]** cmux CLI는 `CMUX_SOCKET_PATH`와 `/tmp/cmux-last-socket-path`로 소켓을 스스로 찾으므로 PONG은 기본 소켓 파일 부재보다 먼저 `reachable`, Access denied는 `denied`로 분류한다. 두 결과가 모두 아니고 기본 소켓도 없을 때만 `notRunning`이며, 기동 필요 판정은 소켓 부재와 ping 실패의 동시 조건이다. Access denied는 cmux를 다시 띄워 고칠 수 없으므로 즉시 `cmuxSocketDenied`로 실패시켜야 한다. 소켓 파일이 있으면 ping을 생략하고 진행하며, automation 거부 진단은 `workspace.create`의 RPC 분류로 보존한다(H3). **[교체 — I5, 2026-08-26]** 실행 경로는 ping을 쓰지 않고 `workspace.create`를 정본 진단으로 삼는다. 첫 RPC가 `cmuxSocketDenied`면 즉시 던지고, 그 밖의 실패에서만 한 번 기동·`debug.terminals` 서버 폴링·`workspace.create` 한 번의 재시도를 한다. 설정 창 라이브 상태 프로브의 ping 정본과 실행 경로의 `workspace.create` 정본은 서로 다른 계약이다. J2에서는 timeout·invalid JSON처럼 서버 부작용 가능성이 있는 결과를 재시도하지 않고, 연결 자체가 성립하지 않았음이 보이는 RPC 실패만 재시도한다. J5에서는 기동 뒤 `debug.terminals` 서버 응답을 준비 정본으로 삼고, 거부는 즉시 `cmuxSocketDenied`로 끝낸다.
 
@@ -425,6 +433,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 - cold review 5차(2026-08-26, bb511c5): 판정 no, 차단 5건 + 비차단 1건 + 드라이버 추가 1건 — J1 교체 부분 실패 시 진짜 백업 삭제(치명), J2 결과 불확실한 `workspace.create` 재시도, J3 정상 종료 경로의 무한 드레인(**드라이버 실측: 타임아웃 테스트 뒤 `sleep 30` PID 잔존**), J4 백업 경고가 한 번 쓰고 잊힘, J5 준비 판정이 다시 소켓 파일 의존, J6 예약 직후 잔재 창, **J7 심링크된 cmux.json에서 [Allow Automation] 실패(드라이버 실측: `NSCocoaErrorDomain Code=4`)**. I3·I4·I6은 닫힘 확인. red: 6 테스트 12 실패(전체 30.1초가 J3의 증거) / green: swift 559(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. 실측(설치본, 드라이버): R1-j 7회째 PASS(7.5s), **J7 심링크 실기기 PASS**(설정 창 [자동화 허용] → 상태줄 `소켓 접근 거부` → `연결 가능`, 링크 유지·target이 automation 획득·백업은 target 디렉터리에 0600 원본 바이트), R1-n 3회째 PASS(0.2s), **J2 회귀 검사 PASS**(cmux 완전 종료 뒤 자동 기동 2.4s, CLI 오류 원문 `Failed to connect to socket … (Connection refused, errno 61)`), **J8 setpgid 20/20 EACCES**(손자 잔존 1 → 2). J7 실측 중 무관한 결함 하나를 발견해 이슈로 남겼다(#59 — 설정 창이 base dir 입력창에 포커스를 준 채 열려 오타 한 글자가 저장까지 간다).
 
 - cold review 6차(2026-08-26, bd01c24): 판정 no, 차단 6건 + 비차단 1건 — L1 파일을 고치지 않고도 백업 경고가 해제됨(이미 automation + cmux 꺼짐에서 재클릭), L2 재시도 마커가 부분 문자열이라 서버가 만든 뒤의 후처리 실패도 재시도(workspace 중복), L3 교체 중간 실패에서 진짜 백업이 0600 보장을 잃음, L4 예약 identity를 `close` 뒤 경로에서 읽음, L5 잘못된 UTF-8 한 바이트가 전체 출력을 빈 문자열로 만듦, L6 마지막 대기 실패 뒤 버퍼 읽기가 데이터 경합, L7 기동·준비 실패 진단 소실(비차단). J5∼J8은 닫힘 확인. red: 8 테스트 11 실패(드라이버) / green: swift 567(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. **green 중 드라이버 실측으로 L2 앵커 결함을 잡았다** — 실제 CLI stderr은 `Error: `로 시작하는데 앵커가 그 접두사를 몰라, 테스트는 통과하면서 실경로의 자동 기동을 막고 있었다. 사용자 cmux를 끄지 않고 `CMUX_SOCKET_PATH`로 두 형태를 재측정했다: `Error: Failed to connect to socket at <path> (Connection refused, errno 61)`(소켓 파일은 있고 listener 없음)과 `Error: Socket not found at <path>`(소켓 파일 없음). 둘 다 접두사 포함 앵커로 고정했고, 테스트 입력도 실측 원문으로 바꿨다(red 3 테스트 4 실패 확인 후 green).
+- cold review 7차(2026-08-27, f3e077b): 판정 no, 4건 — **N1 `claude_inputs`가 NUL·개행만 거부해 DEL(U+007F)이 통과, 타이핑되는 바이트라 Backspace로 동작하고 반영 확인은 앞 24자만 보므로 24자 뒤의 DEL은 검사에 걸리지 않은 채 CR이 나가 다른 명령이 조용히 실행된다(cmux 이전부터 있던 결함)**, N2 앵커가 `Error: `를 선택적으로 벗겨 측정되지 않은 무접두사 형태도 재시도로 승인, N3 identity 확인∼경로 삭제/chmod TOCTOU(`funlinkat`은 Swift Darwin에 없음 — 드라이버 실측), N4 `fileExists == false`가 '없음'과 '확인 불가'를 합쳐 EACCES에서 경고가 영구히 사라진다. L3·L5·L6·L7은 닫힘 확인. red: 4 테스트 8 실패(드라이버) / green: 다음 커밋 라운드에 기입. green: swift 571(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. N3은 `funlinkat` 부재(드라이버 실측: `import Darwin; _ = funlinkat` 컴파일 실패, 반면 `O_NOFOLLOW`·`fstat`·`fchmod`는 보인다)를 인정하고 두 갈래로 풀었다 — chmod는 `O_NOFOLLOW` 디스크립터 기반, 삭제는 예약 이름에 8자리 hex를 넣어 경로를 예측 불가로 만들고 identity 검사를 방어 이중화로 남겼다.
 
 ### 테스트 심사
 

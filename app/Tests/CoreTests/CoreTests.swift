@@ -341,6 +341,44 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
+    /// N1 red reproduction: the DEL at the end of a 25-character input is outside the first
+    /// 24 reflected characters but still reaches TIOCSTI as the project's Backspace byte. Tabs
+    /// and ESC are the same class of unsafe input. NUL and CR/LF keep their existing diagnostics;
+    /// command_template remains on the shell-execution boundary and accepts DEL.
+    func testClaudeInputsRejectControlBytesWithoutChangingSpecificDiagnostics() {
+        func request(_ input: String) -> [String: Any] {
+            [
+                "command_template": "claude",
+                "claude_inputs": [input],
+            ]
+        }
+
+        let controls = [
+            "!printf '%s\\n' 123456789012345678901234Z\u{7F}",
+            "tab\u{09}input",
+            "escape\u{1B}input",
+        ]
+        for input in controls {
+            XCTAssertThrowsError(try resolveRequest(request(input))) { error in
+                XCTAssertTrue(errorMessage(error).contains("claude_inputs"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertThrowsError(try resolveRequest(request("pre\u{0}post"))) { error in
+            XCTAssertTrue(errorMessage(error).contains("must not contain NUL"), "unexpected error: \(error)")
+        }
+        for lineBreak in ["pre\npost", "pre\rpost"] {
+            XCTAssertThrowsError(try resolveRequest(request(lineBreak))) { error in
+                XCTAssertTrue(errorMessage(error).contains("must not contain line breaks"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertNoThrow(try resolveRequest(request("!안녕 🦄")))
+        XCTAssertNoThrow(try resolveRequest([
+            "command_template": "claude\u{7F}",
+        ]))
+    }
+
     func testNULInTheCommandIsRejected() {
         XCTAssertThrowsError(try resolveRequest([
             "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],

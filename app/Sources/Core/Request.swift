@@ -62,6 +62,7 @@ public func resolveRequest(
         guard !rendered.isEmpty else { continue }
         try rejectNUL(in: rendered, what: "claude_inputs")
         try rejectLineBreaks(in: rendered, what: "claude_inputs")
+        try rejectControlCharacters(in: rendered, what: "claude_inputs")
         claudeInputs.append(rendered)
     }
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)
@@ -85,6 +86,20 @@ private func rejectLineBreaks(in text: String, what: String) throws {
     guard !text.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) else {
         throw CommandError.badRequest(
             "\(what) must not contain line breaks: they are submitted before screen reflection can be confirmed"
+        )
+    }
+}
+
+/// Typed claude input must not carry control bytes: they are typed into the terminal, DEL acts as
+/// Backspace, and reflection checks only the first 24 characters before the app sends CR. This
+/// guard is not used for `command_template`, whose shell execution treats an embedded line break
+/// as the user's intentional second command.
+private func rejectControlCharacters(in text: String, what: String) throws {
+    guard !text.unicodeScalars.contains(where: { scalar in
+        scalar.value <= 0x1F || scalar.value == 0x7F
+    }) else {
+        throw CommandError.badRequest(
+            "\(what) must not contain control characters: typed bytes can act as keys (DEL is Backspace), and reflection checks only the first 24 characters before CR"
         )
     }
 }

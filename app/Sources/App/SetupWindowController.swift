@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Core
 
 /// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
@@ -322,13 +323,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return retained
     }
 
-    private static func cmuxBackupIsSecured(at path: String) -> Bool {
-        guard FileManager.default.fileExists(atPath: path) else { return true }
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let permissions = attributes[.posixPermissions] as? NSNumber else {
-            return false
+    /// Only a confirmed 0600 file, or a lstat failure proving ENOENT/ENOTDIR, releases a retained
+    /// warning. An access error is "could not check", not evidence that the backup is protected.
+    static func cmuxBackupSecurityDecision(
+        statResult: Int32, errnoValue: Int32, mode: mode_t
+    ) -> Bool {
+        guard statResult == 0 else {
+            return errnoValue == ENOENT || errnoValue == ENOTDIR
         }
-        return permissions.intValue == 0o600
+        return mode & mode_t(0o777) == mode_t(0o600)
+    }
+
+    private static func cmuxBackupIsSecured(at path: String) -> Bool {
+        var info = stat()
+        let result = path.withCString { lstat($0, &info) }
+        let error = result == 0 ? 0 : errno
+        return cmuxBackupSecurityDecision(
+            statResult: Int32(result), errnoValue: Int32(error), mode: info.st_mode
+        )
     }
 
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))

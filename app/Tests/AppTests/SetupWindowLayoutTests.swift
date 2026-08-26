@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import Darwin
 import XCTest
 @testable import App
 
@@ -588,6 +589,36 @@ final class SetupWindowLayoutTests: XCTestCase {
                 [oldPath], after: .alreadyEnabled, isSecured: { _ in false }
             ),
             [oldPath]
+        )
+    }
+
+    /// N4 red reproduction: only ENOENT and ENOTDIR prove that a backup is gone. An EACCES
+    /// result is an unknown state and must keep the warning until the file can be measured.
+    func testCmuxBackupSecurityDecisionKeepsWarningOnAccessDenied() {
+        XCTAssertTrue(
+            SetupWindowController.cmuxBackupSecurityDecision(
+                statResult: -1, errnoValue: Int32(ENOENT), mode: 0
+            )
+        )
+        XCTAssertTrue(
+            SetupWindowController.cmuxBackupSecurityDecision(
+                statResult: -1, errnoValue: Int32(ENOTDIR), mode: 0
+            )
+        )
+        XCTAssertFalse(
+            SetupWindowController.cmuxBackupSecurityDecision(
+                statResult: -1, errnoValue: Int32(EACCES), mode: 0
+            )
+        )
+        XCTAssertTrue(
+            SetupWindowController.cmuxBackupSecurityDecision(
+                statResult: 0, errnoValue: 0, mode: mode_t(0o600)
+            )
+        )
+        XCTAssertFalse(
+            SetupWindowController.cmuxBackupSecurityDecision(
+                statResult: 0, errnoValue: 0, mode: mode_t(0o644)
+            )
         )
     }
 
