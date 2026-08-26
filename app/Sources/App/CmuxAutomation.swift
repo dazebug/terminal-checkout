@@ -28,6 +28,23 @@ enum CmuxConfigurationError: Error, CustomStringConvertible {
 }
 
 enum CmuxAutomation {
+    /// Foundation removes an existing item with the same backupItemName during replacement.
+    /// A seconds-only timestamp cannot protect that older recovery file, so try readable suffixes
+    /// and fail rather than silently overwriting after the bounded search.
+    static func backupFileName(
+        timestamp: String, isTaken: (String) -> Bool
+    ) throws -> String {
+        let base = "cmux.json.\(timestamp).bak"
+        if !isTaken(base) { return base }
+        for suffix in 2...1000 {
+            let candidate = "cmux.json.\(timestamp)-\(suffix).bak"
+            if !isTaken(candidate) { return candidate }
+        }
+        throw CmuxConfigurationError.backupFailed(
+            "no available backup name for timestamp \(timestamp)"
+        )
+    }
+
     static func defaultConfigURL(homeDirectory: String = NSHomeDirectory()) -> URL {
         URL(fileURLWithPath: homeDirectory)
             .appendingPathComponent(".config", isDirectory: true)
@@ -84,9 +101,13 @@ enum CmuxAutomation {
         let directory = configURL.deletingLastPathComponent()
         let backupURL: URL?
         if exists {
-            let path = configURL.deletingLastPathComponent().appendingPathComponent(
-                "cmux.json.\(backupTimestamp(now)).bak"
+            let backupName = try backupFileName(
+                timestamp: backupTimestamp(now),
+                isTaken: { name in
+                    fileManager.fileExists(atPath: directory.appendingPathComponent(name).path)
+                }
             )
+            let path = directory.appendingPathComponent(backupName)
             backupURL = path
         } else {
             backupURL = nil
@@ -123,9 +144,18 @@ enum CmuxAutomation {
                 try replaceItemOperation(configURL, temporaryURL, backupURL?.lastPathComponent)
                 // Narrowing a backup loses nothing, and cmux.json may contain socketPassword.
                 if let backupURL {
-                    try fileManager.setAttributes(
-                        [.posixPermissions: 0o600], ofItemAtPath: backupURL.path
-                    )
+                    do {
+                        try fileManager.setAttributes(
+                            [.posixPermissions: 0o600], ofItemAtPath: backupURL.path
+                        )
+                    } catch {
+                        // Replacement already applied the new config; reporting this as a write
+                        // failure would lie about the live state. Keep the diagnosis and probe it.
+                        checkoutLog(
+                            "could not narrow cmux backup permissions to 0600 after replacement"
+                                + " — configuration is already applied (\(errorMessage(error)))"
+                        )
+                    }
                 }
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: configURL)

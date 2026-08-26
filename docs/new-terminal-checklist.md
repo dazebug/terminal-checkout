@@ -124,6 +124,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] The setup window draws all four live cmux states: `notInstalled`, `notRunning`, `denied`, and `reachable`.
 - [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
 - [ ] Clicking [Allow Automation] creates the timestamped `.bak`, changes `~/.config/cmux/cmux.json`, and confirms `cmux ping` → PONG without restarting cmux (live reflection measured 2026-08-23).
+- [ ] Pressing [Allow Automation] twice in the same second does not remove the existing `.bak`; the button is disabled while the first operation is in flight.
 - [ ] The setup window's [Allow Automation] button is disabled when the live cmux status is `reachable`.
 - [ ] After [Allow Automation], the backup and a newly created cmux.json are mode 0600; an existing cmux.json keeps its original permissions (cmux-created files are 0600 because they may hold `socketPassword`).
 - [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).

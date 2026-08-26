@@ -276,6 +276,12 @@ func makeStatusLabel(font: NSFont) -> NSTextField {
 }
 
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
+    /// Feedback supplements the live diagnostic; it must not replace the reason refresh just drew.
+    static func cmuxStatusLine(liveText: String, feedback: String?) -> String {
+        guard let feedback else { return liveText }
+        return "\(liveText) — \(feedback)"
+    }
+
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
@@ -1698,6 +1704,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// This is the only path that edits cmux.json. It is an explicit user action; installation,
     /// launch, and ordinary refreshes only read the live ping state.
     @objc private func enableCmuxAutomation() {
+        // The button is disabled for the whole in-flight operation; completion calls refresh(),
+        // which is the only owner allowed to decide whether it becomes enabled again.
+        cmuxAutomationButton.isEnabled = false
         CmuxAutomation.enableAutomation { [weak self] result in
             guard let self else { return }
             switch result {
@@ -1714,13 +1723,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     case .notApplied:
                         feedback = localized("app.status.cmux.automationNotApplied")
                     }
-                    let state: SetupState
-                    switch self.cmuxSetupState(liveStatus) {
-                    case .ok: state = .ok(feedback)
-                    case .warning: state = .warning(feedback)
-                    case .error: state = .error(feedback)
-                    }
-                    self.apply(state, to: self.cmuxStatusLabel)
+                    // refresh() has already applied the live label and its color. Append only the
+                    // compatible feedback, leaving that live state as the color oracle.
+                    self.cmuxStatusLabel.stringValue = Self.cmuxStatusLine(
+                        liveText: self.cmuxStatusLabel.stringValue, feedback: feedback
+                    )
                 }
             case .failure(let error):
                 self.refresh()

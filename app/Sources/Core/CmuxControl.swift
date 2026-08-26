@@ -92,11 +92,21 @@ enum CmuxPreflight: Equatable {
     case denied
 }
 
-func cmuxPreflight(_ status: CmuxSocketStatus) -> CmuxPreflight {
-    switch status {
+/// A present socket is enough to proceed without a ping: D12 launches only when both the socket
+/// and ping are absent, while D7 keeps the normal path to workspace.create and surface.send_text.
+/// If the socket is present but automation is denied, workspace.create reports that RPC denial
+/// and the existing cmuxRPCFailure classifier preserves the cmuxSocketDenied diagnosis.
+func cmuxPreflight(
+    socketExists: Bool, pingStatus: CmuxSocketStatus?
+) -> CmuxPreflight {
+    guard let pingStatus else {
+        return socketExists ? .proceed : .launch
+    }
+    switch pingStatus {
     case .reachable: return .proceed
     case .denied: return .denied
-    case .notInstalled, .notRunning, .failed: return .launch
+    case .failed: return socketExists ? .proceed : .launch
+    case .notInstalled, .notRunning: return .launch
     }
 }
 

@@ -52,14 +52,27 @@ final class CmuxTests: XCTestCase {
         XCTAssertFalse(cmuxLaunchNeeded(socketExists: true, pingSucceeded: false))
     }
 
-    /// G2 reproduction: a denied alternate socket cannot be repaired by launching cmux; it must
-    /// become `cmuxSocketDenied` immediately so the user sees the automation-mode diagnosis.
-    func testCmuxPreflightSeparatesDeniedFromLaunchableStates() {
-        XCTAssertEqual(cmuxPreflight(.reachable), .proceed)
-        XCTAssertEqual(cmuxPreflight(.denied), .denied)
-        XCTAssertEqual(cmuxPreflight(.notRunning), .launch)
-        XCTAssertEqual(cmuxPreflight(.failed("temporary")), .launch)
-        XCTAssertEqual(cmuxPreflight(.notInstalled), .launch)
+    /// H3 red reproduction: D12 launches only for missing socket plus failed ping, while D7
+    /// keeps a present socket on the normal two-RPC path without a preliminary ping.
+    func testCmuxPreflightUsesSocketPresenceAndOptionalPing() {
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: true, pingStatus: nil), .proceed
+        )
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: false, pingStatus: .denied), .denied
+        )
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: false, pingStatus: .reachable), .proceed
+        )
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: false, pingStatus: .notRunning), .launch
+        )
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: true, pingStatus: .failed("boom")), .proceed
+        )
+        XCTAssertEqual(
+            cmuxPreflight(socketExists: true, pingStatus: .denied), .denied
+        )
     }
 
     func testCmuxRPCFailureLogSuppressesRepeatedSameSurfaceMessage() {
@@ -107,6 +120,37 @@ final class CmuxTests: XCTestCase {
                 surface: "surface-b", message: "surface.read_text failed"
             )
         )
+    }
+
+    /// H5 red reproduction: a delivery that ends in failure must forget its surface so the next
+    /// attempt can report the same RPC error again.
+    func testCmuxRPCFailureLogForgetsFailuresAtDeliveryEnd() {
+        CmuxRPCFailureLog.reset()
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+        CmuxRPCFailureLog.forgetScreenReadFailures(surface: "surface-a")
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+    }
+
+    /// H5 red reproduction: a stream of failed surfaces must not grow the process-lifetime map
+    /// without bound; 32 entries is the chosen backstop for the green implementation.
+    func testCmuxRPCFailureLogHasBoundedFailureSurfaceState() {
+        CmuxRPCFailureLog.reset()
+        for index in 0..<40 {
+            XCTAssertTrue(
+                CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                    surface: "surface-\(index)", message: "surface.read_text failed"
+                )
+            )
+        }
+        XCTAssertLessThanOrEqual(CmuxRPCFailureLog.testOnlyScreenReadFailureCount(), 32)
     }
 
     func testCmuxRPCMethodNamesAreTheFourSupportedMethods() {

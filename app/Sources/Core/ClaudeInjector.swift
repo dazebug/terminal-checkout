@@ -317,8 +317,11 @@ struct InputBoxOwnership {
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2,
-    timeline: DeliveryTimeline? = nil
+    timeline: DeliveryTimeline? = nil, onDeliveryEnd: () -> Void = {}
 ) -> Int {
+    // Every return path, including an empty or abandoned delivery, passes one cleanup hook here.
+    defer { onDeliveryEnd() }
+
     // Counting the bytes that go out is how "might a fragment of ours be in the input box" is tracked.
     // The tracking lives inside this function because **there are several failure exits** (a failed session check between inputs, exhausted retries). With the cleanup outside, only one of them would reach it
     var ownership = InputBoxOwnership()
@@ -1037,7 +1040,12 @@ public func deliverClaudeInputs(
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
     let sent = submitClaudeInputs(
-        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline
+        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
+        onDeliveryEnd: {
+            if case .cmux(let surfaceID, _, _) = handle {
+                CmuxRPCFailureLog.forgetScreenReadFailures(surface: surfaceID)
+            }
+        }
     )
     timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
     checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
@@ -1135,12 +1143,19 @@ private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
 
 enum CmuxRPCFailureLog {
     static let lock = NSLock()
+    static let maxTrackedScreenReadFailures = 32
     static var lastScreenReadMessages: [String: String] = [:]
 
     static func shouldLogScreenReadFailure(surface: String, message: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         guard lastScreenReadMessages[surface] != message else { return false }
+        if lastScreenReadMessages[surface] == nil,
+           lastScreenReadMessages.count >= maxTrackedScreenReadFailures {
+            // A failed delivery has no later success callback, so clear all stale entries at the
+            // cap; bounded memory is preferable to suppressing a new surface indefinitely.
+            lastScreenReadMessages.removeAll()
+        }
         lastScreenReadMessages[surface] = message
         return true
     }
@@ -1149,6 +1164,19 @@ enum CmuxRPCFailureLog {
         lock.lock()
         lastScreenReadMessages.removeValue(forKey: surface)
         lock.unlock()
+    }
+
+    static func forgetScreenReadFailures(surface: String) {
+        lock.lock()
+        lastScreenReadMessages.removeValue(forKey: surface)
+        lock.unlock()
+    }
+
+    /// Test-only access to the bounded failure map; production uses the map only for suppression.
+    static func testOnlyScreenReadFailureCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastScreenReadMessages.count
     }
 
     /// Test-only reset: production state is cleared per surface after a successful read.

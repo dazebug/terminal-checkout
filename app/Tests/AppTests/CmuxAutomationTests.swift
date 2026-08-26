@@ -57,6 +57,72 @@ final class CmuxAutomationTests: XCTestCase {
         XCTAssertEqual(try permissions(of: backup), 0o600)
     }
 
+    /// H1 red reproduction: a timestamp collision must not remove an older backup. The green
+    /// implementation will keep the timestamp visible and choose the first untaken suffix.
+    func testItem22BackupFileNameSkipsTakenTimestampCandidates() throws {
+        let timestamp = "20260826-200000"
+        var candidates: [String] = []
+        let result = try CmuxAutomation.backupFileName(timestamp: timestamp) { candidate in
+            candidates.append(candidate)
+            return candidates.count < 3
+        }
+
+        XCTAssertEqual(
+            candidates,
+            [
+                "cmux.json.\(timestamp).bak",
+                "cmux.json.\(timestamp)-2.bak",
+                "cmux.json.\(timestamp)-3.bak",
+            ]
+        )
+        XCTAssertEqual(result, "cmux.json.\(timestamp)-3.bak")
+    }
+
+    /// H1 red reproduction: an existing same-second backup is a recovery artifact and must stay
+    /// byte-identical while the V1 config is saved under another candidate name.
+    func testItem22BackupNameCollisionPreservesExistingBackup() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        let sentinel = "sentinel"
+        let now = Date(timeIntervalSince1970: 1_756_000_000)
+        let timestamp = backupTimestamp(now)
+        let existingBackupName = try CmuxAutomation.backupFileName(
+            timestamp: timestamp, isTaken: { _ in false }
+        )
+        let existingBackup = directory.appendingPathComponent(existingBackupName)
+        try Data(original.utf8).write(to: config)
+        try Data(sentinel.utf8).write(to: existingBackup)
+
+        var result: CmuxAutomationWriteResult?
+        var thrown: Error?
+        do {
+            result = try CmuxAutomation.writeAutomation(
+                configURL: config,
+                now: now,
+                status: { .reachable },
+                sleep: { _ in }
+            )
+        } catch {
+            thrown = error
+        }
+
+        XCTAssertNil(thrown)
+        XCTAssertEqual(result, .some(.applied))
+        XCTAssertEqual(try String(contentsOf: existingBackup, encoding: .utf8), sentinel)
+        XCTAssertTrue(
+            try String(contentsOf: config, encoding: .utf8)
+                .contains("\"socketControlMode\": \"automation\"")
+        )
+
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "bak" && $0.path != existingBackup.path }
+        XCTAssertTrue(
+            try backups.contains { try String(contentsOf: $0, encoding: .utf8) == original },
+            "the original config must survive in a differently named backup"
+        )
+    }
+
     /// F2 reproduction: V1 is read, the backup target is prepared, and another editor writes V2
     /// before the atomic replacement. The write must reject the stale V1 operation and leave V2 intact.
     func testItem22WriteRejectsAConfigChangedAfterBackup() throws {
@@ -162,10 +228,66 @@ final class CmuxAutomationTests: XCTestCase {
         XCTAssertEqual(files, ["cmux.json"])
     }
 
+    /// H2 red reproduction: if narrowing the backup permissions fails after replacement, the
+    /// config and backup already exist, so the result must come from the live status probe.
+    func testItem22BackupPermissionFailureReportsLiveStatusAfterReplacement() throws {
+        let scenarios: [(String, CmuxSocketStatus, CmuxAutomationWriteResult)] = [
+            ("reachable", .reachable, .applied),
+            ("not-running", .notRunning, .notApplied),
+        ]
+
+        for (name, liveStatus, expected) in scenarios {
+            let caseDirectory = directory.appendingPathComponent(name)
+            try FileManager.default.createDirectory(
+                at: caseDirectory, withIntermediateDirectories: true
+            )
+            let config = caseDirectory.appendingPathComponent("cmux.json")
+            let original = #"{"schemaVersion":1}"#
+            try Data(original.utf8).write(to: config)
+
+            let fileManager = FileManagerThatRejectsBackupPermissions()
+            var result: CmuxAutomationWriteResult?
+            var thrown: Error?
+            do {
+                result = try CmuxAutomation.writeAutomation(
+                    configURL: config,
+                    fileManager: fileManager,
+                    status: { liveStatus },
+                    sleep: { _ in }
+                )
+            } catch {
+                thrown = error
+            }
+
+            XCTAssertNil(thrown, name)
+            XCTAssertEqual(result, .some(expected), name)
+            XCTAssertTrue(
+                try String(contentsOf: config, encoding: .utf8)
+                    .contains("\"socketControlMode\": \"automation\""),
+                name
+            )
+            let backups = try FileManager.default.contentsOfDirectory(
+                at: caseDirectory, includingPropertiesForKeys: nil
+            ).filter { $0.pathExtension == "bak" }
+            XCTAssertTrue(
+                try backups.contains { try String(contentsOf: $0, encoding: .utf8) == original },
+                name
+            )
+        }
+    }
+
     private func permissions(of url: URL) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber)
         return permissions.intValue
+    }
+
+    private func backupTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: date)
     }
 }
 
@@ -189,5 +311,16 @@ private final class FileManagerThatEditsConfigAfterBackup: FileManager {
         try super.setAttributes(attributes, ofItemAtPath: path)
         guard path != configURL.path else { return }
         try replacement.write(to: configURL, options: [])
+    }
+}
+
+private final class FileManagerThatRejectsBackupPermissions: FileManager {
+    override func setAttributes(
+        _ attributes: [FileAttributeKey: Any], ofItemAtPath path: String
+    ) throws {
+        if path.hasSuffix(".bak") {
+            throw NSError(domain: "CmuxAutomationTests", code: 1)
+        }
+        try super.setAttributes(attributes, ofItemAtPath: path)
     }
 }

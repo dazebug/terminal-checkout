@@ -463,6 +463,24 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertNil(cmuxAutomationFeedback(result: .applied, liveStatus: .denied))
     }
 
+    /// H4 red reproduction: D13 says feedback supplements the live diagnostic instead of
+    /// replacing a specific denial, failure, or not-installed explanation.
+    func testCmuxStatusLineKeepsLiveTextWhenFeedbackIsPresent() {
+        let liveText = "Socket access denied"
+        let feedback = "Not applied"
+        let line = SetupWindowController.cmuxStatusLine(
+            liveText: liveText, feedback: feedback
+        )
+
+        XCTAssertTrue(line.contains(liveText))
+        XCTAssertTrue(line.contains(feedback))
+        XCTAssertEqual(line, "\(liveText) — \(feedback)")
+        XCTAssertEqual(
+            SetupWindowController.cmuxStatusLine(liveText: "Reachable", feedback: nil),
+            "Reachable"
+        )
+    }
+
     /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
     /// almost nothing around the placeholder would match anything, so those are not counted.
     private func framed(_ text: String, by values: [String]) -> Bool {

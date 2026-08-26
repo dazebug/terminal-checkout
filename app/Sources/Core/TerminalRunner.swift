@@ -254,9 +254,11 @@ private let cmuxSocketWaitTimeout: TimeInterval = 10
 private let cmuxSocketPollInterval: TimeInterval = 0.1
 private let cmuxPingTimeout: TimeInterval = 5
 
-private func cmuxPingStatus(cliPath: String, socketExists: Bool) -> CmuxSocketStatus {
+private func cmuxPingStatus(
+    cliPath: String, socketExists: Bool, timeout: TimeInterval = cmuxPingTimeout
+) -> CmuxSocketStatus {
     do {
-        let result = try runProcess(cliPath, ["ping"], timeout: cmuxPingTimeout)
+        let result = try runProcess(cliPath, ["ping"], timeout: timeout)
         return classifyCmuxSocketStatus(
             socketExists: socketExists,
             pingStatus: result.status,
@@ -277,8 +279,15 @@ private func waitForCmuxSocket(cliPath: String) throws -> Bool {
     let deadline = Date().addingTimeInterval(cmuxSocketWaitTimeout)
     while true {
         let socketExists = cmuxSocketPath() != nil
-        let status = cmuxPingStatus(cliPath: cliPath, socketExists: socketExists)
-        switch cmuxPreflight(status) {
+        // Once the path appears, stop immediately; ping is only a fallback while it is absent.
+        if socketExists { return true }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { return false }
+        let status = cmuxPingStatus(
+            cliPath: cliPath, socketExists: false,
+            timeout: min(cmuxPingTimeout, remaining)
+        )
+        switch cmuxPreflight(socketExists: socketExists, pingStatus: status) {
         case .proceed:
             return true
         case .denied:
@@ -286,12 +295,11 @@ private func waitForCmuxSocket(cliPath: String) throws -> Bool {
             // immediately instead of turning it into a misleading timeout.
             throw TerminalError.cmuxSocketDenied
         case .launch:
-            // A socket file is enough to leave the bounded wait; the following RPC reports any
-            // stale-file failure with its method and detail.
-            if socketExists { return true }
+            break
         }
-        if Date() >= deadline { return false }
-        Thread.sleep(forTimeInterval: cmuxSocketPollInterval)
+        let sleepFor = min(cmuxSocketPollInterval, deadline.timeIntervalSinceNow)
+        guard sleepFor > 0 else { return false }
+        Thread.sleep(forTimeInterval: sleepFor)
     }
 }
 
@@ -302,7 +310,18 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
     guard let cliPath = findCmuxCLI() else { throw TerminalError.cmuxNotFound }
 
     let socketExists = cmuxSocketPath() != nil
-    switch cmuxPreflight(cmuxPingStatus(cliPath: cliPath, socketExists: socketExists)) {
+    let preflight: CmuxPreflight
+    if socketExists {
+        // Do not add a normal-path ping: D7 is two RPCs, and a present socket lets workspace.create
+        // provide the authoritative automation-denied error if the mode is wrong.
+        preflight = cmuxPreflight(socketExists: true, pingStatus: nil)
+    } else {
+        preflight = cmuxPreflight(
+            socketExists: false,
+            pingStatus: cmuxPingStatus(cliPath: cliPath, socketExists: false)
+        )
+    }
+    switch preflight {
     case .denied:
         // Launching cannot change a running cmux's socket control mode.
         throw TerminalError.cmuxSocketDenied
