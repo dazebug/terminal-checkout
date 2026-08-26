@@ -18,7 +18,7 @@ cmux only accepts socket commands from processes it can prove are its own descen
 
 **Rejected alternative — delegate to `cmux settings automation`.** The obvious escape from hand-editing JSON, and it does not work in the state where it is needed: measured from an external shell while `socketControlMode` was still `cmuxOnly`, the CLI answered `Error: ERROR: Access denied - only processes started inside cmux can connect`. The subcommand goes through the same socket that automation mode is what unlocks, so it can only turn on a setting that is already on.
 
-**Rejected alternative — harvest a capability token.** cmux mints bearer tokens in the environment of panes it starts, and they do not expire; reading one out of another pane's environment would have bypassed the whole question. It works, and it is not a supported interface, and it means taking a credential from a context that did not offer it to us.
+**Rejected alternative — harvest a capability token.** cmux mints bearer tokens in the environment of the panes it starts, and they do not expire, so a token read out of a pane would authorize us without any setting being changed. Rejected on the boundary rather than on feasibility: it takes a credential from a context that never offered it, through an interface cmux does not support for this. Feasibility was never established either — the closest measurement, made while looking for the tty, is that `ps -E` does not show a system binary's environment at all.
 
 **Rejected alternative — recommend `allowAll`.** It also lifts the ancestry test, and it does so by making the socket world-accessible. `automation` is the narrowest mode that solves the actual problem.
 
@@ -68,7 +68,7 @@ When an RPC fails, the app decides whether it may launch cmux and retry by askin
 
 **Reason:** the server routes an unaddressed create to the most recently active window, so the new workspace appears where the user was looking. This is the problem WezTerm has — without `--window-id`, `wezterm cli spawn` falls back to the mux's oldest window — and cmux simply does not have it. The conditional-fallback ladder that WezTerm needs was planned, measured to be unnecessary, and dropped.
 
-**Rejected alternative — `focus:false`.** A workspace created unfocused can have no pty at all, which reports `tty: null` and `queued: true`. The queued bytes are not lost — the surface flushes them after warm-up, observed both in cmux and in the app's own log — but with no tty there is nothing to check raw mode against, and the rule that no CR goes out before the screen reflects the input has no way to hold.
+**Rejected alternative — `focus:false`.** A workspace created unfocused can have no pty at all: `debug.terminals` reports `tty: null` and a send comes back `queued: true`. The queued bytes are not lost — the surface flushes them once it warms up, observed both in cmux and in the app's own log — but with no tty there is nothing to check raw mode against, so the gate that decides whether claude is really at a raw-mode prompt cannot be answered and the input is given up.
 
 ## The tty comes from `debug.terminals`, not from the pane
 
