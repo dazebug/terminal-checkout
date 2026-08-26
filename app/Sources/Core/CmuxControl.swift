@@ -15,16 +15,16 @@ public enum CmuxSocketStatus: Equatable {
     case failed(String)
 }
 
-/// Classifies one live `cmux ping` observation. A missing socket is authoritative: a failed ping
-/// cannot distinguish a stopped cmux from a running cmux whose control mode rejects the socket.
+/// Classifies one live `cmux ping` observation. A successful PONG or an access denial wins over
+/// the default socket path because the CLI discovers sockets through `CMUX_SOCKET_PATH` and
+/// `/tmp/cmux-last-socket-path`; only a missing default socket with neither result means stopped.
 public func classifyCmuxSocketStatus(
     socketExists: Bool, pingStatus: Int32, stdout: String, stderr: String
 ) -> CmuxSocketStatus {
-    guard socketExists else { return .notRunning }
-
     let output = [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
-    if output.localizedCaseInsensitiveContains("access denied") { return .denied }
     if pingStatus == 0, output.contains("PONG") { return .reachable }
+    if output.localizedCaseInsensitiveContains("access denied") { return .denied }
+    if !socketExists { return .notRunning }
 
     let summary = output.trimmingCharacters(in: .whitespacesAndNewlines)
     return .failed(summary.isEmpty ? "exit status \(pingStatus)" : summary)
@@ -80,6 +80,10 @@ public func cmuxSocketPath(
 ) -> String? {
     let path = (homeDirectory as NSString).appendingPathComponent(".local/state/cmux/cmux.sock")
     return fileExists(path) ? path : nil
+}
+
+func cmuxLaunchNeeded(socketExists: Bool, pingSucceeded: Bool) -> Bool {
+    !socketExists && !pingSucceeded
 }
 
 private func asciiJSON(_ data: Data) -> String {

@@ -61,6 +61,7 @@ public func resolveRequest(
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rendered.isEmpty else { continue }
         try rejectNUL(in: rendered, what: "claude_inputs")
+        try rejectLineBreaks(in: rendered, what: "claude_inputs")
         claudeInputs.append(rendered)
     }
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)
@@ -73,6 +74,19 @@ public func resolveRequest(
 private func rejectNUL(in text: String, what: String) throws {
     guard text.utf8.contains(0) else { return }
     throw CommandError.badRequest("\(what) must not contain NUL")
+}
+
+/// `claude_inputs` are typed only after a marker/reflection check, so a line break would submit
+/// before that check on every terminal carrier. `command_template` is different: its CR is the
+/// execution contract and an embedded line break deliberately means another shell command.
+private func rejectLineBreaks(in text: String, what: String) throws {
+    // Character comparison lets the single CRLF Character through; its two Unicode scalars must
+    // be inspected separately.
+    guard !text.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+        throw CommandError.badRequest(
+            "\(what) must not contain line breaks: they are submitted before screen reflection can be confirmed"
+        )
+    }
 }
 
 /// The variables only the app knows the value of. Today that is `{cd}` (the repository entry

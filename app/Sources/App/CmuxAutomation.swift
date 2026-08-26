@@ -47,6 +47,7 @@ enum CmuxAutomation {
         let configURL = suppliedURL ?? defaultConfigURL()
         let exists = fileManager.fileExists(atPath: configURL.path)
         let existing: String?
+        let existingData: Data?
         if exists {
             do {
                 let data = try Data(contentsOf: configURL)
@@ -54,6 +55,7 @@ enum CmuxAutomation {
                     throw CmuxConfigurationError.invalidUTF8
                 }
                 existing = string
+                existingData = data
             } catch let error as CmuxConfigurationError {
                 throw error
             } catch {
@@ -61,6 +63,7 @@ enum CmuxAutomation {
             }
         } else {
             existing = nil
+            existingData = nil
         }
 
         let edit: CmuxConfigEditResult
@@ -69,24 +72,29 @@ enum CmuxAutomation {
         } catch {
             throw CmuxConfigurationError.editFailed(errorMessage(error))
         }
-        guard case .edited(let contents) = edit else { return .alreadyEnabled }
+        guard case .edited(let contents) = edit else {
+            return status() == .reachable ? .alreadyEnabled : .notApplied
+        }
 
         // The backup is deliberately before directory creation and before the temporary file is
         // visible. If it cannot be made, the original remains untouched and no write is attempted.
+        let backupURL: URL?
         if exists {
-            let backupURL = configURL.deletingLastPathComponent().appendingPathComponent(
+            let path = configURL.deletingLastPathComponent().appendingPathComponent(
                 "cmux.json.\(backupTimestamp(now)).bak"
             )
+            backupURL = path
             do {
-                let attributes = try fileManager.attributesOfItem(atPath: configURL.path)
-                let originalPermissions = attributes[.posixPermissions] ?? 0o600
-                try fileManager.copyItem(at: configURL, to: backupURL)
+                try fileManager.copyItem(at: configURL, to: path)
+                // Narrowing a backup loses nothing, and cmux.json may contain socketPassword.
                 try fileManager.setAttributes(
-                    [.posixPermissions: originalPermissions], ofItemAtPath: backupURL.path
+                    [.posixPermissions: 0o600], ofItemAtPath: path.path
                 )
             } catch {
                 throw CmuxConfigurationError.backupFailed(errorMessage(error))
             }
+        } else {
+            backupURL = nil
         }
 
         let directory = configURL.deletingLastPathComponent()
@@ -106,12 +114,20 @@ enum CmuxAutomation {
                 [.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path
             )
             if exists {
+                let currentData = try Data(contentsOf: configURL)
+                guard currentData == existingData else {
+                    throw CmuxConfigurationError.writeFailed(
+                        "configuration changed after backup at \(backupURL?.path ?? configURL.path); refusing to overwrite"
+                    )
+                }
                 _ = try fileManager.replaceItemAt(
                     configURL, withItemAt: temporaryURL, backupItemName: nil, options: []
                 )
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: configURL)
             }
+        } catch let error as CmuxConfigurationError {
+            throw error
         } catch {
             throw CmuxConfigurationError.writeFailed(errorMessage(error))
         }

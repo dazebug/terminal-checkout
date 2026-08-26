@@ -319,6 +319,28 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
+    /// A newline in a claude input must be rejected before it can reach the typed path: the
+    /// extension's `toStoredButton` trims only the outside, `Request` trims only the outside and
+    /// rejects NUL, then `prepareRequest` reaches its newline guard at line 775 and sends the
+    /// input typed. Every terminal treats that newline as an early submission (cmux's server
+    /// converts LF to CR), so the marker/reflection/CR protocol cannot protect it.
+    func testClaudeInputsWithLineBreaksAreRejectedBeforeTypedDelivery() {
+        let lineBreaks = ["!echo first\n!echo second", "!echo first\r!echo second", "!echo first\r\n!echo second"]
+        for input in lineBreaks {
+            XCTAssertThrowsError(try resolveRequest([
+                "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+                "claude_inputs": [input],
+            ])) { error in
+                XCTAssertTrue(errorMessage(error).contains("claude_inputs"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertNoThrow(try resolveRequest([
+            "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["!echo first !echo second"],
+        ]))
+    }
+
     func testNULInTheCommandIsRejected() {
         XCTAssertThrowsError(try resolveRequest([
             "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],

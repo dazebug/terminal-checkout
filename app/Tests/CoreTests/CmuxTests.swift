@@ -43,6 +43,15 @@ final class CmuxTests: XCTestCase {
         XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
     }
 
+    /// F6: cmux's CLI discovers its own socket (`CMUX_SOCKET_PATH` and
+    /// `/tmp/cmux-last-socket-path` are fallbacks), so a successful ping must prevent opening
+    /// cmux even when the app's default socket path is absent.
+    func testItem5CmuxLaunchNeededDependsOnPingWhenSocketIsMissing() {
+        XCTAssertFalse(cmuxLaunchNeeded(socketExists: false, pingSucceeded: true))
+        XCTAssertTrue(cmuxLaunchNeeded(socketExists: false, pingSucceeded: false))
+        XCTAssertFalse(cmuxLaunchNeeded(socketExists: true, pingSucceeded: false))
+    }
+
     func testCmuxRPCMethodNamesAreTheFourSupportedMethods() {
         XCTAssertEqual(cmuxWorkspaceCreateMethod, "workspace.create")
         XCTAssertEqual(cmuxSurfaceSendTextMethod, "surface.send_text")
@@ -205,6 +214,32 @@ final class CmuxTests: XCTestCase {
         XCTAssertTrue(operations.allSatisfy { $0.method == cmuxSurfaceSendTextMethod })
     }
 
+    /// F3 reproduction: `send(_:io:)` checks the session once, then the cmux branch emits the
+    /// two clear RPCs below it. CLAUDE.md requires every byte-emitting site to pass through that
+    /// gate and re-check session identity; if the first check passes and the second fails, only
+    /// the first operation may be sent.
+    func testItem10CmuxOperationsRecheckSessionBeforeEveryRPC() {
+        let operations = cmuxSendOperations(surfaceID: "surface-1", text: claudeClearInputKey)
+        var sessionChecks = 0
+        var sent: [CmuxRPCOperation] = []
+
+        let result = runCmuxOperations(
+            operations,
+            sessionIsUnchanged: {
+                sessionChecks += 1
+                return sessionChecks == 1
+            },
+            send: { operation in
+                sent.append(operation)
+                return true
+            }
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(sent, Array(operations.prefix(1)))
+        XCTAssertEqual(sessionChecks, 2)
+    }
+
     func testItem10CmuxBodyUsesSurfaceSendTextWithoutChangingIt() {
         XCTAssertEqual(
             cmuxSendOperations(surfaceID: "surface-1", text: "한글"),
@@ -243,12 +278,24 @@ final class CmuxTests: XCTestCase {
         }
     }
 
-    func testItem13CmuxSocketStatusSocketAbsenceWinsOverPingOutput() {
+    func testItem13CmuxPingResultOverridesMissingDefaultSocket() {
         XCTAssertEqual(
             classifyCmuxSocketStatus(
                 socketExists: false, pingStatus: 0, stdout: "PONG\n", stderr: ""
             ),
+            .reachable
+        )
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: false, pingStatus: 1, stdout: "not running", stderr: ""
+            ),
             .notRunning
+        )
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: false, pingStatus: 1, stdout: "", stderr: "Access denied"
+            ),
+            .denied
         )
     }
 

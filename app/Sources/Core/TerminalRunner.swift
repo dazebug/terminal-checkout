@@ -252,11 +252,19 @@ public func runInTerminal(
 
 private let cmuxSocketWaitTimeout: TimeInterval = 10
 private let cmuxSocketPollInterval: TimeInterval = 0.1
+private let cmuxPingTimeout: TimeInterval = 5
 
-private func waitForCmuxSocket() -> Bool {
+private func cmuxPingSucceeded(cliPath: String) -> Bool {
+    guard let result = try? runProcess(cliPath, ["ping"], timeout: cmuxPingTimeout) else {
+        return false
+    }
+    return result.status == 0 && result.stdout.contains("PONG")
+}
+
+private func waitForCmuxSocket(cliPath: String) -> Bool {
     let deadline = Date().addingTimeInterval(cmuxSocketWaitTimeout)
     while true {
-        if cmuxSocketPath() != nil { return true }
+        if cmuxSocketPath() != nil || cmuxPingSucceeded(cliPath: cliPath) { return true }
         if Date() >= deadline { return false }
         Thread.sleep(forTimeInterval: cmuxSocketPollInterval)
     }
@@ -268,11 +276,13 @@ private func waitForCmuxSocket() -> Bool {
 public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
     guard let cliPath = findCmuxCLI() else { throw TerminalError.cmuxNotFound }
 
-    if cmuxSocketPath() == nil {
+    let socketExists = cmuxSocketPath() != nil
+    let pingSucceeded = !socketExists && cmuxPingSucceeded(cliPath: cliPath)
+    if cmuxLaunchNeeded(socketExists: socketExists, pingSucceeded: pingSucceeded) {
         // Passing no target after the bundle id is deliberate: an argument would enable cmux
         // session restoration instead of merely starting the app.
         _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
-        guard waitForCmuxSocket() else { throw TerminalError.timeout("cmux socket") }
+        guard waitForCmuxSocket(cliPath: cliPath) else { throw TerminalError.timeout("cmux socket") }
     }
 
     let workspace = try cmuxRPC(

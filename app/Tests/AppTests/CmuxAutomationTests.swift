@@ -20,7 +20,9 @@ final class CmuxAutomationTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testItem22WriteBacksUpBeforeReplacingAndConfirmsReachable() throws {
+    /// Existing user-owned config permissions stay unchanged; only the backup and newly created
+    /// config are ours to constrain to 0600.
+    func testItem22WriteNarrowsBackupPermissionsTo0600AndConfirmsReachable() throws {
         let config = directory.appendingPathComponent("cmux.json")
         let original = """
         {
@@ -31,7 +33,7 @@ final class CmuxAutomationTests: XCTestCase {
         """
         try Data(original.utf8).write(to: config)
         try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: config.path
+            [.posixPermissions: 0o644], ofItemAtPath: config.path
         )
 
         let result = try CmuxAutomation.writeAutomation(
@@ -51,8 +53,28 @@ final class CmuxAutomationTests: XCTestCase {
         ).filter { $0.lastPathComponent.hasPrefix("cmux.json.") && $0.pathExtension == "bak" }
         let backup = try XCTUnwrap(backups.single)
         XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), original)
-        XCTAssertEqual(try permissions(of: config), 0o600)
+        XCTAssertEqual(try permissions(of: config), 0o644)
         XCTAssertEqual(try permissions(of: backup), 0o600)
+    }
+
+    /// F2 reproduction: V1 is read, the backup copy is made, and another editor writes V2 before
+    /// the atomic replacement. The write must reject the stale V1 operation and leave V2 intact.
+    func testItem22WriteRejectsAConfigChangedAfterBackup() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        let replacement = #"{"schemaVersion":2,"editedBy":"another-process"}"#
+        try Data(original.utf8).write(to: config)
+
+        let fileManager = FileManagerThatEditsConfigAfterBackup(
+            configURL: config, replacement: Data(replacement.utf8)
+        )
+        XCTAssertThrowsError(try CmuxAutomation.writeAutomation(
+            configURL: config,
+            fileManager: fileManager,
+            status: { .reachable },
+            sleep: { _ in }
+        ))
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), replacement)
     }
 
     func testItem22WriteCreatesDirectoriesAndReportsNotAppliedAfterBoundedPoll() throws {
@@ -72,18 +94,32 @@ final class CmuxAutomationTests: XCTestCase {
         XCTAssertEqual(try permissions(of: config), 0o600)
     }
 
-    func testItem22WriteDoesNotTouchAnAlreadyEnabledConfig() throws {
+    /// F5: unchanged configuration is not proof that the live cmux accepts the socket. It still
+    /// gets one probe: reachable is alreadyEnabled, while denied is notApplied, with no write.
+    func testItem22WriteChecksReachabilityOnceForAlreadyEnabledConfig() throws {
         let config = directory.appendingPathComponent("cmux.json")
         let original = #"{"automation":{"socketControlMode":"automation"},"other":1}"#
         try Data(original.utf8).write(to: config)
 
-        let result = try CmuxAutomation.writeAutomation(
+        var reachableCalls = 0
+        let reachable = try CmuxAutomation.writeAutomation(
             configURL: config,
-            status: { XCTFail("an unchanged config must not be probed"); return .reachable },
+            status: { reachableCalls += 1; return .reachable },
             sleep: { _ in }
         )
 
-        XCTAssertEqual(result, .alreadyEnabled)
+        XCTAssertEqual(reachable, .alreadyEnabled)
+        XCTAssertEqual(reachableCalls, 1)
+
+        var deniedCalls = 0
+        let denied = try CmuxAutomation.writeAutomation(
+            configURL: config,
+            status: { deniedCalls += 1; return .denied },
+            sleep: { _ in }
+        )
+
+        XCTAssertEqual(denied, .notApplied)
+        XCTAssertEqual(deniedCalls, 1)
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), original)
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         XCTAssertEqual(files, ["cmux.json"])
@@ -98,4 +134,21 @@ final class CmuxAutomationTests: XCTestCase {
 
 private extension Array where Element == URL {
     var single: Element? { count == 1 ? first : nil }
+}
+
+private final class FileManagerThatEditsConfigAfterBackup: FileManager {
+    private let configURL: URL
+    private let replacement: Data
+
+    init(configURL: URL, replacement: Data) {
+        self.configURL = configURL
+        self.replacement = replacement
+        super.init()
+    }
+
+    override func copyItem(at srcURL: URL, to dstURL: URL) throws {
+        try super.copyItem(at: srcURL, to: dstURL)
+        guard srcURL.path == configURL.path else { return }
+        try replacement.write(to: configURL, options: [])
+    }
 }

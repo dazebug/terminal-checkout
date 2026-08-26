@@ -1680,6 +1680,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             switch result {
             case .success(.alreadyEnabled):
+                self.refresh()
                 self.cmuxAutomationButton.isEnabled = true
                 self.apply(
                     .ok(localized("app.status.cmux.automationAlreadyEnabled")),

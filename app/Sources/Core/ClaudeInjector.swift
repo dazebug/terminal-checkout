@@ -61,6 +61,23 @@ func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
     ]
 }
 
+/// Every site that emits bytes must pass gate ③ through `send(_:io:)`. cmux was the exception
+/// because one clear operation expands into two RPCs below that call; every operation repeats the
+/// same session-identity check before it can emit its byte. The first check is intentionally
+/// redundant with `send(_:io:)`: one identical question at every byte boundary costs about 9ms
+/// of ps+stty and keeps the rule local to the operation that is about to send.
+func runCmuxOperations(
+    _ operations: [CmuxRPCOperation],
+    sessionIsUnchanged: () -> Bool,
+    send: (CmuxRPCOperation) -> Bool
+) -> Bool {
+    for operation in operations {
+        guard sessionIsUnchanged() else { return false }
+        guard send(operation) else { return false }
+    }
+    return true
+}
+
 private func cmuxRPCParameters(_ parameters: [String: String]) -> [String: Any] {
     parameters.reduce(into: [String: Any]()) { result, entry in
         result[entry.key] = entry.value
@@ -993,8 +1010,16 @@ public func deliverClaudeInputs(
     // The "+" on this line is the time taken by cd + the shell rc + claude booting — up to the foreground process becoming claude and the tty switching to raw mode. It is a stretch the app cannot shorten, so a large number here has its cause outside
     timeline?.step("claude ready (pid \(claudePID))")
 
+    let sessionIsUnchanged: () -> Bool = {
+        probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
+    }
     let io = ClaudeSessionIO(
-        sendKeys: { keys in sendKeys(keys, to: handle, expectedPID: claudePID) },
+        sendKeys: { keys in
+            sendKeys(
+                keys, to: handle, expectedPID: claudePID,
+                sessionIsUnchanged: sessionIsUnchanged
+            )
+        },
         screenText: { screenText(of: handle) },
         confirmSession: { limit in
             waitUntilClaudeAcceptsInput(
@@ -1003,9 +1028,7 @@ public func deliverClaudeInputs(
             ) != nil
         },
         // The check immediately before sending does not wait — it measures once and only asks whether it is still that claude
-        sessionIsUnchanged: {
-            probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
-        },
+        sessionIsUnchanged: sessionIsUnchanged,
         // A revoked permission makes screen confirmation impossible — no new input is typed then, only the cleanup. The reason travels with the answer so a later diagnosis does not have to guess it back out of a Bool
         screenConfirmation: {
             handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
@@ -1083,17 +1106,26 @@ private let cmuxTTYPollInterval: TimeInterval = 0.2
 
 private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
     let deadline = Date().addingTimeInterval(cmuxTTYWaitTimeout)
+    var lastRPCError: String?
     while true {
-        if let response = try? cmuxRPC(
-            cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5
-        ), let data = try? JSONSerialization.data(withJSONObject: response),
-           let tty = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID) {
-            return tty
+        do {
+            let response = try cmuxRPC(
+                cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5
+            )
+            if let data = try? JSONSerialization.data(withJSONObject: response),
+               let tty = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID) {
+                return tty
+            }
+        } catch {
+            lastRPCError = errorMessage(error)
         }
         if Date() >= deadline {
+            // Logging every rotation would produce up to 100 lines in 20 seconds; keep only the
+            // last RPC error and attach it at the give-up point.
+            let errorSuffix = lastRPCError.map { " (last rpc error: \($0))" } ?? ""
             checkoutLog(
                 "cmux surface \(surfaceID) did not report a tty within \(Int(cmuxTTYWaitTimeout))s"
-                    + " — giving up on claude input"
+                    + " — giving up on claude input\(errorSuffix)"
             )
             return nil
         }
@@ -1101,8 +1133,24 @@ private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
     }
 }
 
+private enum CmuxRPCFailureLog {
+    static let lock = NSLock()
+    static var lastScreenReadMessage: String?
+
+    static func recordScreenReadFailure(_ message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard lastScreenReadMessage != message else { return }
+        lastScreenReadMessage = message
+        checkoutLog(message)
+    }
+}
+
 /// Sends keystrokes as they are, without appending a newline (`claudeSubmitKey` and `claudeClearInputKey` included).
-private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expectedPID: Int) -> Bool {
+private func sendKeys(
+    _ text: String, to handle: TerminalSessionHandle, expectedPID: Int,
+    sessionIsUnchanged: @escaping () -> Bool
+) -> Bool {
     switch handle {
     case .iterm(let sessionID, _):
         // Control characters cannot go into an AppleScript string literal, so these branch to dedicated scripts
@@ -1127,18 +1175,26 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
         )
         return result?.status == 0
     case .cmux(let surfaceID, _, let cliPath):
-        for operation in cmuxSendOperations(surfaceID: surfaceID, text: text) {
-            guard let response = try? cmuxRPC(
-                cli: cliPath, method: operation.method,
-                params: cmuxRPCParameters(operation.params), timeout: 5
-            ) else {
+        return runCmuxOperations(
+            cmuxSendOperations(surfaceID: surfaceID, text: text),
+            sessionIsUnchanged: sessionIsUnchanged
+        ) { operation in
+            do {
+                let response = try cmuxRPC(
+                    cli: cliPath, method: operation.method,
+                    params: cmuxRPCParameters(operation.params), timeout: 5
+                )
+                if response["queued"] as? Bool == true {
+                    checkoutLog("cmux \(operation.method) queued=true")
+                }
+                return true
+            } catch {
+                checkoutLog(
+                    "cmux \(operation.method) failed while delivering input: \(errorMessage(error))"
+                )
                 return false
             }
-            if response["queued"] as? Bool == true {
-                checkoutLog("cmux \(operation.method) queued=true")
-            }
         }
-        return true
     case .warp(let socket):
         // The helper puts bytes straight into our pane's tty input queue (TIOCSTI) — independent of focus, and unable to leak into another pane or another app. That is why synthetic keystrokes are not used.
         // The expected PID rides along so the helper can also check "the process that will read this tty right now" — we can only look before sending, and who reads what was put in the queue is decided only there
@@ -1175,13 +1231,20 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
         ), result.status == 0 else { return nil }
         return result.stdout
     case .cmux(let surfaceID, _, let cliPath):
-        guard let response = try? cmuxRPC(
-            cli: cliPath, method: cmuxSurfaceReadTextMethod,
-            params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
-        ) else {
+        do {
+            let response = try cmuxRPC(
+                cli: cliPath, method: cmuxSurfaceReadTextMethod,
+                params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
+            )
+            return cmuxScreenText(from: response)
+        } catch {
+            let message =
+                "cmux \(cmuxSurfaceReadTextMethod) failed while reading screen: \(errorMessage(error))"
+            // Screen reads run in a 0.15s reflection poll; suppress consecutive duplicates, but
+            // always record a changed RPC error so a new failure is not hidden.
+            CmuxRPCFailureLog.recordScreenReadFailure(message)
             return nil
         }
-        return cmuxScreenText(from: response)
     case .warp:
         // What Accessibility reads is "the focused pane in Warp", with no guarantee it is ours.
         // It is nevertheless safe because input does not travel this path (see `warpScreenText`) — reading someone else's pane makes the pane proof and the reflection check fail, which sends us back to a retry, and if it fails for good nothing is submitted
