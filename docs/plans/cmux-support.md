@@ -31,7 +31,7 @@
 - cmux **workspace group·layout·todo·sidebar·notification**: 새 탭 하나를 만드는 것이 우리 계약이다
 - **확장(JS) 쪽 동작**: 확장은 터미널을 모르고 알 수단도 두지 않는다(CLAUDE.md). `extension/manifest.json`의 description 문구만 바뀐다
 - 기존 3개 터미널의 실행·전달 경로: switch가 컴파일 에러로 드러내는 자리에 케이스를 더하는 것 외에 손대지 않는다
-- cmux를 우리가 대신 설치하는 것. socket mode 변경도 **설정 창 버튼의 명시적 클릭으로만** 한다 — 설치 스크립트·앱 기동 중 자동 변경은 하지 않는다(다른 앱의 보안 관련 설정이므로 클릭이 동의다)
+- cmux를 우리가 대신 설치하는 것. 앱은 socket control mode를 바꾸지 않으며, 설정 창은 값을 복사해 주고 설정 파일을 열어 줄 뿐이다 — 설치 스크립트·앱 기동 중 자동 변경은 하지 않는다
 - cmux 버전 감시·경고 UI(열린 질문 5 결정): 검사 목록 항목으로만 둔다
 - cmux의 **AppleScript 표면**(D6에서 기각). `app/Info.plist`의 `NSAppleEventsUsageDescription`도 그대로 둔다
 
@@ -285,7 +285,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 ### D13. 자동화 버튼은 설정 안내만 제공한다
 
-**[교체 — 사용자 결정 2026-08-27]** 버튼은 라이브 상태와 무관하게 활성이고, `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사한 뒤 기존 설정 파일 또는 폴더를 연다. 파일·폴더를 만들거나 쓰지 않으므로 백업 경고·in-flight 상태·결과 후처리로 라이브 상태를 덮는 경로는 없다. cmux 자체 설정 → Automation도 함께 안내하고, cmux의 파일 워처가 변경을 즉시 반영하므로 재시작은 필요 없다(R1-m). 분류가 흔들리는 라이브 프로브는 상태 표시의 정본으로만 남는다.
+**[교체 — 사용자 결정 2026-08-27]** 버튼은 라이브 상태와 무관하게 활성이고, `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사한 뒤 기존 설정 파일 또는 폴더를 연다. 파일·폴더를 만들거나 쓰지 않으므로 백업 경고·in-flight 상태·결과 후처리로 라이브 상태를 덮는 경로는 없다. cmux 자체 설정 → Automation도 함께 안내하고, cmux의 파일 워처가 변경을 즉시 반영하므로 재시작은 필요 없다(R1-m). 분류가 흔들리는 라이브 프로브는 상태 표시의 정본으로만 남는다. 같은 부류가 세 번 나왔고, 이제 인스턴스가 아니라 대입 지점을 감사 테스트로 고정한다.
 
 ### D14. cmux 화면 읽기 오류 억제는 surface별이며 성공 시 초기화
 
@@ -427,6 +427,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 - cold review 6차(2026-08-26, bd01c24): 판정 no, 차단 6건 + 비차단 1건 — L1 파일을 고치지 않고도 백업 경고가 해제됨(이미 automation + cmux 꺼짐에서 재클릭), L2 재시도 마커가 부분 문자열이라 서버가 만든 뒤의 후처리 실패도 재시도(workspace 중복), L3 교체 중간 실패에서 진짜 백업이 0600 보장을 잃음, L4 예약 identity를 `close` 뒤 경로에서 읽음, L5 잘못된 UTF-8 한 바이트가 전체 출력을 빈 문자열로 만듦, L6 마지막 대기 실패 뒤 버퍼 읽기가 데이터 경합, L7 기동·준비 실패 진단 소실(비차단). J5∼J8은 닫힘 확인. red: 8 테스트 11 실패(드라이버) / green: swift 567(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. **green 중 드라이버 실측으로 L2 앵커 결함을 잡았다** — 실제 CLI stderr은 `Error: `로 시작하는데 앵커가 그 접두사를 몰라, 테스트는 통과하면서 실경로의 자동 기동을 막고 있었다. 사용자 cmux를 끄지 않고 `CMUX_SOCKET_PATH`로 두 형태를 재측정했다: `Error: Failed to connect to socket at <path> (Connection refused, errno 61)`(소켓 파일은 있고 listener 없음)과 `Error: Socket not found at <path>`(소켓 파일 없음). 둘 다 접두사 포함 앵커로 고정했고, 테스트 입력도 실측 원문으로 바꿨다(red 3 테스트 4 실패 확인 후 green).
 - cold review 7차(2026-08-27, f3e077b): 판정 no, 4건 — **N1 `claude_inputs`가 NUL·개행만 거부해 DEL(U+007F)이 통과, 타이핑되는 바이트라 Backspace로 동작하고 반영 확인은 앞 24자만 보므로 24자 뒤의 DEL은 검사에 걸리지 않은 채 CR이 나가 다른 명령이 조용히 실행된다(cmux 이전부터 있던 결함)**, N2 앵커가 `Error: `를 선택적으로 벗겨 측정되지 않은 무접두사 형태도 재시도로 승인, N3 identity 확인∼경로 삭제/chmod TOCTOU(`funlinkat`은 Swift Darwin에 없음 — 드라이버 실측), N4 `fileExists == false`가 '없음'과 '확인 불가'를 합쳐 EACCES에서 경고가 영구히 사라진다. L3·L5·L6·L7은 닫힘 확인. red: 4 테스트 8 실패(드라이버) / green: 다음 커밋 라운드에 기입. green: swift 571(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. N3은 `funlinkat` 부재(드라이버 실측: `import Darwin; _ = funlinkat` 컴파일 실패, 반면 `O_NOFOLLOW`·`fstat`·`fchmod`는 보인다)를 인정하고 두 갈래로 풀었다 — chmod는 `O_NOFOLLOW` 디스크립터 기반, 삭제는 예약 이름에 8자리 hex를 넣어 경로를 예측 불가로 만들고 identity 검사를 방어 이중화로 남겼다.
 - cold review 8차(2026-08-27, 7404ecd): 판정 no, **차단 1건** — N1의 제어 문자 검사가 `trimmingCharacters` 뒤에 있어 가장자리의 TAB·개행이 검사를 빠져나가고, `["\t"]`는 빈 문자열이 되어 성공 응답과 함께 사라진다. N2·N3·N4는 닫힘 확인(N3은 선언된 same-UID 신뢰 모델 안에서). 그 밖의 차단 없음. red: 3 테스트 7 실패(드라이버) / green: 다음 커밋 라운드에 기입.
+- cold review 9차(2026-08-27, 38fd8a7): 판정 no, 차단 2건 + 비차단 1건 — **P1 O1이 앱 경계에서만 닫혔고 확장의 `trim()`이 제어 문자를 먼저 지워 버튼 경로를 우회했다**(`["\t"]`는 저장 시점에 소멸, `["\t!echo x"]`는 변조 후 실행), P2 설정 버튼 피드백이 라이브 진단 라벨을 덮어 D13 위반(G3·H4에 이은 3회째 — 소스 감사 테스트로 원천을 막았다), P3 계획 비목표가 축소와 어긋남. O2의 삭제는 죽은 참조 없이 깨끗하다고 확인됨. red: node 222/2 실패 + swift 2 실패(드라이버) / green: swift 542(1 skip)·node 222·build.sh·e2e 9/9, 0 실패. P1은 두 호출부가 `normalizeClaudeInputs` 하나를 쓰게 해 한쪽만 바뀌는 재발을 막았고, P2는 `cmuxFeedbackLabel`을 분리하고 `refresh()`가 그것을 비우게 했다. 소스 감사 테스트가 라이브 라벨 대입을 `refresh()`로 고정한다.
 
 ### 테스트 심사
 

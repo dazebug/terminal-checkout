@@ -264,6 +264,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let permissionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let accessibilityStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let cmuxStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let cmuxFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
@@ -277,7 +278,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     var statusLabelsForTesting: [NSTextField] {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
-            permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, testResultLabel,
+            permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, cmuxFeedbackLabel,
+            testResultLabel,
         ]
     }
     /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
@@ -973,6 +975,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxSection.addArrangedSubview(sectionTitle(localized("app.section.cmux.title")))
         cmuxSection.addArrangedSubview(helpLabel(localized("app.section.cmux.help")))
         cmuxSection.addArrangedSubview(cmuxStatusLabel)
+        cmuxSection.addArrangedSubview(cmuxFeedbackLabel)
 
         cmuxConfigButton.title = localized("app.button.openCmuxConfig")
         cmuxConfigButton.target = self
@@ -1325,6 +1328,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let status = PermissionChecker.cmuxSocketStatus()
             cmuxStatus = status
             apply(cmuxSetupState(status), to: cmuxStatusLabel)
+            // A refresh is the live-status oracle. Clear transient click feedback so an old
+            // action is not mistaken for the current diagnosis after a redraw.
+            cmuxFeedbackLabel.stringValue = ""
+            cmuxFeedbackLabel.textColor = Theme.textDim
             cmuxConfigButton.isEnabled = true
             cmuxRefreshButton.isEnabled = true
         }
@@ -1681,8 +1688,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         guard pasteboard.setString(
             CmuxConfigHelp.cmuxConfigClipboardFragment(), forType: .string
         ) else {
-            cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configClipboardFailed")
-            cmuxStatusLabel.textColor = Theme.warn
+            cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configClipboardFailed")
+            cmuxFeedbackLabel.textColor = Theme.warn
             return
         }
 
@@ -1699,25 +1706,25 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         switch target {
         case .file(let url):
             if NSWorkspace.shared.open(url) {
-                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpened")
-                cmuxStatusLabel.textColor = Theme.accent
+                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpened")
+                cmuxFeedbackLabel.textColor = Theme.accent
             } else {
-                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
-                cmuxStatusLabel.textColor = Theme.warn
+                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
+                cmuxFeedbackLabel.textColor = Theme.warn
             }
         case .directory(let url):
             if NSWorkspace.shared.open(url) {
-                cmuxStatusLabel.stringValue = "● " + localized(
+                cmuxFeedbackLabel.stringValue = "● " + localized(
                     "app.status.cmux.configDirectoryOpened"
                 )
-                cmuxStatusLabel.textColor = Theme.accent
+                cmuxFeedbackLabel.textColor = Theme.accent
             } else {
-                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
-                cmuxStatusLabel.textColor = Theme.warn
+                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
+                cmuxFeedbackLabel.textColor = Theme.warn
             }
         case .nothing:
-            cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configUnavailable")
-            cmuxStatusLabel.textColor = Theme.warn
+            cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configUnavailable")
+            cmuxFeedbackLabel.textColor = Theme.warn
         }
     }
 

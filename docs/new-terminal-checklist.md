@@ -124,7 +124,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] The setup window draws all four live cmux states: `notInstalled`, `notRunning`, `denied`, and `reachable`.
 - [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
 - [ ] The cmux config action opens the existing file or its folder, fills the clipboard with the automation fragment, and never creates or writes a file.
-- [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery.
+- [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery, and the storage/send path does not remove those control bytes before the app checks them.
 - [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).
 - [ ] A `!` input enters claude's shell mode, and the clear sequence uses two separate `surface.send_text` calls, `0x15` then `0x7F`, to remove the shell-mode prefix as well as the text.

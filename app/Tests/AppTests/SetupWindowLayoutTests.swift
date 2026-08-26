@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import TestSupport
 import XCTest
 @testable import App
 
@@ -213,6 +214,29 @@ final class SetupWindowLayoutTests: XCTestCase {
             XCTAssertEqual(label.maximumNumberOfLines, 0)
             XCTAssertEqual(label.preferredMaxLayoutWidth, setupTextWidth)
             XCTAssertEqual(label.font?.pointSize, 11.5, "\(String(describing: label.font))")
+        }
+    }
+
+    /// P2 source audit: the live cmux label belongs to `refresh()`, while the configuration action
+    /// needs a separate feedback label. The current action still writes the live label directly;
+    /// green will move those assignments without changing the live-status oracle.
+    func testCmuxLiveStatusLabelIsAssignedOnlyByRefresh() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/SetupWindowController.swift").path
+        let source = try auditSource(sourcePath, claim: .sourceStructure).text
+        let refresh = try XCTUnwrap(source.range(of: "private func refresh() {")?.lowerBound)
+        let refreshEnd = try XCTUnwrap(
+            source.range(
+                of: "\n    /// Redraws the base directory card", range: refresh..<source.endIndex
+            )?.lowerBound
+        )
+        let outsideRefresh = String(source[..<refresh]) + String(source[refreshEnd...])
+        for assignment in ["cmuxStatusLabel.stringValue =", "cmuxStatusLabel.textColor ="] {
+            XCTAssertFalse(
+                outsideRefresh.contains(assignment),
+                "the live cmux label is assigned outside refresh(): \(assignment)"
+            )
         }
     }
 
@@ -435,7 +459,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
         let cmuxSection = controller.refillableSectionsForTesting[1]
         XCTAssertFalse(cmuxSection.isHidden)
-        XCTAssertEqual(cmuxSection.arrangedSubviews.count, 5)
+        XCTAssertEqual(cmuxSection.arrangedSubviews.count, 6)
 
         let nodes = controller.pipelineNodes(
             manifest: .ok("registered"), extensionState: .ok("ready"), socketAlive: true,
@@ -443,6 +467,21 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
         XCTAssertEqual(nodes.last?.label, "cmux")
         XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.denied"))
+    }
+
+    func testItem14CmuxCardHasSeparateEmptyFeedbackLabel() throws {
+        let controller = makeController(.cmux)
+        let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let cmuxSection = controller.refillableSectionsForTesting[1]
+        let feedback = try XCTUnwrap(
+            cmuxSection.arrangedSubviews.compactMap { $0 as? NSTextField }
+                .first { $0.stringValue.isEmpty },
+            "cmux card has no separate empty feedback label"
+        )
+        XCTAssertEqual(feedback.stringValue, "")
     }
 
 
