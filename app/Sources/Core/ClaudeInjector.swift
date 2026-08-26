@@ -4,12 +4,15 @@ import Foundation
 public enum TerminalSessionHandle {
     case iterm(sessionID: String, tty: String)
     case wezterm(paneID: String, cliPath: String, socketPath: String?)
+    case cmux(surfaceID: String, workspaceID: String, cliPath: String)
     /// Warp has neither a CLI nor AppleScript that can address a pane, so the socket of the injection helper running inside the pane is the only channel. Even the tty is learned by asking that helper (`ClaudeInjector.warpHelperTTY`).
     case warp(helperSocket: String)
     /// No delivery path (the WezTerm fallback launch, a Warp helper that could not be prepared, and so on).
     case none
 
-    /// Can a screen read be asserted to belong to this session? iTerm2 and WezTerm read exactly that screen by session or pane id, whereas Warp only ever reads "the focused pane" — so only that one needs a pane proof.
+    /// Can a screen read be asserted to belong to this session? iTerm2, WezTerm and cmux read
+    /// exactly that screen by session, pane or surface id, whereas Warp only ever reads "the
+    /// focused pane" — so only that one needs a pane proof.
     var screenNeedsPaneProof: Bool {
         if case .warp = self { return true }
         return false
@@ -30,6 +33,38 @@ let claudeSubmitKey = "\r"
 ///
 /// Only `!` was measured. The `/` and `#` prefixes are one character too and should be erased by the same sequence, but that is inference, not measurement.
 let claudeClearInputKey = "\u{15}\u{7F}"
+
+struct CmuxRPCOperation: Equatable {
+    let method: String
+    let params: [String: String]
+}
+
+func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
+    if text == claudeClearInputKey {
+        return [
+            CmuxRPCOperation(
+                method: cmuxSurfaceSendKeyMethod,
+                params: ["surface_id": surfaceID, "key": "ctrl+u"]
+            ),
+            CmuxRPCOperation(
+                method: cmuxSurfaceSendKeyMethod,
+                params: ["surface_id": surfaceID, "key": "backspace"]
+            ),
+        ]
+    }
+    return [
+        CmuxRPCOperation(
+            method: cmuxSurfaceSendTextMethod,
+            params: ["surface_id": surfaceID, "text": text]
+        )
+    ]
+}
+
+private func cmuxRPCParameters(_ parameters: [String: String]) -> [String: Any] {
+    parameters.reduce(into: [String: Any]()) { result, entry in
+        result[entry.key] = entry.value
+    }
+}
 
 /// Returns the PID of the claude that is in the foreground process group (stat contains `+`), out of `ps -t <tty> -o pid=,stat=,comm=` output. nil when there is none. With the shell sitting at its prompt the shell itself is `+`, so the answer is nil — and this gate is the only defence against the mistyping where input goes into the shell and Enter runs it immediately.
 /// A PID is returned rather than a yes/no because the re-wait between inputs has to confirm the session's identity: going by the name and raw mode alone, a claude that came up on the same tty after the original died reads as the same session, and the remaining inputs get submitted into an unrelated one. Restarting claude on the same tty confirmed it — comm (`claude`) and raw mode (true) were identical across the two sessions and only the PID differed, so the PID is the only signal that can tell a session swap apart.
@@ -78,6 +113,24 @@ public func wezTermTTYName(listJSON: Data, paneID: String) -> String? {
         return pane["tty_name"] as? String
     }
     return nil
+}
+
+/// Finds the basename tty attached to a cmux surface. `debug.terminals` reports the tty without
+/// `/dev/`; returning the full device path keeps the rest of the Claude gate identical to the
+/// iTerm2 and WezTerm paths.
+public func cmuxTTYName(debugTerminalsJSON: Data, surfaceID: String) -> String? {
+    guard
+        let object = try? JSONSerialization.jsonObject(with: debugTerminalsJSON),
+        let response = object as? [String: Any],
+        let terminals = response["terminals"] as? [[String: Any]],
+        let terminal = terminals.first(where: { $0["surface_id"] as? String == surfaceID }),
+        let tty = terminal["tty"] as? String,
+        !tty.isEmpty,
+        !tty.contains("/")
+    else {
+        return nil
+    }
+    return "/dev/" + tty
 }
 
 /// The random value used for the pane proof. It can only enter our own tty, so seeing it newly appear on screen is evidence that the screen is our pane. It is alphanumeric so it means nothing special to claude's input box (`/`, `!` and `@` trigger modes and completion), and long enough not to collide by accident.
@@ -886,6 +939,9 @@ public func deliverClaudeInputs(
         ttyPath = tty
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
+    case .cmux(let surfaceID, _, let cliPath):
+        ttyPath = cmuxQueryTTY(cliPath: cliPath, surfaceID: surfaceID)
+        timeline?.step(ttyPath == nil ? "failed waiting for the cmux surface tty" : "cmux surface tty ready")
     case .warp(let socket):
         // Without reading the screen there is no way to confirm claude received the input, and a CR sent without that confirmation submits an empty line while input claude discarded is recorded as "delivered" (measured).
         // So on Warp the Accessibility permission is a **hard requirement** for buttons that schedule claude input — it has nothing to do with running the command itself, and the log records that difference
@@ -1002,6 +1058,31 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
     return wezTermTTYName(listJSON: Data(result.stdout.utf8), paneID: paneID)
 }
 
+/// Waits for cmux to materialize the pty behind a newly focused surface. The command is already
+/// running while this waits, so a timeout gives up only the scheduled Claude inputs.
+private let cmuxTTYWaitTimeout: TimeInterval = 20
+private let cmuxTTYPollInterval: TimeInterval = 0.2
+
+private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
+    let deadline = Date().addingTimeInterval(cmuxTTYWaitTimeout)
+    while true {
+        if let response = try? cmuxRPC(
+            cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5
+        ), let data = try? JSONSerialization.data(withJSONObject: response),
+           let tty = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID) {
+            return tty
+        }
+        if Date() >= deadline {
+            checkoutLog(
+                "cmux surface \(surfaceID) did not report a tty within \(Int(cmuxTTYWaitTimeout))s"
+                    + " — giving up on claude input"
+            )
+            return nil
+        }
+        Thread.sleep(forTimeInterval: cmuxTTYPollInterval)
+    }
+}
+
 /// Sends keystrokes as they are, without appending a newline (`claudeSubmitKey` and `claudeClearInputKey` included).
 private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expectedPID: Int) -> Bool {
     switch handle {
@@ -1027,6 +1108,19 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
             input: text, env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         )
         return result?.status == 0
+    case .cmux(let surfaceID, _, let cliPath):
+        for operation in cmuxSendOperations(surfaceID: surfaceID, text: text) {
+            guard let response = try? cmuxRPC(
+                cli: cliPath, method: operation.method,
+                params: cmuxRPCParameters(operation.params), timeout: 5
+            ) else {
+                return false
+            }
+            if response["queued"] as? Bool == true {
+                checkoutLog("cmux \(operation.method) queued=true")
+            }
+        }
+        return true
     case .warp(let socket):
         // The helper puts bytes straight into our pane's tty input queue (TIOCSTI) — independent of focus, and unable to leak into another pane or another app. That is why synthetic keystrokes are not used.
         // The expected PID rides along so the helper can also check "the process that will read this tty right now" — we can only look before sending, and who reads what was put in the queue is decided only there
@@ -1062,6 +1156,14 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
             env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         ), result.status == 0 else { return nil }
         return result.stdout
+    case .cmux(let surfaceID, _, let cliPath):
+        guard let response = try? cmuxRPC(
+            cli: cliPath, method: cmuxSurfaceReadTextMethod,
+            params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
+        ) else {
+            return nil
+        }
+        return cmuxScreenText(from: response)
     case .warp:
         // What Accessibility reads is "the focused pane in Warp", with no guarantee it is ours.
         // It is nevertheless safe because input does not travel this path (see `warpScreenText`) — reading someone else's pane makes the pane proof and the reflection check fail, which sends us back to a retry, and if it fails for good nothing is submitted

@@ -112,6 +112,37 @@ public func cmuxRPCResponse(_ data: Data) throws -> [String: Any] {
     return response
 }
 
+/// The workspace request deliberately leaves window selection and cwd to cmux. The server's
+/// default is the user's last active window, while the command's `{cd}` clause owns the cwd.
+public func cmuxWorkspaceCreateParameters() -> [String: Any] {
+    ["focus": true]
+}
+
+/// The identifiers returned by `workspace.create` are both required to address the new surface.
+/// A missing surface is not a successful workspace creation for this caller: without it no
+/// command can be sent.
+public func cmuxWorkspaceIdentifiers(
+    from response: [String: Any]
+) -> (workspaceID: String, surfaceID: String)? {
+    guard let workspaceID = response["workspace_id"] as? String, !workspaceID.isEmpty,
+          let surfaceID = response["surface_id"] as? String, !surfaceID.isEmpty else {
+        return nil
+    }
+    return (workspaceID, surfaceID)
+}
+
+public func cmuxSurfaceSendTextParameters(surfaceID: String, text: String) -> [String: Any] {
+    ["surface_id": surfaceID, "text": text]
+}
+
+public func cmuxSurfaceReadTextParameters(surfaceID: String) -> [String: Any] {
+    ["surface_id": surfaceID]
+}
+
+public func cmuxScreenText(from response: [String: Any]) -> String? {
+    response["text"] as? String
+}
+
 public func cmuxRPCFailure(method: String, status: Int32, stderr: String) -> TerminalError {
     let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
     if status != 0 && detail.localizedCaseInsensitiveContains("access denied") {

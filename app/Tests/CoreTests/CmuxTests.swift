@@ -118,4 +118,106 @@ final class CmuxTests: XCTestCase {
             XCTFail("A non-access RPC failure must include its method")
         }
     }
+
+    func testItem5CmuxRunParametersUseFocusOnlyAndPreserveCommandCR() {
+        let workspace = cmuxWorkspaceCreateParameters()
+        XCTAssertEqual(workspace["focus"] as? Bool, true)
+        XCTAssertNil(workspace["window_id"])
+        XCTAssertNil(workspace["cwd"])
+
+        let command = cmuxSurfaceSendTextParameters(
+            surfaceID: "surface-1", text: "echo 한글\r"
+        )
+        XCTAssertEqual(command["surface_id"] as? String, "surface-1")
+        XCTAssertEqual(command["text"] as? String, "echo 한글\r")
+    }
+
+    func testItem5CmuxWorkspaceIdentifiersRequireWorkspaceAndSurface() {
+        let identifiers = cmuxWorkspaceIdentifiers(from: [
+            "workspace_id": "workspace-1",
+            "surface_id": "surface-1",
+        ])
+        XCTAssertEqual(identifiers?.workspaceID, "workspace-1")
+        XCTAssertEqual(identifiers?.surfaceID, "surface-1")
+
+        XCTAssertNil(cmuxWorkspaceIdentifiers(from: ["workspace_id": "workspace-1"]))
+        XCTAssertNil(cmuxWorkspaceIdentifiers(from: ["surface_id": "surface-1"]))
+    }
+
+    func testItem9CmuxTTYNameParsesTheMatchingSurface() {
+        let json = Data(
+            """
+            {"terminals":[{"surface_id":"surface-other","tty":"ttys019"},{"surface_id":"surface-1","tty":"ttys020"}]}
+            """.utf8
+        )
+
+        XCTAssertEqual(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"), "/dev/ttys020")
+    }
+
+    func testItem9CmuxTTYNameReturnsNilForNullTTY() {
+        let json = Data(
+            #"{"terminals":[{"surface_id":"surface-1","tty":null}]}"#.utf8
+        )
+
+        XCTAssertNil(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"))
+    }
+
+    func testItem9CmuxTTYNameReturnsNilForMissingSurface() {
+        let json = Data(
+            #"{"terminals":[{"surface_id":"surface-other","tty":"ttys020"}]}"#.utf8
+        )
+
+        XCTAssertNil(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"))
+    }
+
+    func testItem9CmuxTTYNameReturnsNilForInvalidJSON() {
+        XCTAssertNil(cmuxTTYName(debugTerminalsJSON: Data("not json".utf8), surfaceID: "surface-1"))
+    }
+
+    func testItem10CmuxClearInputUsesCtrlUThenBackspace() {
+        XCTAssertEqual(
+            cmuxSendOperations(surfaceID: "surface-1", text: claudeClearInputKey),
+            [
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendKeyMethod,
+                    params: ["surface_id": "surface-1", "key": "ctrl+u"]
+                ),
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendKeyMethod,
+                    params: ["surface_id": "surface-1", "key": "backspace"]
+                ),
+            ]
+        )
+    }
+
+    func testItem10CmuxBodyUsesSurfaceSendTextWithoutChangingIt() {
+        XCTAssertEqual(
+            cmuxSendOperations(surfaceID: "surface-1", text: "한글"),
+            [
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": "한글"]
+                )
+            ]
+        )
+    }
+
+    func testItem10CmuxCRUsesOneSurfaceSendTextCR() {
+        XCTAssertEqual(
+            cmuxSendOperations(surfaceID: "surface-1", text: claudeSubmitKey),
+            [
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": "\r"]
+                )
+            ]
+        )
+    }
+
+    func testItem11CmuxScreenTextRequiresTheTextField() {
+        let parameters = cmuxSurfaceReadTextParameters(surfaceID: "surface-1")
+        XCTAssertEqual(parameters["surface_id"] as? String, "surface-1")
+        XCTAssertEqual(cmuxScreenText(from: ["text": "screen"]), "screen")
+        XCTAssertNil(cmuxScreenText(from: ["error": "internal_error"]))
+    }
 }

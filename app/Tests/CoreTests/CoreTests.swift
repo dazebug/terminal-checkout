@@ -4082,12 +4082,22 @@ final class WarpProcessTests: XCTestCase {
 // Whether a screen read can be asserted to belong to that session differs per terminal. Getting this verdict wrong makes iTerm2 and WezTerm pay an unnecessary proof cost, or lets Warp submit without one.
 
 final class PaneProofRoutingTests: XCTestCase {
-    func testOnlyWarpNeedsPaneProof() {
+    func testItem8OnlyWarpNeedsPaneProof() {
         XCTAssertTrue(TerminalSessionHandle.warp(helperSocket: "/tmp/x.sock").screenNeedsPaneProof)
         XCTAssertFalse(TerminalSessionHandle.iterm(sessionID: "s", tty: "/dev/ttys001").screenNeedsPaneProof)
         XCTAssertFalse(
             TerminalSessionHandle.wezterm(paneID: "1", cliPath: "/x", socketPath: nil).screenNeedsPaneProof
         )
+        let cmux = TerminalSessionHandle.cmux(
+            surfaceID: "surface-1", workspaceID: "workspace-1", cliPath: "/cmux"
+        )
+        XCTAssertFalse(cmux.screenNeedsPaneProof)
+        guard case .cmux(let surfaceID, let workspaceID, let cliPath) = cmux else {
+            return XCTFail("item 8 must retain the cmux identifiers")
+        }
+        XCTAssertEqual(surfaceID, "surface-1")
+        XCTAssertEqual(workspaceID, "workspace-1")
+        XCTAssertEqual(cliPath, "/cmux")
         XCTAssertFalse(TerminalSessionHandle.none.screenNeedsPaneProof)
     }
 

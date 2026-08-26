@@ -246,9 +246,59 @@ public func runInTerminal(
     case .iterm: return try runInITerm(command)
     case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
     case .warp: return try runInWarp(command, claudeInput: claudeInput)
-    case .cmux:
-        throw TerminalError.cmuxRPCFailed("cmux terminal runner is not available yet")
+    case .cmux: return try runInCmux(command)
     }
+}
+
+private let cmuxSocketWaitTimeout: TimeInterval = 10
+private let cmuxSocketPollInterval: TimeInterval = 0.1
+
+private func waitForCmuxSocket() -> Bool {
+    let deadline = Date().addingTimeInterval(cmuxSocketWaitTimeout)
+    while true {
+        if cmuxSocketPath() != nil { return true }
+        if Date() >= deadline { return false }
+        Thread.sleep(forTimeInterval: cmuxSocketPollInterval)
+    }
+}
+
+/// Opens a workspace in cmux and starts the command on its returned surface. cmux chooses the
+/// user's last active window; the command itself owns cwd through its assembled `{cd}` clause.
+@discardableResult
+public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
+    guard let cliPath = findCmuxCLI() else { throw TerminalError.cmuxNotFound }
+
+    if cmuxSocketPath() == nil {
+        // Passing no target after the bundle id is deliberate: an argument would enable cmux
+        // session restoration instead of merely starting the app.
+        _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
+        guard waitForCmuxSocket() else { throw TerminalError.timeout("cmux socket") }
+    }
+
+    let workspace = try cmuxRPC(
+        cli: cliPath, method: cmuxWorkspaceCreateMethod,
+        params: cmuxWorkspaceCreateParameters()
+    )
+    guard let identifiers = cmuxWorkspaceIdentifiers(from: workspace) else {
+        throw TerminalError.cmuxRPCFailed(
+            "\(cmuxWorkspaceCreateMethod): response missing workspace_id or surface_id"
+        )
+    }
+
+    let sendResponse = try cmuxRPC(
+        cli: cliPath, method: cmuxSurfaceSendTextMethod,
+        params: cmuxSurfaceSendTextParameters(
+            surfaceID: identifiers.surfaceID, text: command + claudeSubmitKey
+        )
+    )
+    if sendResponse["queued"] as? Bool == true {
+        checkoutLog("cmux \(cmuxSurfaceSendTextMethod) queued=true")
+    }
+    return .cmux(
+        surfaceID: identifiers.surfaceID,
+        workspaceID: identifiers.workspaceID,
+        cliPath: cliPath
+    )
 }
 
 /// Opens a new tab in iTerm2 and runs the command.
