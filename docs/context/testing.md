@@ -16,6 +16,22 @@ The Node gate walks the test tree and derives two sets from the files themselves
 
 This is deliberately a contract gate, not a runtime claim about what a source-only lint proves. Such tests label their source half as a lint and add a live oracle when the behaviour is observable; an unobservable boundary remains human-review scope. The lexical reader is intentionally bounded: `FileHandle` and other APIs outside the `contentsOf*` family evade it, and `NSString(contentsOfFile:)` is covered only when that label and its source path are visible rather than hidden behind a helper. An indirect copied-artifact read is therefore a human-review residual, not evidence that the gate understands every file API.
 
+## The third instance of a defect class becomes a source audit instead of a third fix
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** PR #60; `app/Sources/App/SetupWindowController.swift`, and the earlier `/usr/bin/osascript` occurrence count
+**Revisit when:** a source audit starts failing for a legitimate new call site often enough that the count is the thing being maintained
+
+A button in the setup window wrote its own result into the live cmux status label, replacing a diagnosis it had not changed — so a card could read "copied and opened" over a socket that was still refusing us. That was the third time in this project that a one-off write clobbered a label owned by a refresh pass. Rather than fix the third instance, a source-audit test now asserts that assignments to that label's `stringValue` and `textColor` appear only inside `refresh()`.
+
+**Reason:** the first two fixes were correct and did not stop the third, because what recurs is not the bug but the shape — any future writer reaching for the nearest visible label reproduces it. Naming the owner in a test makes the next attempt fail at the gate instead of on a user's screen.
+
+**Rejected alternative — fix the instance and note it in review.** Tried twice, by construction: this is what "fix the instance" produced both previous times.
+
+**Precedent it follows:** the same repository already pins "every AppleScript run goes through one function" by counting `/usr/bin/osascript` occurrences in `app/Sources/**`. A second call site fails that test. It is a lexical count and it is honest about being one — it constrains the spelling, not the semantics, which is enough when the rule is "there is exactly one place this may appear."
+
 ## When authority moves between two stores, the gates stay on the old one and everything passes
 
 **Type:** constraint
