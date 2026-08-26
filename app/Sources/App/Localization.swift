@@ -207,9 +207,6 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
 /// app bundle. The socket response and config action are user-facing, so the App boundary localizes
 /// cmux failures while leaving every existing terminal message byte-for-byte unchanged.
 func localizedErrorMessage(_ error: Error) -> String {
-    if let cmuxError = error as? CmuxConfigurationError {
-        return localized("app.error.cmux.config", cmuxError.description)
-    }
     guard let terminalError = error as? TerminalError else { return errorMessage(error) }
     switch terminalError {
     case .cmuxNotFound:

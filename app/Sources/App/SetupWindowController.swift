@@ -1,5 +1,4 @@
 import AppKit
-import Darwin
 import Core
 
 /// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
@@ -12,29 +11,6 @@ import Core
 let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
 let setupTextWidth: CGFloat = setupContentWidth - 28
-
-enum CmuxAutomationFeedback: Equatable {
-    case alreadyEnabled
-    case notApplied
-    case backupUnsecured
-}
-
-/// Returns a case rather than a key string because only literal keys are visible to catalogue audit.
-func cmuxAutomationFeedback(
-    result: CmuxAutomationWriteResult, liveStatus: CmuxSocketStatus
-) -> CmuxAutomationFeedback? {
-    switch result {
-    case .alreadyEnabled:
-        return liveStatus == .reachable ? .alreadyEnabled : nil
-    case .applied(let backupSecured, _):
-        // Backup protection is a separate safety axis and takes priority over live-state
-        // feedback: a successful setting change must not hide an unsecured recovery file.
-        return backupSecured ? nil : .backupUnsecured
-    case .notApplied(let backupSecured, _):
-        guard backupSecured else { return .backupUnsecured }
-        return liveStatus == .reachable ? nil : .notApplied
-    }
-}
 
 struct FittedContentLayoutPass {
     let fittingSize: NSSize
@@ -282,67 +258,6 @@ func makeStatusLabel(font: NSFont) -> NSTextField {
 }
 
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
-    /// Feedback supplements the live diagnostic; it must not replace the reason refresh just drew.
-    static func cmuxStatusLine(
-        liveText: String, feedback: String?, backupWarning: String? = nil
-    ) -> String {
-        [liveText, feedback, backupWarning]
-            .compactMap { $0 }
-            .joined(separator: " — ")
-    }
-
-    /// The live cmux-only measurement was `Error: Failed to write to socket`, which classifies as
-    /// `.failed`; the recovery control must remain available in that state rather than disappearing
-    /// with the diagnostic. The repair action has to stay alive in the state that needs it.
-    static func cmuxAutomationButtonEnabled(
-        for status: CmuxSocketStatus, inFlight: Bool
-    ) -> Bool {
-        guard !inFlight else { return false }
-        switch status {
-        case .reachable, .notInstalled: return false
-        case .notRunning, .denied, .failed: return true
-        }
-    }
-
-    /// `backupSecured` describes only the backup from this write, not every path already retained
-    /// from earlier writes. A path is cleared only when its own file is secured (or gone).
-    static func retainedUnsecuredBackups(
-        _ current: Set<String>, after result: CmuxAutomationWriteResult,
-        isSecured: (String) -> Bool
-    ) -> Set<String> {
-        var retained = current.filter { !isSecured($0) }
-        switch result {
-        case .alreadyEnabled:
-            return retained
-        case .applied(let backupSecured, let backupPath),
-             .notApplied(let backupSecured, let backupPath):
-            // The result flag belongs to the newly written backup; it is not evidence about
-            // another path, so an unsecured existing path remains until its mode is rechecked.
-            if !backupSecured, let backupPath { retained.insert(backupPath) }
-        }
-        return retained
-    }
-
-    /// Only a confirmed 0600 file, or a lstat failure proving ENOENT/ENOTDIR, releases a retained
-    /// warning. An access error is "could not check", not evidence that the backup is protected.
-    static func cmuxBackupSecurityDecision(
-        statResult: Int32, errnoValue: Int32, mode: mode_t
-    ) -> Bool {
-        guard statResult == 0 else {
-            return errnoValue == ENOENT || errnoValue == ENOTDIR
-        }
-        return mode & mode_t(0o777) == mode_t(0o600)
-    }
-
-    private static func cmuxBackupIsSecured(at path: String) -> Bool {
-        var info = stat()
-        let result = path.withCString { lstat($0, &info) }
-        let error = result == 0 ? 0 : errno
-        return cmuxBackupSecurityDecision(
-            statResult: Int32(result), errnoValue: Int32(error), mode: info.st_mode
-        )
-    }
-
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
@@ -370,7 +285,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// title is set in the builder instead, where a rebuild reads it again — and it lives in
     /// exactly one place, so a rebuild has one site to update rather than two to keep in step.
     private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
-    private let cmuxAutomationButton = NSButton(title: "", target: nil, action: nil)
+    private let cmuxConfigButton = NSButton(title: "", target: nil, action: nil)
     private let cmuxRefreshButton = NSButton(title: "", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
@@ -383,21 +298,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let permissionSection = NSStackView()
     /// On screen only while the terminal is Warp and the Accessibility permission is not granted
     private let accessibilitySection = NSStackView()
-    /// On screen only while cmux is selected; the section exposes the live socket mode and its
-    /// explicit JSONC editing action.
+    /// On screen only while cmux is selected; the section exposes the live socket mode and the
+    /// non-destructive configuration help action.
     private let cmuxSection = NSStackView()
-    /// The status read by the most recent refresh; button feedback may only supplement that same
-    /// live observation, never replace it with the write result.
-    private var lastCmuxStatus: CmuxSocketStatus?
-    /// The unmodified live label from the most recent refresh, before transient feedback is added.
-    private var lastCmuxLiveText: String?
-    /// Backups whose permissions could not be narrowed remain a persistent warning. The set is
-    /// process-local: after a restart the window cannot know whether a user handled an old path,
-    /// so the warning disappears even though the file itself remains.
-    private var unsecuredCmuxBackupPaths = Set<String>()
-    /// Refreshes can arrive while the JSON write and live probe are in flight. This flag is read
-    /// before the live status so an unrelated refresh cannot re-enable the action mid-write.
-    private var cmuxAutomationInFlight = false
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -1071,11 +974,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxSection.addArrangedSubview(helpLabel(localized("app.section.cmux.help")))
         cmuxSection.addArrangedSubview(cmuxStatusLabel)
 
-        cmuxAutomationButton.title = localized("app.button.enableCmuxAutomation")
-        cmuxAutomationButton.target = self
-        cmuxAutomationButton.action = #selector(enableCmuxAutomation)
-        cmuxAutomationButton.identifier = role(#selector(enableCmuxAutomation))
-        cmuxAutomationButton.bezelStyle = .rounded
+        cmuxConfigButton.title = localized("app.button.openCmuxConfig")
+        cmuxConfigButton.target = self
+        cmuxConfigButton.action = #selector(openCmuxConfig)
+        cmuxConfigButton.identifier = role(#selector(openCmuxConfig))
+        cmuxConfigButton.bezelStyle = .rounded
+        cmuxConfigButton.isEnabled = true
 
         cmuxRefreshButton.title = localized("app.button.refreshCmuxStatus")
         cmuxRefreshButton.target = self
@@ -1083,7 +987,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxRefreshButton.identifier = role(#selector(refreshCmuxStatus))
         cmuxRefreshButton.bezelStyle = .rounded
 
-        cmuxSection.addArrangedSubview(buttonRow([cmuxAutomationButton, cmuxRefreshButton]))
+        cmuxSection.addArrangedSubview(buttonRow([cmuxConfigButton, cmuxRefreshButton]))
     }
 
     private func sectionTitle(_ text: String) -> NSTextField {
@@ -1393,8 +1297,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         var permission: SetupState?
         var cmuxStatus: CmuxSocketStatus?
-        lastCmuxStatus = nil
-        lastCmuxLiveText = nil
         // A command still runs without Accessibility — only the claude input delivery is refused —
         // so this is a warning and not an error
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
@@ -1423,29 +1325,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let status = PermissionChecker.cmuxSocketStatus()
             cmuxStatus = status
             apply(cmuxSetupState(status), to: cmuxStatusLabel)
-            lastCmuxLiveText = cmuxStatusLabel.stringValue
-            unsecuredCmuxBackupPaths = Self.retainedUnsecuredBackups(
-                unsecuredCmuxBackupPaths,
-                after: .alreadyEnabled,
-                isSecured: Self.cmuxBackupIsSecured(at:)
-            )
-            let backupWarning: String? = unsecuredCmuxBackupPaths.isEmpty
-                ? nil
-                : localized(
-                    "app.status.cmux.backupProtectionIncomplete",
-                    unsecuredCmuxBackupPaths.sorted().joined(separator: ", ")
-                )
-            cmuxStatusLabel.stringValue = Self.cmuxStatusLine(
-                liveText: cmuxStatusLabel.stringValue,
-                feedback: nil,
-                backupWarning: backupWarning
-            )
-            cmuxAutomationButton.isEnabled = Self.cmuxAutomationButtonEnabled(
-                for: status, inFlight: cmuxAutomationInFlight
-            )
+            cmuxConfigButton.isEnabled = true
             cmuxRefreshButton.isEnabled = true
         }
-        lastCmuxStatus = cmuxStatus
         var granted = false
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
@@ -1791,69 +1673,51 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
-    /// This is the only path that edits cmux.json. It is an explicit user action; installation,
-    /// launch, and ordinary refreshes only read the live ping state.
-    @objc private func enableCmuxAutomation() {
-        guard !cmuxAutomationInFlight else { return }
-        // The button is disabled for the whole in-flight operation; completion calls refresh(),
-        // which is the only owner allowed to decide whether it becomes enabled again.
-        cmuxAutomationInFlight = true
-        cmuxAutomationButton.isEnabled = false
-        CmuxAutomation.enableAutomation { [weak self] result in
-            guard let self else { return }
-            self.cmuxAutomationInFlight = false
-            switch result {
-            case .success(let result):
-                switch result {
-                case .applied(let backupSecured, let backupPath),
-                     .notApplied(let backupSecured, let backupPath):
-                    self.unsecuredCmuxBackupPaths = Self.retainedUnsecuredBackups(
-                        self.unsecuredCmuxBackupPaths,
-                        after: result,
-                        isSecured: Self.cmuxBackupIsSecured(at:)
-                    )
-                case .alreadyEnabled:
-                    // No file was written, so an earlier unsecured backup remains a live warning.
-                    break
-                }
-                self.refresh()
-                if let liveStatus = self.lastCmuxStatus,
-                   let feedbackCase = cmuxAutomationFeedback(
-                       result: result, liveStatus: liveStatus
-                   ) {
-                    // The persistent backup warning is already drawn by refresh(). Do not append
-                    // that same warning twice; transient live-state feedback still goes through
-                    // the three-part line builder with the same live text and warning state.
-                    guard feedbackCase != .backupUnsecured else { return }
-                    let feedback: String
-                    switch feedbackCase {
-                    case .alreadyEnabled:
-                        feedback = localized("app.status.cmux.automationAlreadyEnabled")
-                    case .notApplied:
-                        feedback = localized("app.status.cmux.automationNotApplied")
-                    case .backupUnsecured:
-                        return
-                    }
-                    let backupWarning: String? = self.unsecuredCmuxBackupPaths.isEmpty
-                        ? nil
-                        : localized(
-                            "app.status.cmux.backupProtectionIncomplete",
-                            self.unsecuredCmuxBackupPaths.sorted().joined(separator: ", ")
-                        )
-                    self.cmuxStatusLabel.stringValue = Self.cmuxStatusLine(
-                        liveText: self.lastCmuxLiveText ?? self.cmuxStatusLabel.stringValue,
-                        feedback: feedback,
-                        backupWarning: backupWarning
-                    )
-                }
-            case .failure(let error):
-                if let configurationError = error as? CmuxConfigurationError,
-                   case .writeFailedWithUnsecuredBackup(_, let path) = configurationError {
-                    self.unsecuredCmuxBackupPaths.insert(path)
-                }
-                self.refresh()
-                self.showError(localized("app.alert.cmuxConfigFailed"), error)
+    /// Copies the suggested JSON member and opens the existing config or its containing folder.
+    /// This action never creates or writes a user file; cmux itself watches the file for changes.
+    @objc private func openCmuxConfig() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(
+            CmuxConfigHelp.cmuxConfigClipboardFragment(), forType: .string
+        ) else {
+            cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configClipboardFailed")
+            cmuxStatusLabel.textColor = Theme.warn
+            return
+        }
+
+        let configURL = CmuxConfigHelp.defaultConfigURL()
+        let fileManager = FileManager.default
+        let target = CmuxConfigHelp.cmuxConfigRevealTarget(
+            configURL: configURL,
+            fileExists: fileManager.fileExists(atPath: configURL.path),
+            directoryExists: fileManager.fileExists(
+                atPath: configURL.deletingLastPathComponent().path
+            )
+        )
+
+        switch target {
+        case .file(let url):
+            if NSWorkspace.shared.open(url) {
+                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpened")
+                cmuxStatusLabel.textColor = Theme.accent
+            } else {
+                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
+                cmuxStatusLabel.textColor = Theme.warn
             }
+        case .directory(let url):
+            if NSWorkspace.shared.open(url) {
+                cmuxStatusLabel.stringValue = "● " + localized(
+                    "app.status.cmux.configDirectoryOpened"
+                )
+                cmuxStatusLabel.textColor = Theme.accent
+            } else {
+                cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
+                cmuxStatusLabel.textColor = Theme.warn
+            }
+        case .nothing:
+            cmuxStatusLabel.stringValue = "● " + localized("app.status.cmux.configUnavailable")
+            cmuxStatusLabel.textColor = Theme.warn
         }
     }
 

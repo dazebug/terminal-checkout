@@ -42,7 +42,7 @@ A terminal with no API to address a pane at all (Warp) is covered instead by a h
 | `Settings.terminal` | Auto-detection order when there is no stored value (the unknown-stored-value fallback to iTerm2 lives in `Terminal(storedValue:)` alone — nothing to touch) |
 | `PermissionChecker.isXxxInstalled` | Install detection. If AppleScript-driven: status lookup, permission request, and opening System Settings too |
 | `SetupWindowController` | Add the radio button, disable when not installed, save (`terminalChanged` — the radio→case mapping is an if-chain the compiler can't catch) and restore, permission-card visibility conditions (`isHidden` comparisons), per-terminal guidance notes, and the pipeline node's name/color/description |
-| `Socket access mode is a prerequisite (cmux)` | Add the live status enum, the setup-window card, the explicit settings-file button, the timestamped `.bak`, and the fact that a missing socket cannot distinguish a stopped cmux from a denied mode |
+| `Socket access mode is a prerequisite (cmux)` | Add the live status enum and setup-window card; the non-destructive button copies the settings fragment and opens the existing file or folder without creating or writing it, and a missing socket cannot distinguish a stopped cmux from a denied mode |
 | `app/Info.plist` | `NSAppleEventsUsageDescription` is the single one for the whole app — update it if the copy hard-codes a terminal name |
 | `install.sh` | The preflight's terminal-detection list and guidance copy. Finding none exits 1 and blocks installation, so missing this makes installation itself fail on machines that have only the new terminal (its detection criteria differ from the app's) |
 | `README.md` | Terminal names are hard-coded in the required-terminals list, the architecture diagram, setup steps, permission notes, fallback limits, and troubleshooting. If the code supports it but this is stale, users read it as unsupported |
@@ -123,14 +123,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 
 - [ ] The setup window draws all four live cmux states: `notInstalled`, `notRunning`, `denied`, and `reachable`.
 - [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
-- [ ] The [Allow Automation] button stays enabled for a repairable `.failed` state such as `Error: Failed to write to socket`, so the recovery path remains available.
-- [ ] Clicking [Allow Automation] creates the timestamped `.bak`, changes `~/.config/cmux/cmux.json`, and confirms `cmux ping` → PONG without restarting cmux (live reflection measured 2026-08-23).
-- [ ] Pressing [Allow Automation] twice in the same second does not remove the existing `.bak`; the button is disabled while the first operation is in flight.
-- [ ] The setup window's [Allow Automation] button is disabled when the live cmux status is `reachable`.
-- [ ] After [Allow Automation], the backup and a newly created cmux.json are mode 0600; an existing cmux.json keeps its original permissions (cmux-created files are 0600 because they may hold `socketPassword`).
-- [ ] When `cmux.json` is a symlink, [Allow Automation] edits its resolved target, leaves the symlink in place, and writes the backup beside that target.
-- [ ] If narrowing the backup permissions fails after the setting is applied, the card shows a backup-protection warning while retaining the live status diagnosis.
-- [ ] After backup chmod fails, [Check Again], switching terminals, and pressing [Allow Automation] again keep the warning until that backup is mode 0600 or gone.
+- [ ] The cmux config action opens the existing file or its folder, fills the clipboard with the automation fragment, and never creates or writes a file.
 - [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery.
 - [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).

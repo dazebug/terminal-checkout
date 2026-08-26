@@ -20,13 +20,13 @@
 
 1. `Terminal`에 `cmux` 케이스가 생기고, 앱 설정 창에서 고른 뒤 GitHub 버튼을 누르면 **사용자가 마지막으로 쓰던 cmux 창**에 workspace(=탭)가 생겨 명령이 돈다.
 2. 그 workspace에서 claude가 뜨면 예약한 claude 입력이 기존 프로토콜 그대로 전달된다 — 게이트 ①포그라운드=claude ②tty raw mode ③같은 PID를 통과하고, [타이핑 → 화면 반영 확인 → CR 제출] 순서를 지키며, 바이트는 전부 `send(_:io:)` 한 문을 지난다.
-3. cmux 제어 소켓에 외부에서 붙기 위한 전제(socket control mode = `automation`)가 앱 설정 창·README에 **명시적 상태**로 드러나고, **설정 창 버튼 하나로 앱이 그 옵션을 켤 수 있으며**(D1-b — cmux.json 기록), 전제가 없을 때 실패가 조용히 성공으로 보이지 않는다.
+3. cmux 제어 소켓에 외부에서 붙기 위한 전제(socket control mode = `automation`)가 앱 설정 창·README에 **명시적 상태**로 드러나고, 설정 창 버튼은 값을 복사해 기존 설정 파일 또는 폴더를 열어 주며 앱은 설정 파일을 쓰지 않는다(D1-b), 전제가 없을 때 실패가 조용히 성공으로 보이지 않는다.
 4. iTerm2·WezTerm·Warp의 산출 경로가 그대로다(케이스 추가로 생긴 switch 확장 외에 기존 갈래의 동작 변경 없음).
 5. `docs/new-terminal-checklist.md`의 §1 표를 빠짐없이 덮고, cmux 고유의 실측 항목이 §2에 추가된다.
 
 ## 비목표 — 건드리지 않는다
 
-- **cmux의 UserDefaults·비밀번호 파일을 우리가 만지지 않는다.** 비밀번호는 번들 CLI가 스스로 찾으므로(D1) 우리 코드가 만질 이유가 없다. 설정 파일(`~/.config/cmux/cmux.json`)은 **예외 하나만** 쓴다 — 설정 창 버튼으로 `automation.socketControlMode`를 기록하는 갈래(D1-b, 사용자 지시 2026-08-23). 그 외에는 읽지도 쓰지도 않는다 — 상태 판정은 살아 있는 프로브(`cmux ping`)로 한다
+- **cmux의 UserDefaults·비밀번호 파일·설정 파일을 우리가 만지지 않는다.** 비밀번호는 번들 CLI가 스스로 찾으므로(D1) 우리 코드가 만질 이유가 없다. 설정 창 버튼은 `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사하고 기존 설정 파일 또는 폴더를 열어 줄 뿐이다(D1-b, 사용자 결정 2026-08-27). 상태 판정은 살아 있는 프로브(`cmux ping`)로 한다
 - cmux의 **agent-session surface**(`new-surface --type agent-session --provider claude`)·browser·simulator·`ssh`/`mosh`/`vm` 계열: 우리 명령 모델은 "셸에 한 줄"이고 그 위에서 claude가 뜬다. cmux의 네이티브 agent 세션은 tty·게이트 3겹이 성립하지 않는다
 - cmux **workspace group·layout·todo·sidebar·notification**: 새 탭 하나를 만드는 것이 우리 계약이다
 - **확장(JS) 쪽 동작**: 확장은 터미널을 모르고 알 수단도 두지 않는다(CLAUDE.md). `extension/manifest.json`의 description 문구만 바뀐다
@@ -68,6 +68,12 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
 
 각 결정은 [채택] / [기각한 대안 + 근거]로 남긴다. 근거 없는 "확인했다"는 쓰지 않는다.
 
+### 결정 원장
+
+| 주체 | 날짜 | 결정 |
+|:--|:--|:--|
+| 사용자 | 2026-08-27 | [자동화 허용] 버튼의 역할을 축소한다(파일 열기·클립보드까지, 쓰기 없음). 근거: 이 기능이 cold review 1∼7차 지적의 약 절반(18건)을 냈고 실패 모드가 전부 사용자 파일 손상·권한 누출·거짓 안심이었다. 대체 수단 `cmux settings automation`은 automation이 꺼진 상태에서 소켓 거부로 막힌다(드라이버 실측). 삭제 규모: CmuxAutomation 417 + 그 테스트 677 + Core/CmuxConfig 387 + 관련 테스트. |
+
 ### D1. 외부 프로세스의 소켓 접근 — 사용자가 cmux의 socket control mode를 바꾸는 것이 전제
 
 **소스 근거**
@@ -93,12 +99,7 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
 
 **[채택]** 요구 조건은 **`automation` 모드**(`password`·`allowAll`도 통과하므로 막지 않는다). `automation`의 경계는 "이 macOS 사용자"(uid)이고, 이는 이 앱이 자기 소켓에 이미 쓰는 경계와 같다(`HostServer.swift:82` `getpeereid(fd,&uid,&gid)==0, uid==getuid()`). 새 신뢰 경계를 만들지 않는다.
 
-**[채택 확장 — D1-b, 사용자 지시 2026-08-23] 앱이 옵션을 켜는 수단을 제공한다.** 지시 원문: "cmux의 옵션이 automation인 경우를 전제로 구현하고, 앱에서는 해당 옵션을 켜도록 하는것을 계획에 추가해". 설정 창 「cmux 소켓 제어」 카드의 버튼 하나가 `~/.config/cmux/cmux.json`에 `"automation": {"socketControlMode": "automation"}`을 기록한다. 조건:
-
-1. 쓰기 전 타임스탬프 `.bak` 백업(cmux CLI 자신의 Agent Help가 권고하는 절차)
-2. **명시적 버튼으로만 발동** — 설치·기동 중 자동 변경 금지
-3. 기존 파일의 주석·다른 키 보존 — JSONC라 파싱-재직렬화 금지, **텍스트 삽입 편집**으로 한다. 비주석 `automation` 키가 이미 있으면 값만 교체, 파일이 없거나 공백뿐이면 잃을 내용이 없으므로 최소 JSON을 생성하고, 토큰이 있는 깨진 JSONC만 거부한다. 편집 로직은 순수 함수로 떼어 단위 테스트로 고정
-4. 적용 확인은 `cmux ping` 라이브 프로브 — 파일 변경이 자동 반영되지 않으면(→ R1-m) 버튼이 cmux 재시작 안내를 띄운다
+**[교체 — D1-b, 사용자 결정 2026-08-27]** [자동화 허용] 버튼은 사용자 설정 파일을 읽거나 쓰지 않는다. `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사하고 기존 `~/.config/cmux/cmux.json`을 열거나, 파일이 없으면 이미 있는 설정 폴더를 열어 사용자가 직접 수정하게 한다. 파일·폴더가 없으면 안내만 남긴다. cmux 자체 설정 → Automation도 대안으로 안내하며, cmux는 파일 변경을 즉시 반영하므로 재시작이 필요 없다(R1-m). 이전의 JSONC 편집·백업·원자적 교체·권한 축소·라이브 적용 확인은 이 범위 축소로 dropped했다.
 
 README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 프로세스나 cmux를 조종할 수 있게 됨**)를 명시한다 — 사용자 승인됨.
 
@@ -266,19 +267,13 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 ### D10. claude_inputs의 CR/LF는 앱 경계에서 거부
 
-**[채택 — 2026-08-26]** 렌더링과 바깥 공백 제거 뒤 `claude_inputs`의 LF·CR을 거부한다. 모든 typed carrier에서 개행은 marker·화면 반영 확인·최종 CR보다 먼저 제출되므로 조용한 우회가 된다. `command_template`은 실행 계약상 CR을 붙이고 개행을 별도 shell command로 실행하므로 이 제한을 적용하지 않는다.
+**[채택 — 2026-08-26, O1 정정 2026-08-27]** 렌더링 뒤 원본 `claude_inputs`에 NUL·LF·CR 검사를 먼저 하고, 나머지 제어 문자 검사를 통과한 뒤에만 바깥 공백을 제거한다. 모든 typed carrier에서 개행은 marker·화면 반영 확인·최종 CR보다 먼저 제출되므로 조용한 우회가 된다. 검사를 trim 뒤에 두면 `.whitespacesAndNewlines`가 가장자리의 TAB·CR·LF를 지우고 TAB만 있는 입력이 성공 응답과 함께 사라진다(cold review 8차). `command_template`은 실행 계약상 CR을 붙이고 개행을 별도 shell command로 실행하므로 이 제한을 적용하지 않는다.
 
 **N1 보강 — 2026-08-27:** `claude_inputs`는 NUL·개행의 기존 진단을 먼저 거친 뒤 나머지 C0 제어 문자와 DEL도 거부한다. 이 바이트들은 타이핑되고 DEL은 Backspace로 동작하며 반영 확인은 앞 24자만 보므로, 뒤의 제어 문자가 CR 전에 명령을 바꿀 수 있다. `command_template`에는 적용하지 않는다.
 
-### D11. cmux.json은 백업 뒤 교체 직전 재읽기
+### D11. cmux 설정 파일은 앱이 쓰지 않는다
 
-**[채택 — 2026-08-26]** timestamp 백업 이름을 정한 뒤 원자적 교체 직전에 설정 파일 바이트를 다시 읽어 최초 읽기와 비교한다. 불일치하면 백업 경로를 포함해 던지고 stale 결과를 덮어쓰지 않는다. 비교로 탐지한 경합은 거부하고, 탐지하지 못한 경합도 `replaceItem`의 `backupItemName`이 교체된 바이트를 보존하게 한다. 백업 이름이 이미 있으면 건너뛴다 — `backupItemName`은 동명 항목을 제거한다(H1). 병합은 어느 편집자의 의도를 보존할지 추측하게 되므로 하지 않는다. 백업과 새로 생성하는 설정 파일은 0600으로 만들고, 이미 있던 설정 파일의 권한은 그대로 보존한다(cmux가 만든 파일이면 0600이며 `socketPassword`를 담을 수 있다). 백업 권한 좁히기는 교체 뒤 마무리이므로 실패해도 라이브 상태를 거짓으로 만들지 않는다(H2). I1에서는 그 실패를 `backupSecured: false`로 결과에 실어 UI가 라이브 상태와 별도로 경고한다. I2에서는 이름을 확인 후 사용하는 대신 후보를 `O_EXCL` placeholder로 원자 예약한다 — `backupItemName`의 동명 항목 제거 창을 예약 자체로 닫는다. J1은 교체가 원본을 backup으로 옮긴 뒤 던지는 경로에서 inode·device와 크기 0이 맞을 때만 placeholder를 정리하고, J6은 예약 직후부터 정리한다. J7은 심링크 위 `replaceItemAt`의 실측 오류 `NSCocoaErrorDomain Code=4` 때문에 유한하게 실제 target을 해석해 그 경로를 편집한다.
-
-**L3/L4 보강 — 2026-08-27:** 교체 중간 실패 때 실제 백업을 먼저 0600으로 좁히고, 그 chmod까지 실패했을 때만 경로를 담은 보호 실패를 던진다. 예약 identity는 닫기 전 `fstat`으로 얻고 모든 placeholder 삭제는 identity·빈 크기 확인 뒤에만 한다.
-
-**N3 보강 — 2026-08-27:** 백업 chmod는 `O_RDONLY|O_NOFOLLOW`로 연 정규 파일 descriptor의 `fstat`·`fchmod`로 수행한다. Swift Darwin에 `funlinkat`이 없어 예약 이름에 난수 성분을 넣어 예측 가능한 경로 교체를 막고 identity 확인은 유지한다.
-
-**N4 보강 — 2026-08-27:** 백업 보안 경고는 `lstat`의 ENOENT·ENOTDIR만 파일 없음으로 해제하며, EACCES 같은 확인 불가는 유지한다. 성공한 `0600` 확인만 보호 완료의 근거다.
+**[폐기 — 사용자 결정 2026-08-27]** 이전 D1-b의 JSONC 텍스트 편집·백업·원자적 교체·권한 축소·심링크 해석·라이브 적용 확인은 사용자 파일 손상·권한 누출·거짓 안심을 낳은 cold review 1∼7차 지적의 약 절반(18건) 때문에 범위에서 제거했다. 현재 버튼은 설정 조각을 클립보드에 복사하고 기존 파일 또는 폴더를 열어 사용자가 직접 수정하게 하며, 앱은 설정 파일을 읽거나 쓰지 않는다.
 
 ### D12. cmux ping PONG/거부가 기본 소켓 파일보다 우선
 
@@ -288,19 +283,17 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 **[채택 — 2026-08-26]** cmux CLI는 `CMUX_SOCKET_PATH`와 `/tmp/cmux-last-socket-path`로 소켓을 스스로 찾으므로 PONG은 기본 소켓 파일 부재보다 먼저 `reachable`, Access denied는 `denied`로 분류한다. 두 결과가 모두 아니고 기본 소켓도 없을 때만 `notRunning`이며, 기동 필요 판정은 소켓 부재와 ping 실패의 동시 조건이다. Access denied는 cmux를 다시 띄워 고칠 수 없으므로 즉시 `cmuxSocketDenied`로 실패시켜야 한다. 소켓 파일이 있으면 ping을 생략하고 진행하며, automation 거부 진단은 `workspace.create`의 RPC 분류로 보존한다(H3). **[교체 — I5, 2026-08-26]** 실행 경로는 ping을 쓰지 않고 `workspace.create`를 정본 진단으로 삼는다. 첫 RPC가 `cmuxSocketDenied`면 즉시 던지고, 그 밖의 실패에서만 한 번 기동·`debug.terminals` 서버 폴링·`workspace.create` 한 번의 재시도를 한다. 설정 창 라이브 상태 프로브의 ping 정본과 실행 경로의 `workspace.create` 정본은 서로 다른 계약이다. J2에서는 timeout·invalid JSON처럼 서버 부작용 가능성이 있는 결과를 재시도하지 않고, 연결 자체가 성립하지 않았음이 보이는 RPC 실패만 재시도한다. J5에서는 기동 뒤 `debug.terminals` 서버 응답을 준비 정본으로 삼고, 거부는 즉시 `cmuxSocketDenied`로 끝낸다.
 
-### D13. 자동화 버튼 후처리는 라이브 상태를 덮지 않는다
+### D13. 자동화 버튼은 설정 안내만 제공한다
 
-**L1 보강 — 2026-08-27:** 각 보류 백업 경로의 실제 모드를 매 refresh마다 다시 확인하고, `backupSecured: true`는 다른 경로를 해제하는 근거로 쓰지 않는다.
-
-**[채택 — 2026-08-26]** 자동화 기록 결과의 추가 문구는 `refresh()`가 방금 읽은 라이브 상태와 모순되지 않을 때만 붙인다. 추가 문구는 라이브 진단을 대체하지 않고 덧붙인다(H4). 버튼 활성/비활성·상태 라벨의 정본은 `refresh()`이고, 결과만 보고 초록 또는 경고를 덧씌우는 방식은 cmuxOnly·꺼짐 상태의 거짓 성공과 상태 변동 사이의 거짓 경고를 만들므로 기각한다. I3·I4에서는 `.failed`에도 복구 버튼을 살리고, 작업 중에는 `refresh()`가 라이브 상태와 무관하게 버튼을 비활성으로 유지한다. 분류가 흔들리므로 복구 수단은 넓은 쪽에 걸어야 한다. J4의 백업 보호 경고는 경로와 함께 컨트롤러에 남아 매 refresh마다 라이브 진단 뒤에 붙고, 새 쓰기가 `backupSecured: true`로 끝날 때만 해제한다.
+**[교체 — 사용자 결정 2026-08-27]** 버튼은 라이브 상태와 무관하게 활성이고, `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사한 뒤 기존 설정 파일 또는 폴더를 연다. 파일·폴더를 만들거나 쓰지 않으므로 백업 경고·in-flight 상태·결과 후처리로 라이브 상태를 덮는 경로는 없다. cmux 자체 설정 → Automation도 함께 안내하고, cmux의 파일 워처가 변경을 즉시 반영하므로 재시작은 필요 없다(R1-m). 분류가 흔들리는 라이브 프로브는 상태 표시의 정본으로만 남는다.
 
 ### D14. cmux 화면 읽기 오류 억제는 surface별이며 성공 시 초기화
 
 **[채택 — 2026-08-26]** 화면 읽기 오류 로그는 surface UUID별 마지막 메시지만 억제하고, 같은 surface의 성공한 read가 그 기록을 지운다. 전달 종료 시 해당 surface의 기록을 삭제하고, 실패만 이어지는 경우에도 32개 상한에서 stale 기록을 비워 맵을 제한한다(H5). 프로세스 전역 마지막 문자열만 비교하는 방식은 다른 surface의 같은 오류와 성공 뒤 재발한 오류를 삼키므로 기각한다. I5의 실행 복구도 첫 실패 뒤 한 번만 재시도하며, 성공한 workspace를 다시 만들지 않는다.
 
-### D15. cmux.json 무효 입력 경계
+### D15. cmux 설정 파일 편집기 제거
 
-**[채택 — 2026-08-26]** 파일이 없거나 공백뿐이면 보존할 내용이 없으므로 최소 JSON을 만들고 백업한다. 토큰이 있는데 JSONC 스캔·파싱에 실패한 문서는 거부하고 파일을 바꾸지 않는다. 두 경우를 하나의 "빈 입력"으로 취급하면 사용자가 작성한 깨진 설정을 덮어쓸 수 있어 기각한다(I6).
+**[폐기 — 사용자 결정 2026-08-27]** 파일이 없거나 공백뿐인 경우의 최소 JSON 생성, 토큰이 있는 깨진 JSONC의 거부, 주석 보존 스캔은 앱이 설정 파일을 읽거나 쓰지 않도록 범위를 줄이면서 더 이상 적용되지 않는다. 사용자가 클립보드 조각을 직접 파일에 붙여 넣고 편집한다.
 
 ### D16. `runProcess` 종료 상한
 
@@ -325,7 +318,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | 11 | `screenText`의 `case .cmux` — `surface.read_text` | cleared | `testItem11CmuxScreenTextRequiresTheTextField`가 `surface_id` 파라미터와 `text` 필드·필드 없음의 nil을 고정한다. cmux 갈래는 RPC 실패·필드 없음에서 nil이며 다른 화면 폴백을 만들지 않는다. 재실행(드라이버): swift 502(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. | `3(cmuxRPC 계약)` | |
 | 12 | `Settings.terminal` 자동 감지에 cmux 한 줄(맨 뒤) | cleared | `CmuxDetectionTests.testItem12CmuxOnlyInstallationSelectsCmux`, `testItem12NoInstalledTerminalFallsBackToITerm`, `testItem12ITermWinsOverCmux`, `testItem12WarpWinsOverCmux`가 순수 우선순위 함수를 고정한다. `Settings.terminal`은 iTerm → WezTerm → Warp → cmux 순으로 같은 함수에 설치 판정을 넣는다. 재실행(드라이버): swift 512(1 skip)·node 220, 0 실패. 실환경 reachable 실측: `cmux ping` → PONG, exit 0. | | |
 | 13 | `PermissionChecker.isCmuxInstalled` + `cmuxSocketStatus()` 라이브 프로브(`cmux ping`) | cleared | `CmuxTests`의 5개 `testItem13CmuxSocketStatus...`가 notInstalled·notRunning·denied·reachable·failed 분류를 고정하고, `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs`가 5상태 × 5로케일 raw-key 부재를 고정한다. `isCmuxInstalled`는 실행과 같은 `findCmuxCLI()`를 쓰며, `cmuxSocketStatus()`는 소켓 존재와 5초 `cmux ping`을 매번 분류하고 저장하지 않는다. D12: PONG·Access denied가 기본 소켓 파일 부재보다 우선하고, 그 외 소켓 부재만 notRunning이며 실행 경로의 거부는 즉시 실패한다. 실환경: 드라이버가 reachable 상태만 실측할 수 있다(사용자의 cmux가 automation으로 살아 있다 — notRunning·denied 실측은 사용자 상태를 바꿔야 하므로 항목 21로 이월). 재실행(드라이버): swift 512(1 skip)·node 220, 0 실패. 실환경 reachable 실측: `cmux ping` → PONG, exit 0. | | |
-| 14 | `SetupWindowController` — 라디오, `terminalChanged` if-체인, 안내 노트, `refresh` 권한 switch, 새 「cmux 소켓 제어」 카드(+[자동화 허용] 버튼 — D1-b), `pipelineNodes` | cleared | `SetupWindowController`에 4번째 cmux 라디오·상태 카드·[자동화 허용]/[다시 확인] 버튼·reachable/notRunning/denied/notInstalled/failed pipeline 매핑을 추가했고, `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`와 제품명 집합 "cmux", `CmuxLocalizationTests.testItem14And22CmuxCardStringsExistInAllFiveCatalogs`로 고정했다. D11: 동시 편집은 백업 경로를 포함해 거부하고, D12: 카드 상태도 PONG·거부를 기본 소켓 부재보다 우선해 라이브 프로브한다. D13: 버튼 활성/비활성은 `refresh()`의 라이브 상태가 정본이고 결과 문구는 모순되지 않을 때만 덧붙인다. 설정 창 4상태 캡처(미설치/소켓 거부/허용/cmux 꺼짐)는 설치 후 사용자 참여인 항목 21로 이월한다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. 설정 창 캡처·라이브 버튼 실측은 항목 21. | `13` | |
+| 14 | `SetupWindowController` — 라디오, `terminalChanged` if-체인, 안내 노트, `refresh` 권한 switch, 「cmux 소켓 제어」 카드(+[설정 파일 열기] 버튼), `pipelineNodes` | claimed | `SetupWindowController`에 4번째 cmux 라디오·상태 카드·[설정 파일 열기]/[다시 확인] 버튼·reachable/notRunning/denied/notInstalled/failed pipeline 매핑을 추가했고, 버튼은 모든 상태에서 활성이다. `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`와 제품명 집합 "cmux", `CmuxLocalizationTests.testItem14CmuxCardStringsExistInAllFiveCatalogs`로 고정했다. 축소된 계약에 따라 자동화 기록·JSONC 편집·백업·원자 교체·권한 처리·심링크 쓰기·in-flight/백업 경고 후처리는 dropped했고, 설정 창 캡처·사용자 실측은 항목 21로 남긴다. | `13` | |
 | 15 | `install.sh` 프리플라이트에 cmux 감지 + 안내 | cleared | `install.sh:34-69`에 Core `findCmuxCLI()`와 같은 번들 우선 후보(`/Applications` → `$HOME/Applications` → Homebrew → `/usr/local` → PATH)와 실행 가능 판정을 넣고, 감지 실패 안내를 iTerm2·WezTerm·Warp·cmux로 갱신했다. 앱 함수와 어긋나면 설치 통과/앱 미설치 판정이 갈리는 이유를 주석으로 남겼다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. | | R1 |
 | 16 | `README.md` — 터미널 목록·아키텍처 그림·설정 단계·권한 안내·fallback 제한·트러블슈팅 + **cmux socket mode 안내** | cleared | `README.md:8,16,28,34-35,41,91-94,178-185,262,271-275`에 cmux 실행·surface 단위 백그라운드 전달·TCC 0개/automation 전제·설정 카드·uid 경계·Warp 구별·트러블슈팅을 기록했다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. | | R1 |
 | 17 | manifest description은 `__MSG_…__` 참조이고 실제 문구는 `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json` 5파일에 있다 — 다섯 로케일 모두 갱신, `tools/check-locales.js`가 게이트(불변 원칙 16) | cleared | `extension/manifest.json:5`가 `__MSG_extDescription__` 참조임을 확인하고, 5개 `_locales/*/messages.json:7`의 extDescription에 cmux를 추가했다. `node --test`/`tools/check-locales.js`는 드라이버 게이트 소관이다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. | | R1 |
@@ -333,7 +326,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | 19 | `CLAUDE.md`에 cmux 함정 추가(rpc 통일 이유·`unescapeSendText` 구멍·서버의 LF→CR 변환·socket mode 전제·tty가 push 기반) + 5행의 낡은 터미널 목록 갱신 | cleared | `CLAUDE.md:7,55-63`에 cmux rpc 단일 경로·v0.64.22 개행 함정·automation uid 경계·socket 부재 분류 불가·tty/queued 웜업·입력 바이트·ASCII argv·무인자 `open -b`·Warp 반대 화면 등급을 기록했고, `SECURITY.md:12`의 same-uid 모델에도 cmux automation을 반영했다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. | | R1 |
 | 20 | 게이트 4종 재실행 | verified | 최종 코드에서 드라이버 재실행: swift 533(1 skip)·node 220·build.sh 완료·e2e 9/9, 0 실패. | | |
 | 21 | `docs/new-terminal-checklist.md` §2 실측 전체 수행(사용자 참여) | verified | R1-g PASS, R1-k 웜업 flush를 앱 로그에서 실증(첫 요청 `queued=true`인데 명령 실행됨), R1-j 재실측 통과(위). R1-g는 재실측에서도 활성 창(W2)에 생성. R1-n(automation 미설정 시 안내 문구) 실측 포함. | | |
-| 22 | cmux.json `automation.socketControlMode` 기록 헬퍼(D1-b — 순수 함수: JSONC 주석 보존 텍스트 편집 + `.bak` 백업) + 설정 창 버튼 연결 | cleared | `CmuxTests`의 `testItem22CmuxConfigInsertsAutomationBeforeCommentedTemplateAndPreservesJSONC`, `testItem22CmuxConfigReplacesOnlyExistingSocketModeValue`, `testItem22CmuxConfigAddsMissingSocketModeAsTheFirstAutomationMember`, `testItem22CmuxConfigReturnsUnchangedWhenAutomationIsAlreadyEnabled`, `testItem22CmuxConfigCreatesMinimalJSONForMissingOrBlankFile`, `testItem22CmuxConfigDoesNotTreatAStringValueAsTheAutomationKey`, `testItem22CmuxConfigIgnoresAutomationInsideBlockComment`, `testItem22CmuxConfigRejectsNonObjectAndUnbalancedInputWithoutEditing`가 JSONC 주석 템플릿 오인·비주석 automation/socketControlMode·빈 입력·문자열/블록 주석·잘못된 구조를 고정하고, `CmuxAutomationTests` 3개가 디렉터리 생성·`replaceItem`의 단일 OS 백업·원자 교체·3초(0.3초 간격) bounded poll·unchanged no-op을 고정한다. D11: 교체 직전 재읽기에서 바이트가 바뀌면 거부하고, 탐지하지 못한 경합의 교체 바이트도 `backupItemName` 경로에 남긴다. `CmuxAutomation`은 버튼에서만 비동기 호출된다. 라이브 버튼→cmux.json→`.bak`→ping 실측은 드라이버/사용자 환경 대조로 남긴다. 재실행(드라이버): swift 527(1 skip)·node 220, 0 실패. 설정 창 캡처·라이브 버튼 실측은 항목 21. | `13` | |
+| 22 | `CmuxConfigHelp` — automation JSON 조각 클립보드 + 기존 파일/폴더 열기, 사용자 파일 읽기·쓰기 없음 | claimed | `CmuxConfigHelpTests.testItem22ConfigClipboardFragmentContainsAutomationSetting`과 `testItem22ConfigRevealTargetChoosesFileDirectoryOrNothing`가 조각 내용과 파일·폴더·없음 대상 선택을 고정한다. 축소된 계약에 따라 JSONC 파싱·편집·최소 JSON 생성·백업·원자 교체·권한 변경·심링크 target 쓰기·라이브 적용 폴링은 dropped했다. 버튼은 기존 파일 또는 폴더만 열고 파일·디렉터리를 만들거나 쓰지 않는다. | `13` | |
 
 ## 전수 소탕 표
 
@@ -365,9 +358,8 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | `App/SetupWindowController.swift:1232-1248` (`updateTerminalControls` switch + Warp 전용 note) | 예 — cmux는 라디오만 on, Warp note는 cmux에 붙지 않는다 | `swift build` + 코드 확인 | 확인(항목 14) |
 | `App/SetupWindowController.swift:1295-1340` (`refresh` permission/cmux status switch + 섹션 visibility + pipeline 전달) | 예 — cmux ping을 한 번 읽고 카드·pipeline에 같은 status를 쓴다 | `swift build` + 코드 확인 | 확인(항목 14) |
 | `App/SetupWindowController.swift:1448-1505` (`pipelineNodes` switch) | 예 — 상태별 ok/warn/err와 nil unknown을 닫는다 | `swift build` + 코드 확인 | 확인(항목 14) |
-| `App/SetupWindowController.swift:1671-1700` (다시 확인·자동화 허용 action, App I/O 경계) | 예 — 명시적 클릭만 JSONC 기록을 시작하고 completion은 main으로 돌아온다 | 코드 확인 | 확인(항목 14, 22) |
-| `App/CmuxAutomation.swift:30-138` (백업·원자적 쓰기·bounded live poll) | 예 — 설정 파일을 쓰는 유일한 App 경계 | 코드 + `CmuxAutomationTests` | 확인(항목 22) |
-| `Core/CmuxConfig.swift:1-365` (JSONC lexer/parser와 텍스트 편집) | 예 — 주석/문자열을 건너뛰는 순수 편집 계층 | `CmuxTests` | 확인(항목 22) |
+| `App/SetupWindowController.swift:1678-1722` (다시 확인·설정 파일 열기 action, App I/O 경계) | 예 — 조각을 복사하고 기존 파일 또는 폴더를 여는 유일한 UI 경계이며 파일·디렉터리를 쓰지 않는다 | 코드 확인 | 확인(항목 14, 22) |
+| `App/CmuxConfigHelp.swift:1-28` (클립보드 조각·파일/폴더 reveal 순수 함수) | 예 — 사용자 설정 파일을 쓰지 않는 도움말 계층 | 코드 + `CmuxConfigHelpTests` | 확인(항목 22) |
 | `Tests/AppTests/SetupWindowLayoutTests.swift:392,430-445` (터미널 제품명 집합·cmux 카드/pipeline) | 예 | `swift test` | 확인(항목 14) |
 | `App/HostServer.swift:177-201` | 아니오 — `Settings.terminal`을 그대로 넘긴다 | 코드 확인 | 안전 |
 | `App/AppDelegate.swift`·`Installer.swift`·`Theme.swift` | 아니오 | `grep -rn "iterm\|wezterm\|warp"` 무결과 | 안전 |
@@ -434,22 +426,22 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 - cold review 6차(2026-08-26, bd01c24): 판정 no, 차단 6건 + 비차단 1건 — L1 파일을 고치지 않고도 백업 경고가 해제됨(이미 automation + cmux 꺼짐에서 재클릭), L2 재시도 마커가 부분 문자열이라 서버가 만든 뒤의 후처리 실패도 재시도(workspace 중복), L3 교체 중간 실패에서 진짜 백업이 0600 보장을 잃음, L4 예약 identity를 `close` 뒤 경로에서 읽음, L5 잘못된 UTF-8 한 바이트가 전체 출력을 빈 문자열로 만듦, L6 마지막 대기 실패 뒤 버퍼 읽기가 데이터 경합, L7 기동·준비 실패 진단 소실(비차단). J5∼J8은 닫힘 확인. red: 8 테스트 11 실패(드라이버) / green: swift 567(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. **green 중 드라이버 실측으로 L2 앵커 결함을 잡았다** — 실제 CLI stderr은 `Error: `로 시작하는데 앵커가 그 접두사를 몰라, 테스트는 통과하면서 실경로의 자동 기동을 막고 있었다. 사용자 cmux를 끄지 않고 `CMUX_SOCKET_PATH`로 두 형태를 재측정했다: `Error: Failed to connect to socket at <path> (Connection refused, errno 61)`(소켓 파일은 있고 listener 없음)과 `Error: Socket not found at <path>`(소켓 파일 없음). 둘 다 접두사 포함 앵커로 고정했고, 테스트 입력도 실측 원문으로 바꿨다(red 3 테스트 4 실패 확인 후 green).
 - cold review 7차(2026-08-27, f3e077b): 판정 no, 4건 — **N1 `claude_inputs`가 NUL·개행만 거부해 DEL(U+007F)이 통과, 타이핑되는 바이트라 Backspace로 동작하고 반영 확인은 앞 24자만 보므로 24자 뒤의 DEL은 검사에 걸리지 않은 채 CR이 나가 다른 명령이 조용히 실행된다(cmux 이전부터 있던 결함)**, N2 앵커가 `Error: `를 선택적으로 벗겨 측정되지 않은 무접두사 형태도 재시도로 승인, N3 identity 확인∼경로 삭제/chmod TOCTOU(`funlinkat`은 Swift Darwin에 없음 — 드라이버 실측), N4 `fileExists == false`가 '없음'과 '확인 불가'를 합쳐 EACCES에서 경고가 영구히 사라진다. L3·L5·L6·L7은 닫힘 확인. red: 4 테스트 8 실패(드라이버) / green: 다음 커밋 라운드에 기입. green: swift 571(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. N3은 `funlinkat` 부재(드라이버 실측: `import Darwin; _ = funlinkat` 컴파일 실패, 반면 `O_NOFOLLOW`·`fstat`·`fchmod`는 보인다)를 인정하고 두 갈래로 풀었다 — chmod는 `O_NOFOLLOW` 디스크립터 기반, 삭제는 예약 이름에 8자리 hex를 넣어 경로를 예측 불가로 만들고 identity 검사를 방어 이중화로 남겼다.
+- cold review 8차(2026-08-27, 7404ecd): 판정 no, **차단 1건** — N1의 제어 문자 검사가 `trimmingCharacters` 뒤에 있어 가장자리의 TAB·개행이 검사를 빠져나가고, `["\t"]`는 빈 문자열이 되어 성공 응답과 함께 사라진다. N2·N3·N4는 닫힘 확인(N3은 선언된 same-UID 신뢰 모델 안에서). 그 밖의 차단 없음. red: 3 테스트 7 실패(드라이버) / green: 다음 커밋 라운드에 기입.
 
 ### 테스트 심사
 
 | 테스트 이름 | 고정하는 계획 항목 번호 | 입장 기준 | 같은 계약을 다른 고도에서 또 고정하는 테스트 | 판정 |
-| `CmuxAutomationTests.testItem22WriteBacksUpBeforeReplacingAndConfirmsReachable` | 22 | i: 백업·교체·폴링 구현을 되돌리면 실패; ii: 백업 선행, 원자 교체, 0600 권한, reachable 확인을 고정; iii: 드라이버 냉독에서 승계된 0644 파일 결함을 특성화. 대역: `writeAutomation`의 `configURL`·`now`·`fileManager`·`status`·`sleep` 5개 주입점 | `CmuxTests.testItem22CmuxConfigInsertsAutomationBeforeCommentedTemplateAndPreservesJSONC`(JSONC 순수 편집, 다른 고도) | 유지 |
-| `CmuxAutomationTests.testItem22WriteCreatesDirectoriesAndReportsNotAppliedAfterBoundedPoll` | 22 | i: 새 경로 생성과 bounded poll을 되돌리면 실패; ii: 디렉터리 생성, 새 파일 0600, 10회 폴링, 미반영 결과를 고정; iii: 없음. 앞 테스트와 같은 5개 주입 경계 | `CmuxTests.testItem22CmuxConfigCreatesMinimalJSONForMissingOrBlankFile`(순수 편집, 다른 고도) | 유지 |
-| `CmuxAutomationTests.testItem22WriteDoesNotTouchAnAlreadyEnabledConfig` | 22 | i: unchanged 조기 반환을 되돌리면 실패; ii: 이미 켜진 파일에는 쓰기·백업·프로브가 없어야 함을 고정; iii: 없음. 앞 테스트와 같은 5개 주입 경계 | `CmuxTests.testItem22CmuxConfigReturnsUnchangedWhenAutomationIsAlreadyEnabled`(순수 편집, 다른 고도) | 유지 |
+| `CmuxConfigHelpTests.testItem22ConfigClipboardFragmentContainsAutomationSetting` | 22 | i: 클립보드 조각 제공을 되돌리면 실패; ii: 사용자가 붙여 넣을 automation/socketControlMode 조각을 정확히 고정; iii: 없음 | 없음 | 유지 |
+| `CmuxConfigHelpTests.testItem22ConfigRevealTargetChoosesFileDirectoryOrNothing` | 22 | i: 파일·폴더·없음 대상 선택을 되돌리면 실패; ii: 파일이 있으면 파일을, 파일만 없고 폴더가 있으면 폴더를, 둘 다 없으면 아무것도 열지 않는 비파괴 계약을 고정; iii: 없음 | 없음 | 유지 |
 | `CmuxDetectionTests.testItem12CmuxOnlyInstallationSelectsCmux` | 12 | i: cmux 자동 감지 분기를 되돌리면 실패; ii: 네 설치 여부 입력의 cmux 단독 결과를 고정; iii: 없음 | `CmuxDetectionTests.testItem12NoInstalledTerminalFallsBackToITerm`, `testItem12ITermWinsOverCmux`, `testItem12WarpWinsOverCmux`(같은 함수의 다른 우선순위 경계, 중복 아님) | 유지 |
 | `CmuxDetectionTests.testItem12NoInstalledTerminalFallsBackToITerm` | 12 | i: 기본 fallback을 되돌리면 실패; ii: 아무 설치도 없을 때 단일 소스가 iTerm을 선택하는 계약을 고정; iii: 없음 | `CmuxDetectionTests.testItem12CmuxOnlyInstallationSelectsCmux`, `testItem12ITermWinsOverCmux`, `testItem12WarpWinsOverCmux`(같은 함수의 다른 우선순위 경계) | 유지 |
 | `CmuxDetectionTests.testItem12ITermWinsOverCmux` | 12 | i: 기존 iTerm 우선순위를 바꾸면 실패; ii: 새 cmux가 기존 선택을 선점하지 않는 순서를 고정; iii: 없음 | `CmuxDetectionTests.testItem12CmuxOnlyInstallationSelectsCmux`, `testItem12NoInstalledTerminalFallsBackToITerm`, `testItem12WarpWinsOverCmux`(같은 함수의 다른 우선순위 경계) | 유지 |
 | `CmuxDetectionTests.testItem12WarpWinsOverCmux` | 12 | i: 기존 Warp 우선순위를 바꾸면 실패; ii: cmux보다 Warp가 앞서는 순서를 고정; iii: 없음 | `CmuxDetectionTests.testItem12CmuxOnlyInstallationSelectsCmux`, `testItem12NoInstalledTerminalFallsBackToITerm`, `testItem12ITermWinsOverCmux`(같은 함수의 다른 우선순위 경계) | 유지 |
 | `CmuxLocalizationTests.testCmuxTerminalErrorsUseAllFiveCatalogs` | 4 | i: cmux 오류 Localization을 되돌리면 실패; ii: 5개 카탈로그에서 raw key가 없고 RPC method payload가 보존되는 계약을 고정; iii: 없음 | `CmuxTests.testCmuxRPCFailuresDistinguishSocketDenialAndMethod`(Core 분류, 다른 고도) | 유지 |
 | `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs` | 13 | i: 5상태 라벨 카탈로그를 되돌리면 실패; ii: 모든 상태가 5로케일의 값으로 그려지는 i18n 계약을 고정; iii: 첫 게이트의 상태 라벨 포함 관계 결함은 별도 카탈로그 게이트로 해소됨 | `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`(카드 조합, 다른 고도) | 유지 |
-| `CmuxLocalizationTests.testItem14And22CmuxCardStringsExistInAllFiveCatalogs` | 14·22 | i: 카드·버튼 문자열을 되돌리면 실패; ii: 새 UI 키 전부가 5로케일에 존재해야 하는 원칙 16을 고정; iii: 없음 | `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`(UI 조합, 다른 고도) | 유지 |
-| `SetupWindowLayoutTests.testPipelineNodesAreLocalized` | 14 | i: cmux pipeline node와 상태 인자를 되돌리면 실패; ii: 4개 터미널 노드의 label/detail이 카탈로그 프레임이고 로케일별로 달라지는 오라클을 고정; iii: 없음 | `CmuxLocalizationTests.testItem14And22CmuxCardStringsExistInAllFiveCatalogs`(키 존재, 다른 고도) | 유지 |
-| `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState` | 14 | i: cmux 라디오·섹션·상태 매핑을 되돌리면 실패; ii: cmux 선택 시 카드가 보이고 denied가 err 상태의 label/detail로 연결되는 UI 조합을 고정; iii: 없음 | `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs`, `testItem14And22CmuxCardStringsExistInAllFiveCatalogs`(카탈로그, 다른 고도) | 유지 |
+| `CmuxLocalizationTests.testItem14CmuxCardStringsExistInAllFiveCatalogs` | 14 | i: 카드·버튼 문자열을 되돌리면 실패; ii: 새 UI 키 전부가 5로케일에 존재해야 하는 원칙 16을 고정; iii: 없음 | `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`(UI 조합, 다른 고도) | 유지 |
+| `SetupWindowLayoutTests.testPipelineNodesAreLocalized` | 14 | i: cmux pipeline node와 상태 인자를 되돌리면 실패; ii: 4개 터미널 노드의 label/detail이 카탈로그 프레임이고 로케일별로 달라지는 오라클을 고정; iii: 없음 | `CmuxLocalizationTests.testItem14CmuxCardStringsExistInAllFiveCatalogs`(키 존재, 다른 고도) | 유지 |
+| `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState` | 14 | i: cmux 라디오·섹션·상태 매핑을 되돌리면 실패; ii: cmux 선택 시 카드가 보이고 denied가 err 상태의 label/detail로 연결되는 UI 조합을 고정; iii: 없음 | `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs`, `testItem14CmuxCardStringsExistInAllFiveCatalogs`(카탈로그, 다른 고도) | 유지 |
 | `CmuxTests.testCmuxCLICandidatePathsUseBundleLocationsBeforePATH` | 2 | i: 후보 생성 순서나 번들 경로를 되돌리면 실패; ii: D7의 번들 우선 후보와 PATH 순서를 바이트 단위로 고정; iii: 없음 | `CmuxTests.testFindCmuxCLIReturnsTheFirstExecutableCandidate`(선택 함수, 다른 순수 계약) | 유지 |
 | `CmuxTests.testFindCmuxCLIReturnsTheFirstExecutableCandidate` | 2 | i: 실행 가능 후보 선택을 되돌리면 실패; ii: 감지와 실행이 같은 `findCmuxCLI`에서 첫 실행 가능 경로를 고르는 계약을 고정; iii: 없음 | `CmuxTests.testCmuxCLICandidatePathsUseBundleLocationsBeforePATH`(후보 목록, 다른 순수 계약) | 유지 |
 | `CmuxTests.testCmuxSocketPathOnlyReportsAnExistingSocket` | 2·13 | i: 소켓 생존 판정 구현을 되돌리면 실패; ii: 정해진 상태 경로는 존재할 때만 반환하고 CLI 인자로 쓰지 않는 계약을 고정; iii: 소켓 부재가 모드와 무관하게 notRunning이 되는 관찰을 지지 | `CmuxTests.testItem13CmuxSocketStatusSocketAbsenceWinsOverPingOutput`(분류 함수, 다른 고도) | 유지 |
@@ -479,26 +471,16 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | `CmuxTests.testItem13CmuxSocketStatusClassifiesAccessDenied` | 13 | i: Access denied 대소문자 분류를 되돌리면 실패; ii: stdout·stderr의 거부 문구를 denied로 분류하는 프로브 계약을 고정; iii: socketDenied가 소켓 부재 처방이 아니라 automation 모드 문제라는 수정의 입력을 특성화 | `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs`(라벨, 다른 고도) | 유지 |
 | `CmuxTests.testItem13CmuxSocketStatusClassifiesSuccessfulPong` | 13 | i: exit 0+PONG reachable 분류를 되돌리면 실패; ii: 라이브 ping reachable 상태를 고정; iii: 드라이버 실환경 PONG 대조의 순수 입력을 특성화 | `CmuxLocalizationTests.testCmuxSocketStatusLabelsUseAllFiveCatalogs`(라벨, 다른 고도) | 유지 |
 | `CmuxTests.testItem13CmuxSocketStatusPreservesFailureSummary` | 13 | i: 기타 실패의 원문 요약을 버리면 실패; ii: failed(String)가 사용자가 볼 원문을 보존하는 계약을 고정; iii: 없음 | `CmuxLocalizationTests.testCmuxTerminalErrorsUseAllFiveCatalogs`(오류 문구, 다른 고도) | 유지 |
-| `CmuxTests.testItem22CmuxConfigInsertsAutomationBeforeCommentedTemplateAndPreservesJSONC` | 22 | i: JSONC 스팬 편집을 되돌리면 실패; ii: 주석 템플릿을 무시하고 루트 첫 멤버에 파일 개행·공백을 재사용하며 나머지 바이트와 JSON 의미를 보존하는 오라클을 고정; iii: 실제 사용자 템플릿 오인과 드라이버 냉독의 서식 결함을 특성화 | `CmuxAutomationTests.testItem22WriteBacksUpBeforeReplacingAndConfirmsReachable`(파일 I/O, 다른 고도) | 유지 |
-| `CmuxTests.testItem22CmuxConfigFollowsFourSpaceRootIndentation` | 22 | i: root 첫 멤버 공백 스팬 처리를 되돌리면 실패; ii: 기존 4칸 들여쓰기를 삽입문이 따르는 바이트 계약을 고정; iii: 드라이버 냉독의 서식 미준수 결함을 특성화 | `CmuxTests.testItem22CmuxConfigInsertsAutomationBeforeCommentedTemplateAndPreservesJSONC`(2칸 JSONC fixture, 같은 함수의 별도 서식·함정) | 유지 |
-| `CmuxTests.testItem22CmuxConfigReplacesOnlyExistingSocketModeValue` | 22 | i: 기존 값만 치환하는 스팬을 되돌리면 실패; ii: portRange·다른 루트 멤버·키 순서를 보존하고 값만 바꾸는 계약을 고정; iii: 없음 | `CmuxTests.testItem22CmuxConfigReturnsUnchangedWhenAutomationIsAlreadyEnabled`(이미 같은 값, 다른 분기) | 유지 |
-| `CmuxTests.testItem22CmuxConfigAddsMissingSocketModeAsTheFirstAutomationMember` | 22 | i: 자식 객체 첫 멤버 삽입을 되돌리면 실패; ii: compact 객체에서 콤마를 정확히 처리하고 기존 멤버를 보존하는 계약을 고정; iii: 없음 | `CmuxTests.testItem22CmuxConfigFollowsAutomationMemberIndentation`(multiline 서식, 같은 함수의 별도 서식) | 유지 |
-| `CmuxTests.testItem22CmuxConfigFollowsAutomationMemberIndentation` | 22 | i: 자식 첫 멤버의 공백 스팬 재사용을 되돌리면 실패; ii: automation 객체의 4칸 상대 들여쓰기와 기존 멤버 순서를 보존하는 계약을 고정; iii: 드라이버 냉독의 서식 미준수 결함을 특성화 | `CmuxTests.testItem22CmuxConfigAddsMissingSocketModeAsTheFirstAutomationMember`(compact 서식, 같은 함수의 별도 서식) | 유지 |
-| `CmuxTests.testItem22CmuxConfigReturnsUnchangedWhenAutomationIsAlreadyEnabled` | 22 | i: 이미 automation인 입력의 no-op을 되돌리면 실패; ii: 바이트를 전혀 쓰지 않는 unchanged 결과를 고정; iii: 없음 | `CmuxAutomationTests.testItem22WriteDoesNotTouchAnAlreadyEnabledConfig`(App I/O에서 no-op, 다른 고도) | 유지 |
-| `CmuxTests.testItem22CmuxConfigCreatesMinimalJSONForMissingOrBlankFile` | 22 | i: nil·공백 입력의 최소 JSON 생성을 되돌리면 실패; ii: 2칸 들여쓰기와 끝 개행을 포함한 정본 출력을 고정; iii: 없음 | `CmuxAutomationTests.testItem22WriteCreatesDirectoriesAndReportsNotAppliedAfterBoundedPoll`(새 파일 I/O, 다른 고도) | 유지 |
-| `CmuxTests.testItem22CmuxConfigDoesNotTreatAStringValueAsTheAutomationKey` | 22 | i: 문자열 토큰을 키로 오인하는 스캐너를 되돌리면 실패; ii: 문자열 리터럴을 건너뛰는 JSONC lexical 계약과 원문 보존을 고정; iii: 사용자 텍스트 안의 `automation` 오인 결함을 특성화 | `CmuxTests.testItem22CmuxConfigIgnoresAutomationInsideBlockComment`(주석 lexical 경계, 같은 고도지만 별도 상태) | 유지 |
-| `CmuxTests.testItem22CmuxConfigIgnoresAutomationInsideBlockComment` | 22 | i: 블록 주석 스캔을 되돌리면 실패; ii: 주석 안의 automation을 비주석 최상위 키로 세지 않는 계약을 고정; iii: 사용자 JSONC 주석 템플릿 오인 결함을 특성화 | `CmuxTests.testItem22CmuxConfigDoesNotTreatAStringValueAsTheAutomationKey`(문자열 lexical 경계, 같은 고도지만 별도 상태) | 유지 |
-| `CmuxTests.testItem22CmuxConfigRejectsNonObjectAndUnbalancedInputWithoutEditing` | 22 | i: 유효성 검사·쓰기 거부를 되돌리면 실패; ii: 비객체·괄호 불균형·미종결 문자열에서 throw하고 덮어쓰지 않는 안전 계약을 고정; iii: 없음 | `CmuxAutomationTests.testItem22WriteBacksUpBeforeReplacingAndConfirmsReachable`(유효 입력의 I/O, 다른 고도) | 유지 |
 | `TerminalIdentifierTests.testRawValuesAreTheStoredIdentifiers` | 1 | i: cmux enum/rawValue를 되돌리면 실패; ii: 저장 식별자 4개 리터럴과 `allCases.count == 4`라는 단일 소스를 고정; iii: 식별자 테스트 중복 제거 후 남긴 정본 오라클 | 없음 — `CmuxTests`에 식별자 중복 없음 | 유지 |
 | `TerminalIdentifierTests.testStoredValueParsingFallsBackToITerm` | 1 | i: cmux 저장값 파싱을 되돌리면 실패; ii: 네 식별자와 미지 값의 iTerm fallback을 한 파싱 지점에서 고정; iii: 없음 | `TerminalIdentifierTests.testRawValuesAreTheStoredIdentifiers`(rawValue 목록, 다른 계약) | 유지 |
 | `PaneProofRoutingTests.testItem8OnlyWarpNeedsPaneProof` | 8 | i: `.cmux(surfaceID:workspaceID:cliPath:)` 또는 `screenNeedsPaneProof`를 되돌리면 실패; ii: cmux는 surface UUID 오라클로 pane proof가 false이고 Warp만 true라는 라우팅 계약을 고정; iii: 없음 | 없음 — 기존 터미널 handle oracle을 한 테스트에서 함께 고정하며 cmux 중복 없음 | 유지 |
 
 ## 열린 질문 → 결정 (2026-08-23, 사용자·드라이버)
 
-1. **수용 + 확장** — automation 전제로 구현하고, **앱이 설정 창 버튼으로 옵션을 켠다**(D1-b에 조건과 함께 반영). automation의 의미(같은 uid 노출 확대)는 README·설정 창에 적는다 — 사용자 승인.
+1. **수용 + 확장** — automation 전제로 구현하고, automation의 의미(같은 uid 노출 확대)는 README·설정 창에 적는다 — 사용자 승인. 2026-08-27 사용자 결정으로 설정 창 버튼은 파일을 쓰지 않고 설정 조각을 복사해 기존 파일 또는 폴더를 여는 도움말 동작으로 축소했다.
 2. 소멸(1 수용). AppleScript 대안(D6)은 기록으로만 남는다.
 3. **[교체 — D8, 2026-08-26]** CR·Ctrl+U·Backspace 모두 `surface.send_text`로 보낸다. CR은 `"\r"` 한 호출, 클리어는 `"\u{15}"` 다음 `"\u{7F}"` 두 별도 호출이다. raw 셸의 키 측정은 claude TUI에 적용되지 않았고, D8의 Claude Code 실기기 측정으로 기존 답을 교체한다.
-4. **실측 승인** — 안전 조건 그대로(우리가 만든 workspace UUID만 지목, 사용자 pane은 조회 금지, 종료 시 close). cmux.json 편집도 승인(`.bak` 백업 조건). 실측 후 automation 모드는 **켠 채로 둔다**(사용자가 원하는 최종 상태).
+4. **실측 승인** — 안전 조건 그대로(우리가 만든 workspace UUID만 지목, 사용자 pane은 조회 금지, 종료 시 close). cmux.json 직접 편집은 사용자·드라이버 실측으로만 수행하고, 앱 버튼은 파일을 쓰지 않는다. 실측 후 automation 모드는 **켠 채로 둔다**(사용자가 원하는 최종 상태).
 5. **검사 목록 항목으로만** 둔다. 설정 창 버전 경고는 과설계라 비목표에 명시.
 
 ## R1 실측 설계 (안전 조건 포함)
@@ -518,5 +500,5 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | R1-j | **[완료]**: 앱 경로 실측(설치본, 17:34) — 로그는 성공(tab 0.6s → tty 1.5s → claude ready 2.2s → 반영 5.6s → CR 6.0s → 완료 6.3s)이나 transcript에는 `tctqr20ckbi!echo tc-r1j-input-ok`(마커 11자 잔재 + 본문, 평문 제출). 원인 R1-i 정정 참조. D8·D9 적용 후 재실측 완료. **재실측(2026-08-26, D8·D9 적용 빌드, 설치본 sha256 일치)**: PASS — transcript에 `<bash-input>echo tc-r1j2-input-ok</bash-input>` → `<bash-stdout>tc-r1j2-input-ok</bash-stdout>`(shell mode 제출·실행). 로그: tab 0.2s → tty 1.4s → claude ready 1.9s → pane proof passed(2/12) 5.7s → 반영 6.0s → CR 6.4s → 완료 6.7s. 첫 send_text는 queued=true였고 명령은 실행됨(R1-k 재확인). | 설치본 앱 경로와 Claude transcript 대조(드라이버 실측 2026-08-26) | D8·D9 수리 후 재실측 |
 | R1-k | **[완료]**: cold surface에 send_text → `queued:true`. **queued는 유실이 아니다** — surface가 웜업되면 flush되어 pty에 들어간다(실측: 셸 배너보다 먼저 들어가 프롬프트 라인버퍼에 재등장). 항목 10의 queued 로깅 사유가 이것이다: 보냈다고 착각한 바이트가 나중에 도착할 수 있다 | cold surface send_text 후 웜업·pty 확인(드라이버 실측 2026-08-26) | 우리 workspace 전용 |
 | R1-l | **[완료]**: `workspace.create` 58∼110ms + `surface.send_text` 38ms(각 time 실측) — WezTerm 왕복과 같은 수준, execQueue 예산 안 | 각 RPC 응답의 `time` 기록(드라이버 실측 2026-08-26) | 측정만 |
-| R1-m | **[완료]** cmux.json 변경이 재시작 없이 반영되는가 → **반영된다**(2026-08-23 실측: 기록 직후 외부 ping이 거부→PONG으로 바뀜, 재시작 없음) | 실측 완료 | 버튼 UX 확정: 기록 → `cmux ping` 폴링으로 적용 확인, 재시작 안내는 미반영 시 폴백으로만. `cmux reload-config`는 cmuxOnly에서 외부 호출이 거부되므로 수단이 아님(「재개」) |
+| R1-m | **[완료]** cmux.json 변경이 재시작 없이 반영되는가 → **반영된다**(2026-08-23 실측: 기록 직후 외부 ping이 거부→PONG으로 바뀜, 재시작 없음) | 실측 완료 | 파일 워처의 라이브 반영이 정본이다. 현재 버튼은 설정 조각을 복사하고 기존 파일 또는 폴더를 열어 사용자가 직접 수정하게 하며, `cmux reload-config`는 cmuxOnly에서 외부 호출이 거부되므로 수단이 아니다(「재개」) |
 | R1-n | **[완료]** automation을 끈 상태(cmuxOnly, ping이 Access denied)에서 앱 요청 → 0.2초에 `{success:false}`와 automation 안내 문구. 기동·timeout 오진 없음 | 설치본 앱 경로 + cmux.json 모드 토글(드라이버 실측 2026-08-26) | 실측 후 automation으로 원복, 파일 0600 확인 **재실측(H3 적용, 2026-08-26)**: ping이 `Failed to write to socket`이던 회차에도 0.2초에 automation 문구 — `workspace.create`의 거부 분류가 ping보다 정확하다. **재실측(I3 적용)**: 같은 상태의 분류가 회차에 따라 `.denied`/`.failed`로 갈린다 — 버튼 활성 조건을 '`reachable`·`notInstalled`가 아닌 모든 상태'로 넓힌 근거. |

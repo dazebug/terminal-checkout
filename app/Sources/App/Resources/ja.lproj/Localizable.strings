@@ -4,7 +4,6 @@
 "app.alert.extensionFolderFailed" = "拡張機能フォルダの準備に失敗しました";
 "app.alert.manifestFailed" = "Native Host の登録に失敗しました";
 "app.alert.permissionRequestFailed" = "権限の要求に失敗しました";
-"app.alert.cmuxConfigFailed" = "cmux 自動化設定の更新に失敗しました";
 "app.automation.denied" = "許可されていません — システム設定 → プライバシーとセキュリティ → オートメーション で許可してください";
 "app.automation.granted" = "許可済み";
 "app.automation.notDetermined" = "まだ要求していません — [%@] を押してください";
@@ -19,7 +18,7 @@
 "app.baseDir.reason.notAbsolute" = "絶対パスではありません";
 "app.baseDir.storedInvalid" = "保存されている値は使用できません (%@) — もう一度選び直してください";
 "app.button.chooseFolder" = "フォルダを選択…";
-"app.button.enableCmuxAutomation" = "自動化を許可";
+"app.button.openCmuxConfig" = "設定ファイルを開く";
 "app.button.installInChrome" = "Chrome にインストール";
 "app.button.openOptionsPage" = "拡張機能のオプションページを開く";
 "app.button.openSystemSettings" = "システム設定を開く";
@@ -44,8 +43,7 @@
 "app.error.bundledExtensionMissing" = "アプリバンドルに拡張機能のリソースがありません。アプリをビルドし直してください。";
 "app.error.cmux.notInstalled" = "cmux がインストールされていません。cmux をインストールするか、インストール先を確認してください。";
 "app.error.cmux.rpcFailed" = "cmux RPC が失敗しました: %@";
-"app.error.cmux.socketDenied" = "cmux がソケット接続を拒否しました — socket control mode が automation ではありません。このアプリの設定画面で自動化を許可するか、~/.config/cmux/cmux.json の automation.socketControlMode を \"automation\" に変更してください。";
-"app.error.cmux.config" = "cmux.json の更新に失敗しました: %@";
+"app.error.cmux.socketDenied" = "cmux がソケット接続を拒否しました — socket control mode が automation ではありません。cmux の設定 → Automation で有効にするか、~/.config/cmux/cmux.json の automation.socketControlMode を \"automation\" に変更してください。";
 "app.guide.step1" = "① 右上のデベロッパーモードをオンにします";
 "app.guide.step2" = "② 左上の「パッケージ化されていない拡張機能を読み込む」をクリックします";
 "app.guide.step3" = "③ ファイルダイアログで: ⇧⌘G → ⌘V (貼り付け) → Enter → [選択]";
@@ -77,7 +75,7 @@
 "app.pipeline.wezterm.notInstalled" = "WezTerm がインストールされていません";
 "app.section.accessibility.help" = "claude が入力を受け取ったことを Warp の画面上で確認するために使います。これがないと、claude 入力が予約されたボタンはタブを開かずに拒否されます — 同梱のプリセット 3 つはすべてこのグループに入ります。! 入力は claude のシェルモードに入力されたときにだけ実行されるからです。claude 入力のないボタンと、プレーンな 1 行だけを予約するボタンは、この権限がなくても動きます。配信中はそのタブを表示したままにしてください。";
 "app.section.accessibility.title" = "Warp の claude 入力 (アクセシビリティ)";
-"app.section.cmux.help" = "外部アプリが cmux に接続するには、socket control mode を \"automation\" にする必要があります。これを有効にすると、この macOS ユーザーが所有するすべてのプロセスが cmux を操作できるようになります。";
+"app.section.cmux.help" = "外部アプリが cmux に接続するには、socket control mode を \"automation\" にする必要があります。これを有効にすると、この macOS ユーザーが所有するすべてのプロセスが cmux を操作できるようになります。cmux の設定 → Automation で有効にするか、このボタンで設定をコピーして cmux.json を開いて編集できます。cmux はファイルの変更をすぐに反映するため、再起動は不要です。";
 "app.section.cmux.title" = "cmux ソケット制御";
 "app.section.itermPermission.help" = "このアプリだけに iTerm2 の制御 (Apple Events) を許可します。Chrome には権限は一切必要ありません。";
 "app.section.itermPermission.title" = "iTerm2 の制御権限";
@@ -96,9 +94,11 @@
 "app.status.cmux.denied" = "ソケットへのアクセスが拒否されました — socket control mode が automation ではありません";
 "app.status.cmux.reachable" = "接続可能";
 "app.status.cmux.failed" = "状態の確認に失敗しました: %@";
-"app.status.cmux.automationAlreadyEnabled" = "自動化はすでに有効です";
-"app.status.cmux.automationNotApplied" = "反映されませんでした — cmux を再起動してください";
-"app.status.cmux.backupProtectionIncomplete" = "バックアップの保護が未完了です — .bak ファイルの権限を確認してください: %@";
+"app.status.cmux.configOpened" = "自動化設定をコピーし、cmux.jsonを開きました";
+"app.status.cmux.configDirectoryOpened" = "自動化設定をコピーしました。cmux.jsonがないため、そのフォルダを開きました";
+"app.status.cmux.configOpenFailed" = "自動化設定をコピーしましたが、cmux設定の対象を開けませんでした";
+"app.status.cmux.configUnavailable" = "自動化設定をコピーしましたが、cmux.jsonとそのフォルダを開けませんでした";
+"app.status.cmux.configClipboardFailed" = "自動化設定をコピーできなかったため、cmux設定の対象を開きませんでした";
 "app.status.manifest.notRegistered" = "未登録 — [%@] を押してください";
 "app.status.manifest.registered" = "登録済み";
 "app.status.manifest.wrongExtensionID" = "拡張機能の ID が現在の設定と異なります — [%@] で更新してください";
