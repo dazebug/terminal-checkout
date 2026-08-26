@@ -39,6 +39,9 @@
 "app.card.tools.help" = "在你的登录 shell 中检查：按钮的命令及其 claude 输入所调用的工具。";
 "app.card.tools.title" = "命令调用的工具";
 "app.error.bundledExtensionMissing" = "应用程序包中没有扩展程序资源。请重新构建应用。";
+"app.error.cmux.notInstalled" = "未安装 cmux。请安装 cmux 或检查其安装位置。";
+"app.error.cmux.rpcFailed" = "cmux RPC 失败：%@";
+"app.error.cmux.socketDenied" = "cmux 拒绝了套接字连接 — socket control mode 不是 automation。请在此应用的设置窗口中允许自动化，或将 ~/.config/cmux/cmux.json 中的 automation.socketControlMode 改为 \"automation\"。";
 "app.guide.step1" = "① 打开右上角的开发者模式";
 "app.guide.step2" = "② 点击左上角的“加载已解压的扩展程序”";
 "app.guide.step3" = "③ 在文件对话框中：⇧⌘G → ⌘V（粘贴）→ Enter → [选择]";

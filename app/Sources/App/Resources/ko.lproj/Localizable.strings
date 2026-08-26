@@ -39,6 +39,9 @@
 "app.card.tools.help" = "버튼의 command와 claude 입력이 부르는 도구를 로그인 셸에서 확인했습니다.";
 "app.card.tools.title" = "명령이 부르는 도구";
 "app.error.bundledExtensionMissing" = "앱 번들 안에 extension 리소스가 없습니다. 앱을 다시 빌드하세요.";
+"app.error.cmux.notInstalled" = "cmux가 설치되어 있지 않습니다. cmux를 설치하거나 설치 위치를 확인하세요.";
+"app.error.cmux.rpcFailed" = "cmux RPC가 실패했습니다: %@";
+"app.error.cmux.socketDenied" = "cmux가 소켓 연결을 거부했습니다 — socket control mode가 automation이 아닙니다. 이 앱 설정 창에서 자동화 허용을 켜거나, ~/.config/cmux/cmux.json의 automation.socketControlMode를 \"automation\"으로 바꾸세요.";
 "app.guide.step1" = "① 우측 상단 「개발자 모드」 켜기";
 "app.guide.step2" = "② 좌측 상단 「압축해제된 확장 프로그램을 로드합니다」 클릭";
 "app.guide.step3" = "③ 파일 선택 창에서 ⇧⌘G → ⌘V(붙여넣기) → Enter → [선택]";

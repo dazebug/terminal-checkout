@@ -39,6 +39,9 @@
 "app.card.tools.help" = "ログインシェルで確認します: ボタンのコマンドと claude 入力が呼び出すツールです。";
 "app.card.tools.title" = "コマンドが呼び出すツール";
 "app.error.bundledExtensionMissing" = "アプリバンドルに拡張機能のリソースがありません。アプリをビルドし直してください。";
+"app.error.cmux.notInstalled" = "cmux がインストールされていません。cmux をインストールするか、インストール先を確認してください。";
+"app.error.cmux.rpcFailed" = "cmux RPC が失敗しました: %@";
+"app.error.cmux.socketDenied" = "cmux がソケット接続を拒否しました — socket control mode が automation ではありません。このアプリの設定画面で自動化を許可するか、~/.config/cmux/cmux.json の automation.socketControlMode を \"automation\" に変更してください。";
 "app.guide.step1" = "① 右上のデベロッパーモードをオンにします";
 "app.guide.step2" = "② 左上の「パッケージ化されていない拡張機能を読み込む」をクリックします";
 "app.guide.step3" = "③ ファイルダイアログで: ⇧⌘G → ⌘V (貼り付け) → Enter → [選択]";

@@ -47,6 +47,9 @@
 "app.card.tools.help" = "Checked in your login shell: the tools a button's command and its claude input call.";
 "app.card.tools.title" = "Tools the commands call";
 "app.error.bundledExtensionMissing" = "The app bundle carries no extension resource. Build the app again.";
+"app.error.cmux.notInstalled" = "cmux is not installed. Install cmux or check its installation.";
+"app.error.cmux.rpcFailed" = "cmux RPC failed: %@";
+"app.error.cmux.socketDenied" = "cmux denied the socket connection — its socket control mode is not \"automation\". Allow automation from this app's setup window, or set automation.socketControlMode to \"automation\" in ~/.config/cmux/cmux.json.";
 "app.guide.step1" = "① Turn on Developer mode, top right";
 "app.guide.step2" = "② Click “Load unpacked”, top left";
 "app.guide.step3" = "③ In the file dialog: ⇧⌘G → ⌘V (paste) → Enter → [Select]";

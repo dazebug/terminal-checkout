@@ -5,6 +5,9 @@ public enum TerminalError: Error, CustomStringConvertible {
     case wezTermNotFound
     case warpNotFound
     case warpTabConfigFailed(String)
+    case cmuxNotFound
+    case cmuxSocketDenied
+    case cmuxRPCFailed(String)
     case timeout(String)
     /// The app is leaving, so no new delivery may be started. Transient by nature — which is why it
     /// is not a `ClaudeInputBlocker`: those name a state the user has to go and fix.
@@ -23,6 +26,9 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .wezTermNotFound: return "WezTerm not found. Install WezTerm or check your PATH."
         case .warpNotFound: return "Warp not found. Install Warp in /Applications or ~/Applications."
         case .warpTabConfigFailed(let message): return "Warp tab config error: \(message)"
+        case .cmuxNotFound: return "cmux not found. Install cmux or check your PATH."
+        case .cmuxSocketDenied: return "cmux socket access denied."
+        case .cmuxRPCFailed(let message): return "cmux RPC error: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
         case .goingAway:
             return "Terminal Checkout is quitting or restarting — press the button again in a moment."
@@ -103,6 +109,7 @@ public func claudeInputBlocker(
         guard accessibilityTrusted() else { return .warpAccessibility }
         guard injectionHelperReady() else { return .warpHelperUnavailable }
         return nil
+    case .cmux: return nil
     }
 }
 
@@ -239,6 +246,8 @@ public func runInTerminal(
     case .iterm: return try runInITerm(command)
     case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
     case .warp: return try runInWarp(command, claudeInput: claudeInput)
+    case .cmux:
+        throw TerminalError.cmuxRPCFailed("cmux terminal runner is not available yet")
     }
 }
 

@@ -109,12 +109,13 @@ public func errorMessage(_ error: Error) -> String {
 
 /// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
 public func handleRequest(
-    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void
+    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void,
+    message: (Error) -> String = errorMessage
 ) -> [String: Any] {
     do {
         try run(try resolveRequest(json, baseDirectory: baseDirectory))
         return ["success": true]
     } catch {
-        return ["success": false, "error": errorMessage(error)]
+        return ["success": false, "error": message(error)]
     }
 }

@@ -203,6 +203,23 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
     String(format: AppLocalization.string(key.description), arguments: arguments)
 }
 
+/// Core keeps its stable English descriptions for diagnostics and for callers that do not have an
+/// app bundle. The socket response is user-facing, so the App boundary localizes the three cmux
+/// failures while leaving every existing terminal message byte-for-byte unchanged.
+func localizedErrorMessage(_ error: Error) -> String {
+    guard let terminalError = error as? TerminalError else { return errorMessage(error) }
+    switch terminalError {
+    case .cmuxNotFound:
+        return localized("app.error.cmux.notInstalled")
+    case .cmuxSocketDenied:
+        return localized("app.error.cmux.socketDenied")
+    case .cmuxRPCFailed(let message):
+        return localized("app.error.cmux.rpcFailed", message)
+    default:
+        return errorMessage(error)
+    }
+}
+
 /// Text that is **shell syntax**, not a message.
 ///
 /// The distinction is load-bearing rather than tidy: `testCommand` is shown on screen *and* run in

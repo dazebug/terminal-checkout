@@ -675,14 +675,16 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal.iterm.rawValue, "iterm")
         XCTAssertEqual(Terminal.wezterm.rawValue, "wezterm")
         XCTAssertEqual(Terminal.warp.rawValue, "warp")
+        XCTAssertEqual(Terminal.cmux.rawValue, "cmux")
         // Oracle completeness: a new case has to gain a literal line in the list above too
-        XCTAssertEqual(Terminal.allCases.count, 3)
+        XCTAssertEqual(Terminal.allCases.count, 4)
     }
 
     func testStoredValueParsingFallsBackToITerm() {
         XCTAssertEqual(Terminal(storedValue: "iterm"), .iterm)
         XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
         XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
+        XCTAssertEqual(Terminal(storedValue: "cmux"), .cmux)
         // An unknown stored value (an identifier left by another version, a hand-edited plist) falls back to iTerm2 — the contract that gathers the fallback into the single parsing point so it cannot diverge per consumer
         XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
         XCTAssertEqual(Terminal(storedValue: ""), .iterm)

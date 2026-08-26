@@ -40,6 +40,9 @@
 "app.card.tools.help" = "在你的登入 shell 中檢查：按鈕的指令及其 claude 輸入所呼叫的工具。";
 "app.card.tools.title" = "指令呼叫的工具";
 "app.error.bundledExtensionMissing" = "應用程式套件中沒有擴充功能資源。請重新建置應用程式。";
+"app.error.cmux.notInstalled" = "尚未安裝 cmux。請安裝 cmux 或檢查其安裝位置。";
+"app.error.cmux.rpcFailed" = "cmux RPC 失敗：%@";
+"app.error.cmux.socketDenied" = "cmux 拒絕了通訊端連線 — socket control mode 不是 automation。請在此應用程式的設定視窗中允許自動化，或將 ~/.config/cmux/cmux.json 中的 automation.socketControlMode 改為 \"automation\"。";
 "app.guide.step1" = "① 開啟右上角的開發人員模式";
 "app.guide.step2" = "② 點擊左上角的「載入未封裝項目」";
 "app.guide.step3" = "③ 在檔案對話方塊中：⇧⌘G → ⌘V（貼上）→ Enter → [選擇]";

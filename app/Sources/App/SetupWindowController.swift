@@ -1191,6 +1191,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .iterm: itermRadio.state = .on
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
+        case .cmux:
+            itermRadio.state = .off
+            weztermRadio.state = .off
+            warpRadio.state = .off
         }
         // Scheduled claude input is delivered only once claude is up, so it takes a while — and
         // anything the user types in the meantime mixes into it
@@ -1275,6 +1279,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     : .warning(localized("app.status.accessibility.denied")),
                 to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
+        case .cmux:
+            break // cmux permission/status UI belongs to the cmux setup item
         }
         var granted = false
         if let permission, case .ok = permission { granted = true }
@@ -1423,6 +1429,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.warn
                 terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
+        case .cmux:
+            terminalName = "cmux"
+            terminalColor = Theme.warn
+            terminalDetail = localized("app.status.unknown")
         }
         return [
             .init(
@@ -1603,7 +1613,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
             DispatchQueue.main.async {
                 if let failure {
-                    self?.testResultLabel.stringValue = localized("app.test.failed", errorMessage(failure))
+                    self?.testResultLabel.stringValue = localized("app.test.failed", localizedErrorMessage(failure))
                     self?.testResultLabel.textColor = Theme.err
                 } else {
                     self?.testResultLabel.stringValue = localized("app.test.succeeded")
@@ -1629,7 +1639,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = title
-        alert.informativeText = errorMessage(error)
+        alert.informativeText = localizedErrorMessage(error)
         if let window {
             alert.beginSheetModal(for: window)
         } else {

@@ -2,7 +2,7 @@
 
 - 대상: `terminal-checkout` (작업 clone `/Users/choongjaelee/Codes/terminal-checkout-cmux-support-work`, 브랜치 `cmux-support-work` — spark 변형이라 linked worktree가 아닌 전용 clone)
 - base: 2f922d6 (재개 2026-08-26 — 최초 R0는 a20f69d 기준, 「재개」 참조)
-- 현재: R0 승인(2026-08-23, 열린 질문 5건 결정 완료 — 「열린 질문 → 결정」) · R1 착수. 게이트 기준선은 base 이동으로 재측정 중(직전 기준선: a20f69d에서 `swift test` 180·`node --test` 22)
+- 현재: R0 승인(2026-08-23, 열린 질문 5건 결정 완료 — 「열린 질문 → 결정」) · R1 착수. 게이트 기준선은 base 이동 후 드라이버가 재측정했다(`swift test` 483 tests(1 skip)·`node --test` 220 pass)
 - 검증 구성: spark — 구현=Codex(write_codex), 검증=드라이버 겸임, 종결 cold review 필수. 게이트 4종(`cd app && swift test`·`node --test`·`app/build.sh`·`app/e2e.sh`)은 전부 드라이버가 clone에서 돌린다(Codex 샌드박스에서 swift 게이트가 돌지 않음 — 실측)
 - 최근 검증자 판정: 미요청
 
@@ -52,11 +52,11 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
 9. **`{success:false, error}` 검사**: 새 실패 사유(cmux 소켓 거부 등)도 같은 경로로 나가야 하고, 조용히 성공으로 보이면 안 된다
 10. **GUI 앱 PATH 함정**: cmux CLI도 절대 경로 후보를 명시적으로 탐색한다. 설치 감지와 실행이 **같은 함수**를 쓴다(`isWarpInstalled`↔`findWarpExecutable` 선례)
 11. **사용자가 보던 창에 탭을 만든다** — 폴백까지가 한 세트다
-12. **게이트 4종 그린 유지**: `cd app && swift test`(180 → 늘어난 수), `node --test`(22, 불변), `app/build.sh`, `app/e2e.sh`
+12. **게이트 4종 그린 유지**: `cd app && swift test`(드라이버 기준선 483 tests, 1 skip → 늘어난 수), `node --test`(드라이버 기준선 220 pass), `app/build.sh`, `app/e2e.sh`
 13. **iTerm2/WezTerm/Warp 산출 경로 바이트 불변**
 14. **검사 목록 갱신 의무**: `docs/new-terminal-checklist.md` §2에 cmux 항목을 함께 추가한다
 15. **남의 pane을 건드리지 않는다**: 우리가 만든 workspace/surface의 **UUID를 명시**해서만 보내고 읽는다. `--surface` 없이 부르면 cmux는 **포커스된 surface**로 떨어지므로(`Sources/TerminalController.swift:5491-5497`) 기본값에 기대지 않는다. 실측도 마찬가지 — 사용자의 라이브 claude 세션이 같은 cmux 안에서 돌고 있다
-16. **i18n(#41 이후)**: 사용자 노출 문자열은 앱은 `Localization`(`.lproj` 5로케일), 확장은 `_locales`+`i18n.js`를 지난다 — cmux가 추가하는 설정 창 카드·버튼·에러 문구·manifest description도 같은 경로로 넣고 5로케일을 모두 채운다. 로케일 정합 게이트(`tools/check-locales.js`·source-audit 테스트)가 게이트 4종의 어디에 걸리는지 R1 첫 부류에서 확인해 이 행을 갱신한다
+16. **i18n(#41 이후)**: 사용자 노출 문자열은 앱은 `Localization`(`.lproj` 5로케일), 확장은 `_locales`+`i18n.js`를 지난다 — cmux가 추가하는 설정 창 카드·버튼·에러 문구·manifest description도 같은 경로로 넣고 5로케일을 모두 채운다. 로케일 정합 게이트는 확장 `tools/check-locales.js`가 `tests/i18n.test.js`를 통해 `node --test`에 포함되고, 앱 source-audit가 `swift test`의 `LocalizationCatalogTests`에 포함된다(직접 `node tools/check-locales.js` 실행도 가능하다)
 
 이 작업 고유의 규칙:
 
@@ -89,7 +89,7 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
   - `automation` — **"Allow external local automation clients from this macOS user (no ancestry check)."**
   - `password` — "Require socket authentication with a password stored in a local file."
   - `allowAll` — "Allow any local process and user to connect with no auth. Unsafe."
-- 사용자의 현재 `~/.config/cmux/cmux.json`은 `$schema`·`schemaVersion` 외 전부 주석 상태다(`socketPassword`·`socketControlMode`가 187∼188행에 주석으로만 존재) → **지금은 기본값 `cmuxOnly`**
+- 사용자의 현재 `~/.config/cmux/cmux.json`은 `$schema`·`schemaVersion` 외 전부 주석 상태다(`socketPassword`·`socketControlMode`가 187∼188행에 주석으로만 존재) → **지금은 기본값 `cmuxOnly`** (R0 시점. 재개 시점에는 R1-a의 automation 기록이 적용돼 있다 — 「재개」)
 
 **[채택]** 요구 조건은 **`automation` 모드**(`password`·`allowAll`도 통과하므로 막지 않는다). `automation`의 경계는 "이 macOS 사용자"(uid)이고, 이는 이 앱이 자기 소켓에 이미 쓰는 경계와 같다(`HostServer.swift:82` `getpeereid(fd,&uid,&gid)==0, uid==getuid()`). 새 신뢰 경계를 만들지 않는다.
 
@@ -162,7 +162,9 @@ README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 
 
 **[남는 위험]** `rpc`는 "raw v2 method" 탈출구다. 메서드 이름·파라미터가 버전 사이에 바뀔 수 있다(cmux는 0.64.x로 빠르게 움직인다). 완화: 메서드 이름을 한 자리 상수로 모으고, 실패 로그에 메서드 이름을 남기고, 검사 목록에 "cmux 버전이 오르면 rpc 메서드 5개 확인" 항목을 넣는다.
 
-**[확인할 응답 필드]** `surface.send_text` 응답의 `queued: Bool`은 "surface가 아직 차가워서 바이트가 pty에 안 들어갔다"는 뜻이다(`ControlCommandCoordinator+Surface2.swift:345-354`). 반영 확인이 어차피 막아 주지만 **로그에는 남긴다** — 진단이 갈린다.
+**[확인할 응답 필드]** `surface.send_text` 응답의 `queued: Bool`은 "surface가 아직 차가워서 바이트가 pty에 안 들어갔다"는 뜻이다(`ControlCommandCoordinator+Surface2.swift:345-354`). 반영 확인이 어차피 막아 주지만 **로그에는 남긴다** — 진단이 갈린다. R1-k 실측: queued:true였던 텍스트는 surface 웜업 시 flush되어 pty에 들어간다 — 유실로 취급하지 말고, 반영 확인 없이 CR을 보내지 않는 기존 원칙이 이 경우를 막는다.
+
+CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]` 인자로 받으므로, `JSONSerialization` 뒤 비ASCII 스칼라를 `\uXXXX`(보충 평면은 surrogate pair)로 이스케이프해 JSON argv 전체를 ASCII로 만든다 — JSON 의미와 원본 문자열 바이트를 보존한다.
 
 ### D3. 새 탭(workspace) 만들기와 창 선택
 
@@ -250,35 +252,35 @@ README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 
 
 - **[채택]** `case cmux`, rawValue `"cmux"`. 앱 이름·번들 CLI 이름과 같아 별칭이 필요 없다(`iterm`이 iTerm2를 가리키는 예외와 다르다)
 - 자동 감지 순서: `iterm → wezterm → warp → cmux`(맨 뒤). `Settings.terminal`의 기존 주석은 "지원이 오래돼 실사용으로 다져진 순"이고, cmux는 가장 새롭고 **사용자 쪽 선행 설정까지 필요**하므로 마지막이 맞다
-- 설치 감지: `findCmuxCLI()` 하나를 Core에 두고 `PermissionChecker.isCmuxInstalled`가 그것을 쓴다. 후보는 PATH + `/Applications/cmux.app/Contents/Resources/bin/cmux` + `~/Applications/…` + `/opt/homebrew/bin/cmux` + `/usr/local/bin/cmux`. **번들 안 경로가 정본**이다 — cmux가 pane에 넣는 `CMUX_BUNDLED_CLI_PATH`가 그것을 가리킨다(`Surface/TerminalSurface+RuntimeSurfaceCreation.swift:111-114`)
+- 설치 감지: `findCmuxCLI()` 하나를 Core에 두고 `PermissionChecker.isCmuxInstalled`가 그것을 쓴다. 후보는 `/Applications/cmux.app/Contents/Resources/bin/cmux` → `~/Applications/cmux.app/Contents/Resources/bin/cmux` → `/opt/homebrew/bin/cmux` → `/usr/local/bin/cmux` → PATH 순이다. **번들 안 경로가 정본**이다 — cmux가 pane에 넣는 `CMUX_BUNDLED_CLI_PATH`가 그것을 가리킨다(`Surface/TerminalSurface+RuntimeSurfaceCreation.swift:111-114`)
 - 성능: 번들 CLI는 48MB Mach-O지만 콜드 스타트가 **10∼20ms**다(`/usr/bin/time -p cmux version` 3회: 0.02/0.01/0.01). `runInTerminal`이 도는 execQueue는 Chrome 응답을 막으므로(`HostServer.swift:96-112`) 호출 수를 2회(`workspace.create` + `surface.send_text`)로 유지한다 — WezTerm의 왕복 20∼40ms와 같은 수준이다
 
 ## 작업 항목
 
-| # | 항목 | 상태 | 근거 (무엇을 실행해 무엇이 나오면 claimed인가) | 라운드 |
-|:--|:--|:--|:--|:--|
-| 1 | `Terminal`에 `cmux` 케이스 + `TerminalIdentifierTests`에 rawValue 리터럴과 `allCases.count` 4 | todo | `swift test --filter TerminalIdentifierTests` 2개 통과. `swift build` 에러 목록(= 컴파일러가 잡은 분기)을 라운드 로그에 붙인다 | |
-| 2 | `findCmuxCLI()`·`cmuxSocketPath()` (Core) | todo | 후보 순서 순수 함수 테스트 + 실환경에서 `/Applications/cmux.app/Contents/Resources/bin/cmux` 반환 | |
-| 3 | `cmuxRPC(cli:method:params:)` + 메서드 이름 상수 5개(`workspace.create`·`surface.send_text`·`surface.send_key`·`surface.read_text`·`debug.terminals`) | todo | 파라미터 JSON 직렬화·응답 파싱 순수 함수 테스트(리터럴 `\`+`n`, `\r`, 한글, 512바이트 초과) | |
-| 4 | `TerminalError`에 `cmuxNotFound`·`cmuxSocketDenied`·`cmuxRPCFailed` — 소켓 거부를 **구분되는 문구**로 | todo | 거부 상태에서 relay 왕복(`docs/new-terminal-checklist.md` §3 방식) 시 `{"success":false,"error":"…"}`에 그 문구가 실린다 | |
-| 5 | `runInCmux(_:injectsClaudeInput:)` — 소켓 없으면 인자 없는 `open -b com.cmuxterm.app` + 폴링 → `workspace.create`(focus true) → `surface.send_text`로 `command+"\r"` | todo | 실측: 새 workspace에서 echo가 돈다. `ps -eo tty,command` 전후 비교로 새 tty 확인, `lsof -a -p <셸pid> -d cwd`로 작업 디렉토리 | |
-| 6 | `cmuxWorkspaceCreateAttempts(windowID:)` 순수 함수 + 테스트 — **R1-g가 통과하면 `dropped`** | todo | 단위 테스트 + 창 2개 실측 | |
-| 7 | `runInTerminal` switch에 `.cmux` | todo | `swift build` + 설정 창 [터미널에서 실행] | |
-| 8 | `TerminalSessionHandle`에 `.cmux(surfaceID:workspaceID:cliPath:)` + `screenNeedsPaneProof` 갈래(false) | todo | oracle 단위 테스트(`.cmux`는 false, `.warp`만 true) | |
-| 9 | `deliverClaudeInputs`의 tty 갈래 — `debug.terminals` 폴링 + `cmuxTTYName(debugTerminalsJSON:surfaceID:)` 순수 파서 | todo | 파서 단위 테스트(정상/`tty` null/surface 없음). 실측: 앱 로그의 tty가 `ps -t <tty>`에서 그 workspace 셸을 보여 준다 | |
-| 10 | `sendKeys`의 `case .cmux` — 텍스트·CR은 `surface.send_text`, Ctrl+U는 `surface.send_key ctrl+u`. `queued` 로깅 | todo | 단위 테스트: 세 갈래가 각각 어떤 메서드·파라미터를 만드는지. 실측: 입력 3개가 순서대로 제출되고 `~/.claude/projects/<슬러그>/*.jsonl`에 `<bash-input>`·`<command-name>`이 남는다 | |
-| 11 | `screenText`의 `case .cmux` — `surface.read_text` | todo | 실측: 타이핑 직후 프로브가 화면에 새로 보인다(앱 로그에 재시도가 남지 않는다) | |
-| 12 | `Settings.terminal` 자동 감지에 cmux 한 줄(맨 뒤) | todo | `defaults delete com.dazebug.terminal-checkout terminal` 후 감지 결과 | |
-| 13 | `PermissionChecker.isCmuxInstalled` + `cmuxSocketStatus()` 라이브 프로브(`cmux ping`) | todo | cmux 켜짐/꺼짐 × 모드 `cmuxOnly`/`automation` 네 조합에서 상태 문구가 갈린다 | |
-| 14 | `SetupWindowController` — 라디오, `terminalChanged` if-체인, 안내 노트, `refresh` 권한 switch, 새 「cmux 소켓 제어」 카드(+[자동화 허용] 버튼 — D1-b), `pipelineNodes` | todo | 설정 창 캡처 4상태(미설치/소켓 거부/허용/cmux 꺼짐). `screencapture -l <windowID>` | |
-| 15 | `install.sh` 프리플라이트에 cmux 감지 + 안내 | todo | `./install.sh` 출력의 "감지된 터미널"에 cmux가 찍힌다 | |
-| 16 | `README.md` — 터미널 목록·아키텍처 그림·설정 단계·권한 안내·fallback 제한·트러블슈팅 + **cmux socket mode 안내** | todo | diff 리뷰 | |
-| 17 | `extension/manifest.json` description | todo | `node --test` 22 그대로 + 문자열 diff | |
-| 18 | `docs/new-terminal-checklist.md` — §1에 "소켓 접근 모드가 필요한 터미널" 줄, §2에 cmux 전용 실측 블록 | todo | diff | |
-| 19 | `CLAUDE.md`에 cmux 함정 추가(rpc 통일 이유·`unescapeSendText` 구멍·서버의 LF→CR 변환·socket mode 전제·tty가 push 기반) + 5행의 낡은 터미널 목록 갱신 | todo | diff | |
-| 20 | 게이트 4종 재실행 | todo | 각 명령의 마지막 줄 인용 | |
-| 21 | `docs/new-terminal-checklist.md` §2 실측 전체 수행(사용자 참여) | todo | 체크박스별 근거 | |
-| 22 | cmux.json `automation.socketControlMode` 기록 헬퍼(D1-b — 순수 함수: JSONC 주석 보존 텍스트 편집 + `.bak` 백업) + 설정 창 버튼 연결 | todo | 편집 순수 함수 단위 테스트(파일 없음/주석만 템플릿/비주석 automation 키 존재/다른 키 공존/이미 automation). 실측: 버튼 → cmux.json 변경·`.bak` 생성 → `cmux ping` 통과 | |
+| # | 항목 | 상태 | 근거 (무엇을 실행해 무엇이 나오면 claimed인가) | 의존 | 라운드 |
+|:--|:--|:--|:--|:--|:--|
+| 1 | `Terminal`에 `cmux` 케이스 + `TerminalIdentifierTests`에 rawValue 리터럴과 `allCases.count` 4 | verified | `TerminalIdentifierTests`에 4개 rawValue 리터럴·`allCases.count == 4`를 추가하고, 컴파일 switch 구멍은 R1 라운드 로그에 기록했다. 재실행(드라이버): swift test 493(1 skip)·node 220, 0 실패. toggle red는 신규 심볼 참조라 구현 제거 시 컴파일 실패로 성립. | | R1 |
+| 2 | `findCmuxCLI()`·`cmuxSocketPath()` (Core) | verified | `CmuxTests.testCmuxCLICandidatePathsUseBundleLocationsBeforePATH`, `testFindCmuxCLIReturnsTheFirstExecutableCandidate`, `testCmuxSocketPathOnlyReportsAnExistingSocket`로 후보 순서·생존 소켓 판정을 고정했다(실환경 게이트는 드라이버). 재실행(드라이버): swift test 493(1 skip)·node 220, 0 실패. toggle red는 신규 심볼 참조라 구현 제거 시 컴파일 실패로 성립. | | R1 |
+| 3 | `cmuxRPC(cli:method:params:)` + 메서드 이름 상수 5개(`workspace.create`·`surface.send_text`·`surface.send_key`·`surface.read_text`·`debug.terminals`) | verified | `CmuxTests`의 메서드 상수·ASCII argv·JSON 의미 보존·workspace/send/read 응답 파싱 테스트로 고정했다. CLI stdin 경로가 없어 `\uXXXX` JSON argv를 채택한 근거는 D2에 기록했다. 재실행(드라이버): swift test 493(1 skip)·node 220, 0 실패. toggle red는 신규 심볼 참조라 구현 제거 시 컴파일 실패로 성립. | | R1 |
+| 4 | `TerminalError`에 `cmuxNotFound`·`cmuxSocketDenied`·`cmuxRPCFailed` — 소켓 거부를 **구분되는 문구**로 | verified | `CmuxTests.testCmuxRPCFailuresDistinguishSocketDenialAndMethod`와 `CmuxLocalizationTests.testCmuxTerminalErrorsUseAllFiveCatalogs`로 분류·5로케일 경로를 고정했다(실제 relay 왕복은 드라이버). 재실행(드라이버): swift test 493(1 skip)·node 220, 0 실패. toggle red는 신규 심볼 참조라 구현 제거 시 컴파일 실패로 성립. | | R1 |
+| 5 | `runInCmux(_ command: String, claudeInput: ClaudeDelivery.Admission? = nil)` — 소켓 없으면 인자 없는 `open -b com.cmuxterm.app` + 폴링 → `workspace.create`(focus true) → `surface.send_text`로 `command+"\r"` | todo | 실측: 새 workspace에서 echo가 돈다. `ps -eo tty,command` 전후 비교로 새 tty 확인, `lsof -a -p <셸pid> -d cwd`로 작업 디렉토리 | `3(cmuxRPC 계약)` | |
+| 6 | `cmuxWorkspaceCreateAttempts(windowID:)` 순수 함수 + 테스트 — **R1-g가 통과하면 `dropped`** | todo | 단위 테스트 + 창 2개 실측 | | |
+| 7 | `runInTerminal` switch에 `.cmux` | todo | `swift build` + 설정 창 [터미널에서 실행] | | |
+| 8 | `TerminalSessionHandle`에 `.cmux(surfaceID:workspaceID:cliPath:)` + `screenNeedsPaneProof` 갈래(false) | todo | oracle 단위 테스트(`.cmux`는 false, `.warp`만 true) | | |
+| 9 | `deliverClaudeInputs`의 tty 갈래 — `debug.terminals` 폴링 + `cmuxTTYName(debugTerminalsJSON:surfaceID:)` 순수 파서 | todo | 파서 단위 테스트(정상/`tty` null/surface 없음). 실측: 앱 로그의 tty가 `ps -t <tty>`에서 그 workspace 셸을 보여 준다 | `3(cmuxRPC 계약)` | |
+| 10 | `sendKeys`의 `case .cmux` — 텍스트·CR은 `surface.send_text`, Ctrl+U는 `surface.send_key ctrl+u`. `queued` 로깅. claudeClearInputKey는 #36 이후 Ctrl+U(0x15)+Backspace(0x7F) 2바이트다 — cmux 갈래는 send_key `ctrl+u` 뒤 send_key `backspace`로 매핑한다(R1-i에서 두 키의 바이트 정확성 실측 완료). 바이트 시퀀스를 그대로 send_text로 보내지 않는 이유는 D2(원시 텍스트 경로의 제어문자 필터 미확정)와 같다. | todo | 단위 테스트: 세 갈래가 각각 어떤 메서드·파라미터를 만드는지. 실측: 입력 3개가 순서대로 제출되고 `∼/.claude/projects/<슬러그>/*.jsonl`에 `<bash-input>`·`<command-name>`이 남는다 | `3(cmuxRPC 계약)` | |
+| 11 | `screenText`의 `case .cmux` — `surface.read_text` | todo | 실측: 타이핑 직후 프로브가 화면에 새로 보인다(앱 로그에 재시도가 남지 않는다) | `3(cmuxRPC 계약)` | |
+| 12 | `Settings.terminal` 자동 감지에 cmux 한 줄(맨 뒤) | todo | `defaults delete com.dazebug.terminal-checkout terminal` 후 감지 결과 | | |
+| 13 | `PermissionChecker.isCmuxInstalled` + `cmuxSocketStatus()` 라이브 프로브(`cmux ping`) | todo | cmux 켜짐/꺼짐 × 모드 `cmuxOnly`/`automation` 네 조합에서 상태 문구가 갈린다. cmux가 꺼져 있으면(소켓 부재) ping 실패가 모드와 무관하게 동일하므로 cmuxOnly/automation을 구별할 수 없다 — 상태 문구는 '꺼짐(모드 확인 불가, cmux 실행 후 재확인)'을 별도 상태로 둔다. 설정 파일을 읽어 추정하지 않는다(비목표: 프로브가 정본). | | |
+| 14 | `SetupWindowController` — 라디오, `terminalChanged` if-체인, 안내 노트, `refresh` 권한 switch, 새 「cmux 소켓 제어」 카드(+[자동화 허용] 버튼 — D1-b), `pipelineNodes` | todo | 설정 창 캡처 4상태(미설치/소켓 거부/허용/cmux 꺼짐). `screencapture -l <windowID>` | `13` | |
+| 15 | `install.sh` 프리플라이트에 cmux 감지 + 안내 | todo | `./install.sh` 출력의 "감지된 터미널"에 cmux가 찍힌다 | | |
+| 16 | `README.md` — 터미널 목록·아키텍처 그림·설정 단계·권한 안내·fallback 제한·트러블슈팅 + **cmux socket mode 안내** | todo | diff 리뷰 | | |
+| 17 | manifest description은 `__MSG_…__` 참조이고 실제 문구는 `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json` 5파일에 있다 — 다섯 로케일 모두 갱신, `tools/check-locales.js`가 게이트(불변 원칙 16) | todo | `node --test` 220 그대로 + 문자열 diff | | |
+| 18 | `docs/new-terminal-checklist.md` — §1에 "소켓 접근 모드가 필요한 터미널" 줄, §2에 cmux 전용 실측 블록 | todo | diff | | |
+| 19 | `CLAUDE.md`에 cmux 함정 추가(rpc 통일 이유·`unescapeSendText` 구멍·서버의 LF→CR 변환·socket mode 전제·tty가 push 기반) + 5행의 낡은 터미널 목록 갱신 | todo | diff | | |
+| 20 | 게이트 4종 재실행 | todo | 각 명령의 마지막 줄 인용 | | |
+| 21 | `docs/new-terminal-checklist.md` §2 실측 전체 수행(사용자 참여) | todo | 체크박스별 근거 | | |
+| 22 | cmux.json `automation.socketControlMode` 기록 헬퍼(D1-b — 순수 함수: JSONC 주석 보존 텍스트 편집 + `.bak` 백업) + 설정 창 버튼 연결 | todo | 편집 순수 함수 단위 테스트(파일 없음/주석만 템플릿/비주석 automation 키 존재/다른 키 공존/이미 automation). 실측: 버튼 → cmux.json 변경·`.bak` 생성 → `cmux ping` 통과 | `13` | |
 
 ## 전수 소탕 표
 
@@ -286,34 +288,37 @@ README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 
 
 | 지점 | 이 부류가 성립하는가 | 확인 방법 | 판정 |
 |:--|:--|:--|:--|
-| `Core/Terminal.swift:5-9` (enum) | 예 — 시작점 | 케이스 추가 | 구멍(항목 1) |
-| `Core/Terminal.swift:13-15` (`init(storedValue:)`) | 아니오 — 폴백이 한 곳뿐 | 코드 확인 | 안전 |
-| `Core/TerminalRunner.swift:84-89` (`runInTerminal`) | 예 — **컴파일러가 잡는다** | `swift build` | 구멍(항목 7) |
-| `Core/TerminalRunner.swift:3-19` (`TerminalError`) | 예 — 새 실패 사유 | 컴파일 + 문구 | 구멍(항목 4) |
-| `Core/ClaudeInjector.swift:4-11` (`TerminalSessionHandle`) | 예 | 케이스 추가 | 구멍(항목 8) |
-| `Core/ClaudeInjector.swift:15-18` (`screenNeedsPaneProof`) | 예 — **`if case`라 컴파일러가 못 잡는다** | 눈으로 + oracle 테스트 | 구멍(항목 8) |
-| `Core/ClaudeInjector.swift:425-427` (`defer`의 `if case .warp` 헬퍼 종료) | **아니오** — cmux는 종료시킬 pane 내 프로세스가 없다(D4 Plan A) | 결정 D4 | 안전 |
-| `Core/ClaudeInjector.swift:429-451` (tty switch) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 9) |
-| `Core/ClaudeInjector.swift:479` (`canConfirmScreen` 삼항) | 아니오 — `screenNeedsPaneProof=false`면 `true`로 떨어진다 | 결정 D5 | 안전 |
-| `Core/ClaudeInjector.swift:486-493` (권한 지목 로그의 "Warp뿐이라서" 전제) | **아니오 — 전제가 유지된다**(cmux는 `canConfirmScreen`이 false가 되지 않는다) | 결정 D5 | 안전 — D5가 뒤집히면 구멍 |
-| `Core/ClaudeInjector.swift:535-571` (`sendKeys`) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 10) |
-| `Core/ClaudeInjector.swift:574-598` (`screenText`) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 11) |
-| `App/Settings.swift:13-16` (자동 감지 if-체인) | 예 — **컴파일러가 못 잡는다** | 눈으로 | 구멍(항목 12) |
-| `App/PermissionChecker.swift:29-41` (`isXxxInstalled`) | 예 | 눈으로 | 구멍(항목 13) |
-| `App/SetupWindowController.swift:15-22` (라디오·섹션 프로퍼티) | 예 | 눈으로 | 구멍(항목 14) |
-| `…:222-231` (라디오 생성·세로 배치) | 예 — 4개가 되면 배치도 다시 본다 | 창 캡처 | 구멍(항목 14) |
-| `…:490-500` (`terminalChanged` if-체인) | 예 — **컴파일러가 못 잡는다**(체크리스트가 명시) | 라디오 클릭 후 재시작 | 구멍(항목 14) |
-| `…:502-518` (`updateTerminalControls` switch + `== .warp` 노트) | 예 — switch는 잡히고 `==`는 안 잡힌다 | `swift build` + 눈으로 | 구멍(항목 14) |
-| `…:565-587` (`refresh` 권한 switch + `!= .iterm`·`!= .warp` isHidden) | 예 — 둘 다 | `swift build` + 눈으로 | 구멍(항목 14) |
-| `…:626-652` (`pipelineNodes` switch) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 14) |
-| `App/HostServer.swift:99-101` | 아니오 — `Settings.terminal`을 그대로 넘긴다 | 코드 확인 | 안전 |
+| `Core/Terminal.swift:3-7` (enum) | 예 — 시작점 | 케이스 추가 | 구멍(항목 1) |
+| `Core/Terminal.swift:11-13` (`init(storedValue:)`) | 아니오 — 폴백이 한 곳뿐 | 코드 확인 | 안전 |
+| `Core/TerminalRunner.swift:245-251` (`runInTerminal`) | 예 — **컴파일러가 잡는다** | `swift build` | 구멍(항목 1, 7) |
+| `Core/TerminalRunner.swift:3-34` (`TerminalError`) | 예 — 새 실패 사유 | 컴파일 + 문구 | 구멍(항목 4) |
+| `Core/TerminalRunner.swift:102-114` (`claudeInputBlocker` 분기, #36 신설 — 요청한 `ClaudeInjector.swift` 행 아래에 기록하되 현재 위치는 `TerminalRunner.swift`) | 예 — **컴파일러가 잡는다** | `swift build` | 구멍(항목 1, 5) |
+| `Core/ClaudeInjector.swift:4-17` (`TerminalSessionHandle`) | 예 | 케이스 추가 | 구멍(항목 8) |
+| `Core/ClaudeInjector.swift:12-16` (`screenNeedsPaneProof`) | 예 — **`if case`라 컴파일러가 못 잡는다** | 눈으로 + oracle 테스트 | 구멍(항목 8) |
+| `Core/ClaudeInjector.swift:877-880` (`defer`의 `if case .warp` 헬퍼 종료) | **아니오** — cmux는 종료시킬 pane 내 프로세스가 없다(D4 Plan A) | 결정 D4 | 안전 |
+| `Core/ClaudeInjector.swift:884-905` (tty switch) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 9) |
+| `Core/ClaudeInjector.swift:138-142` (`canConfirmScreen`·`screenNeedsPaneProof`) | 아니오 — `screenNeedsPaneProof=false`면 `canConfirmScreen()`은 화면 차단 사유만 본다 | 결정 D5 | 안전 |
+| `Core/ClaudeInjector.swift:935-940` (권한 지목 로그의 "Warp뿐이라서" 전제) | **아니오 — 전제가 유지된다**(cmux는 `canConfirmScreen`이 false가 되지 않는다) | 결정 D5 | 안전 — D5가 뒤집히면 구멍 |
+| `Core/ClaudeInjector.swift:1006-1047` (`sendKeys`) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 10) |
+| `Core/ClaudeInjector.swift:1051-1071` (`screenText`) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 11) |
+| `App/Settings.swift:9-18` (자동 감지 if-체인) | 예 — **컴파일러가 못 잡는다** | 눈으로 | 구멍(항목 12) |
+| `App/PermissionChecker.swift:39-51` (`isXxxInstalled`) | 예 | 눈으로 | 구멍(항목 13) |
+| `App/SetupWindowController.swift:284-293` (라디오·섹션 프로퍼티) | 예 | 눈으로 | 구멍(항목 14) |
+| `App/SetupWindowController.swift:871-890` (라디오 생성·세로 배치) | 예 — 4개가 되면 배치도 다시 본다 | 창 캡처 | 구멍(항목 14) |
+| `App/SetupWindowController.swift:1170-1177` (`terminalChanged` if-체인) | 예 — **컴파일러가 못 잡는다**(체크리스트가 명시) | 라디오 클릭 후 재시작 | 구멍(항목 14) |
+| `App/SetupWindowController.swift:1189-1207` (`updateTerminalControls` switch + `== .warp` 노트) | 예 — switch는 잡히고 `==`는 안 잡힌다 | `swift build` + 눈으로 | 구멍(항목 14) |
+| `App/SetupWindowController.swift:1264-1288` (`refresh` 권한 switch + `!= .iterm`·`!= .warp` isHidden) | 예 — 둘 다 | `swift build` + 눈으로 | 구멍(항목 14) |
+| `App/SetupWindowController.swift:1405-1436` (`pipelineNodes` switch) | 예 — 컴파일러가 잡는다 | `swift build` | 구멍(항목 14) |
+| `Tests/AppTests/SetupWindowLayoutTests.swift:392` (터미널 목록·제품명 집합 하드코딩) | 예 | `swift test` | 구멍(항목 14) |
+| `App/HostServer.swift:177-201` | 아니오 — `Settings.terminal`을 그대로 넘긴다 | 코드 확인 | 안전 |
 | `App/AppDelegate.swift`·`Installer.swift`·`Theme.swift` | 아니오 | `grep -rn "iterm\|wezterm\|warp"` 무결과 | 안전 |
 | `Core/Paths.swift:31` (`com.iterm.checkout.json`) | 아니오 — 레거시 manifest 이름 | 코드 확인 | 안전 |
 | `app/Info.plist` `NSAppleEventsUsageDescription` | 아니오(D6) | 결정 D6 | 안전 — D6이 뒤집히면 구멍 |
 | `app/Package.swift`·`app/build.sh` (헬퍼 타깃·복사·서명) | 아니오 — pane 안 헬퍼를 만들지 않는다 | 결정 D4 Plan A | 안전 |
 | `install.sh:21-28` (터미널 감지·`exit 1`) | 예 — **스크립트** | 실행 | 구멍(항목 15) |
 | `uninstall.sh:20-37` (Warp 잔여 스윕) | **아니오** — cmux는 디스크에 남기는 것이 없다(Tab Config·헬퍼 소켓 없음) | 결정 D4 Plan A | 안전 |
-| `Tests/CoreTests/CoreTests.swift:407-418` (`TerminalIdentifierTests`) | 예 — **`allCases.count`가 3으로 박혀 테스트가 빨개진다** | `swift test` | 구멍(항목 1) |
+| `Tests/CoreTests/CoreTests.swift:673-688` (`TerminalIdentifierTests`) | 예 — **`allCases.count`가 3으로 박혀 테스트가 빨개진다** | `swift test` | 구멍(항목 1) |
+| `Tests/CoreTests/CmuxTests.swift:6-20` (cmux 식별자·후보·소켓 순수 테스트) | 예 | `swift test` | 구멍(항목 1, 2) |
 | `Tests/CoreTests/CoreTests.swift:1802-1833` (`UninstallScriptSyncTests`) | 아니오 — 새 상수가 없다 | 결정 D4 | 안전 |
 | `README.md:3,13,17-19,22,30,73-76,114,127,188,190-192` | 예 — **문서** | diff | 구멍(항목 16) |
 | `CLAUDE.md:5`(터미널 목록이 이미 Warp 누락), `24,32-38,44-45` | 예 — **문서**, 게다가 이미 낡았다 | diff | 구멍(항목 19) |
@@ -339,6 +344,15 @@ README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 
 - 드라이버 설계 재검토(spark에서 검증자=드라이버): R0 계획 유지, 반영 둘 — 불변 원칙 16(i18n) 추가, 파일:행 재확인 의무(「재개」). 부류 분할·의존: 항목 5·9·10·11은 항목 3(cmuxRPC 계약)에, 항목 14·22는 항목 13에 의존 — 배정 시 `의존` 열에 적는다
 - 역할 배분(spark): cmux 실측(R1-a∼m)은 전부 드라이버가 수행(Codex 샌드박스는 네트워크·소켓 불가), Codex는 코드·테스트·문서만. 게이트 4종도 드라이버가 clone에서 실행
 
+### R1 — Core 순수 계층 (2026-08-26, Codex)
+
+- 항목 1∼4를 `verified`로 갱신했다. `Terminal` rawValue 4개와 `allCases.count == 4`, cmux CLI 후보·소켓 생존 판정, RPC 메서드 5개·ASCII JSON argv·응답 파서, cmux 오류 분류와 5로케일 Localization 경로를 코드와 테스트에 반영했다.
+- 항목 1의 enum 추가로 컴파일러가 잡는 exhaustive switch 구멍은 현재 트리에서 `Core/TerminalRunner.swift:102-114`(`claudeInputBlocker`, #36 신설), `Core/TerminalRunner.swift:245-251`(`runInTerminal`), `App/SetupWindowController.swift:1190-1198`(`updateTerminalControls`), `:1264-1284`(`refresh` 권한), `:1405-1436`(`pipelineNodes`)다. 이 부류에서는 새 케이스가 컴파일되도록 해당 위치에만 cmux 분기를 닫았고, 실제 실행·설정 UI 경로는 항목 5 이후로 남겼다.
+- 컴파일러가 잡지 못하는 현재 위치도 갱신했다: `App/Settings.swift:9-18` 자동 감지 if-체인, `App/SetupWindowController.swift:1170-1177` 라디오 if-체인, `:1205` Warp `==`, `:1287-1288` 섹션 `!=`, `App/PermissionChecker.swift:39-51` 설치 판정, `Tests/AppTests/SetupWindowLayoutTests.swift:392` 제품명 집합.
+- TDD 테스트: `TerminalIdentifierTests.testRawValuesAreTheStoredIdentifiers`를 4개로 늘렸고, `CmuxTests.testCmuxCLICandidatePathsUseBundleLocationsBeforePATH`, `testFindCmuxCLIReturnsTheFirstExecutableCandidate`, `testCmuxSocketPathOnlyReportsAnExistingSocket`, `testCmuxRPCMethodNamesAreTheFiveSupportedMethods`, `testCmuxRPCArgumentsAreASCIIAndPreserveJSONValues`, `testCmuxRPCResponseParsesWorkspaceIdentifiers`, `testCmuxRPCResponseParsesQueuedAndText`, `testCmuxRPCFailuresDistinguishSocketDenialAndMethod`, `CmuxLocalizationTests.testCmuxTerminalErrorsUseAllFiveCatalogs`를 추가했다.
+- 게이트 4종은 드라이버가 실행한다. 이 부류에서는 `swift test`·`node --test`·build·e2e를 실행하지 않았다.
+- 드라이버 대조(2026-08-26): swift 493(신규 10 = CmuxTests 9 + CmuxLocalizationTests 1, 이후 중복 1 삭제로 9)·node 220. 수정 3건 반영 — socketDenied 문구 오진(소켓 부재 처방 → automation 모드 처방), rpcFailed 형식-payload 불일치, 식별자 테스트 중복 삭제. build.sh·e2e.sh는 실행 경로가 생기는 항목 5·7 승격에서 돌린다.
+
 ## 열린 질문 → 결정 (2026-08-23, 사용자·드라이버)
 
 1. **수용 + 확장** — automation 전제로 구현하고, **앱이 설정 창 버튼으로 옵션을 켠다**(D1-b에 조건과 함께 반영). automation의 의미(같은 uid 노출 확대)는 README·설정 창에 적는다 — 사용자 승인.
@@ -354,15 +368,14 @@ README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 
 | # | 확정할 것 | 방법 | 안전 조건 |
 |:--|:--|:--|:--|
 | R1-a | **[완료]** `automation` 모드로 바꾸면 외부에서 붙는가 → **붙는다**(2026-08-23 PONG, 2026-08-26 재확인 PONG) | `cmux ping` | 모드 변경은 cmux.json 직접 편집으로 수행됨(사용자 승인, `.bak`: `cmux.json.20260823-160057.bak`). automation 유지 중 |
-| R1-b | `workspace.create` 응답 스키마(`workspace_id`·`surface_id` 유무) | `cmux --json rpc workspace.create '{"focus":true}'` | 새 workspace만 생긴다. 끝나면 닫는다 |
-| R1-c | surface_id를 어디서 얻는가 (응답에 없으면 `surface.list`/`pane.surfaces`) | `cmux rpc surface.list '{"workspace_id":"<우리 것>"}'` | workspace_id를 우리 것으로 명시 |
-| R1-d | `surface.read_text`가 surface 단위로 정확한가 | 우리 workspace 둘을 만들고 A에만 난수를 타이핑, B의 surface_id로 읽어 그 난수가 **없음**을 확인 | 둘 다 우리 것. 사용자 탭을 포커스하지 않는다 |
-| R1-e | 비포커스·백그라운드 workspace도 정확히 읽히는가 | R1-d를 다른 workspace가 선택된 상태에서 반복 | 위와 같음 |
-| R1-f | `debug.terminals`의 `tty`가 우리 surface에 채워지는가·언제 | `cmux rpc debug.terminals` → 우리 surface_id 행만 본다. 생성 직후/1초 후/명령 실행 후 3회 | 출력이 전체를 담으므로 **우리 행만 파싱**한다. 2026-08-23 관찰: 생성 직후 3초 내 tty null 1건(미확정 — 채워지는 시점·조건이 이 항목의 핵심, D4 폴백·폴링 설계에 직결) |
-| R1-g | `window_id` 없이 만든 workspace가 "사용자가 보던 창"에 가는가 | cmux 창 2개, 두 번째를 활성화 → Chrome으로 전환 → 실행 | 창 추가는 사용자 동의 후. 아니면 항목 6이 살아난다 |
-| R1-h | 지정한 `window_id`가 그 사이 닫혔을 때 실패하는가 (항목 6이 살아날 때만) | 우리가 만든 창의 id를 받고 닫은 뒤 `workspace.create` | 우리가 만든 창만 닫는다 |
-| R1-i | CR·Ctrl+U가 의도한 바이트로 들어가는가 | 우리 workspace에서 `cat -v` 실행 후 `send_text "\r"` → `^M` 하나만, `send_key ctrl+u` → `^U`. 이어서 `send_text "\u{15}"`도 시험(열린 질문 3) | 우리 workspace 전용 |
-| R1-j | 전체 경로: 명령 실행 + claude 입력 3개 | 임시 디렉토리에서 claude를 띄우고 전달. `~/.claude/projects/<슬러그>/*.jsonl`과 앱 로그(`log show --predicate 'subsystem == "com.dazebug.terminal-checkout"'`) 대조 | 전용 임시 디렉토리 |
-| R1-k | `queued:true`가 실제로 나는 조건 | 차가운 surface에 `send_text` | 우리 workspace 전용 |
-| R1-l | execQueue 지연 | `workspace.create` + `surface.send_text` 합계 시간 | 측정만 |
+| R1-b | **[완료]**: `workspace.create {"focus":false,"title":"tc-probe-a"}` 응답에 `workspace_id`·`surface_id`·`window_id`(각 UUID)와 `*_ref`·`group_*` 가 실린다 — surface_id를 별도 조회 없이 응답에서 바로 얻는다 | `workspace.create` 응답 확인(드라이버 실측 2026-08-26) | 새 workspace만 생긴다. 끝나면 닫는다 |
+| R1-c | **[완료·해소]**: R1-b 응답에 surface_id가 있으므로 `surface.list` 폴백 불필요 — 항목·상수에 추가하지 않는다 | R1-b 응답과 항목 3 API 대조(드라이버 실측 2026-08-26) | workspace_id를 우리 것으로 명시 |
+| R1-d | **[완료]**: workspace 2개에서 A에만 난수 타이핑 후 B의 surface_id로 read_text → 난수 없음(CLEAN), A → 있음. surface 단위 정확성 확정 | 두 workspace의 `surface.read_text` 대조(드라이버 실측 2026-08-26) | 둘 다 우리 것. 사용자 탭을 포커스하지 않는다 |
+| R1-e | **[완료]**: 선택되지 않은(백그라운드) live surface에 send_text → `queued:false`, read_text → 방금 보낸 난수 확인. **사용자가 다른 탭으로 전환해도 전달이 계속된다**(Warp와 다른 등급) — D5 채택(screenNeedsPaneProof=false) 실측 확정 | 백그라운드 surface send/read와 탭 전환(드라이버 실측 2026-08-26) | 위와 같음 |
+| R1-f | **[완료]**: focus:false로 만든 비가시 workspace는 65초가 지나도 `tty:null`·`runtime_surface_ready:false`·`ghostty_surface_ptr:nil` — **pty가 아직 없는 상태**(2026-08-23 tty null 관찰의 원인). focus:true 생성은 수십 ms 안에 materialize되어 send_text가 `queued:false`로 즉시 들어가고, tty는 `debug.terminals`에 채워진다(실측 ttys020 등). cold였던 surface도 웜업되면 tty가 채워진다. → 항목 9의 폴링 설계 유지, 폴링 타임아웃 안에 안 채워지면 claude 입력 포기(D4 폴백) | `cmux rpc debug.terminals`를 생성 상태별 대조(드라이버 실측 2026-08-26) | 출력이 전체를 담으므로 **우리 행만 파싱**한다 |
+| R1-g·R1-h | **[보류]**: cmux 창 2개가 필요 — 창 추가는 사용자 동의 후(안전 조건). 단 참고 관찰: 프로브 workspace들은 전부 사용자의 기존 창(window:1)에 생겼다 | 창 2개를 추가하는 실측은 사용자 동의 후 | 우리가 만든 창만 닫는다 |
+| R1-i | **[완료]**: 우리 workspace에서 `stty raw -echo; cat -v` 후 send_text `"\r"` → `^M` 하나, send_key `ctrl+u` → `^U`(0x15), send_key `backspace` → `^?`(0x7F). CR·Ctrl+U·Backspace 모두 의도한 원시 바이트로 들어간다 — 열린 질문 3의 채택안 검증 완료 | 우리 workspace의 raw tty 실측(드라이버 실측 2026-08-26) | 우리 workspace 전용 |
+| R1-j | **[보류]**: 항목 1∼11 구현 후 | 전체 경로 실측은 항목 1∼11 완료 후 | 전용 임시 디렉토리 |
+| R1-k | **[완료]**: cold surface에 send_text → `queued:true`. **queued는 유실이 아니다** — surface가 웜업되면 flush되어 pty에 들어간다(실측: 셸 배너보다 먼저 들어가 프롬프트 라인버퍼에 재등장). 항목 10의 queued 로깅 사유가 이것이다: 보냈다고 착각한 바이트가 나중에 도착할 수 있다 | cold surface send_text 후 웜업·pty 확인(드라이버 실측 2026-08-26) | 우리 workspace 전용 |
+| R1-l | **[완료]**: `workspace.create` 58∼110ms + `surface.send_text` 38ms(각 time 실측) — WezTerm 왕복과 같은 수준, execQueue 예산 안 | 각 RPC 응답의 `time` 기록(드라이버 실측 2026-08-26) | 측정만 |
 | R1-m | **[완료]** cmux.json 변경이 재시작 없이 반영되는가 → **반영된다**(2026-08-23 실측: 기록 직후 외부 ping이 거부→PONG으로 바뀜, 재시작 없음) | 실측 완료 | 버튼 UX 확정: 기록 → `cmux ping` 폴링으로 적용 확인, 재시작 안내는 미반영 시 폴백으로만. `cmux reload-config`는 cmuxOnly에서 외부 호출이 거부되므로 수단이 아님(「재개」) |
