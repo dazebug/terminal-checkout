@@ -4,7 +4,7 @@
     "description": "这是产品名，不翻译。"
   },
   "extDescription": {
-    "message": "从 GitHub 的 PR、issue 和仓库页面在你的终端（iTerm2/WezTerm/Warp）中运行命令",
+    "message": "从 GitHub 的 PR、issue 和仓库页面在你的终端（iTerm2/WezTerm/Warp/cmux）中运行命令",
     "description": "Chrome 显示在名称旁边的一行说明。"
   },
   "ext_banner_stale": {
