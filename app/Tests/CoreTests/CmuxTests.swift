@@ -220,4 +220,47 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(cmuxScreenText(from: ["text": "screen"]), "screen")
         XCTAssertNil(cmuxScreenText(from: ["error": "internal_error"]))
     }
+
+    func testItem13CmuxSocketStatusIncludesNotInstalledState() {
+        guard case .notInstalled = CmuxSocketStatus.notInstalled else {
+            XCTFail("cmux status must distinguish an absent CLI")
+            return
+        }
+    }
+
+    func testItem13CmuxSocketStatusSocketAbsenceWinsOverPingOutput() {
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: false, pingStatus: 0, stdout: "PONG\n", stderr: ""
+            ),
+            .notRunning
+        )
+    }
+
+    func testItem13CmuxSocketStatusClassifiesAccessDenied() {
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: true, pingStatus: 1, stdout: "", stderr: "ACCESS DENIED"
+            ),
+            .denied
+        )
+    }
+
+    func testItem13CmuxSocketStatusClassifiesSuccessfulPong() {
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: true, pingStatus: 0, stdout: "PONG\n", stderr: ""
+            ),
+            .reachable
+        )
+    }
+
+    func testItem13CmuxSocketStatusPreservesFailureSummary() {
+        XCTAssertEqual(
+            classifyCmuxSocketStatus(
+                socketExists: true, pingStatus: 2, stdout: "unexpected reply\n", stderr: ""
+            ),
+            .failed("unexpected reply")
+        )
+    }
 }

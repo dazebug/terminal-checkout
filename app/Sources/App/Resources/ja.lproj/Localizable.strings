@@ -85,6 +85,11 @@
 "app.status.iterm.notInstalled" = "iTerm2 がインストールされていません";
 "app.status.itermAutomation.format" = "iTerm2 のオートメーション: %@";
 "app.status.itermAutomation.waiting" = "iTerm2 のオートメーション: 権限のダイアログを待っています…";
+"app.status.cmux.notInstalled" = "未インストール";
+"app.status.cmux.notRunning" = "cmux は実行されていません — ソケットモードは確認できません。cmux を起動してからもう一度確認してください";
+"app.status.cmux.denied" = "ソケットへのアクセスが拒否されました — socket control mode が automation ではありません";
+"app.status.cmux.reachable" = "接続可能";
+"app.status.cmux.failed" = "状態の確認に失敗しました: %@";
 "app.status.manifest.notRegistered" = "未登録 — [%@] を押してください";
 "app.status.manifest.registered" = "登録済み";
 "app.status.manifest.wrongExtensionID" = "拡張機能の ID が現在の設定と異なります — [%@] で更新してください";

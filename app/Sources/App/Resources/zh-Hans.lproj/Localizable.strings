@@ -85,6 +85,11 @@
 "app.status.iterm.notInstalled" = "未安装 iTerm2";
 "app.status.itermAutomation.format" = "iTerm2 自动化：%@";
 "app.status.itermAutomation.waiting" = "iTerm2 自动化：正在等待权限提示…";
+"app.status.cmux.notInstalled" = "未安装";
+"app.status.cmux.notRunning" = "cmux 未运行 — 无法确认套接字模式；请启动 cmux 后重新检查";
+"app.status.cmux.denied" = "套接字访问被拒绝 — socket control mode 不是 automation";
+"app.status.cmux.reachable" = "可连接";
+"app.status.cmux.failed" = "状态检查失败：%@";
 "app.status.manifest.notRegistered" = "未注册 — 请按 [%@]";
 "app.status.manifest.registered" = "已注册";
 "app.status.manifest.wrongExtensionID" = "扩展程序 ID 与当前设置不同 — 请用 [%@] 刷新";

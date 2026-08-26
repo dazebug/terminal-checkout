@@ -93,6 +93,11 @@
 "app.status.iterm.notInstalled" = "iTerm2 is not installed";
 "app.status.itermAutomation.format" = "iTerm2 automation: %@";
 "app.status.itermAutomation.waiting" = "iTerm2 automation: waiting for the permission prompt…";
+"app.status.cmux.notInstalled" = "Not installed";
+"app.status.cmux.notRunning" = "cmux is not running — socket mode cannot be checked; start cmux and check again";
+"app.status.cmux.denied" = "Socket access denied — socket control mode is not \"automation\"";
+"app.status.cmux.reachable" = "Reachable";
+"app.status.cmux.failed" = "Status check failed: %@";
 "app.status.manifest.notRegistered" = "Not registered — press [%@]";
 "app.status.manifest.registered" = "Registered";
 "app.status.manifest.wrongExtensionID" = "The extension ID differs from the current setting — refresh it with [%@]";

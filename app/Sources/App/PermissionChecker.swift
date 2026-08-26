@@ -2,6 +2,20 @@ import AppKit
 import Core
 import Foundation
 
+extension CmuxSocketStatus {
+    /// Read at draw time, like `AutomationStatus.label`, so changing the app language redraws the
+    /// current state instead of retaining a sentence from the previous catalogue.
+    var label: String {
+        switch self {
+        case .notInstalled: return localized("app.status.cmux.notInstalled")
+        case .notRunning: return localized("app.status.cmux.notRunning")
+        case .denied: return localized("app.status.cmux.denied")
+        case .reachable: return localized("app.status.cmux.reachable")
+        case .failed(let detail): return localized("app.status.cmux.failed", detail)
+        }
+    }
+}
+
 enum AutomationStatus {
     case granted
     case denied
@@ -48,6 +62,35 @@ enum PermissionChecker {
     /// is "installed according to the settings, not found when run".
     static var isWarpInstalled: Bool {
         findWarpExecutable() != nil
+    }
+
+    /// Uses the same executable lookup Core uses for cmux execution — detection and execution must
+    /// not disagree about whether the CLI is installed.
+    static var isCmuxInstalled: Bool {
+        findCmuxCLI() != nil
+    }
+
+    /// Reads cmux's live socket state on every call. The result is intentionally not stored: cmux
+    /// may reload its control mode while this window remains open, and the ping itself has no lockout.
+    static func cmuxSocketStatus() -> CmuxSocketStatus {
+        guard let cli = findCmuxCLI() else { return .notInstalled }
+        let socketExists = cmuxSocketPath() != nil
+        do {
+            let result = try runProcess(cli, ["ping"], timeout: 5)
+            return classifyCmuxSocketStatus(
+                socketExists: socketExists,
+                pingStatus: result.status,
+                stdout: result.stdout,
+                stderr: result.stderr
+            )
+        } catch {
+            return classifyCmuxSocketStatus(
+                socketExists: socketExists,
+                pingStatus: -1,
+                stdout: "",
+                stderr: errorMessage(error)
+            )
+        }
     }
 
     /// The Accessibility permission. It is a hard requirement for buttons that schedule claude input

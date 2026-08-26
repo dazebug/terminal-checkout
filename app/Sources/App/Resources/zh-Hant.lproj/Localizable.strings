@@ -86,6 +86,11 @@
 "app.status.iterm.notInstalled" = "未安裝 iTerm2";
 "app.status.itermAutomation.format" = "iTerm2 自動化：%@";
 "app.status.itermAutomation.waiting" = "iTerm2 自動化：正在等待權限提示…";
+"app.status.cmux.notInstalled" = "未安裝";
+"app.status.cmux.notRunning" = "cmux 未執行 — 無法確認通訊端模式；請啟動 cmux 後重新檢查";
+"app.status.cmux.denied" = "通訊端存取遭拒 — socket control mode 不是 automation";
+"app.status.cmux.reachable" = "可連線";
+"app.status.cmux.failed" = "狀態檢查失敗：%@";
 "app.status.manifest.notRegistered" = "未註冊 — 請按 [%@]";
 "app.status.manifest.registered" = "已註冊";
 "app.status.manifest.wrongExtensionID" = "擴充功能 ID 與目前設定不同 — 請用 [%@] 重新整理";

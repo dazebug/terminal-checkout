@@ -4,18 +4,32 @@ import Foundation
 /// The settings the app owns as their single source. Which terminal to use is decided here and not
 /// by the extension.
 enum Settings {
+    /// Chooses the first installed terminal in the supported priority order. Keeping the decision
+    /// pure makes the order testable without consulting this Mac's applications or UserDefaults.
+    static func terminalForInstalledTerminals(
+        iterm: Bool, wezterm: Bool, warp: Bool, cmux: Bool
+    ) -> Terminal {
+        if iterm { return .iterm }
+        if wezterm { return .wezterm }
+        if warp { return .warp }
+        if cmux { return .cmux }
+        return .iterm
+    }
+
     static var terminal: Terminal {
         get {
             if let value = UserDefaults.standard.string(forKey: "terminal") {
                 return Terminal(storedValue: value)
             }
             // The default detects what is installed. The order is how long each has been supported
-            // and worn in by real use — Warp is last because it has no official way to address a
-            // pane and needs a helper process in between
-            if PermissionChecker.isITermInstalled { return .iterm }
-            if PermissionChecker.isWezTermInstalled { return .wezterm }
-            if PermissionChecker.isWarpInstalled { return .warp }
-            return .iterm
+            // and worn in by real use — cmux is last because it is the newest integration and needs
+            // its user's socket automation setting in addition to the installed CLI
+            return terminalForInstalledTerminals(
+                iterm: PermissionChecker.isITermInstalled,
+                wezterm: PermissionChecker.isWezTermInstalled,
+                warp: PermissionChecker.isWarpInstalled,
+                cmux: PermissionChecker.isCmuxInstalled
+            )
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "terminal") }
     }

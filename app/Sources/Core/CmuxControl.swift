@@ -6,6 +6,31 @@ public let cmuxSurfaceSendKeyMethod = "surface.send_key"
 public let cmuxSurfaceReadTextMethod = "surface.read_text"
 public let cmuxDebugTerminalsMethod = "debug.terminals"
 
+/// The facts the App target may render about cmux. Core deliberately carries no user-facing text;
+/// the App boundary maps these cases to the current catalogue when the setup window draws.
+public enum CmuxSocketStatus: Equatable {
+    case notInstalled
+    case notRunning
+    case denied
+    case reachable
+    case failed(String)
+}
+
+/// Classifies one live `cmux ping` observation. A missing socket is authoritative: a failed ping
+/// cannot distinguish a stopped cmux from a running cmux whose control mode rejects the socket.
+public func classifyCmuxSocketStatus(
+    socketExists: Bool, pingStatus: Int32, stdout: String, stderr: String
+) -> CmuxSocketStatus {
+    guard socketExists else { return .notRunning }
+
+    let output = [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+    if output.localizedCaseInsensitiveContains("access denied") { return .denied }
+    if pingStatus == 0, output.contains("PONG") { return .reachable }
+
+    let summary = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return .failed(summary.isEmpty ? "exit status \(pingStatus)" : summary)
+}
+
 public enum CmuxRPCError: Error, Equatable, CustomStringConvertible {
     case invalidParameters
     case invalidResponse
