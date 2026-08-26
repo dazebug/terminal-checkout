@@ -20,7 +20,7 @@ That file is one per checkout **of the machine**, not one per worktree — a git
 <!-- keep-the-why:config -->
 - context: `docs/context/`
 - init: complete
-- context-schema: 0.9.0
+- context-schema: 0.9.2
 - capture-confirmation: automatic
 - source-reference: never
 <!-- /keep-the-why:config -->
