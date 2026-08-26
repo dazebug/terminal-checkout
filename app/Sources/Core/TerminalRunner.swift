@@ -316,7 +316,7 @@ private func waitForCmuxReadiness(cliPath: String) throws {
                 cli: cliPath, method: cmuxDebugTerminalsMethod,
                 timeout: min(3, remaining)
             )
-            if case .ready = cmuxReadinessOutcome(from: nil) { return }
+            return
         } catch let error as TerminalError {
             switch cmuxReadinessOutcome(from: error) {
             case .ready:

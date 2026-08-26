@@ -85,6 +85,28 @@ final class CmuxTests: XCTestCase {
         )
     }
 
+    /// The fully stopped-cmux CLI emitted this exact string (driver measurement, 2026-08-26).
+    /// If the connection-marker list is narrowed, this measured case should fail first.
+    func testCmuxRecoveryActionUsesMeasuredStoppedCmuxConnectionError() {
+        let measuredConnectionError =
+            "Failed to connect to socket at /Users/choongjaelee/.local/state/cmux/cmux.sock "
+            + "(Connection refused, errno 61)"
+        XCTAssertEqual(
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxRPCFailed(measuredConnectionError),
+                launchAttempted: false
+            ),
+            .launchAndRetry
+        )
+        XCTAssertEqual(
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxRPCFailed(measuredConnectionError),
+                launchAttempted: true
+            ),
+            .rethrow
+        )
+    }
+
     /// J5 red reproduction: readiness must come from a lightweight RPC response, with denial as
     /// an immediate terminal outcome rather than another poll. The current socket-file stub cannot
     /// distinguish either response yet.
