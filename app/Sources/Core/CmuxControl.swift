@@ -86,6 +86,20 @@ func cmuxLaunchNeeded(socketExists: Bool, pingSucceeded: Bool) -> Bool {
     !socketExists && !pingSucceeded
 }
 
+enum CmuxPreflight: Equatable {
+    case proceed
+    case launch
+    case denied
+}
+
+func cmuxPreflight(_ status: CmuxSocketStatus) -> CmuxPreflight {
+    switch status {
+    case .reachable: return .proceed
+    case .denied: return .denied
+    case .notInstalled, .notRunning, .failed: return .launch
+    }
+}
+
 private func asciiJSON(_ data: Data) -> String {
     let source = String(decoding: data, as: UTF8.self)
     var result = String()

@@ -52,6 +52,63 @@ final class CmuxTests: XCTestCase {
         XCTAssertFalse(cmuxLaunchNeeded(socketExists: true, pingSucceeded: false))
     }
 
+    /// G2 reproduction: a denied alternate socket cannot be repaired by launching cmux; it must
+    /// become `cmuxSocketDenied` immediately so the user sees the automation-mode diagnosis.
+    func testCmuxPreflightSeparatesDeniedFromLaunchableStates() {
+        XCTAssertEqual(cmuxPreflight(.reachable), .proceed)
+        XCTAssertEqual(cmuxPreflight(.denied), .denied)
+        XCTAssertEqual(cmuxPreflight(.notRunning), .launch)
+        XCTAssertEqual(cmuxPreflight(.failed("temporary")), .launch)
+        XCTAssertEqual(cmuxPreflight(.notInstalled), .launch)
+    }
+
+    func testCmuxRPCFailureLogSuppressesRepeatedSameSurfaceMessage() {
+        CmuxRPCFailureLog.reset()
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+        XCTAssertFalse(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+    }
+
+    /// G4: a successful read must reopen logging for that surface, rather than letting a stale
+    /// process-wide message suppress a later failure.
+    func testCmuxRPCFailureLogResetsAfterScreenReadSuccess() {
+        CmuxRPCFailureLog.reset()
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+        CmuxRPCFailureLog.recordScreenReadSuccess(surface: "surface-a")
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+    }
+
+    /// G4: the same error text from another surface must not be swallowed by the first surface's
+    /// suppression state.
+    func testCmuxRPCFailureLogSeparatesSurfaces() {
+        CmuxRPCFailureLog.reset()
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-a", message: "surface.read_text failed"
+            )
+        )
+        XCTAssertTrue(
+            CmuxRPCFailureLog.shouldLogScreenReadFailure(
+                surface: "surface-b", message: "surface.read_text failed"
+            )
+        )
+    }
+
     func testCmuxRPCMethodNamesAreTheFourSupportedMethods() {
         XCTAssertEqual(cmuxWorkspaceCreateMethod, "workspace.create")
         XCTAssertEqual(cmuxSurfaceSendTextMethod, "surface.send_text")

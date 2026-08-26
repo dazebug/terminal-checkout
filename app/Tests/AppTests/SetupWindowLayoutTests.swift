@@ -445,6 +445,24 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.denied"))
     }
 
+    /// G3 reproduction: result text may supplement a compatible live probe only; it must not
+    /// paint green or warning text over a status that `refresh()` just observed.
+    func testCmuxAutomationFeedbackDoesNotContradictLiveStatus() {
+        XCTAssertEqual(
+            cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .reachable),
+            .alreadyEnabled
+        )
+        XCTAssertNil(cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .denied))
+        XCTAssertNil(cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .notRunning))
+        XCTAssertNil(cmuxAutomationFeedback(result: .notApplied, liveStatus: .reachable))
+        XCTAssertEqual(
+            cmuxAutomationFeedback(result: .notApplied, liveStatus: .denied),
+            .notApplied
+        )
+        XCTAssertNil(cmuxAutomationFeedback(result: .applied, liveStatus: .reachable))
+        XCTAssertNil(cmuxAutomationFeedback(result: .applied, liveStatus: .denied))
+    }
+
     /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
     /// almost nothing around the placeholder would match anything, so those are not counted.
     private func framed(_ text: String, by values: [String]) -> Bool {

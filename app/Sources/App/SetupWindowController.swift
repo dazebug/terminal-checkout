@@ -12,6 +12,24 @@ let setupContentWidth: CGFloat = 560
 /// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
 let setupTextWidth: CGFloat = setupContentWidth - 28
 
+enum CmuxAutomationFeedback: Equatable {
+    case alreadyEnabled
+    case notApplied
+}
+
+/// Returns a case rather than a key string because only literal keys are visible to catalogue audit.
+func cmuxAutomationFeedback(
+    result: CmuxAutomationWriteResult, liveStatus: CmuxSocketStatus
+) -> CmuxAutomationFeedback? {
+    switch result {
+    case .alreadyEnabled:
+        return liveStatus == .reachable ? .alreadyEnabled : nil
+    case .notApplied:
+        return liveStatus == .reachable ? nil : .notApplied
+    case .applied: return nil
+    }
+}
+
 struct FittedContentLayoutPass {
     let fittingSize: NSSize
     let targetSize: NSSize
@@ -301,6 +319,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// On screen only while cmux is selected; the section exposes the live socket mode and its
     /// explicit JSONC editing action.
     private let cmuxSection = NSStackView()
+    /// The status read by the most recent refresh; button feedback may only supplement that same
+    /// live observation, never replace it with the write result.
+    private var lastCmuxStatus: CmuxSocketStatus?
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -1296,6 +1317,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         var permission: SetupState?
         var cmuxStatus: CmuxSocketStatus?
+        lastCmuxStatus = nil
         // A command still runs without Accessibility — only the claude input delivery is refused —
         // so this is a warning and not an error
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
@@ -1327,6 +1349,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             cmuxAutomationButton.isEnabled = status == .notRunning || status == .denied
             cmuxRefreshButton.isEnabled = true
         }
+        lastCmuxStatus = cmuxStatus
         var granted = false
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
@@ -1675,28 +1698,33 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// This is the only path that edits cmux.json. It is an explicit user action; installation,
     /// launch, and ordinary refreshes only read the live ping state.
     @objc private func enableCmuxAutomation() {
-        cmuxAutomationButton.isEnabled = false
         CmuxAutomation.enableAutomation { [weak self] result in
             guard let self else { return }
             switch result {
-            case .success(.alreadyEnabled):
+            case .success(let result):
                 self.refresh()
-                self.cmuxAutomationButton.isEnabled = true
-                self.apply(
-                    .ok(localized("app.status.cmux.automationAlreadyEnabled")),
-                    to: self.cmuxStatusLabel
-                )
-            case .success(.applied):
-                self.refresh()
-            case .success(.notApplied):
-                self.refresh()
-                self.apply(
-                    .warning(localized("app.status.cmux.automationNotApplied")),
-                    to: self.cmuxStatusLabel
-                )
+                if let liveStatus = self.lastCmuxStatus,
+                   let feedbackCase = cmuxAutomationFeedback(
+                       result: result, liveStatus: liveStatus
+                   ) {
+                    let feedback: String
+                    switch feedbackCase {
+                    case .alreadyEnabled:
+                        feedback = localized("app.status.cmux.automationAlreadyEnabled")
+                    case .notApplied:
+                        feedback = localized("app.status.cmux.automationNotApplied")
+                    }
+                    let state: SetupState
+                    switch self.cmuxSetupState(liveStatus) {
+                    case .ok: state = .ok(feedback)
+                    case .warning: state = .warning(feedback)
+                    case .error: state = .error(feedback)
+                    }
+                    self.apply(state, to: self.cmuxStatusLabel)
+                }
             case .failure(let error):
-                self.showError(localized("app.alert.cmuxConfigFailed"), error)
                 self.refresh()
+                self.showError(localized("app.alert.cmuxConfigFailed"), error)
             }
         }
     }

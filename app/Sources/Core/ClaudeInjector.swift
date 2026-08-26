@@ -1133,16 +1133,35 @@ private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
     }
 }
 
-private enum CmuxRPCFailureLog {
+enum CmuxRPCFailureLog {
     static let lock = NSLock()
-    static var lastScreenReadMessage: String?
+    static var lastScreenReadMessages: [String: String] = [:]
 
-    static func recordScreenReadFailure(_ message: String) {
+    static func shouldLogScreenReadFailure(surface: String, message: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard lastScreenReadMessage != message else { return }
-        lastScreenReadMessage = message
-        checkoutLog(message)
+        guard lastScreenReadMessages[surface] != message else { return false }
+        lastScreenReadMessages[surface] = message
+        return true
+    }
+
+    static func recordScreenReadSuccess(surface: String) {
+        lock.lock()
+        lastScreenReadMessages.removeValue(forKey: surface)
+        lock.unlock()
+    }
+
+    /// Test-only reset: production state is cleared per surface after a successful read.
+    static func reset() {
+        lock.lock()
+        lastScreenReadMessages.removeAll()
+        lock.unlock()
+    }
+
+    static func recordScreenReadFailure(surface: String, message: String) {
+        if shouldLogScreenReadFailure(surface: surface, message: message) {
+            checkoutLog(message)
+        }
     }
 }
 
@@ -1236,13 +1255,16 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
                 cli: cliPath, method: cmuxSurfaceReadTextMethod,
                 params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
             )
-            return cmuxScreenText(from: response)
+            guard let text = cmuxScreenText(from: response) else { return nil }
+            CmuxRPCFailureLog.recordScreenReadSuccess(surface: surfaceID)
+            return text
         } catch {
             let message =
                 "cmux \(cmuxSurfaceReadTextMethod) failed while reading screen: \(errorMessage(error))"
-            // Screen reads run in a 0.15s reflection poll; suppress consecutive duplicates, but
-            // always record a changed RPC error so a new failure is not hidden.
-            CmuxRPCFailureLog.recordScreenReadFailure(message)
+            // Screen reads run in a 0.15s reflection poll; suppress the same error per surface,
+            // clear that surface's suppression after a successful read, and always record a
+            // changed RPC error so a new failure is not hidden.
+            CmuxRPCFailureLog.recordScreenReadFailure(surface: surfaceID, message: message)
             return nil
         }
     case .warp:

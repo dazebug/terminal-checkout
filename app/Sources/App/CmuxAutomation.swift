@@ -42,7 +42,8 @@ enum CmuxAutomation {
         now: Date = Date(),
         fileManager: FileManager = .default,
         status: @escaping () -> CmuxSocketStatus = { PermissionChecker.cmuxSocketStatus() },
-        sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+        sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        replaceItem: ((_ original: URL, _ replacement: URL, _ backupItemName: String?) throws -> Void)? = nil
     ) throws -> CmuxAutomationWriteResult {
         let configURL = suppliedURL ?? defaultConfigURL()
         let exists = fileManager.fileExists(atPath: configURL.path)
@@ -76,28 +77,21 @@ enum CmuxAutomation {
             return status() == .reachable ? .alreadyEnabled : .notApplied
         }
 
-        // The backup is deliberately before directory creation and before the temporary file is
-        // visible. If it cannot be made, the original remains untouched and no write is attempted.
+        // The replacement operation is the one backup operation for an existing config. If it
+        // fails, FileManager leaves the original untouched; the temporary file is removed by the
+        // defer below. Keeping the OS backup here also preserves bytes from a race that happens
+        // after the comparison and before replacement.
+        let directory = configURL.deletingLastPathComponent()
         let backupURL: URL?
         if exists {
             let path = configURL.deletingLastPathComponent().appendingPathComponent(
                 "cmux.json.\(backupTimestamp(now)).bak"
             )
             backupURL = path
-            do {
-                try fileManager.copyItem(at: configURL, to: path)
-                // Narrowing a backup loses nothing, and cmux.json may contain socketPassword.
-                try fileManager.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: path.path
-                )
-            } catch {
-                throw CmuxConfigurationError.backupFailed(errorMessage(error))
-            }
         } else {
             backupURL = nil
         }
 
-        let directory = configURL.deletingLastPathComponent()
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
@@ -108,6 +102,12 @@ enum CmuxAutomation {
             ".cmux.json.\(UUID().uuidString).tmp"
         )
         defer { try? fileManager.removeItem(at: temporaryURL) }
+        let replaceItemOperation = replaceItem ?? { original, replacement, backupItemName in
+            _ = try fileManager.replaceItemAt(
+                original, withItemAt: replacement, backupItemName: backupItemName,
+                options: [.withoutDeletingBackupItem]
+            )
+        }
         do {
             try Data(contents.utf8).write(to: temporaryURL, options: [])
             try fileManager.setAttributes(
@@ -117,12 +117,16 @@ enum CmuxAutomation {
                 let currentData = try Data(contentsOf: configURL)
                 guard currentData == existingData else {
                     throw CmuxConfigurationError.writeFailed(
-                        "configuration changed after backup at \(backupURL?.path ?? configURL.path); refusing to overwrite"
+                        "configuration changed before replacement; refusing to overwrite (backup target: \(backupURL?.path ?? configURL.path))"
                     )
                 }
-                _ = try fileManager.replaceItemAt(
-                    configURL, withItemAt: temporaryURL, backupItemName: nil, options: []
-                )
+                try replaceItemOperation(configURL, temporaryURL, backupURL?.lastPathComponent)
+                // Narrowing a backup loses nothing, and cmux.json may contain socketPassword.
+                if let backupURL {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: 0o600], ofItemAtPath: backupURL.path
+                    )
+                }
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: configURL)
             }

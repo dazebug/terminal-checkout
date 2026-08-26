@@ -57,8 +57,8 @@ final class CmuxAutomationTests: XCTestCase {
         XCTAssertEqual(try permissions(of: backup), 0o600)
     }
 
-    /// F2 reproduction: V1 is read, the backup copy is made, and another editor writes V2 before
-    /// the atomic replacement. The write must reject the stale V1 operation and leave V2 intact.
+    /// F2 reproduction: V1 is read, the backup target is prepared, and another editor writes V2
+    /// before the atomic replacement. The write must reject the stale V1 operation and leave V2 intact.
     func testItem22WriteRejectsAConfigChangedAfterBackup() throws {
         let config = directory.appendingPathComponent("cmux.json")
         let original = #"{"schemaVersion":1}"#
@@ -75,6 +75,43 @@ final class CmuxAutomationTests: XCTestCase {
             sleep: { _ in }
         ))
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), replacement)
+    }
+
+    /// G1 reproduction: a third editor can save after the compare but before replace. The
+    /// replacement operation must preserve the bytes it evicts, not just the earlier V1 backup.
+    func testItem22ReplacementRacePreservesTheBytesEvictedAtReplaceTime() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        let replacement = #"{"schemaVersion":3,"editedBy":"replace-race"}"#
+        try Data(original.utf8).write(to: config)
+
+        _ = try? CmuxAutomation.writeAutomation(
+            configURL: config,
+            status: { .reachable },
+            sleep: { _ in },
+            replaceItem: { original, replacementURL, backupItemName in
+                try Data(replacement.utf8).write(to: original, options: [])
+                _ = try FileManager.default.replaceItemAt(
+                    original,
+                    withItemAt: replacementURL,
+                    backupItemName: backupItemName,
+                    options: [.withoutDeletingBackupItem]
+                )
+            }
+        )
+
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "bak" }
+        let backupContents = try backups.map { try String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertTrue(backupContents.contains(replacement), "the bytes evicted at replace were lost")
+        XCTAssertTrue(
+            try String(contentsOf: config, encoding: .utf8)
+                .contains("\"socketControlMode\": \"automation\"")
+        )
+        for backup in backups {
+            XCTAssertEqual(try permissions(of: backup), 0o600)
+        }
     }
 
     func testItem22WriteCreatesDirectoriesAndReportsNotAppliedAfterBoundedPoll() throws {
@@ -146,9 +183,11 @@ private final class FileManagerThatEditsConfigAfterBackup: FileManager {
         super.init()
     }
 
-    override func copyItem(at srcURL: URL, to dstURL: URL) throws {
-        try super.copyItem(at: srcURL, to: dstURL)
-        guard srcURL.path == configURL.path else { return }
+    override func setAttributes(
+        _ attributes: [FileAttributeKey: Any], ofItemAtPath path: String
+    ) throws {
+        try super.setAttributes(attributes, ofItemAtPath: path)
+        guard path != configURL.path else { return }
         try replacement.write(to: configURL, options: [])
     }
 }
