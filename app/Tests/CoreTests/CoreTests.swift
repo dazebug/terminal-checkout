@@ -3682,6 +3682,29 @@ final class RunProcessTimeoutTests: XCTestCase {
             "SIGTERM grace plus the post-kill wait must be a real upper bound"
         )
     }
+
+    /// J3 red reproduction: a parent can exit normally while a background child keeps the pipe
+    /// open. The normal drain must be bounded too, and should return the parent's successful result
+    /// with whatever output was read before the bound closed the pipe.
+    func testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound() {
+        let started = Date()
+        var result: (status: Int32, stdout: String, stderr: String)?
+        var thrown: Error?
+        do {
+            result = try runProcess(
+                "/bin/sh", ["-c", "sleep 30 &"], timeout: 0.5
+            )
+        } catch {
+            thrown = error
+        }
+
+        XCTAssertNil(thrown)
+        XCTAssertEqual(result?.status, 0)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 8,
+            "a normally exited parent must not make pipe draining unbounded"
+        )
+    }
 }
 
 // MARK: - The carriers that were changing the user's bytes

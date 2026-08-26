@@ -98,7 +98,7 @@
 "app.status.cmux.failed" = "状态检查失败：%@";
 "app.status.cmux.automationAlreadyEnabled" = "自动化已启用";
 "app.status.cmux.automationNotApplied" = "未生效 — 请尝试重新启动 cmux";
-"app.status.cmux.backupProtectionIncomplete" = "备份保护未完成 — 请检查 .bak 文件的权限。";
+"app.status.cmux.backupProtectionIncomplete" = "备份保护未完成 — 请检查 .bak 文件的权限：%@";
 "app.status.manifest.notRegistered" = "未注册 — 请按 [%@]";
 "app.status.manifest.registered" = "已注册";
 "app.status.manifest.wrongExtensionID" = "扩展程序 ID 与当前设置不同 — 请用 [%@] 刷新";

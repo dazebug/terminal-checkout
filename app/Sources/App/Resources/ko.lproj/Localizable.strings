@@ -98,7 +98,7 @@
 "app.status.cmux.failed" = "상태 확인 실패: %@";
 "app.status.cmux.automationAlreadyEnabled" = "자동화가 이미 켜져 있음";
 "app.status.cmux.automationNotApplied" = "반영되지 않음 — cmux를 재시작해 보세요";
-"app.status.cmux.backupProtectionIncomplete" = "백업 보호가 완료되지 않음 — .bak 파일 권한을 확인하세요.";
+"app.status.cmux.backupProtectionIncomplete" = "백업 보호가 완료되지 않음 — .bak 파일 권한을 확인하세요: %@";
 "app.status.manifest.notRegistered" = "등록되지 않음 — [%@]를 누르세요";
 "app.status.manifest.registered" = "등록됨";
 "app.status.manifest.wrongExtensionID" = "확장 ID가 현재 설정과 다름 — [%@]로 갱신하세요";

@@ -87,18 +87,49 @@ enum CmuxRecovery: Equatable {
     case launchAndRetry
 }
 
+enum CmuxReadiness: Equatable {
+    case ready
+    case denied
+    case notReady
+}
+
+/// A successful lightweight RPC is the readiness answer; a socket denial is an immediate
+/// diagnosis, and any other failure means that the server is not ready yet.
+func cmuxReadinessOutcome(from error: TerminalError?) -> CmuxReadiness {
+    guard let error else { return .ready }
+    if case .cmuxSocketDenied = error { return .denied }
+    return .notReady
+}
+
 /// A workspace denial is a configuration diagnosis, not a launch failure: opening cmux cannot
-/// change a running instance's socket mode. Other first failures may mean cmux is stale, stopped,
-/// or using a socket the default-path probe cannot see, so one launch-and-retry is allowed before
-/// the error is returned. A second launch is never attempted.
+/// change a running instance's socket mode. A retry is safe only when it is proven that the
+/// request had no server-side effect; `workspace.create` is not idempotent, so timeouts and
+/// malformed responses are rethrown because the server may already have created a workspace.
+/// `TerminalError` flattens transport details into the RPC failure string, so the small,
+/// conservative connection-marker list below is the only available classification. The measured
+/// not-running error was `Error: Failed to connect to socket at <path> (Connection refused, errno
+/// 61)`, which matched `failed to connect` and `connection refused`; the app then launched cmux and
+/// succeeded in 2.4s. Unknown failures are deliberately rethrown rather than guessed to be
+/// connection failures, so the markers remain conservative rather than speculative.
 func cmuxRecoveryAction(
     afterFirstFailure: TerminalError, launchAttempted: Bool
 ) -> CmuxRecovery {
     switch afterFirstFailure {
-    case .cmuxSocketDenied:
+    case .cmuxSocketDenied, .timeout:
         return .rethrow
+    case .cmuxRPCFailed(let message):
+        let lowercased = message.lowercased()
+        guard !lowercased.contains("invalid json response"), !launchAttempted else {
+            return .rethrow
+        }
+        let connectionMarkers = [
+            "connection refused", "failed to connect", "could not connect",
+            "connection failed", "socket not found", "no such file or directory",
+        ]
+        return connectionMarkers.contains { lowercased.contains($0) }
+            ? .launchAndRetry : .rethrow
     default:
-        return launchAttempted ? .rethrow : .launchAndRetry
+        return .rethrow
     }
 }
 

@@ -99,7 +99,7 @@
 "app.status.cmux.failed" = "狀態檢查失敗：%@";
 "app.status.cmux.automationAlreadyEnabled" = "自動化已啟用";
 "app.status.cmux.automationNotApplied" = "未套用 — 請嘗試重新啟動 cmux";
-"app.status.cmux.backupProtectionIncomplete" = "備份保護未完成 — 請檢查 .bak 檔案的權限。";
+"app.status.cmux.backupProtectionIncomplete" = "備份保護未完成 — 請檢查 .bak 檔案的權限：%@";
 "app.status.manifest.notRegistered" = "未註冊 — 請按 [%@]";
 "app.status.manifest.registered" = "已註冊";
 "app.status.manifest.wrongExtensionID" = "擴充功能 ID 與目前設定不同 — 請用 [%@] 重新整理";

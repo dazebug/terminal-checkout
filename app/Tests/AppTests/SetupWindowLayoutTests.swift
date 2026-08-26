@@ -456,20 +456,24 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertNil(cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .notRunning))
         XCTAssertNil(
             cmuxAutomationFeedback(
-                result: .notApplied(backupSecured: true), liveStatus: .reachable
+                result: .notApplied(backupSecured: true, backupPath: nil), liveStatus: .reachable
             )
         )
         XCTAssertEqual(
             cmuxAutomationFeedback(
-                result: .notApplied(backupSecured: true), liveStatus: .denied
+                result: .notApplied(backupSecured: true, backupPath: nil), liveStatus: .denied
             ),
             .notApplied
         )
         XCTAssertNil(
-            cmuxAutomationFeedback(result: .applied(backupSecured: true), liveStatus: .reachable)
+            cmuxAutomationFeedback(
+                result: .applied(backupSecured: true, backupPath: nil), liveStatus: .reachable
+            )
         )
         XCTAssertNil(
-            cmuxAutomationFeedback(result: .applied(backupSecured: true), liveStatus: .denied)
+            cmuxAutomationFeedback(
+                result: .applied(backupSecured: true, backupPath: nil), liveStatus: .denied
+            )
         )
     }
 
@@ -478,13 +482,13 @@ final class SetupWindowLayoutTests: XCTestCase {
     func testCmuxAutomationFeedbackWarnsWhenBackupIsUnsecured() {
         XCTAssertEqual(
             cmuxAutomationFeedback(
-                result: .applied(backupSecured: false), liveStatus: .reachable
+                result: .applied(backupSecured: false, backupPath: "/tmp/cmux.json.bak"), liveStatus: .reachable
             ),
             .backupUnsecured
         )
         XCTAssertEqual(
             cmuxAutomationFeedback(
-                result: .applied(backupSecured: false), liveStatus: .denied
+                result: .applied(backupSecured: false, backupPath: "/tmp/cmux.json.bak"), liveStatus: .denied
             ),
             .backupUnsecured
         )
@@ -522,20 +526,28 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 
-    /// H4 red reproduction: D13 says feedback supplements the live diagnostic instead of
-    /// replacing a specific denial, failure, or not-installed explanation.
-    func testCmuxStatusLineKeepsLiveTextWhenFeedbackIsPresent() {
+    /// J4 red reproduction: the backup-protection warning persists alongside the live diagnostic
+    /// and any operation feedback instead of being forgotten on the next refresh.
+    func testCmuxStatusLineKeepsLiveTextAndPersistentBackupWarning() {
         let liveText = "Socket access denied"
         let feedback = "Not applied"
+        let backupWarning = "Backup protection incomplete"
         let line = SetupWindowController.cmuxStatusLine(
-            liveText: liveText, feedback: feedback
+            liveText: liveText, feedback: nil, backupWarning: backupWarning
         )
 
         XCTAssertTrue(line.contains(liveText))
-        XCTAssertTrue(line.contains(feedback))
-        XCTAssertEqual(line, "\(liveText) — \(feedback)")
+        XCTAssertTrue(line.contains(backupWarning))
+        let combined = SetupWindowController.cmuxStatusLine(
+            liveText: liveText, feedback: feedback, backupWarning: backupWarning
+        )
+        XCTAssertTrue(combined.contains(liveText))
+        XCTAssertTrue(combined.contains(feedback))
+        XCTAssertTrue(combined.contains(backupWarning))
         XCTAssertEqual(
-            SetupWindowController.cmuxStatusLine(liveText: "Reachable", feedback: nil),
+            SetupWindowController.cmuxStatusLine(
+                liveText: "Reachable", feedback: nil, backupWarning: nil
+            ),
             "Reachable"
         )
     }

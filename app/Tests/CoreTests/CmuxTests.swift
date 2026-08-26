@@ -43,9 +43,9 @@ final class CmuxTests: XCTestCase {
         XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
     }
 
-    /// I5 red reproduction: socket denial cannot be repaired by launching cmux, while an ordinary
-    /// first workspace failure can be retried after one launch attempt. The retry must not repeat
-    /// after launch has already been attempted.
+    /// J2 red reproduction: retry is safe only when the first request demonstrably never reached
+    /// the server. A timeout or invalid JSON can follow a server-side workspace creation, so the
+    /// implementation must rethrow those uncertain outcomes instead of creating a duplicate.
     func testCmuxRecoveryActionRetriesOnlyARecoverableFirstFailure() {
         XCTAssertEqual(
             cmuxRecoveryAction(
@@ -55,13 +55,17 @@ final class CmuxTests: XCTestCase {
         )
         XCTAssertEqual(
             cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed("workspace.create: failed"), launchAttempted: false
+                afterFirstFailure: .cmuxRPCFailed(
+                    "workspace.create: connection refused"
+                ), launchAttempted: false
             ),
             .launchAndRetry
         )
         XCTAssertEqual(
             cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed("workspace.create: failed"), launchAttempted: true
+                afterFirstFailure: .cmuxRPCFailed(
+                    "workspace.create: connection refused"
+                ), launchAttempted: true
             ),
             .rethrow
         )
@@ -69,7 +73,28 @@ final class CmuxTests: XCTestCase {
             cmuxRecoveryAction(
                 afterFirstFailure: .timeout("cmux socket"), launchAttempted: false
             ),
-            .launchAndRetry
+            .rethrow
+        )
+        XCTAssertEqual(
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxRPCFailed(
+                    "workspace.create: invalid JSON response"
+                ), launchAttempted: false
+            ),
+            .rethrow
+        )
+    }
+
+    /// J5 red reproduction: readiness must come from a lightweight RPC response, with denial as
+    /// an immediate terminal outcome rather than another poll. The current socket-file stub cannot
+    /// distinguish either response yet.
+    func testCmuxReadinessOutcomeStopsPollingOnDenied() {
+        XCTAssertEqual(cmuxReadinessOutcome(from: nil), .ready)
+        XCTAssertEqual(
+            cmuxReadinessOutcome(from: .cmuxSocketDenied), .denied
+        )
+        XCTAssertEqual(
+            cmuxReadinessOutcome(from: .timeout("debug.terminals")), .notReady
         )
     }
 

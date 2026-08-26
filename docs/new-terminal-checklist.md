@@ -128,6 +128,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Pressing [Allow Automation] twice in the same second does not remove the existing `.bak`; the button is disabled while the first operation is in flight.
 - [ ] The setup window's [Allow Automation] button is disabled when the live cmux status is `reachable`.
 - [ ] After [Allow Automation], the backup and a newly created cmux.json are mode 0600; an existing cmux.json keeps its original permissions (cmux-created files are 0600 because they may hold `socketPassword`).
+- [ ] When `cmux.json` is a symlink, [Allow Automation] edits its resolved target, leaves the symlink in place, and writes the backup beside that target.
 - [ ] If narrowing the backup permissions fails after the setting is applied, the card shows a backup-protection warning while retaining the live status diagnosis.
 - [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).

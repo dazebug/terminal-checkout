@@ -191,8 +191,16 @@ public func runProcess(
     try process.run()
     let processID = process.processIdentifier
     // Keep timeout cleanup from leaving a descendant with the pipes open. Foundation exposes only
-    // the process id, so put this subprocess in its own group immediately after launch and kill
-    // the group on escalation; normal success and its return value are unchanged.
+    // the process id: its public API has no child-side posix_spawn attribute hook. On Darwin 25.4.0,
+    // a /bin/sh child returned by Process.run() had already execed before the parent could call
+    // setpgid: 20/20 attempts returned EACCES. In practice isolatedProcessGroup is therefore
+    // effectively always false; the three kill(-pid, ...) branches are best effort when this race
+    // happens to be won, not the source of the timeout bound. The bound comes from closing the
+    // pipe readers, and the measured sleep descendant can remain (pgrep rose from 1 to 2), so
+    // this is not full process-tree cleanup. WezTerm's GUI fallback uses a raw Process, and
+    // open -b/-a delegates to LaunchServices, so no current runProcess caller launches a
+    // long-lived GUI child inside this group; revisit that assumption before keeping this branch
+    // if that changes. A child-side group setup is not available through the public Foundation API.
     let isolatedProcessGroup = Darwin.setpgid(processID, processID) == 0
 
     if let input {
@@ -240,7 +248,21 @@ public func runProcess(
         }
         throw TerminalError.timeout("\(path) \(args.joined(separator: " "))")
     }
-    group.wait()
+    // A normally exited parent can leave a background child holding a pipe open. Do not let that
+    // descendant turn a successful command into an unbounded wait: one second is long enough for
+    // ordinary pipe EOF after the parent exits, while the bounded final wait keeps this shared
+    // helper from stalling the HostServer queue. The bytes collected so far are returned and the
+    // partial drain is logged rather than silently discarded.
+    let normalDrainTimeout: TimeInterval = 1
+    if group.wait(timeout: .now() + normalDrainTimeout) == .timedOut {
+        checkoutLog(
+            "process \(path) exited but output drain exceeded \(normalDrainTimeout)s; "
+                + "returning partial output"
+        )
+        outPipe.fileHandleForReading.closeFile()
+        errPipe.fileHandleForReading.closeFile()
+        _ = group.wait(timeout: .now() + 0.25)
+    }
 
     return (
         process.terminationStatus,
@@ -275,17 +297,42 @@ public func runInTerminal(
     }
 }
 
-private let cmuxSocketWaitTimeout: TimeInterval = 10
-private let cmuxSocketPollInterval: TimeInterval = 0.1
+private let cmuxReadinessWaitTimeout: TimeInterval = 10
+private let cmuxReadinessPollInterval: TimeInterval = 0.1
 
-private func waitForCmuxSocket() -> Bool {
-    let deadline = Date().addingTimeInterval(cmuxSocketWaitTimeout)
+/// After launching, a successful `debug.terminals` RPC is the server-side readiness proof. A
+/// denied response is surfaced immediately; a missing socket path is not consulted because cmux
+/// may be reachable through its alternate discovery paths. The normal first `workspace.create`
+/// success path never calls this poll, preserving the two-RPC budget.
+private func waitForCmuxReadiness(cliPath: String) throws {
+    let deadline = Date().addingTimeInterval(cmuxReadinessWaitTimeout)
     while true {
-        if cmuxSocketPath() != nil { return true }
         let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else { return false }
-        let sleepFor = min(cmuxSocketPollInterval, deadline.timeIntervalSinceNow)
-        guard sleepFor > 0 else { return false }
+        guard remaining > 0 else {
+            throw TerminalError.timeout("cmux readiness")
+        }
+        do {
+            _ = try cmuxRPC(
+                cli: cliPath, method: cmuxDebugTerminalsMethod,
+                timeout: min(3, remaining)
+            )
+            if case .ready = cmuxReadinessOutcome(from: nil) { return }
+        } catch let error as TerminalError {
+            switch cmuxReadinessOutcome(from: error) {
+            case .ready:
+                return
+            case .denied:
+                throw TerminalError.cmuxSocketDenied
+            case .notReady:
+                break
+            }
+        } catch {
+            // An untyped process failure is not a readiness proof; leave the bounded poll intact.
+        }
+        let sleepFor = min(cmuxReadinessPollInterval, deadline.timeIntervalSinceNow)
+        guard sleepFor > 0 else {
+            throw TerminalError.timeout("cmux readiness")
+        }
         Thread.sleep(forTimeInterval: sleepFor)
     }
 }
@@ -314,9 +361,7 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
             // Passing no target after the bundle id is deliberate: an argument would enable cmux
             // session restoration instead of merely starting the app.
             _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
-            guard waitForCmuxSocket() else {
-                throw TerminalError.timeout("cmux socket")
-            }
+            try waitForCmuxReadiness(cliPath: cliPath)
             workspace = try cmuxRPC(
                 cli: cliPath, method: cmuxWorkspaceCreateMethod,
                 params: cmuxWorkspaceCreateParameters()
