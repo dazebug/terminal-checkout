@@ -1065,7 +1065,7 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
     ) else {
         return nil
     }
-    // A failed stty is passed on as empty output and treated as "cannot tell" (carrying on with the ps gate alone)
+    // A failed stty is treated as "cannot tell" and closes the gate; ps alone cannot prove raw mode.
     let stty = (try? runProcess("/bin/stty", ["-f", ttyPath, "-a"], timeout: 5))
         .flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
     return acceptingClaudePID(psOutput: ps.stdout, sttyOutput: stty)

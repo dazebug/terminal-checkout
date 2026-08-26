@@ -430,8 +430,8 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
         case .rethrow:
             throw firstFailure
         case .launchAndRetry:
-            // Passing no target after the bundle id is deliberate: an argument would enable cmux
-            // session restoration instead of merely starting the app.
+            // Passing no target after the bundle id is deliberate: an argument would disable cmux
+            // session restoration by turning this into an explicit launch.
             var launchExitStatus: Int32?
             var launchError: TerminalError?
             do {

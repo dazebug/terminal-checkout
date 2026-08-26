@@ -29,7 +29,7 @@
 - **cmux의 UserDefaults·비밀번호 파일·설정 파일을 우리가 만지지 않는다.** 비밀번호는 번들 CLI가 스스로 찾으므로(D1) 우리 코드가 만질 이유가 없다. 설정 창 버튼은 `"automation": { "socketControlMode": "automation" }` 조각을 클립보드에 복사하고 기존 설정 파일 또는 폴더를 열어 줄 뿐이다(D1-b, 사용자 결정 2026-08-27). 상태 판정은 살아 있는 프로브(`cmux ping`)로 한다
 - cmux의 **agent-session surface**(`new-surface --type agent-session --provider claude`)·browser·simulator·`ssh`/`mosh`/`vm` 계열: 우리 명령 모델은 "셸에 한 줄"이고 그 위에서 claude가 뜬다. cmux의 네이티브 agent 세션은 tty·게이트 3겹이 성립하지 않는다
 - cmux **workspace group·layout·todo·sidebar·notification**: 새 탭 하나를 만드는 것이 우리 계약이다
-- **확장(JS) 쪽 동작**: 확장은 터미널을 모르고 알 수단도 두지 않는다(CLAUDE.md). `extension/manifest.json`의 description 문구만 바뀐다
+- **확장(JS) 쪽 터미널 동작**: 확장은 터미널을 모르고 알 수단도 두지 않는다(CLAUDE.md). cmux 제품·상태·실행은 앱이 정본으로 가지며, `claude_inputs`의 스페이스 전용 정규화처럼 앱 경계 계약을 보존하는 입력 처리는 예외적으로 포함한다. `extension/manifest.json`의 description 문구도 로케일별로 바뀐다
 - 기존 3개 터미널의 실행·전달 경로: switch가 컴파일 에러로 드러내는 자리에 케이스를 더하는 것 외에 손대지 않는다
 - cmux를 우리가 대신 설치하는 것. 앱은 socket control mode를 바꾸지 않으며, 설정 창은 값을 복사해 주고 설정 파일을 열어 줄 뿐이다 — 설치 스크립트·앱 기동 중 자동 변경은 하지 않는다
 - cmux 버전 감시·경고 UI(열린 질문 5 결정): 검사 목록 항목으로만 둔다
@@ -73,6 +73,7 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
 | 주체 | 날짜 | 결정 |
 |:--|:--|:--|
 | 사용자 | 2026-08-27 | [자동화 허용] 버튼의 역할을 축소한다(파일 열기·클립보드까지, 쓰기 없음). 근거: 이 기능이 cold review 1∼7차 지적의 약 절반(18건)을 냈고 실패 모드가 전부 사용자 파일 손상·권한 누출·거짓 안심이었다. 대체 수단 `cmux settings automation`은 automation이 꺼진 상태에서 소켓 거부로 막힌다(드라이버 실측). 삭제 규모: CmuxAutomation 417 + 그 테스트 677 + Core/CmuxConfig 387 + 관련 테스트. |
+| 검증 | 2026-08-27 | cold review 10차에서 코드와 어긋난 주석 3건(인자 없는 cmux `open`의 세션 복원, `stty` 실패 시 안전한 nil 종료, 확장 `claude_inputs` 정규화)을 발견해 동작 변경 없이 설명을 코드와 맞췄다. |
 
 ### D1. 외부 프로세스의 소켓 접근 — 사용자가 cmux의 socket control mode를 바꾸는 것이 전제
 
@@ -475,6 +476,37 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | `TerminalIdentifierTests.testRawValuesAreTheStoredIdentifiers` | 1 | i: cmux enum/rawValue를 되돌리면 실패; ii: 저장 식별자 4개 리터럴과 `allCases.count == 4`라는 단일 소스를 고정; iii: 식별자 테스트 중복 제거 후 남긴 정본 오라클 | 없음 — `CmuxTests`에 식별자 중복 없음 | 유지 |
 | `TerminalIdentifierTests.testStoredValueParsingFallsBackToITerm` | 1 | i: cmux 저장값 파싱을 되돌리면 실패; ii: 네 식별자와 미지 값의 iTerm fallback을 한 파싱 지점에서 고정; iii: 없음 | `TerminalIdentifierTests.testRawValuesAreTheStoredIdentifiers`(rawValue 목록, 다른 계약) | 유지 |
 | `PaneProofRoutingTests.testItem8OnlyWarpNeedsPaneProof` | 8 | i: `.cmux(surfaceID:workspaceID:cliPath:)` 또는 `screenNeedsPaneProof`를 되돌리면 실패; ii: cmux는 surface UUID 오라클로 pane proof가 false이고 Warp만 true라는 라우팅 계약을 고정; iii: 없음 | 없음 — 기존 터미널 handle oracle을 한 테스트에서 함께 고정하며 cmux 중복 없음 | 유지 |
+
+#### cold review 10차 재심사 (fc774c0)
+
+기존 표의 `testItem13CmuxSocketStatusSocketAbsenceWinsOverPingOutput`은 H3 수정 전 이름을 당시 판정 이력으로 보존한 것이며, 현재 이름 `testItem13CmuxPingResultOverridesMissingDefaultSocket`으로 재심사했다.
+
+| 테스트 이름 | 고정하는 항목 번호 또는 계약 | 입장 기준 | 같은 계약을 다른 고도에서 또 고정하는 테스트 | 판정 |
+| `SetupWindowLayoutTests.testCmuxLiveStatusLabelIsAssignedOnlyByRefresh` | 14·P2 | i: 라이브 라벨 대입 감사가 없으면 open action의 대입을 허용; ii: 라이브 진단의 단일 작성자 계약; iii: G3·H4·P2 반복 결함을 소스 수준에서 특성화 | `SetupWindowLayoutTests.testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState`(카드 조합, 다른 고도) | 유지 |
+| `SetupWindowLayoutTests.testItem14CmuxCardHasSeparateEmptyFeedbackLabel` | 14·P2 | i: 별도 피드백 라벨을 제거하면 실패; ii: 라이브 상태와 작업 피드백을 분리하는 UI 계약; iii: 없음 | `SetupWindowLayoutTests.testCmuxLiveStatusLabelIsAssignedOnlyByRefresh`(소스 감사, 다른 고도) | 유지 |
+| `CmuxTests.testCmuxRecoveryActionRetriesOnlyATypedReachabilityFailure` | 5·D12·J2·L2 | i: 복구 판정을 되돌리면 실패; ii: 부작용이 없다고 증명된 연결 실패만 한 번 재시도하는 계약; iii: workspace.create의 비멱등 재시도 결함을 특성화 | `CmuxTests.testCmuxCLIFailureClassifierUsesMeasuredStaleAndMissingSocketErrors`(분류 입력, 다른 고도) | 유지 |
+| `CmuxTests.testCmuxCLIFailureClassifierUsesMeasuredStaleAndMissingSocketErrors` | D12·L2 | i: 두 실측 오류의 typed 분류를 되돌리면 실패; ii: 연결 단계 오류를 시작 앵커로 분류하는 계약; iii: 드라이버 실측 원문을 회귀 입력으로 고정 | `CmuxTests.testCmuxRecoveryActionRetriesOnlyATypedReachabilityFailure`(복구 조합, 다른 고도) | 유지 |
+| `CmuxTests.testCmuxCLIFailureClassifierRequiresTheMeasuredErrorPrefix` | D12·L2 | i: 필수 `Error: ` 접두사 앵커를 선택적으로 만들면 실패; ii: 측정되지 않은 입력은 닫히는 계약; iii: 접두사 없는 테스트가 초록이면서 실경로를 막았던 결함을 특성화 | `CmuxTests.testCmuxCLIFailureClassifierUsesMeasuredStaleAndMissingSocketErrors`(실측 정상 입력, 같은 함수의 다른 경계) | 유지 |
+| `CmuxTests.testCmuxCLIFailureDoesNotTreatPostCreateHookFailureAsConnectionLoss` | D12·L2 | i: 부분 문자열 재시도를 되살리면 실패; ii: 서버 부작용 가능성이 있는 post-create 오류는 rethrow하는 계약; iii: workspace 중복 생성 결함을 특성화 | `CmuxTests.testCmuxRecoveryActionRetriesOnlyATypedReachabilityFailure`(복구 판정, 다른 고도) | 유지 |
+| `CmuxTests.testCmuxReadinessOutcomeStopsPollingOnDenied` | 5·J5 | i: readiness 분류와 거부 즉시 종료를 되돌리면 실패; ii: 서버 응답을 준비 정본으로 삼는 계약; iii: 없음 | `CmuxTests.testItem5CmuxWorkspaceIdentifiersRequireWorkspaceAndSurface`(workspace 생성 조합, 다른 고도) | 유지 |
+| `CmuxTests.testCmuxReadinessTimeoutDescriptionKeepsLaunchAndLastError` | 20·L7 | i: 진단 조립을 되돌리면 실패; ii: 기동 결과와 마지막 오류를 timeout에 보존하는 계약; iii: bundle not found가 generic timeout으로 뭉개진 결함을 특성화 | 없음 | 유지 |
+| `CmuxTests.testCmuxRPCFailureLogSuppressesRepeatedSameSurfaceMessage` | 10·D14 | i: 연속 중복 억제를 되돌리면 실패; ii: 같은 surface의 같은 오류를 한 번만 기록하는 로그 계약; iii: 없음 | `CmuxTests.testCmuxRPCFailureLogSeparatesSurfaces`(surface 구분, 같은 고도에서 다른 경계) | 유지 |
+| `CmuxTests.testCmuxRPCFailureLogResetsAfterScreenReadSuccess` | 10·D14 | i: 성공 read 후 기록 초기화를 되돌리면 실패; ii: 성공 뒤 같은 오류를 다시 기록하는 계약; iii: surface별 영구 억제 결함을 특성화 | `CmuxTests.testCmuxRPCFailureLogForgetsFailuresAtDeliveryEnd`(전달 종료 정리, 다른 경계) | 유지 |
+| `CmuxTests.testCmuxRPCFailureLogSeparatesSurfaces` | 10·D14 | i: surface별 상태를 합치면 실패; ii: 다른 surface의 같은 오류는 독립 기록하는 계약; iii: 없음 | `CmuxTests.testCmuxRPCFailureLogResetsAfterScreenReadSuccess`(성공 초기화, 같은 고도에서 다른 경계) | 유지 |
+| `CmuxTests.testCmuxRPCFailureLogForgetsFailuresAtDeliveryEnd` | 10·D14·H5 | i: 전달 종료 정리를 제거하면 실패; ii: 실패 상태를 다음 전달로 누적하지 않는 계약; iii: 억제 맵의 프로세스 수명 누적 결함을 특성화 | `CmuxTests.testCmuxRPCFailureLogResetsAfterScreenReadSuccess`(read 성공 정리, 다른 경계) | 유지 |
+| `CmuxTests.testCmuxRPCFailureLogHasBoundedFailureSurfaceState` | 10·D14·H5 | i: 32개 상한을 제거하면 실패; ii: 실패만 이어지는 surface도 전역 상태를 무한히 키우지 않는 계약; iii: 없음 | `CmuxTests.testCmuxRPCFailureLogForgetsFailuresAtDeliveryEnd`(명시적 정리, 다른 경계) | 유지 |
+| `CmuxTests.testItem10CmuxOperationsRecheckSessionBeforeEveryRPC` | 10·F3 | i: 두 번째 RPC 전 게이트 재검사를 되돌리면 실패; ii: 바이트를 내보내는 모든 operation이 같은 세션 게이트를 통과하는 호출 순서 계약; iii: 없음 | `CmuxTests.testItem10EveryCmuxByteGoesThroughSendText`(operation 운반 방식, 다른 계약) | 유지 |
+| `CmuxTests.testItem13CmuxPingResultOverridesMissingDefaultSocket` | 13·D12 | i: PONG이 기본 소켓 부재보다 우선하는 분류를 되돌리면 실패; ii: 대체 소켓에서 살아 있는 cmux를 notRunning으로 보지 않는 계약; iii: 없음 | `CmuxTests.testCmuxSocketPathOnlyReportsAnExistingSocket`(경로 조회, 다른 고도) | 유지 |
+| `RequestTests.testClaudeInputsWithLineBreaksAreRejectedBeforeTypedDelivery` | D10·F1 | i: 개행 거부를 되돌리면 실패; ii: typed delivery 전에 LF·CR을 거부하고 정상 입력은 통과하는 경계 계약; iii: 모든 terminal carrier의 조기 제출 결함을 특성화 | `RequestTests.testClaudeInputsRejectControlBytesWithoutChangingSpecificDiagnostics`(제어문자 경계, 다른 진단) | 유지 |
+| `RequestTests.testClaudeInputsRejectControlBytesWithoutChangingSpecificDiagnostics` | D10·N1 | i: C0·DEL 거부 또는 NUL·개행의 기존 진단 보존을 되돌리면 실패; ii: 경계 거부와 구체적 오류 문구 계약; iii: 24자 반영 확인 뒤 DEL이 명령을 바꾸는 결함을 특성화 | `RequestTests.testClaudeInputsRejectControlCharactersBeforeTrimmingEdges`(trim 순서, 다른 계약) | 유지 |
+| `RequestTests.testClaudeInputsRejectControlCharactersBeforeTrimmingEdges` | D10·O1 | i: 검사와 trim 순서를 되돌리면 실패; ii: 가장자리 제어문자는 거부하고 ordinary spaces만 trim하는 계약; iii: TAB만 있는 입력이 성공과 함께 사라진 결함을 특성화 | `RequestTests.testClaudeInputsRejectControlBytesWithoutChangingSpecificDiagnostics`(문자 종류·진단, 다른 계약) | 유지 |
+| `RunProcessTimeoutTests.testRunProcessKillsAChildThatIgnoresTerminationWithinABound` | 20·D16·I7 | i: SIGKILL과 종료 상한을 되돌리면 실패; ii: SIGTERM 무시 자식도 유한 시간 안에 timeout으로 끝나는 계약; iii: 드라이버가 확인한 30초 대기 결함을 특성화 | `RunProcessTimeoutTests.testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound`(정상 종료 드레인, 다른 결함) | 유지 |
+| `RunProcessTimeoutTests.testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound` | 20·D16·J3·L6 | i: 정상 종료 뒤 드레인 상한을 되돌리면 실패; ii: 부모 성공 결과를 보존하면서 파이프를 유한 시간에 닫는 계약; iii: 손자가 파이프를 잡는 30초 드레인 결함을 특성화 | `RunProcessTimeoutTests.testRunProcessKillsAChildThatIgnoresTerminationWithinABound`(timeout kill, 다른 결함) | 유지 |
+| `RunProcessTimeoutTests.testRunProcessKeepsValidPrefixBeforeInvalidUTF8` | 20·D16·L5 | i: 손실 디코딩 수정을 되돌리면 실패; ii: 유효한 출력 prefix를 보존하는 계약; iii: 강제 pipe close가 만든 잘린 UTF-8 결함을 특성화 | `RunProcessTimeoutTests.testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound`(드레인 상한, 다른 결함) | 유지 |
+| `buttons.test.js — executionPayload: claude inputs preserve controls and trim only spaces` | P1 | i: 실행 payload의 공통 정규화를 되돌리면 실패; ii: 제어문자 바이트 불변과 스페이스만 trim하는 계약; iii: `trim()`이 버튼 경계를 우회한 결함을 특성화 | `buttons.test.js — toStoredButton: claude inputs preserve controls and trim only spaces`(저장 호출부, 같은 helper의 별도 call site) | 유지 |
+| `buttons.test.js — toStoredButton: claude inputs preserve controls and trim only spaces` | P1 | i: 저장 payload의 공통 정규화를 되돌리면 실패; ii: 저장·전송 지문이 같은 입력 바이트를 보는 계약; iii: `trim()` 변조·소실 결함을 특성화 | `buttons.test.js — executionPayload: claude inputs preserve controls and trim only spaces`(실행 호출부, 같은 helper의 별도 call site) | 유지 |
+
+이번 회차 결론: `git diff 2f922d6..fc774c0 -- app/Tests tests/`의 65개 테스트(기존 표 43개 재확인 + 위 22개) 모두 i·ii·iii 중 하나 이상에 해당해 유지했다. O2에서 제거한 cmux.json 쓰기·백업·권한·심링크 테스트의 잔재는 없었고 삭제한 테스트는 없다. 경계당 대역(stub·closure)은 3개 이상인 테스트가 없으며, 최대 1개다.
 
 ## 열린 질문 → 결정 (2026-08-23, 사용자·드라이버)
 
