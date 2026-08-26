@@ -124,10 +124,11 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] The setup window draws all four live cmux states: `notInstalled`, `notRunning`, `denied`, and `reachable`.
 - [ ] Clicking [Allow Automation] creates the timestamped `.bak`, changes `~/.config/cmux/cmux.json`, and confirms `cmux ping` → PONG without restarting cmux (live reflection measured 2026-08-23).
 - [ ] After [Allow Automation], both `~/.config/cmux/cmux.json` and the `.bak` are mode 0600 (cmux keeps the file at 0600 because it may hold `socketPassword`).
-- [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g; not measured).
+- [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).
-- [ ] A `!` input enters claude's shell mode, and the clear sequence `ctrl+u` → `backspace` removes the shell-mode prefix as well as the text.
-- [ ] When cmux's version is raised, confirm all five RPC methods still exist, `debug.terminals` reports a tty basename, `workspace.create` returns `surface_id`, and `cmux ping` prints PONG.
+- [ ] A `!` input enters claude's shell mode, and the clear sequence uses two separate `surface.send_text` calls, `0x15` then `0x7F`, to remove the shell-mode prefix as well as the text.
+- [ ] The clear key (Ctrl+U, Backspace) was measured **inside a running claude TUI**, not in a raw shell — claude enables the kitty keyboard protocol, and a terminal's key-event path can encode control keys differently under it (cmux's key-event path did; measured 2.1.246).
+- [ ] When cmux's version is raised, confirm all four RPC methods still exist, `debug.terminals` reports a tty basename, `workspace.create` returns `surface_id`, and `cmux ping` prints PONG.
 - [ ] With shell integration disabled in a cmux pane, `debug.terminals` leaves tty null: the command runs, claude input is abandoned, and the reason is logged.
 
 ## 3. Verification tools

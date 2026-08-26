@@ -2,7 +2,6 @@ import Foundation
 
 public let cmuxWorkspaceCreateMethod = "workspace.create"
 public let cmuxSurfaceSendTextMethod = "surface.send_text"
-public let cmuxSurfaceSendKeyMethod = "surface.send_key"
 public let cmuxSurfaceReadTextMethod = "surface.read_text"
 public let cmuxDebugTerminalsMethod = "debug.terminals"
 

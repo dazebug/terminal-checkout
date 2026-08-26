@@ -43,10 +43,9 @@ final class CmuxTests: XCTestCase {
         XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
     }
 
-    func testCmuxRPCMethodNamesAreTheFiveSupportedMethods() {
+    func testCmuxRPCMethodNamesAreTheFourSupportedMethods() {
         XCTAssertEqual(cmuxWorkspaceCreateMethod, "workspace.create")
         XCTAssertEqual(cmuxSurfaceSendTextMethod, "surface.send_text")
-        XCTAssertEqual(cmuxSurfaceSendKeyMethod, "surface.send_key")
         XCTAssertEqual(cmuxSurfaceReadTextMethod, "surface.read_text")
         XCTAssertEqual(cmuxDebugTerminalsMethod, "debug.terminals")
     }
@@ -174,20 +173,36 @@ final class CmuxTests: XCTestCase {
         XCTAssertNil(cmuxTTYName(debugTerminalsJSON: Data("not json".utf8), surfaceID: "surface-1"))
     }
 
-    func testItem10CmuxClearInputUsesCtrlUThenBackspace() {
+    /// **R1-j reproduction:** under Claude's Kitty keyboard protocol flag 1,
+    /// cmux's key-event path for `ctrl+u` is ineffective; a separate `surface.send_text`
+    /// call carrying 0x15 clears the text. A separate 0x7F call then removes the `!` shell-mode
+    /// prefix. Sending both bytes in one text call leaves `!`, while two calls in order empty it.
+    func testItem10CmuxClearInputIsTwoSendTextCallsCtrlUThenBackspace() {
         XCTAssertEqual(
             cmuxSendOperations(surfaceID: "surface-1", text: claudeClearInputKey),
             [
                 CmuxRPCOperation(
-                    method: cmuxSurfaceSendKeyMethod,
-                    params: ["surface_id": "surface-1", "key": "ctrl+u"]
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": "\u{15}"]
                 ),
                 CmuxRPCOperation(
-                    method: cmuxSurfaceSendKeyMethod,
-                    params: ["surface_id": "surface-1", "key": "backspace"]
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": "\u{7F}"]
                 ),
             ]
         )
+    }
+
+    /// D8 routes the marker, both clear bytes, body, and CR through the same raw text carrier.
+    /// The clear key is deliberately two operations so cmux cannot reorder the buffered bytes.
+    func testItem10EveryCmuxByteGoesThroughSendText() {
+        let inputs = ["tcabcdefghij", claudeClearInputKey, "!echo x", claudeSubmitKey]
+        let operations = inputs.flatMap {
+            cmuxSendOperations(surfaceID: "surface-1", text: $0)
+        }
+
+        XCTAssertEqual(operations.count, 5)
+        XCTAssertTrue(operations.allSatisfy { $0.method == cmuxSurfaceSendTextMethod })
     }
 
     func testItem10CmuxBodyUsesSurfaceSendTextWithoutChangingIt() {

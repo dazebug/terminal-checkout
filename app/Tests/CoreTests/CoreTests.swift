@@ -2019,6 +2019,9 @@ private final class FakeClaudeSession {
     /// CLI call returning success means the terminal took the bytes, not that claude processed
     /// them (measured)
     var clearDoesNothing = false
+    /// R1-j reproduction: Kitty keyboard protocol makes cmux's key-event ctrl+u path ineffective under
+    /// claude, while the following backspace still removes one character.
+    var ctrlUIsIgnored = false
     /// **Measured (2.1.238, pty)**: Ctrl+U on a `!…` line clears the text but **leaves the `!`**,
     /// so the box stays in shell mode and looks empty. Whatever is typed next is submitted as a
     /// shell command. One Backspace after the Ctrl+U removes the prefix (also measured)
@@ -2074,7 +2077,7 @@ private final class FakeClaudeSession {
                     // Backspace from the clear sequence shows up here rather than passing
                     for character in keys {
                         switch character {
-                        case "\u{15}" where !clearDoesNothing:
+                        case "\u{15}" where !clearDoesNothing && !ctrlUIsIgnored:
                             box = clearLeavesModePrefix && box.hasPrefix("!") ? "!" : ""
                         case "\u{15}":
                             break // the write was accepted, the TUI ignored it
@@ -2413,6 +2416,26 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
         XCTAssertTrue(session.submitted.isEmpty)
         XCTAssertFalse(session.keystrokes.contains("!git status"), "the body was typed without confirmation")
+    }
+
+    /// **R1-j reproduction (cmux 0.64.22, Claude Code 2.1.246):** the app logged
+    /// "input 1/1 body reflection confirmed → submission (CR) sent → delivery finished — sent 1 of 1",
+    /// but the transcript contained `tctqr20ckbi!echo tc-r1j-input-ok`: an observed 12-character
+    /// `paneProofToken` lost only its final character before the body was typed on top. Claude
+    /// enabled Kitty keyboard protocol flag 1 (`CSI > 1 u`) and modifyOtherKeys 2 (`CSI > 4;2 m`);
+    /// under that mode cmux's key-event `ctrl+u` was ignored while the following Backspace still
+    /// removed one character. The old whole-marker count check therefore accepted the 11-character remnant.
+    func testItem10KittyKeyboardModeLeavesMarkerRemnantAndStopsBeforeTyping() {
+        let session = FakeClaudeSession()
+        session.ctrlUIsIgnored = true
+
+        XCTAssertEqual(submitClaudeInputs(["!echo tc-r1j-input-ok"], io: session.io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertFalse(
+            session.keystrokes.contains("!echo tc-r1j-input-ok"),
+            "the body was typed on top of a marker remnant"
+        )
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
     }
 
     /// Cleanup is one Ctrl+U through the same gate, and the terminal CLI does fail one call now and
@@ -2829,6 +2852,39 @@ final class ClaudeInputDeliveryTests: XCTestCase {
 
 final class ScreenReflectionTests: XCTestCase {
     private let input = "!gh issue view 1415"
+
+    func testScreenShowsMarkerErasedRejectsAnElevenCharacterRemnant() {
+        XCTAssertFalse(
+            screenShowsMarkerErased(
+                before: "", after: "tctqr20ckbi", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedAcceptsAnEmptyScreen() {
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: "", after: "", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedIgnoresUnrelatedText() {
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: "existing screen", after: "existing screen unrelated text", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedAcceptsAnUnchangedExistingOccurrence() {
+        let marker = "tctqr20ckbiq"
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: marker, after: marker, marker: marker
+            )
+        )
+    }
 
     func testNewlyAppearedInputIsReflection() {
         XCTAssertTrue(screenReflectsNewInput(before: "❯ ", after: "❯ " + input, input: input))

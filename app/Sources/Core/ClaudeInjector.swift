@@ -24,7 +24,7 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 
 /// The key that submits an input. Why it has to be CR rather than LF is in `submitClaudeInputs`.
 let claudeSubmitKey = "\r"
-/// The **sequence** that empties the input box: Ctrl+U (0x15) followed by Backspace (0x7F). Erasing the marker, clearing before an input, and the end-of-delivery cleanup all use this one constant, so changing it here applies everywhere.
+/// The **sequence** that empties the input box: Ctrl+U (0x15) followed by Backspace (0x7F). Erasing the marker, clearing before an input, and the end-of-delivery cleanup all use this one constant, so changing it here applies everywhere. In cmux, each byte is sent in a separate `surface.send_text` call.
 /// iTerm2 receives AppleScript rather than bytes, but that script is derived from this constant too (`appleScriptCharacters(of:)`) — while 21 and 127 were written out separately, this sentence was false, and changing the constant silently left iTerm2 on the old sequence.
 ///
 /// **Why the Backspace is there — measured (2.1.238, pty).** Ctrl+U does not leave claude's `!` shell mode: sending it on `!text` erases the text and **leaves the `!`**. On screen that looks like an empty input box and even passes the disappearance check, while the plain text typed afterwards was **submitted and executed as a shell command** (`command not found: tcq3hello`). One Backspace after the Ctrl+U removes that `!`, and the plain text after it is submitted as an ordinary message (same measurement). Sending several Backspaces to an already-empty box had no side effect.
@@ -41,14 +41,15 @@ struct CmuxRPCOperation: Equatable {
 
 func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
     if text == claudeClearInputKey {
+        // Measured with cmux 0.64.22 under Claude Code 2.1.246: its Kitty keyboard protocol flag 1 makes the key-event ctrl+u path ineffective. One text call carrying both bytes leaves `!`, while two calls in order empty the box.
         return [
             CmuxRPCOperation(
-                method: cmuxSurfaceSendKeyMethod,
-                params: ["surface_id": surfaceID, "key": "ctrl+u"]
+                method: cmuxSurfaceSendTextMethod,
+                params: ["surface_id": surfaceID, "text": "\u{15}"]
             ),
             CmuxRPCOperation(
-                method: cmuxSurfaceSendKeyMethod,
-                params: ["surface_id": surfaceID, "key": "backspace"]
+                method: cmuxSurfaceSendTextMethod,
+                params: ["surface_id": surfaceID, "text": "\u{7F}"]
             ),
         ]
     }
@@ -170,6 +171,24 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
         rest = rest[found.upperBound...]
     }
     return count
+}
+
+/// Returns true only when every six-character window of the marker has the same screen count as
+/// before the marker was typed. Checking the whole marker alone misses a remnant with one
+/// character removed, which is possible when a terminal's key-event path ignores Ctrl+U but still
+/// processes Backspace.
+func screenShowsMarkerErased(before: String, after: String, marker: String) -> Bool {
+    let compactMarker = marker.filter { !$0.isWhitespace }
+    let characters = Array(compactMarker)
+    guard characters.count >= 6 else { return false }
+
+    for start in 0...(characters.count - 6) {
+        let window = String(characters[start..<(start + 6)])
+        guard probeCount(window, in: after) == probeCount(window, in: before) else {
+            return false
+        }
+    }
+    return true
 }
 
 /// Session I/O — in reality osascript and wezterm cli calls, split out as closures so the delivery order and the failure-recovery verdicts can be exercised without any processes.
@@ -571,8 +590,7 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
         checkoutLog("failed to clear the input box — retrying (\(attempt)/\(maxAttempts))")
         return false
     }
-    let baseline = probeCount(of: marker, in: before)
-    guard waitUntilProbeCount(baseline, of: marker, io: io) else {
+    guard waitUntilMarkerErased(before: before, marker: marker, io: io) else {
         // The marker did not disappear — either what we saw was not the input box, or the TUI did not process the Ctrl+U. Both mean the same thing: do not send a CR
         checkoutLog("could not confirm the marker being erased from the input box — retrying (\(attempt)/\(maxAttempts))")
         return false
@@ -614,12 +632,12 @@ private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: (
     return false
 }
 
-private func waitUntilProbeCount(
-    _ wanted: Int, of text: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
+private func waitUntilMarkerErased(
+    before: String, marker: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
 ) -> Bool {
     poll(io: io, within: deadline) {
         guard let screen = io.screenText() else { return false }
-        return probeCount(of: text, in: screen) == wanted
+        return screenShowsMarkerErased(before: before, after: screen, marker: marker)
     }
 }
 
