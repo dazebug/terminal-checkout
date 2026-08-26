@@ -60,4 +60,34 @@ final class CmuxLocalizationTests: XCTestCase {
             }
         }
     }
+
+    func testItem14And22CmuxCardStringsExistInAllFiveCatalogs() {
+        let sourceResources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/App/Resources")
+            .path
+        let oldResources = AppLocalization.resourcesPath
+        let oldTag = AppLocalization.tagOverrideForTesting
+        defer {
+            AppLocalization.resourcesPath = oldResources
+            AppLocalization.tagOverrideForTesting = oldTag
+        }
+        AppLocalization.resourcesPath = sourceResources
+
+        let keys = [
+            "app.alert.cmuxConfigFailed", "app.button.enableCmuxAutomation",
+            "app.button.refreshCmuxStatus", "app.error.cmux.config", "app.section.cmux.help",
+            "app.section.cmux.title", "app.status.cmux.automationAlreadyEnabled",
+            "app.status.cmux.automationNotApplied",
+        ]
+        for tag in supportedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            for key in keys {
+                let value = AppLocalization.string(key)
+                XCTAssertFalse(value.hasPrefix("app."), "\(tag) returned raw key \(key)")
+            }
+        }
+    }
 }

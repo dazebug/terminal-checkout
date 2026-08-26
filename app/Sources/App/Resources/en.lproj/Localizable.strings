@@ -12,6 +12,7 @@
 "app.alert.extensionFolderFailed" = "Preparing the extension folder failed";
 "app.alert.manifestFailed" = "Native Host registration failed";
 "app.alert.permissionRequestFailed" = "Permission request failed";
+"app.alert.cmuxConfigFailed" = "Updating cmux automation settings failed";
 "app.automation.denied" = "Not granted — allow it in System Settings → Privacy & Security → Automation";
 "app.automation.granted" = "Granted";
 "app.automation.notDetermined" = "Not requested yet — press [%@]";
@@ -26,12 +27,14 @@
 "app.baseDir.reason.notAbsolute" = "it is not an absolute path";
 "app.baseDir.storedInvalid" = "The stored value is not usable (%@) — please choose it again";
 "app.button.chooseFolder" = "Choose Folder…";
+"app.button.enableCmuxAutomation" = "Allow Automation";
 "app.button.installInChrome" = "Install in Chrome";
 "app.button.openOptionsPage" = "Open Extension Options Page";
 "app.button.openSystemSettings" = "Open System Settings";
 "app.button.registerUpdate" = "Register/Update";
 "app.button.requestAccessibility" = "Request Accessibility Permission";
 "app.button.requestItermPermission" = "Request iTerm2 Permission";
+"app.button.refreshCmuxStatus" = "Check Again";
 "app.button.restartNow" = "Restart Now";
 "app.button.runInTerminal" = "Run in Terminal";
 "app.button.showSetupGuide" = "Show Setup Guide Again";
@@ -50,6 +53,7 @@
 "app.error.cmux.notInstalled" = "cmux is not installed. Install cmux or check its installation.";
 "app.error.cmux.rpcFailed" = "cmux RPC failed: %@";
 "app.error.cmux.socketDenied" = "cmux denied the socket connection — its socket control mode is not \"automation\". Allow automation from this app's setup window, or set automation.socketControlMode to \"automation\" in ~/.config/cmux/cmux.json.";
+"app.error.cmux.config" = "cmux.json update failed: %@";
 "app.guide.step1" = "① Turn on Developer mode, top right";
 "app.guide.step2" = "② Click “Load unpacked”, top left";
 "app.guide.step3" = "③ In the file dialog: ⇧⌘G → ⌘V (paste) → Enter → [Select]";
@@ -81,6 +85,8 @@
 "app.pipeline.wezterm.notInstalled" = "WezTerm is not installed";
 "app.section.accessibility.help" = "Used to confirm on Warp's screen that claude received the input. Without it, buttons that schedule claude input are refused without opening a tab — all three shipped presets are in that group, because a ! input only runs when it is typed into claude's shell mode. Buttons with no claude input, and buttons that schedule a single plain line, work without the permission. While a delivery is running you have to keep that tab in view.";
 "app.section.accessibility.title" = "Warp claude input (Accessibility)";
+"app.section.cmux.help" = "External apps can connect to cmux only when its socket control mode is \"automation\". Enabling it lets every process owned by this macOS user control cmux.";
+"app.section.cmux.title" = "cmux socket control";
 "app.section.itermPermission.help" = "Grants iTerm2 control (Apple Events) to this app alone. Chrome needs no permission at all.";
 "app.section.itermPermission.title" = "iTerm2 control permission";
 "app.status.accessibility.denied" = "Not granted — buttons with scheduled claude input are refused";
@@ -98,6 +104,8 @@
 "app.status.cmux.denied" = "Socket access denied — socket control mode is not \"automation\"";
 "app.status.cmux.reachable" = "Reachable";
 "app.status.cmux.failed" = "Status check failed: %@";
+"app.status.cmux.automationAlreadyEnabled" = "Automation already enabled";
+"app.status.cmux.automationNotApplied" = "Not applied — try restarting cmux";
 "app.status.manifest.notRegistered" = "Not registered — press [%@]";
 "app.status.manifest.registered" = "Registered";
 "app.status.manifest.wrongExtensionID" = "The extension ID differs from the current setting — refresh it with [%@]";

@@ -263,4 +263,231 @@ final class CmuxTests: XCTestCase {
             .failed("unexpected reply")
         )
     }
+
+    func testItem22CmuxConfigInsertsAutomationBeforeCommentedTemplateAndPreservesJSONC() throws {
+        let fixture = """
+        {
+          "$schema": "https://example.test/cmux.json",
+          "schemaVersion": 1,
+
+          // This file uses JSON with comments (JSONC).
+          //   "automation" : {
+          //     "socketControlMode" : "cmuxOnly",
+          //   },
+        }
+        """
+
+        let result = try cmuxConfigEnablingAutomation(existing: fixture)
+        guard case .edited(let edited) = result else {
+            return XCTFail("a commented template must be edited, not treated as an existing key")
+        }
+
+        let json = try jsonObjectFromCmuxJSONC(edited)
+        let automation = try XCTUnwrap(json["automation"] as? [String: Any])
+        XCTAssertEqual(automation["socketControlMode"] as? String, "automation")
+        XCTAssertEqual(json["$schema"] as? String, "https://example.test/cmux.json")
+        XCTAssertEqual(json["schemaVersion"] as? Int, 1)
+        let expected = """
+        {
+          "automation": {"socketControlMode": "automation"},
+          "$schema": "https://example.test/cmux.json",
+          "schemaVersion": 1,
+
+          // This file uses JSON with comments (JSONC).
+          //   "automation" : {
+          //     "socketControlMode" : "cmuxOnly",
+          //   },
+        }
+        """
+        XCTAssertEqual(edited, expected)
+        XCTAssertTrue(edited.contains("//   \"automation\" : {"))
+        XCTAssertTrue(edited.contains("//     \"socketControlMode\" : \"cmuxOnly\","))
+        let opening = try XCTUnwrap(fixture.firstIndex(of: "{"))
+        let originalAfterOpening = String(fixture[fixture.index(after: opening)...])
+        XCTAssertTrue(edited.contains(originalAfterOpening), "bytes after the insertion stayed intact")
+    }
+
+    func testItem22CmuxConfigFollowsFourSpaceRootIndentation() throws {
+        let source = "{\n    \"schemaVersion\": 1\n}\n"
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("a root without automation must be edited")
+        }
+
+        XCTAssertEqual(
+            edited,
+            "{\n    \"automation\": {\"socketControlMode\": \"automation\"},\n"
+                + "    \"schemaVersion\": 1\n}\n"
+        )
+    }
+
+    func testItem22CmuxConfigReplacesOnlyExistingSocketModeValue() throws {
+        let source = """
+        {
+          "automation": {"socketControlMode": "cmuxOnly", "portRange": 10},
+          "other": true
+        }
+        """
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("cmuxOnly must be replaced")
+        }
+        XCTAssertTrue(edited.contains("\"socketControlMode\": \"automation\""))
+        XCTAssertTrue(edited.contains("\"portRange\": 10"))
+        XCTAssertTrue(edited.contains("\"other\": true"))
+        XCTAssertFalse(edited.contains("\"socketControlMode\": \"cmuxOnly\""))
+    }
+
+    func testItem22CmuxConfigAddsMissingSocketModeAsTheFirstAutomationMember() throws {
+        let source = #"{"automation":{"portRange":10}}"#
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("an automation object without a mode must be edited")
+        }
+        let json = try jsonObjectFromCmuxJSONC(edited)
+        let automation = try XCTUnwrap(json["automation"] as? [String: Any])
+        XCTAssertEqual(automation["socketControlMode"] as? String, "automation")
+        XCTAssertEqual(automation["portRange"] as? Int, 10)
+        XCTAssertTrue(edited.hasPrefix(#"{"automation":{"socketControlMode": "automation","#))
+    }
+
+    func testItem22CmuxConfigFollowsAutomationMemberIndentation() throws {
+        let source = """
+        {
+          "automation": {
+            "portRange": 10
+          }
+        }
+        """
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("an automation object without a mode must be edited")
+        }
+
+        XCTAssertEqual(
+            edited,
+            """
+            {
+              "automation": {
+                "socketControlMode": "automation",
+                "portRange": 10
+              }
+            }
+            """
+        )
+    }
+
+    func testItem22CmuxConfigReturnsUnchangedWhenAutomationIsAlreadyEnabled() throws {
+        let source = #"{"automation":{"socketControlMode":"automation"},"other":1}"#
+
+        XCTAssertEqual(
+            try cmuxConfigEnablingAutomation(existing: source),
+            .unchanged
+        )
+    }
+
+    func testItem22CmuxConfigCreatesMinimalJSONForMissingOrBlankFile() throws {
+        let expected = """
+        {
+          "automation": {
+            "socketControlMode": "automation"
+          }
+        }
+        """
+
+        guard case .edited(let missing) = try cmuxConfigEnablingAutomation(existing: nil) else {
+            return XCTFail("a missing file must be created")
+        }
+        guard case .edited(let blank) = try cmuxConfigEnablingAutomation(existing: " \n\t") else {
+            return XCTFail("a blank file must be created")
+        }
+        XCTAssertEqual(missing, expected + "\n")
+        XCTAssertEqual(blank, expected + "\n")
+    }
+
+    func testItem22CmuxConfigDoesNotTreatAStringValueAsTheAutomationKey() throws {
+        let source = #"{"title":"\"automation\" mode","other":1}"#
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("the root has no automation key")
+        }
+        XCTAssertTrue(edited.contains(#""title":"\"automation\" mode"#))
+        XCTAssertTrue(edited.contains(#""automation": {"socketControlMode": "automation"}"#))
+    }
+
+    func testItem22CmuxConfigIgnoresAutomationInsideBlockComment() throws {
+        let source = """
+        {
+          /* "automation": {"socketControlMode": "cmuxOnly"} */
+          "other": 1
+        }
+        """
+
+        guard case .edited(let edited) = try cmuxConfigEnablingAutomation(existing: source) else {
+            return XCTFail("a block-commented key is not a real key")
+        }
+        XCTAssertTrue(edited.contains("/* \"automation\": {\"socketControlMode\": \"cmuxOnly\"} */"))
+        XCTAssertEqual(try jsonObjectFromCmuxJSONC(edited)["other"] as? Int, 1)
+    }
+
+    func testItem22CmuxConfigRejectsNonObjectAndUnbalancedInputWithoutEditing() {
+        XCTAssertThrowsError(try cmuxConfigEnablingAutomation(existing: "[]"))
+        XCTAssertThrowsError(try cmuxConfigEnablingAutomation(existing: "{\"automation\": {}"))
+        XCTAssertThrowsError(try cmuxConfigEnablingAutomation(existing: "{\"title\": \"unterminated}"))
+    }
+
+    private func jsonObjectFromCmuxJSONC(_ source: String) throws -> [String: Any] {
+        var withoutComments = ""
+        var index = source.startIndex
+        var inString = false
+        var escaped = false
+        while index < source.endIndex {
+            let character = source[index]
+            let next = source.index(after: index)
+            if inString {
+                withoutComments.append(character)
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                index = next
+                continue
+            }
+            if character == "\"" {
+                inString = true
+                withoutComments.append(character)
+                index = next
+                continue
+            }
+            if character == "/", next < source.endIndex, source[next] == "/" {
+                index = source.index(after: next)
+                while index < source.endIndex, source[index] != "\n" { index = source.index(after: index) }
+                continue
+            }
+            if character == "/", next < source.endIndex, source[next] == "*" {
+                index = source.index(after: next)
+                while index < source.endIndex {
+                    let commentNext = source.index(after: index)
+                    if source[index] == "*", commentNext < source.endIndex, source[commentNext] == "/" {
+                        index = source.index(after: commentNext)
+                        break
+                    }
+                    index = commentNext
+                }
+                continue
+            }
+            withoutComments.append(character)
+            index = next
+        }
+        while let comma = withoutComments.range(of: #",\s*}"#, options: .regularExpression) {
+            withoutComments.replaceSubrange(comma, with: "}")
+        }
+        let object = try JSONSerialization.jsonObject(
+            with: Data(withoutComments.utf8), options: [.fragmentsAllowed]
+        )
+        return try XCTUnwrap(object as? [String: Any])
+    }
 }

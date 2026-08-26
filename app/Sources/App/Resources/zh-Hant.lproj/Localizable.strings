@@ -5,6 +5,7 @@
 "app.alert.extensionFolderFailed" = "擴充功能資料夾準備失敗";
 "app.alert.manifestFailed" = "Native Host 註冊失敗";
 "app.alert.permissionRequestFailed" = "權限請求失敗";
+"app.alert.cmuxConfigFailed" = "更新 cmux 自動化設定失敗";
 "app.automation.denied" = "未授權 — 請在「系統設定 → 隱私權與安全性 → 自動化」中允許";
 "app.automation.granted" = "已授權";
 "app.automation.notDetermined" = "尚未請求 — 請按 [%@]";
@@ -19,12 +20,14 @@
 "app.baseDir.reason.notAbsolute" = "不是絕對路徑";
 "app.baseDir.storedInvalid" = "已儲存的值無法使用 (%@) — 請重新選擇";
 "app.button.chooseFolder" = "選擇資料夾…";
+"app.button.enableCmuxAutomation" = "允許自動化";
 "app.button.installInChrome" = "在 Chrome 中安裝";
 "app.button.openOptionsPage" = "開啟擴充功能選項頁";
 "app.button.openSystemSettings" = "開啟系統設定";
 "app.button.registerUpdate" = "註冊 / 更新";
 "app.button.requestAccessibility" = "請求輔助使用權限";
 "app.button.requestItermPermission" = "請求 iTerm2 權限";
+"app.button.refreshCmuxStatus" = "重新檢查";
 "app.button.restartNow" = "立即重新啟動";
 "app.button.runInTerminal" = "在終端機中執行";
 "app.button.showSetupGuide" = "再次顯示設定指南";
@@ -43,6 +46,7 @@
 "app.error.cmux.notInstalled" = "尚未安裝 cmux。請安裝 cmux 或檢查其安裝位置。";
 "app.error.cmux.rpcFailed" = "cmux RPC 失敗：%@";
 "app.error.cmux.socketDenied" = "cmux 拒絕了通訊端連線 — socket control mode 不是 automation。請在此應用程式的設定視窗中允許自動化，或將 ~/.config/cmux/cmux.json 中的 automation.socketControlMode 改為 \"automation\"。";
+"app.error.cmux.config" = "cmux.json 更新失敗：%@";
 "app.guide.step1" = "① 開啟右上角的開發人員模式";
 "app.guide.step2" = "② 點擊左上角的「載入未封裝項目」";
 "app.guide.step3" = "③ 在檔案對話方塊中：⇧⌘G → ⌘V（貼上）→ Enter → [選擇]";
@@ -74,6 +78,8 @@
 "app.pipeline.wezterm.notInstalled" = "未安裝 WezTerm";
 "app.section.accessibility.help" = "用於在 Warp 的畫面上確認 claude 已收到輸入。沒有它，預約了 claude 輸入的按鈕會被拒絕且不開啟分頁 — 隨附的三個預設都屬於這一類，因為 ! 輸入只有被輸入到 claude 的 shell 模式時才會執行。沒有 claude 輸入的按鈕，以及只預約一行純文字的按鈕，不需要該權限也能運作。傳送進行期間，請保持該分頁可見。";
 "app.section.accessibility.title" = "Warp 的 claude 輸入（輔助使用）";
+"app.section.cmux.help" = "外部應用程式連線至 cmux 需要將 socket control mode 設為 \"automation\"。啟用後，此 macOS 使用者擁有的所有處理程序都能控制 cmux。";
+"app.section.cmux.title" = "cmux 通訊端控制";
 "app.section.itermPermission.help" = "僅授予本應用程式控制 iTerm2 的權限（Apple Events）。Chrome 完全不需要任何權限。";
 "app.section.itermPermission.title" = "iTerm2 控制權限";
 "app.status.accessibility.denied" = "未授權 — 預約了 claude 輸入的按鈕會被拒絕";
@@ -91,6 +97,8 @@
 "app.status.cmux.denied" = "通訊端存取遭拒 — socket control mode 不是 automation";
 "app.status.cmux.reachable" = "可連線";
 "app.status.cmux.failed" = "狀態檢查失敗：%@";
+"app.status.cmux.automationAlreadyEnabled" = "自動化已啟用";
+"app.status.cmux.automationNotApplied" = "未套用 — 請嘗試重新啟動 cmux";
 "app.status.manifest.notRegistered" = "未註冊 — 請按 [%@]";
 "app.status.manifest.registered" = "已註冊";
 "app.status.manifest.wrongExtensionID" = "擴充功能 ID 與目前設定不同 — 請用 [%@] 重新整理";

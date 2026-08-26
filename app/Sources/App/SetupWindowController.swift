@@ -263,17 +263,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
     private let permissionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let accessibilityStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let cmuxStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
-    /// The two stacks that are **filled** rather than created — a rebuild appends to them unless
+    /// The three stacks that are **filled** rather than created — a rebuild appends to them unless
     /// the builders clear first, which is the one way replacing the view tree can double a window
-    var refillableSectionsForTesting: [NSStackView] { [permissionSection, accessibilitySection] }
+    /// Keep Accessibility last for the existing transition oracle; cmux sits between the two.
+    var refillableSectionsForTesting: [NSStackView] {
+        [permissionSection, cmuxSection, accessibilitySection]
+    }
 
     var statusLabelsForTesting: [NSTextField] {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
-            permissionStatusLabel, accessibilityStatusLabel, testResultLabel,
+            permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, testResultLabel,
         ]
     }
     /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
@@ -281,9 +285,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// title is set in the builder instead, where a rebuild reads it again — and it lives in
     /// exactly one place, so a rebuild has one site to update rather than two to keep in step.
     private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
+    private let cmuxAutomationButton = NSButton(title: "", target: nil, action: nil)
+    private let cmuxRefreshButton = NSButton(title: "", target: nil, action: nil)
     private var itermRadio: NSButton!
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
+    private var cmuxRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
     /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
     /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
@@ -291,6 +298,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let permissionSection = NSStackView()
     /// On screen only while the terminal is Warp and the Accessibility permission is not granted
     private let accessibilitySection = NSStackView()
+    /// On screen only while cmux is selected; the section exposes the live socket mode and its
+    /// explicit JSONC editing action.
+    private let cmuxSection = NSStackView()
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -871,9 +881,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
         weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
         warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
+        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled)
 
-        // Stacked vertically: three of them side by side do not fit the card's width
-        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio])
+        // Stacked vertically: four of them side by side do not fit the card's width
+        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
         radioColumn.spacing = 7
@@ -886,8 +897,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         radioRow.spacing = 18
 
         buildPermissionSection()
+        buildCmuxSection()
         buildAccessibilitySection()
-        return card(localized("app.card.terminal.title"), [radioRow, permissionSection, accessibilitySection])
+        return card(
+            localized("app.card.terminal.title"),
+            [radioRow, permissionSection, cmuxSection, accessibilitySection]
+        )
     }
 
     private func radio(_ title: String, installed: Bool) -> NSButton {
@@ -946,6 +961,32 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             button(localized("app.button.requestAccessibility"), #selector(requestAccessibility)),
             button(localized("app.button.openSystemSettings"), #selector(openAccessibilitySettings)),
         ]))
+    }
+
+    private func buildCmuxSection() {
+        // Idempotent: this stack survives language redraws just like the permission sections.
+        cmuxSection.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        cmuxSection.orientation = .vertical
+        cmuxSection.alignment = .leading
+        cmuxSection.spacing = 9
+        cmuxSection.addArrangedSubview(hairline())
+        cmuxSection.addArrangedSubview(sectionTitle(localized("app.section.cmux.title")))
+        cmuxSection.addArrangedSubview(helpLabel(localized("app.section.cmux.help")))
+        cmuxSection.addArrangedSubview(cmuxStatusLabel)
+
+        cmuxAutomationButton.title = localized("app.button.enableCmuxAutomation")
+        cmuxAutomationButton.target = self
+        cmuxAutomationButton.action = #selector(enableCmuxAutomation)
+        cmuxAutomationButton.identifier = role(#selector(enableCmuxAutomation))
+        cmuxAutomationButton.bezelStyle = .rounded
+
+        cmuxRefreshButton.title = localized("app.button.refreshCmuxStatus")
+        cmuxRefreshButton.target = self
+        cmuxRefreshButton.action = #selector(refreshCmuxStatus)
+        cmuxRefreshButton.identifier = role(#selector(refreshCmuxStatus))
+        cmuxRefreshButton.bezelStyle = .rounded
+
+        cmuxSection.addArrangedSubview(buttonRow([cmuxAutomationButton, cmuxRefreshButton]))
     }
 
     private func sectionTitle(_ text: String) -> NSTextField {
@@ -1168,7 +1209,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - The terminal choice
 
     @objc private func terminalChanged() {
-        if weztermRadio.state == .on {
+        if cmuxRadio.state == .on {
+            select(terminal: .cmux)
+        } else if weztermRadio.state == .on {
             select(terminal: .wezterm)
         } else if warpRadio.state == .on {
             select(terminal: .warp)
@@ -1191,10 +1234,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .iterm: itermRadio.state = .on
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
-        case .cmux:
-            itermRadio.state = .off
-            weztermRadio.state = .off
-            warpRadio.state = .off
+        case .cmux: cmuxRadio.state = .on
         }
         // Scheduled claude input is delivered only once claude is up, so it takes a while — and
         // anything the user types in the meantime mixes into it
@@ -1255,6 +1295,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
 
         var permission: SetupState?
+        var cmuxStatus: CmuxSocketStatus?
         // A command still runs without Accessibility — only the claude input delivery is refused —
         // so this is a warning and not an error
         let accessibilityGranted = PermissionChecker.isAccessibilityGranted
@@ -1280,17 +1321,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
         case .cmux:
-            break // cmux permission/status UI belongs to the cmux setup item
+            let status = PermissionChecker.cmuxSocketStatus()
+            cmuxStatus = status
+            apply(cmuxSetupState(status), to: cmuxStatusLabel)
+            cmuxAutomationButton.isEnabled = status == .notRunning || status == .denied
+            cmuxRefreshButton.isEnabled = true
         }
         var granted = false
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
+        cmuxSection.isHidden = Settings.terminal != .cmux
         accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
 
         pipeline.update(pipelineNodes(
             manifest: manifest, extensionState: extensionState,
             socketAlive: socketAlive, permission: permission,
-            accessibilityGranted: accessibilityGranted
+            accessibilityGranted: accessibilityGranted, cmuxStatus: cmuxStatus
         ))
         // No resize call here on purpose: the content view resizes the window from inside its
         // own layout pass, which is the only moment the measurement is valid.
@@ -1385,12 +1431,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         toolsList.addArrangedSubview(label)
     }
 
+    private func cmuxSetupState(_ status: CmuxSocketStatus) -> SetupState {
+        switch status {
+        case .reachable:
+            return .ok(status.label)
+        case .notRunning, .failed:
+            return .warning(status.label)
+        case .denied, .notInstalled:
+            return .error(status.label)
+        }
+    }
+
     /// Internal rather than private so `testPipelineNodesAreLocalized` can read the strings this
     /// produces. Reaching them through the drawn view would mean walking a stack of labels, and a
     /// walk that stopped finding them would go quiet instead of failing.
     func pipelineNodes(
         manifest: SetupState, extensionState: SetupState,
-        socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool
+        socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool,
+        cmuxStatus: CmuxSocketStatus?
     ) -> [PipelineStripView.Node] {
         func color(_ state: SetupState) -> NSColor {
             switch state {
@@ -1431,8 +1489,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
         case .cmux:
             terminalName = "cmux"
-            terminalColor = Theme.warn
-            terminalDetail = localized("app.status.unknown")
+            if let cmuxStatus {
+                switch cmuxStatus {
+                case .reachable:
+                    terminalColor = Theme.ok
+                case .notRunning, .failed:
+                    terminalColor = Theme.warn
+                case .denied, .notInstalled:
+                    terminalColor = Theme.err
+                }
+                terminalDetail = cmuxStatus.label
+            } else {
+                terminalColor = Theme.warn
+                terminalDetail = localized("app.status.unknown")
+            }
         }
         return [
             .init(
@@ -1596,6 +1666,38 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openAccessibilitySettings() {
         PermissionChecker.openAccessibilitySettings()
+    }
+
+    @objc private func refreshCmuxStatus() {
+        refresh()
+    }
+
+    /// This is the only path that edits cmux.json. It is an explicit user action; installation,
+    /// launch, and ordinary refreshes only read the live ping state.
+    @objc private func enableCmuxAutomation() {
+        cmuxAutomationButton.isEnabled = false
+        CmuxAutomation.enableAutomation { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(.alreadyEnabled):
+                self.cmuxAutomationButton.isEnabled = true
+                self.apply(
+                    .ok(localized("app.status.cmux.automationAlreadyEnabled")),
+                    to: self.cmuxStatusLabel
+                )
+            case .success(.applied):
+                self.refresh()
+            case .success(.notApplied):
+                self.refresh()
+                self.apply(
+                    .warning(localized("app.status.cmux.automationNotApplied")),
+                    to: self.cmuxStatusLabel
+                )
+            case .failure(let error):
+                self.showError(localized("app.alert.cmuxConfigFailed"), error)
+                self.refresh()
+            }
+        }
     }
 
     @objc private func testTerminal() {

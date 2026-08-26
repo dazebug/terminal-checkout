@@ -204,9 +204,12 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
 }
 
 /// Core keeps its stable English descriptions for diagnostics and for callers that do not have an
-/// app bundle. The socket response is user-facing, so the App boundary localizes the three cmux
-/// failures while leaving every existing terminal message byte-for-byte unchanged.
+/// app bundle. The socket response and config action are user-facing, so the App boundary localizes
+/// cmux failures while leaving every existing terminal message byte-for-byte unchanged.
 func localizedErrorMessage(_ error: Error) -> String {
+    if let cmuxError = error as? CmuxConfigurationError {
+        return localized("app.error.cmux.config", cmuxError.description)
+    }
     guard let terminalError = error as? TerminalError else { return errorMessage(error) }
     switch terminalError {
     case .cmuxNotFound:

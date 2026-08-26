@@ -4,6 +4,7 @@
 "app.alert.extensionFolderFailed" = "扩展程序文件夹准备失败";
 "app.alert.manifestFailed" = "Native Host 注册失败";
 "app.alert.permissionRequestFailed" = "权限请求失败";
+"app.alert.cmuxConfigFailed" = "更新 cmux 自动化设置失败";
 "app.automation.denied" = "未授权 — 请在“系统设置 → 隐私与安全性 → 自动化”中允许";
 "app.automation.granted" = "已授权";
 "app.automation.notDetermined" = "尚未请求 — 请按 [%@]";
@@ -18,12 +19,14 @@
 "app.baseDir.reason.notAbsolute" = "不是绝对路径";
 "app.baseDir.storedInvalid" = "已保存的值无法使用 (%@) — 请重新选择";
 "app.button.chooseFolder" = "选择文件夹…";
+"app.button.enableCmuxAutomation" = "允许自动化";
 "app.button.installInChrome" = "在 Chrome 中安装";
 "app.button.openOptionsPage" = "打开扩展程序选项页";
 "app.button.openSystemSettings" = "打开系统设置";
 "app.button.registerUpdate" = "注册 / 更新";
 "app.button.requestAccessibility" = "请求辅助功能权限";
 "app.button.requestItermPermission" = "请求 iTerm2 权限";
+"app.button.refreshCmuxStatus" = "重新检查";
 "app.button.restartNow" = "立即重新启动";
 "app.button.runInTerminal" = "在终端中运行";
 "app.button.showSetupGuide" = "再次显示设置指南";
@@ -42,6 +45,7 @@
 "app.error.cmux.notInstalled" = "未安装 cmux。请安装 cmux 或检查其安装位置。";
 "app.error.cmux.rpcFailed" = "cmux RPC 失败：%@";
 "app.error.cmux.socketDenied" = "cmux 拒绝了套接字连接 — socket control mode 不是 automation。请在此应用的设置窗口中允许自动化，或将 ~/.config/cmux/cmux.json 中的 automation.socketControlMode 改为 \"automation\"。";
+"app.error.cmux.config" = "cmux.json 更新失败：%@";
 "app.guide.step1" = "① 打开右上角的开发者模式";
 "app.guide.step2" = "② 点击左上角的“加载已解压的扩展程序”";
 "app.guide.step3" = "③ 在文件对话框中：⇧⌘G → ⌘V（粘贴）→ Enter → [选择]";
@@ -73,6 +77,8 @@
 "app.pipeline.wezterm.notInstalled" = "未安装 WezTerm";
 "app.section.accessibility.help" = "用于在 Warp 的屏幕上确认 claude 已收到输入。没有它，预约了 claude 输入的按钮会被拒绝且不打开标签页 — 随附的三个预设都属于这一类，因为 ! 输入只有被输入到 claude 的 shell 模式时才会运行。没有 claude 输入的按钮，以及只预约一行纯文本的按钮，不需要该权限也能工作。传送进行期间，请保持该标签页可见。";
 "app.section.accessibility.title" = "Warp 的 claude 输入（辅助功能）";
+"app.section.cmux.help" = "外部应用连接 cmux 需要将 socket control mode 设为 \"automation\"。启用后，此 macOS 用户拥有的所有进程都可以控制 cmux。";
+"app.section.cmux.title" = "cmux 套接字控制";
 "app.section.itermPermission.help" = "仅授予本应用控制 iTerm2 的权限（Apple Events）。Chrome 完全不需要任何权限。";
 "app.section.itermPermission.title" = "iTerm2 控制权限";
 "app.status.accessibility.denied" = "未授权 — 预约了 claude 输入的按钮会被拒绝";
@@ -90,6 +96,8 @@
 "app.status.cmux.denied" = "套接字访问被拒绝 — socket control mode 不是 automation";
 "app.status.cmux.reachable" = "可连接";
 "app.status.cmux.failed" = "状态检查失败：%@";
+"app.status.cmux.automationAlreadyEnabled" = "自动化已启用";
+"app.status.cmux.automationNotApplied" = "未生效 — 请尝试重新启动 cmux";
 "app.status.manifest.notRegistered" = "未注册 — 请按 [%@]";
 "app.status.manifest.registered" = "已注册";
 "app.status.manifest.wrongExtensionID" = "扩展程序 ID 与当前设置不同 — 请用 [%@] 刷新";

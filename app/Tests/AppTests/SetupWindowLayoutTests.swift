@@ -389,7 +389,7 @@ final class SetupWindowLayoutTests: XCTestCase {
     /// The states handed in are synthetic and built from that locale's own catalogue, so the case
     /// enumerates the rows it means instead of whatever this machine's manifest happens to say.
     func testPipelineNodesAreLocalized() throws {
-        let productNames: Set<String> = ["iTerm2", "WezTerm", "Warp"]
+        let productNames: Set<String> = ["iTerm2", "WezTerm", "Warp", "cmux"]
         var renderings: [String: [String]] = [:]
 
         for tag in SetupWindowLayoutTests.populatedLocales {
@@ -401,7 +401,7 @@ final class SetupWindowLayoutTests: XCTestCase {
             let nodes = controller.pipelineNodes(
                 manifest: .ok(try XCTUnwrap(try loadCatalogue(tag)["app.status.manifest.registered"])),
                 extensionState: .ok(try XCTUnwrap(try loadCatalogue(tag)["app.status.extensionFolder.ready"])),
-                socketAlive: true, permission: nil, accessibilityGranted: true
+                socketAlive: true, permission: nil, accessibilityGranted: true, cmuxStatus: .reachable
             )
             XCTAssertEqual(nodes.count, 4, "\(tag): the strip lost a node")
 
@@ -425,6 +425,24 @@ final class SetupWindowLayoutTests: XCTestCase {
         for (index, pair) in zip(english, korean).enumerated() {
             XCTAssertNotEqual(pair.0, pair.1, "pipeline node \(index) reads the same in both languages")
         }
+    }
+
+    func testItem14CmuxSelectionShowsSocketSectionAndUsesStatusState() throws {
+        let controller = makeController(.cmux)
+        let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let cmuxSection = controller.refillableSectionsForTesting[1]
+        XCTAssertFalse(cmuxSection.isHidden)
+        XCTAssertEqual(cmuxSection.arrangedSubviews.count, 5)
+
+        let nodes = controller.pipelineNodes(
+            manifest: .ok("registered"), extensionState: .ok("ready"), socketAlive: true,
+            permission: nil, accessibilityGranted: true, cmuxStatus: .denied
+        )
+        XCTAssertEqual(nodes.last?.label, "cmux")
+        XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.denied"))
     }
 
     /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
