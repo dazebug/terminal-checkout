@@ -23,6 +23,7 @@ enum CmuxConfigurationError: Error, CustomStringConvertible {
     case backupFailed(String)
     case directoryFailed(String)
     case writeFailed(String)
+    case writeFailedWithUnsecuredBackup(String, path: String)
 
     var description: String {
         switch self {
@@ -32,6 +33,8 @@ enum CmuxConfigurationError: Error, CustomStringConvertible {
         case .backupFailed(let detail): return "backup failed: \(detail)"
         case .directoryFailed(let detail): return "directory creation failed: \(detail)"
         case .writeFailed(let detail): return "atomic write failed: \(detail)"
+        case .writeFailedWithUnsecuredBackup(let detail, let path):
+            return "atomic write failed: \(detail) (unsecured backup: \(path))"
         }
     }
 }
@@ -50,9 +53,11 @@ enum CmuxAutomation {
         return nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EEXIST)
     }
 
-    private static func reservationIdentity(at url: URL) -> ReservedBackup {
+    /// Read identity from the open descriptor before close; the close∼lstat window is not
+    /// reproduced in tests because fstat removes that window rather than racing around it.
+    private static func reservationIdentity(for descriptor: Int32, at url: URL) -> ReservedBackup {
         var info = stat()
-        guard url.path.withCString({ lstat($0, &info) == 0 }) else {
+        guard Darwin.fstat(descriptor, &info) == 0 else {
             return ReservedBackup(url: url, inode: 0, device: 0)
         }
         return ReservedBackup(
@@ -67,18 +72,25 @@ enum CmuxAutomation {
         guard descriptor >= 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
-        guard Darwin.fchmod(descriptor, mode_t(0o600)) == 0 else {
+        let reservation = reservationIdentity(for: descriptor, at: url)
+        guard reservation.inode != 0 else {
             let code = errno
             _ = Darwin.close(descriptor)
-            try? FileManager.default.removeItem(at: url)
+            removeReservedPlaceholder(reservation)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        guard Darwin.fchmod(descriptor, mode_t(0o600)) == 0 else {
+            let code = errno
+            removeReservedPlaceholder(reservation)
+            _ = Darwin.close(descriptor)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
         guard Darwin.close(descriptor) == 0 else {
             let code = errno
-            try? FileManager.default.removeItem(at: url)
+            removeReservedPlaceholder(reservation)
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
         }
-        return reservationIdentity(at: url)
+        return reservation
     }
 
     /// `backupItemName` removes an existing item with that name during replacement, so checking
@@ -163,6 +175,18 @@ enum CmuxAutomation {
             && info.st_size == 0
     }
 
+    /// Every placeholder deletion goes through the reservation identity check. A real backup
+    /// left by a replacement is non-empty or has a different inode/device, so it is never removed.
+    private static func removeReservedPlaceholder(_ reservation: ReservedBackup) {
+        guard ownsEmptyBackupPlaceholder(reservation) else { return }
+        try? FileManager.default.removeItem(at: reservation.url)
+    }
+
+    /// Test-only access to verify identity-safe placeholder cleanup.
+    static func testOnlyRemoveReservedPlaceholder(_ reservation: ReservedBackup) {
+        removeReservedPlaceholder(reservation)
+    }
+
     /// The synchronous file operation is injectable for tests; the button calls the asynchronous
     /// wrapper below so backup, disk I/O, and the bounded live probe never block AppKit.
     static func writeAutomation(
@@ -235,9 +259,8 @@ enum CmuxAutomation {
         // prove that it is ours.
         defer {
             try? fileManager.removeItem(at: temporaryURL)
-            if backupReservationActive, let backupURL,
-               ownsEmptyBackupPlaceholder(backupURL) {
-                try? fileManager.removeItem(at: backupURL.url)
+            if backupReservationActive, let backupURL {
+                removeReservedPlaceholder(backupURL)
             }
         }
 
@@ -273,7 +296,25 @@ enum CmuxAutomation {
         } catch let error as CmuxConfigurationError {
             throw error
         } catch {
-            throw CmuxConfigurationError.writeFailed(errorMessage(error))
+            let replacementError = errorMessage(error)
+            if let backupURL, !ownsEmptyBackupPlaceholder(backupURL) {
+                do {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: 0o600], ofItemAtPath: backupURL.url.path
+                    )
+                } catch {
+                    throw CmuxConfigurationError.writeFailedWithUnsecuredBackup(
+                        "\(replacementError); backup chmod failed: \(errorMessage(error))",
+                        path: backupURL.url.path
+                    )
+                }
+                // The replacement moved a real backup before failing. It is now protected, so
+                // report the original write error without retaining an unsecured-backup warning.
+                throw CmuxConfigurationError.writeFailed(
+                    "\(replacementError) (backup path: \(backupURL.url.path))"
+                )
+            }
+            throw CmuxConfigurationError.writeFailed(replacementError)
         }
 
         // Narrowing loses nothing, and cmux.json may contain socketPassword. This is deliberately

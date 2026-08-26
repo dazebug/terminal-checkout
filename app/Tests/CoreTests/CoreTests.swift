@@ -3685,7 +3685,8 @@ final class RunProcessTimeoutTests: XCTestCase {
 
     /// J3 red reproduction: a parent can exit normally while a background child keeps the pipe
     /// open. The normal drain must be bounded too, and should return the parent's successful result
-    /// with whatever output was read before the bound closed the pipe.
+    /// with whatever output was read before the bound closed the pipe. L6's reader/caller race is
+    /// not reproduced deterministically in a test; the green lock removes that window instead.
     func testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound() {
         let started = Date()
         var result: (status: Int32, stdout: String, stderr: String)?
@@ -3704,6 +3705,15 @@ final class RunProcessTimeoutTests: XCTestCase {
             Date().timeIntervalSince(started), 8,
             "a normally exited parent must not make pipe draining unbounded"
         )
+    }
+
+    /// L5: a truncated final UTF-8 scalar must not erase the valid prefix from stdout when the
+    /// bounded drain closes a pipe after collecting it.
+    func testRunProcessKeepsValidPrefixBeforeInvalidUTF8() throws {
+        let result = try runProcess(
+            "/bin/sh", ["-c", #"printf 'ok'; printf '\303'"#], timeout: 10
+        )
+        XCTAssertTrue(result.stdout.hasPrefix("ok"), result.stdout)
     }
 }
 

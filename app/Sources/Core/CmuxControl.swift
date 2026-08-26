@@ -102,35 +102,45 @@ func cmuxReadinessOutcome(from error: TerminalError?) -> CmuxReadiness {
 }
 
 /// A workspace denial is a configuration diagnosis, not a launch failure: opening cmux cannot
-/// change a running instance's socket mode. A retry is safe only when it is proven that the
-/// request had no server-side effect; `workspace.create` is not idempotent, so timeouts and
-/// malformed responses are rethrown because the server may already have created a workspace.
-/// `TerminalError` flattens transport details into the RPC failure string, so the small,
-/// conservative connection-marker list below is the only available classification. The measured
-/// not-running error was `Error: Failed to connect to socket at <path> (Connection refused, errno
-/// 61)`, which matched `failed to connect` and `connection refused`; the app then launched cmux and
-/// succeeded in 2.4s. Unknown failures are deliberately rethrown rather than guessed to be
-/// connection failures, so the markers remain conservative rather than speculative.
+/// change a running instance's socket mode. Retrying is safe only when the request is proven not
+/// to have reached the server; `workspace.create` is not idempotent, so timeouts, malformed
+/// responses, and post-create failures are rethrown because the server may already have created a
+/// workspace. The measured stopped-cmux CLI emits `Error: Failed to connect to socket at <path>
+/// (Connection refused, errno 61)` for a stale socket, so the classifier below is anchored to
+/// the CLI's measured connection prefix rather than searching substrings. That anchor is tied to
+/// the measured cmux CLI version; unknown failures are conservatively rethrown instead of guessed
+/// to be connection failures.
 func cmuxRecoveryAction(
     afterFirstFailure: TerminalError, launchAttempted: Bool
 ) -> CmuxRecovery {
     switch afterFirstFailure {
-    case .cmuxSocketDenied, .timeout:
-        return .rethrow
-    case .cmuxRPCFailed(let message):
-        let lowercased = message.lowercased()
-        guard !lowercased.contains("invalid json response"), !launchAttempted else {
-            return .rethrow
-        }
-        let connectionMarkers = [
-            "connection refused", "failed to connect", "could not connect",
-            "connection failed", "socket not found", "no such file or directory",
-        ]
-        return connectionMarkers.contains { lowercased.contains($0) }
-            ? .launchAndRetry : .rethrow
+    case .cmuxNotReachable(_):
+        return launchAttempted ? .rethrow : .launchAndRetry
     default:
         return .rethrow
     }
+}
+
+/// The cmux CLI emitted these measured stderr forms:
+/// `Error: Failed to connect to socket at /tmp/…/dead.sock (Connection refused, errno 61)` means
+/// the socket file exists but its listener is gone after cmux stopped; `Error: Socket not found at
+/// /tmp/…/nonexistent.sock` means the socket file is absent. The `Error: ` prefix is part of the
+/// CLI output. An earlier test omitted that prefix and passed while blocking the real auto-launch
+/// path, so the tests must retain the measured raw forms. These anchors are tied to the measured
+/// cmux CLI version; anchoring prevents `workspace.create: post-create hook: no such file or
+/// directory` from authorizing a duplicate workspace retry merely because of a substring match.
+func classifyCmuxCLIFailure(_ message: String) -> TerminalError {
+    let cliPrefix = "Error: "
+    let unprefixed = message.hasPrefix(cliPrefix)
+        ? String(message.dropFirst(cliPrefix.count))
+        : message
+
+    if unprefixed.hasPrefix("Failed to connect to socket at ")
+        || unprefixed.hasPrefix("Socket not found at ") {
+        return .cmuxNotReachable(message)
+    }
+
+    return .cmuxRPCFailed(message)
 }
 
 private func asciiJSON(_ data: Data) -> String {
@@ -224,6 +234,8 @@ public func cmuxRPCFailure(method: String, status: Int32, stderr: String) -> Ter
         return .cmuxSocketDenied
     }
     let message = detail.isEmpty ? "exit status " + String(status) : detail
+    let classified = classifyCmuxCLIFailure(message)
+    if case .cmuxNotReachable(_) = classified { return classified }
     return .cmuxRPCFailed("\(method): \(message)")
 }
 

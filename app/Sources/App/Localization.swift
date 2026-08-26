@@ -218,6 +218,8 @@ func localizedErrorMessage(_ error: Error) -> String {
         return localized("app.error.cmux.socketDenied")
     case .cmuxRPCFailed(let message):
         return localized("app.error.cmux.rpcFailed", message)
+    case .cmuxNotReachable(let message):
+        return localized("app.error.cmux.rpcFailed", message)
     default:
         return errorMessage(error)
     }

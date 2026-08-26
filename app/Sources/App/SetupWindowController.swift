@@ -303,6 +303,34 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// `backupSecured` describes only the backup from this write, not every path already retained
+    /// from earlier writes. A path is cleared only when its own file is secured (or gone).
+    static func retainedUnsecuredBackups(
+        _ current: Set<String>, after result: CmuxAutomationWriteResult,
+        isSecured: (String) -> Bool
+    ) -> Set<String> {
+        var retained = current.filter { !isSecured($0) }
+        switch result {
+        case .alreadyEnabled:
+            return retained
+        case .applied(let backupSecured, let backupPath),
+             .notApplied(let backupSecured, let backupPath):
+            // The result flag belongs to the newly written backup; it is not evidence about
+            // another path, so an unsecured existing path remains until its mode is rechecked.
+            if !backupSecured, let backupPath { retained.insert(backupPath) }
+        }
+        return retained
+    }
+
+    private static func cmuxBackupIsSecured(at path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return true }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let permissions = attributes[.posixPermissions] as? NSNumber else {
+            return false
+        }
+        return permissions.intValue == 0o600
+    }
+
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
@@ -351,9 +379,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var lastCmuxStatus: CmuxSocketStatus?
     /// The unmodified live label from the most recent refresh, before transient feedback is added.
     private var lastCmuxLiveText: String?
-    /// A backup whose permissions could not be narrowed remains a persistent warning: we cannot
-    /// know that the user manually secured it, so only a later successful write clears this state.
-    private var unsecuredCmuxBackupPath: String?
+    /// Backups whose permissions could not be narrowed remain a persistent warning. The set is
+    /// process-local: after a restart the window cannot know whether a user handled an old path,
+    /// so the warning disappears even though the file itself remains.
+    private var unsecuredCmuxBackupPaths = Set<String>()
     /// Refreshes can arrive while the JSON write and live probe are in flight. This flag is read
     /// before the live status so an unrelated refresh cannot re-enable the action mid-write.
     private var cmuxAutomationInFlight = false
@@ -1383,9 +1412,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             cmuxStatus = status
             apply(cmuxSetupState(status), to: cmuxStatusLabel)
             lastCmuxLiveText = cmuxStatusLabel.stringValue
-            let backupWarning = unsecuredCmuxBackupPath.map {
-                localized("app.status.cmux.backupProtectionIncomplete", $0)
-            }
+            unsecuredCmuxBackupPaths = Self.retainedUnsecuredBackups(
+                unsecuredCmuxBackupPaths,
+                after: .alreadyEnabled,
+                isSecured: Self.cmuxBackupIsSecured(at:)
+            )
+            let backupWarning: String? = unsecuredCmuxBackupPaths.isEmpty
+                ? nil
+                : localized(
+                    "app.status.cmux.backupProtectionIncomplete",
+                    unsecuredCmuxBackupPaths.sorted().joined(separator: ", ")
+                )
             cmuxStatusLabel.stringValue = Self.cmuxStatusLine(
                 liveText: cmuxStatusLabel.stringValue,
                 feedback: nil,
@@ -1758,11 +1795,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 switch result {
                 case .applied(let backupSecured, let backupPath),
                      .notApplied(let backupSecured, let backupPath):
-                    if backupSecured {
-                        self.unsecuredCmuxBackupPath = nil
-                    } else if let backupPath {
-                        self.unsecuredCmuxBackupPath = backupPath
-                    }
+                    self.unsecuredCmuxBackupPaths = Self.retainedUnsecuredBackups(
+                        self.unsecuredCmuxBackupPaths,
+                        after: result,
+                        isSecured: Self.cmuxBackupIsSecured(at:)
+                    )
                 case .alreadyEnabled:
                     // No file was written, so an earlier unsecured backup remains a live warning.
                     break
@@ -1785,9 +1822,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     case .backupUnsecured:
                         return
                     }
-                    let backupWarning = self.unsecuredCmuxBackupPath.map {
-                        localized("app.status.cmux.backupProtectionIncomplete", $0)
-                    }
+                    let backupWarning: String? = self.unsecuredCmuxBackupPaths.isEmpty
+                        ? nil
+                        : localized(
+                            "app.status.cmux.backupProtectionIncomplete",
+                            self.unsecuredCmuxBackupPaths.sorted().joined(separator: ", ")
+                        )
                     self.cmuxStatusLabel.stringValue = Self.cmuxStatusLine(
                         liveText: self.lastCmuxLiveText ?? self.cmuxStatusLabel.stringValue,
                         feedback: feedback,
@@ -1795,6 +1835,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     )
                 }
             case .failure(let error):
+                if let configurationError = error as? CmuxConfigurationError,
+                   case .writeFailedWithUnsecuredBackup(_, let path) = configurationError {
+                    self.unsecuredCmuxBackupPaths.insert(path)
+                }
                 self.refresh()
                 self.showError(localized("app.alert.cmuxConfigFailed"), error)
             }

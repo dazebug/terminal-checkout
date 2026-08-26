@@ -46,26 +46,34 @@ final class CmuxTests: XCTestCase {
     /// J2 red reproduction: retry is safe only when the first request demonstrably never reached
     /// the server. A timeout or invalid JSON can follow a server-side workspace creation, so the
     /// implementation must rethrow those uncertain outcomes instead of creating a duplicate.
-    func testCmuxRecoveryActionRetriesOnlyARecoverableFirstFailure() {
+    func testCmuxRecoveryActionRetriesOnlyATypedReachabilityFailure() {
+        let measuredErrors = [
+            "Error: Failed to connect to socket at /tmp/…/dead.sock (Connection refused, errno 61)",
+            "Error: Socket not found at /tmp/…/nonexistent.sock"
+        ]
+        for measuredError in measuredErrors {
+            let classified = classifyCmuxCLIFailure(measuredError)
+            guard case .cmuxNotReachable = classified else {
+                XCTFail("the measured connection error was not typed as unreachable")
+                continue
+            }
+            XCTAssertEqual(
+                cmuxRecoveryAction(
+                    afterFirstFailure: classified, launchAttempted: false
+                ),
+                .launchAndRetry
+            )
+            XCTAssertEqual(
+                cmuxRecoveryAction(
+                    afterFirstFailure: classified, launchAttempted: true
+                ),
+                .rethrow
+            )
+        }
+
         XCTAssertEqual(
             cmuxRecoveryAction(
                 afterFirstFailure: .cmuxSocketDenied, launchAttempted: false
-            ),
-            .rethrow
-        )
-        XCTAssertEqual(
-            cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed(
-                    "workspace.create: connection refused"
-                ), launchAttempted: false
-            ),
-            .launchAndRetry
-        )
-        XCTAssertEqual(
-            cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed(
-                    "workspace.create: connection refused"
-                ), launchAttempted: true
             ),
             .rethrow
         )
@@ -85,24 +93,34 @@ final class CmuxTests: XCTestCase {
         )
     }
 
-    /// The fully stopped-cmux CLI emitted this exact string (driver measurement, 2026-08-26).
-    /// If the connection-marker list is narrowed, this measured case should fail first.
-    func testCmuxRecoveryActionUsesMeasuredStoppedCmuxConnectionError() {
-        let measuredConnectionError =
-            "Failed to connect to socket at /Users/choongjaelee/.local/state/cmux/cmux.sock "
-            + "(Connection refused, errno 61)"
+    /// Both forms are driver measurements from 2026-08-27, and the `Error: ` prefix is part of
+    /// the cmux CLI's stderr output. The earlier no-prefix test passed while blocking the real
+    /// auto-launch path, so both measured inputs must remain anchored here.
+    func testCmuxCLIFailureClassifierUsesMeasuredStaleAndMissingSocketErrors() {
+        let measuredErrors = [
+            "Error: Failed to connect to socket at /tmp/…/dead.sock (Connection refused, errno 61)",
+            "Error: Socket not found at /tmp/…/nonexistent.sock"
+        ]
+        for measuredError in measuredErrors {
+            let classified = classifyCmuxCLIFailure(measuredError)
+            guard case .cmuxNotReachable(let detail) = classified else {
+                XCTFail("the measured CLI error was not typed as unreachable")
+                continue
+            }
+            XCTAssertEqual(detail, measuredError)
+        }
+    }
+
+    /// L2: a post-create hook can contain the same filesystem words after the server already made
+    /// a workspace, so it must remain an ordinary RPC failure and never authorize a retry.
+    func testCmuxCLIFailureDoesNotTreatPostCreateHookFailureAsConnectionLoss() {
+        let message = "workspace.create: post-create hook: no such file or directory"
+        let classified = classifyCmuxCLIFailure(message)
+        guard case .cmuxRPCFailed = classified else {
+            return XCTFail("post-create failure was unexpectedly typed as unreachable")
+        }
         XCTAssertEqual(
-            cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed(measuredConnectionError),
-                launchAttempted: false
-            ),
-            .launchAndRetry
-        )
-        XCTAssertEqual(
-            cmuxRecoveryAction(
-                afterFirstFailure: .cmuxRPCFailed(measuredConnectionError),
-                launchAttempted: true
-            ),
+            cmuxRecoveryAction(afterFirstFailure: classified, launchAttempted: false),
             .rethrow
         )
     }
@@ -117,6 +135,20 @@ final class CmuxTests: XCTestCase {
         )
         XCTAssertEqual(
             cmuxReadinessOutcome(from: .timeout("debug.terminals")), .notReady
+        )
+    }
+
+    /// L7: launch status and the last non-denial readiness error survive a bounded poll instead of
+    /// collapsing into the generic timeout sentence.
+    func testCmuxReadinessTimeoutDescriptionKeepsLaunchAndLastError() {
+        let description = cmuxReadinessTimeoutDescription(
+            launchExitStatus: 1, lastError: .cmuxRPCFailed("bundle not found")
+        )
+        XCTAssertTrue(description.contains("1"), description)
+        XCTAssertTrue(description.contains("bundle not found"), description)
+        XCTAssertEqual(
+            cmuxReadinessTimeoutDescription(launchExitStatus: nil, lastError: nil),
+            "cmux readiness"
         )
     }
 

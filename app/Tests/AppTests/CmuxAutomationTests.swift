@@ -192,6 +192,112 @@ final class CmuxAutomationTests: XCTestCase {
         }
     }
 
+    /// L3: if replacement moves a 0644 config into the backup path and then throws, the real
+    /// recovery file is narrowed and the error retains the path for diagnosis.
+    func testItem22ReplacementFailureSecuresAndReportsBackupMovedBeforeThrow() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        try Data(original.utf8).write(to: config)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: config.path
+        )
+        var backupURL: URL?
+        var thrown: Error?
+
+        do {
+            _ = try CmuxAutomation.writeAutomation(
+                configURL: config,
+                status: { .reachable },
+                sleep: { _ in },
+                replaceItem: { originalURL, _, backupItemName in
+                    guard let backupItemName else {
+                        throw NSError(domain: "CmuxAutomationTests", code: 5)
+                    }
+                    let destination = self.directory.appendingPathComponent(backupItemName)
+                    backupURL = destination
+                    try FileManager.default.removeItem(at: destination)
+                    try FileManager.default.moveItem(at: originalURL, to: destination)
+                    throw NSError(domain: "CmuxAutomationTests", code: 6)
+                }
+            )
+        } catch {
+            thrown = error
+        }
+
+        let backup = try XCTUnwrap(backupURL)
+        XCTAssertEqual(try permissions(of: backup), 0o600)
+        guard let error = thrown as? CmuxConfigurationError else {
+            return XCTFail("expected a configuration error for the replacement failure")
+        }
+        guard case .writeFailed(let detail) = error else {
+            return XCTFail("a secured backup should use the ordinary write failure: \(error)")
+        }
+        XCTAssertTrue(detail.contains(backup.path), "the recovery path should remain diagnosable")
+    }
+
+    /// L3: if the post-replacement chmod itself fails, the applied bytes remain live but the
+    /// error carries the unprotected recovery path for the controller's persistent warning.
+    func testItem22ReplacementFailureReportsUnsecuredBackupWhenChmodFails() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        try Data(original.utf8).write(to: config)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: config.path
+        )
+        let fileManager = FileManagerThatRejectsBackupPermissions()
+        var backupURL: URL?
+        var thrown: Error?
+
+        do {
+            _ = try CmuxAutomation.writeAutomation(
+                configURL: config,
+                fileManager: fileManager,
+                status: { .reachable },
+                sleep: { _ in },
+                replaceItem: { originalURL, _, backupItemName in
+                    guard let backupItemName else {
+                        throw NSError(domain: "CmuxAutomationTests", code: 7)
+                    }
+                    let destination = self.directory.appendingPathComponent(backupItemName)
+                    backupURL = destination
+                    try FileManager.default.removeItem(at: destination)
+                    try FileManager.default.moveItem(at: originalURL, to: destination)
+                    throw NSError(domain: "CmuxAutomationTests", code: 8)
+                }
+            )
+        } catch {
+            thrown = error
+        }
+
+        let backup = try XCTUnwrap(backupURL)
+        XCTAssertEqual(try permissions(of: backup), 0o644)
+        guard let error = thrown as? CmuxConfigurationError,
+              case .writeFailedWithUnsecuredBackup(_, let path) = error else {
+            return XCTFail("a failed backup chmod must name the unsecured backup: \(String(describing: thrown))")
+        }
+        XCTAssertEqual(path, backup.path)
+    }
+
+    /// L4: the close-to-lstat race is not reproduced here; fstat before close makes a replacement
+    /// at the same path distinguishable without relying on that race.
+    func testItem22PlaceholderRemovalDoesNotDeleteDifferentIdentity() throws {
+        let different = directory.appendingPathComponent("different-placeholder")
+        try Data().write(to: different)
+        let actual = reservedBackup(at: different)
+        let mismatched = ReservedBackup(
+            url: different, inode: actual.inode + 1, device: actual.device
+        )
+
+        CmuxAutomation.testOnlyRemoveReservedPlaceholder(mismatched)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: different.path))
+
+        let same = directory.appendingPathComponent("same-placeholder")
+        try Data().write(to: same)
+        let sameReservation = reservedBackup(at: same)
+        CmuxAutomation.testOnlyRemoveReservedPlaceholder(sameReservation)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: same.path))
+    }
+
     /// J7 red reproduction: a dotfiles-style symlink must remain the live configuration path while
     /// the target directory receives the replacement and its recovery backup.
     func testItem22WriteThroughSymlinkPreservesLinkAndBacksUpTarget() throws {

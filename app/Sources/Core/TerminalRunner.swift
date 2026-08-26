@@ -9,6 +9,7 @@ public enum TerminalError: Error, CustomStringConvertible {
     case cmuxNotFound
     case cmuxSocketDenied
     case cmuxRPCFailed(String)
+    case cmuxNotReachable(String)
     case timeout(String)
     /// The app is leaving, so no new delivery may be started. Transient by nature — which is why it
     /// is not a `ClaudeInputBlocker`: those name a state the user has to go and fix.
@@ -30,6 +31,7 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .cmuxNotFound: return "cmux not found. Install cmux or check your PATH."
         case .cmuxSocketDenied: return "cmux socket access denied."
         case .cmuxRPCFailed(let message): return "cmux RPC error: \(message)"
+        case .cmuxNotReachable(let message): return "cmux not reachable: \(message)"
         case .timeout(let what): return "Timed out: \(what)"
         case .goingAway:
             return "Terminal Checkout is quitting or restarting — press the button again in a moment."
@@ -211,11 +213,18 @@ public func runProcess(
     // The pipes have to be drained before waiting for exit, or a large output blocks
     let group = DispatchGroup()
     var outData = Data(), errData = Data()
+    let bufferLock = NSLock()
     DispatchQueue.global().async(group: group) {
-        outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        bufferLock.lock()
+        outData = data
+        bufferLock.unlock()
     }
     DispatchQueue.global().async(group: group) {
-        errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let data = errPipe.fileHandleForReading.readDataToEndOfFile()
+        bufferLock.lock()
+        errData = data
+        bufferLock.unlock()
     }
 
     let exited = DispatchSemaphore(value: 0)
@@ -244,7 +253,12 @@ public func runProcess(
             if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGKILL) }
             outPipe.fileHandleForReading.closeFile()
             errPipe.fileHandleForReading.closeFile()
-            _ = group.wait(timeout: .now() + 0.25)
+            if group.wait(timeout: .now() + 0.25) == .timedOut {
+                checkoutLog(
+                    "process output drain still exceeded the final 0.25s bound after timeout; "
+                        + "captured buffers remain partial"
+                )
+            }
         }
         throw TerminalError.timeout("\(path) \(args.joined(separator: " "))")
     }
@@ -261,13 +275,37 @@ public func runProcess(
         )
         outPipe.fileHandleForReading.closeFile()
         errPipe.fileHandleForReading.closeFile()
-        _ = group.wait(timeout: .now() + 0.25)
+        // The race between the final wait and the readers is not reproduced deterministically in
+        // a test; both readers and this caller use bufferLock so the timeout still has defined data.
+        if group.wait(timeout: .now() + 0.25) == .timedOut {
+            checkoutLog(
+                "process output drain still exceeded the final 0.25s bound; "
+                    + "returning captured partial output"
+            )
+        }
+    }
+
+    bufferLock.lock()
+    let capturedOutData = outData
+    let capturedErrData = errData
+    bufferLock.unlock()
+
+    // Lossy decoding preserves a valid prefix when J3's forced pipe close cuts a multibyte
+    // sequence. The old optional decoder returned an empty string for that same invalid byte;
+    // log the invalid original instead of changing it silently.
+    func decoded(_ data: Data, stream: String) -> String {
+        if String(data: data, encoding: .utf8) == nil {
+            checkoutLog(
+                "process output contained invalid UTF-8 on \(stream); using lossy decoding"
+            )
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     return (
         process.terminationStatus,
-        String(data: outData, encoding: .utf8) ?? "",
-        String(data: errData, encoding: .utf8) ?? ""
+        decoded(capturedOutData, stream: "stdout"),
+        decoded(capturedErrData, stream: "stderr")
     )
 }
 
@@ -300,16 +338,44 @@ public func runInTerminal(
 private let cmuxReadinessWaitTimeout: TimeInterval = 10
 private let cmuxReadinessPollInterval: TimeInterval = 0.1
 
+/// Keep launch and readiness diagnostics ahead of the generic timeout so a missing bundle or the
+/// last server error survives the bounded poll.
+func cmuxReadinessTimeoutDescription(
+    launchExitStatus: Int32?, lastError: TerminalError?
+) -> String {
+    var details: [String] = []
+    if let launchExitStatus {
+        details.append("cmux launch exited with status " + String(launchExitStatus))
+    }
+    if let lastError {
+        details.append("last readiness error: " + errorMessage(lastError))
+    }
+    guard !details.isEmpty else { return "cmux readiness" }
+    return details.joined(separator: "; ") + "; cmux readiness"
+}
+
 /// After launching, a successful `debug.terminals` RPC is the server-side readiness proof. A
 /// denied response is surfaced immediately; a missing socket path is not consulted because cmux
 /// may be reachable through its alternate discovery paths. The normal first `workspace.create`
 /// success path never calls this poll, preserving the two-RPC budget.
-private func waitForCmuxReadiness(cliPath: String) throws {
+private func waitForCmuxReadiness(
+    cliPath: String, launchExitStatus: Int32?, initialError: TerminalError? = nil
+) throws {
     let deadline = Date().addingTimeInterval(cmuxReadinessWaitTimeout)
+    var lastError: TerminalError?
+    if let initialError, case .cmuxSocketDenied = initialError {
+        lastError = nil
+    } else {
+        lastError = initialError
+    }
     while true {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else {
-            throw TerminalError.timeout("cmux readiness")
+            throw TerminalError.timeout(
+                cmuxReadinessTimeoutDescription(
+                    launchExitStatus: launchExitStatus, lastError: lastError
+                )
+            )
         }
         do {
             _ = try cmuxRPC(
@@ -324,14 +390,20 @@ private func waitForCmuxReadiness(cliPath: String) throws {
             case .denied:
                 throw TerminalError.cmuxSocketDenied
             case .notReady:
-                break
+                lastError = error
             }
         } catch {
-            // An untyped process failure is not a readiness proof; leave the bounded poll intact.
+            // An untyped process failure is not a readiness proof, but keep its reason for the
+            // bounded timeout rather than replacing it with a generic sentence.
+            lastError = .cmuxRPCFailed(errorMessage(error))
         }
         let sleepFor = min(cmuxReadinessPollInterval, deadline.timeIntervalSinceNow)
         guard sleepFor > 0 else {
-            throw TerminalError.timeout("cmux readiness")
+            throw TerminalError.timeout(
+                cmuxReadinessTimeoutDescription(
+                    launchExitStatus: launchExitStatus, lastError: lastError
+                )
+            )
         }
         Thread.sleep(forTimeInterval: sleepFor)
     }
@@ -360,8 +432,22 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
         case .launchAndRetry:
             // Passing no target after the bundle id is deliberate: an argument would enable cmux
             // session restoration instead of merely starting the app.
-            _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
-            try waitForCmuxReadiness(cliPath: cliPath)
+            var launchExitStatus: Int32?
+            var launchError: TerminalError?
+            do {
+                launchExitStatus = try runProcess(
+                    "/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15
+                ).status
+            } catch let error as TerminalError {
+                launchError = error
+            } catch {
+                launchError = .cmuxRPCFailed(errorMessage(error))
+            }
+            try waitForCmuxReadiness(
+                cliPath: cliPath,
+                launchExitStatus: launchExitStatus,
+                initialError: launchError
+            )
             workspace = try cmuxRPC(
                 cli: cliPath, method: cmuxWorkspaceCreateMethod,
                 params: cmuxWorkspaceCreateParameters()

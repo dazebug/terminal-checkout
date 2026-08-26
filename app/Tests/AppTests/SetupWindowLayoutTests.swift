@@ -552,6 +552,45 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
     }
 
+    /// L1: the result flag belongs to the latest write, not to older backup paths, so a warning
+    /// survives a no-write result and only secured files are removed.
+    func testCmuxRetainedUnsecuredBackupsUseEachPathMode() {
+        let oldPath = "/tmp/cmux-old.bak"
+        let securedPath = "/tmp/cmux-secured.bak"
+        let newPath = "/tmp/cmux-new.bak"
+
+        XCTAssertEqual(
+            SetupWindowController.retainedUnsecuredBackups(
+                [oldPath],
+                after: .notApplied(backupSecured: true, backupPath: nil),
+                isSecured: { _ in false }
+            ),
+            [oldPath]
+        )
+        XCTAssertEqual(
+            SetupWindowController.retainedUnsecuredBackups(
+                [securedPath, oldPath],
+                after: .notApplied(backupSecured: false, backupPath: nil),
+                isSecured: { $0 == securedPath }
+            ),
+            [oldPath]
+        )
+        XCTAssertEqual(
+            SetupWindowController.retainedUnsecuredBackups(
+                [oldPath],
+                after: .applied(backupSecured: false, backupPath: newPath),
+                isSecured: { _ in false }
+            ),
+            [oldPath, newPath]
+        )
+        XCTAssertEqual(
+            SetupWindowController.retainedUnsecuredBackups(
+                [oldPath], after: .alreadyEnabled, isSecured: { _ in false }
+            ),
+            [oldPath]
+        )
+    }
+
     /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
     /// almost nothing around the placeholder would match anything, so those are not counted.
     private func framed(_ text: String, by values: [String]) -> Bool {
