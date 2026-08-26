@@ -56,13 +56,17 @@ public func resolveRequest(
 
     var claudeInputs: [String] = []
     for text in rawInputs {
-        let rendered = try renderCommand(
+        let renderedSource = try renderCommand(
             template: text, variables: variables, appVariables: appVariables
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        // The order is contractual: inspect the rendered source before trimming, because trimming
+        // first removes edge TAB/CR/LF and lets them pass; a TAB-only input then disappears with a
+        // success response (cold review 8).
+        try rejectNUL(in: renderedSource, what: "claude_inputs")
+        try rejectLineBreaks(in: renderedSource, what: "claude_inputs")
+        try rejectControlCharacters(in: renderedSource, what: "claude_inputs")
+        let rendered = renderedSource.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rendered.isEmpty else { continue }
-        try rejectNUL(in: rendered, what: "claude_inputs")
-        try rejectLineBreaks(in: rendered, what: "claude_inputs")
-        try rejectControlCharacters(in: rendered, what: "claude_inputs")
         claudeInputs.append(rendered)
     }
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)

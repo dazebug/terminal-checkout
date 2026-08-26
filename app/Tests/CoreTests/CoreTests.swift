@@ -379,6 +379,43 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
+    /// O1 red reproduction: extension storage and Request trim outside whitespace before the
+    /// typed-input guard, so an edge TAB can disappear with a success response, a leading TAB can
+    /// alter the body, and a trailing newline can skip the line-break diagnostic. The guard must
+    /// inspect the rendered source before trimming, while ordinary whitespace remains discardable.
+    func testClaudeInputsRejectControlCharactersBeforeTrimmingEdges() {
+        func request(_ input: String) -> [String: Any] {
+            ["command_template": "claude", "claude_inputs": [input]]
+        }
+
+        for input in ["\t", "\t!echo tc-edge", "\u{7F}"] {
+            XCTAssertThrowsError(try resolveRequest(request(input))) { error in
+                XCTAssertTrue(
+                    errorMessage(error).contains("claude_inputs"),
+                    "edge control byte was not diagnosed: \(error)"
+                )
+                if input == "\u{7F}" || input.contains("\t") {
+                    XCTAssertTrue(
+                        errorMessage(error).contains("control characters"),
+                        "wrong control-byte diagnosis: \(error)"
+                    )
+                }
+            }
+        }
+
+        XCTAssertThrowsError(try resolveRequest(request("hello\n"))) { error in
+            XCTAssertTrue(
+                errorMessage(error).contains("line breaks"),
+                "trailing newline lost its specific diagnosis: \(error)"
+            )
+        }
+
+        let trimmed = try? resolveRequest(request("  hello  "))
+        XCTAssertEqual(trimmed?.claudeInputs, ["hello"])
+        let empty = try? resolveRequest(request("   "))
+        XCTAssertEqual(empty?.claudeInputs, [])
+    }
+
     func testNULInTheCommandIsRejected() {
         XCTAssertThrowsError(try resolveRequest([
             "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],
