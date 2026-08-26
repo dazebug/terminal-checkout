@@ -105,11 +105,8 @@ func cmuxReadinessOutcome(from error: TerminalError?) -> CmuxReadiness {
 /// change a running instance's socket mode. Retrying is safe only when the request is proven not
 /// to have reached the server; `workspace.create` is not idempotent, so timeouts, malformed
 /// responses, and post-create failures are rethrown because the server may already have created a
-/// workspace. The measured stopped-cmux CLI emits `Error: Failed to connect to socket at <path>
-/// (Connection refused, errno 61)` for a stale socket, so the classifier below is anchored to
-/// the CLI's measured connection prefix rather than searching substrings. That anchor is tied to
-/// the measured cmux CLI version; unknown failures are conservatively rethrown instead of guessed
-/// to be connection failures.
+/// workspace. What counts as that proof is `classifyCmuxCLIFailure` below, which fails closed on
+/// anything it has not measured.
 func cmuxRecoveryAction(
     afterFirstFailure: TerminalError, launchAttempted: Bool
 ) -> CmuxRecovery {

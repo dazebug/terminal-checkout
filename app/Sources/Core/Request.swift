@@ -61,7 +61,7 @@ public func resolveRequest(
         )
         // The order is contractual: inspect the rendered source before trimming, because trimming
         // first removes edge TAB/CR/LF and lets them pass; a TAB-only input then disappears with a
-        // success response (cold review 8).
+        // success response.
         try rejectNUL(in: renderedSource, what: "claude_inputs")
         try rejectLineBreaks(in: renderedSource, what: "claude_inputs")
         try rejectControlCharacters(in: renderedSource, what: "claude_inputs")
