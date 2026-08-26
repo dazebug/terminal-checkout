@@ -98,6 +98,7 @@
 "app.status.cmux.failed" = "状態の確認に失敗しました: %@";
 "app.status.cmux.automationAlreadyEnabled" = "自動化はすでに有効です";
 "app.status.cmux.automationNotApplied" = "反映されませんでした — cmux を再起動してください";
+"app.status.cmux.backupProtectionIncomplete" = "バックアップの保護が未完了です — .bak ファイルの権限を確認してください。";
 "app.status.manifest.notRegistered" = "未登録 — [%@] を押してください";
 "app.status.manifest.registered" = "登録済み";
 "app.status.manifest.wrongExtensionID" = "拡張機能の ID が現在の設定と異なります — [%@] で更新してください";

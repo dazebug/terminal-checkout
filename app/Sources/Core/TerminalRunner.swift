@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum TerminalError: Error, CustomStringConvertible {
@@ -188,6 +189,11 @@ public func runProcess(
     if input != nil { process.standardInput = inPipe } else { process.standardInput = FileHandle.nullDevice }
 
     try process.run()
+    let processID = process.processIdentifier
+    // Keep timeout cleanup from leaving a descendant with the pipes open. Foundation exposes only
+    // the process id, so put this subprocess in its own group immediately after launch and kill
+    // the group on escalation; normal success and its return value are unchanged.
+    let isolatedProcessGroup = Darwin.setpgid(processID, processID) == 0
 
     if let input {
         inPipe.fileHandleForWriting.write(Data(input.utf8))
@@ -211,8 +217,27 @@ public func runProcess(
     }
     if exited.wait(timeout: .now() + timeout) == .timedOut {
         process.terminate()
-        _ = exited.wait(timeout: .now() + 2)
-        group.wait()
+        if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGTERM) }
+
+        let termGrace: TimeInterval = 2
+        if exited.wait(timeout: .now() + termGrace) == .timedOut {
+            // SIGTERM is a cooperative request. A child that ignores it (or a shell that traps it)
+            // gets SIGKILL after the grace period, and the group is killed so it cannot keep our
+            // pipe readers alive through an unrelated descendant.
+            if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGKILL) }
+            _ = Darwin.kill(processID, SIGKILL)
+            _ = exited.wait(timeout: .now() + 2)
+        }
+
+        // A killed process can still have a descendant holding stdout/stderr. Never wait forever
+        // for that drain: close the readers after the bounded post-kill wait and give the drain a
+        // short final chance to unwind before reporting the timeout.
+        if group.wait(timeout: .now() + 1) == .timedOut {
+            if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGKILL) }
+            outPipe.fileHandleForReading.closeFile()
+            errPipe.fileHandleForReading.closeFile()
+            _ = group.wait(timeout: .now() + 0.25)
+        }
         throw TerminalError.timeout("\(path) \(args.joined(separator: " "))")
     }
     group.wait()
@@ -252,51 +277,13 @@ public func runInTerminal(
 
 private let cmuxSocketWaitTimeout: TimeInterval = 10
 private let cmuxSocketPollInterval: TimeInterval = 0.1
-private let cmuxPingTimeout: TimeInterval = 5
 
-private func cmuxPingStatus(
-    cliPath: String, socketExists: Bool, timeout: TimeInterval = cmuxPingTimeout
-) -> CmuxSocketStatus {
-    do {
-        let result = try runProcess(cliPath, ["ping"], timeout: timeout)
-        return classifyCmuxSocketStatus(
-            socketExists: socketExists,
-            pingStatus: result.status,
-            stdout: result.stdout,
-            stderr: result.stderr
-        )
-    } catch {
-        return classifyCmuxSocketStatus(
-            socketExists: socketExists,
-            pingStatus: -1,
-            stdout: "",
-            stderr: errorMessage(error)
-        )
-    }
-}
-
-private func waitForCmuxSocket(cliPath: String) throws -> Bool {
+private func waitForCmuxSocket() -> Bool {
     let deadline = Date().addingTimeInterval(cmuxSocketWaitTimeout)
     while true {
-        let socketExists = cmuxSocketPath() != nil
-        // Once the path appears, stop immediately; ping is only a fallback while it is absent.
-        if socketExists { return true }
+        if cmuxSocketPath() != nil { return true }
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else { return false }
-        let status = cmuxPingStatus(
-            cliPath: cliPath, socketExists: false,
-            timeout: min(cmuxPingTimeout, remaining)
-        )
-        switch cmuxPreflight(socketExists: socketExists, pingStatus: status) {
-        case .proceed:
-            return true
-        case .denied:
-            // Access denial cannot be fixed by launching cmux; report the automation-mode error
-            // immediately instead of turning it into a misleading timeout.
-            throw TerminalError.cmuxSocketDenied
-        case .launch:
-            break
-        }
         let sleepFor = min(cmuxSocketPollInterval, deadline.timeIntervalSinceNow)
         guard sleepFor > 0 else { return false }
         Thread.sleep(forTimeInterval: sleepFor)
@@ -309,37 +296,35 @@ private func waitForCmuxSocket(cliPath: String) throws -> Bool {
 public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
     guard let cliPath = findCmuxCLI() else { throw TerminalError.cmuxNotFound }
 
-    let socketExists = cmuxSocketPath() != nil
-    let preflight: CmuxPreflight
-    if socketExists {
-        // Do not add a normal-path ping: D7 is two RPCs, and a present socket lets workspace.create
-        // provide the authoritative automation-denied error if the mode is wrong.
-        preflight = cmuxPreflight(socketExists: true, pingStatus: nil)
-    } else {
-        preflight = cmuxPreflight(
-            socketExists: false,
-            pingStatus: cmuxPingStatus(cliPath: cliPath, socketExists: false)
+    // The execution path deliberately does not ping first: workspace.create is the authoritative
+    // diagnosis for the request, and a normal run stays at D7's two RPCs. A first denial is final;
+    // only another first failure gets one launch and one workspace retry, never a second workspace
+    // creation after a successful first response.
+    let workspace: [String: Any]
+    do {
+        workspace = try cmuxRPC(
+            cli: cliPath, method: cmuxWorkspaceCreateMethod,
+            params: cmuxWorkspaceCreateParameters()
         )
-    }
-    switch preflight {
-    case .denied:
-        // Launching cannot change a running cmux's socket control mode.
-        throw TerminalError.cmuxSocketDenied
-    case .proceed:
-        break
-    case .launch:
-        // Passing no target after the bundle id is deliberate: an argument would enable cmux
-        // session restoration instead of merely starting the app.
-        _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
-        guard try waitForCmuxSocket(cliPath: cliPath) else {
-            throw TerminalError.timeout("cmux socket")
+    } catch let firstFailure as TerminalError {
+        switch cmuxRecoveryAction(afterFirstFailure: firstFailure, launchAttempted: false) {
+        case .rethrow:
+            throw firstFailure
+        case .launchAndRetry:
+            // Passing no target after the bundle id is deliberate: an argument would enable cmux
+            // session restoration instead of merely starting the app.
+            _ = try? runProcess("/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15)
+            guard waitForCmuxSocket() else {
+                throw TerminalError.timeout("cmux socket")
+            }
+            workspace = try cmuxRPC(
+                cli: cliPath, method: cmuxWorkspaceCreateMethod,
+                params: cmuxWorkspaceCreateParameters()
+            )
         }
+    } catch {
+        throw error
     }
-
-    let workspace = try cmuxRPC(
-        cli: cliPath, method: cmuxWorkspaceCreateMethod,
-        params: cmuxWorkspaceCreateParameters()
-    )
     guard let identifiers = cmuxWorkspaceIdentifiers(from: workspace) else {
         throw TerminalError.cmuxRPCFailed(
             "\(cmuxWorkspaceCreateMethod): response missing workspace_id or surface_id"

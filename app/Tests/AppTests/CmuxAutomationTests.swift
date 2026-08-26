@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import App
 @testable import Core
@@ -43,7 +44,7 @@ final class CmuxAutomationTests: XCTestCase {
             sleep: { _ in }
         )
 
-        XCTAssertEqual(result, .applied)
+        XCTAssertEqual(result, .applied(backupSecured: true))
         let updated = try String(contentsOf: config, encoding: .utf8)
         XCTAssertTrue(updated.contains("\"socketControlMode\": \"automation\""))
         XCTAssertTrue(updated.contains("// preserve this comment"))
@@ -57,27 +58,6 @@ final class CmuxAutomationTests: XCTestCase {
         XCTAssertEqual(try permissions(of: backup), 0o600)
     }
 
-    /// H1 red reproduction: a timestamp collision must not remove an older backup. The green
-    /// implementation will keep the timestamp visible and choose the first untaken suffix.
-    func testItem22BackupFileNameSkipsTakenTimestampCandidates() throws {
-        let timestamp = "20260826-200000"
-        var candidates: [String] = []
-        let result = try CmuxAutomation.backupFileName(timestamp: timestamp) { candidate in
-            candidates.append(candidate)
-            return candidates.count < 3
-        }
-
-        XCTAssertEqual(
-            candidates,
-            [
-                "cmux.json.\(timestamp).bak",
-                "cmux.json.\(timestamp)-2.bak",
-                "cmux.json.\(timestamp)-3.bak",
-            ]
-        )
-        XCTAssertEqual(result, "cmux.json.\(timestamp)-3.bak")
-    }
-
     /// H1 red reproduction: an existing same-second backup is a recovery artifact and must stay
     /// byte-identical while the V1 config is saved under another candidate name.
     func testItem22BackupNameCollisionPreservesExistingBackup() throws {
@@ -86,9 +66,7 @@ final class CmuxAutomationTests: XCTestCase {
         let sentinel = "sentinel"
         let now = Date(timeIntervalSince1970: 1_756_000_000)
         let timestamp = backupTimestamp(now)
-        let existingBackupName = try CmuxAutomation.backupFileName(
-            timestamp: timestamp, isTaken: { _ in false }
-        )
+        let existingBackupName = "cmux.json.\(timestamp).bak"
         let existingBackup = directory.appendingPathComponent(existingBackupName)
         try Data(original.utf8).write(to: config)
         try Data(sentinel.utf8).write(to: existingBackup)
@@ -107,7 +85,7 @@ final class CmuxAutomationTests: XCTestCase {
         }
 
         XCTAssertNil(thrown)
-        XCTAssertEqual(result, .some(.applied))
+        XCTAssertEqual(result, .some(.applied(backupSecured: true)))
         XCTAssertEqual(try String(contentsOf: existingBackup, encoding: .utf8), sentinel)
         XCTAssertTrue(
             try String(contentsOf: config, encoding: .utf8)
@@ -190,7 +168,7 @@ final class CmuxAutomationTests: XCTestCase {
             sleep: { _ in sleeps += 1 }
         )
 
-        XCTAssertEqual(result, .notApplied)
+        XCTAssertEqual(result, .notApplied(backupSecured: true))
         XCTAssertEqual(sleeps, 10)
         XCTAssertTrue(FileManager.default.fileExists(atPath: config.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: config.path + ".bak"))
@@ -221,7 +199,7 @@ final class CmuxAutomationTests: XCTestCase {
             sleep: { _ in }
         )
 
-        XCTAssertEqual(denied, .notApplied)
+        XCTAssertEqual(denied, .notApplied(backupSecured: true))
         XCTAssertEqual(deniedCalls, 1)
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), original)
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
@@ -230,10 +208,10 @@ final class CmuxAutomationTests: XCTestCase {
 
     /// H2 red reproduction: if narrowing the backup permissions fails after replacement, the
     /// config and backup already exist, so the result must come from the live status probe.
-    func testItem22BackupPermissionFailureReportsLiveStatusAfterReplacement() throws {
+    func testItem22BackupPermissionFailureReportsLiveStatusAndUnsecuredBackup() throws {
         let scenarios: [(String, CmuxSocketStatus, CmuxAutomationWriteResult)] = [
-            ("reachable", .reachable, .applied),
-            ("not-running", .notRunning, .notApplied),
+            ("reachable", .reachable, .applied(backupSecured: false)),
+            ("not-running", .notRunning, .notApplied(backupSecured: false)),
         ]
 
         for (name, liveStatus, expected) in scenarios {
@@ -274,6 +252,130 @@ final class CmuxAutomationTests: XCTestCase {
                 name
             )
         }
+    }
+
+    /// I2 red reproduction: `isTaken` and replacement are separate operations. The green seam
+    /// will reserve each candidate with an atomic create, skip an EEXIST candidate, and pass the
+    /// placeholder name to replacement.
+    func testItem22BackupReservationUsesAtomicCreateAndSkipsTakenCandidates() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        try Data(original.utf8).write(to: config)
+        let now = Date(timeIntervalSince1970: 1_756_000_000)
+        let timestamp = backupTimestamp(now)
+        let first = "cmux.json.\(timestamp).bak"
+        let second = "cmux.json.\(timestamp)-2.bak"
+        var reservationAttempts: [String] = []
+        var replacementBackupName: String?
+
+        let result = try CmuxAutomation.writeAutomation(
+            configURL: config,
+            now: now,
+            status: { .reachable },
+            sleep: { _ in },
+            replaceItem: { originalURL, replacementURL, backupItemName in
+                replacementBackupName = backupItemName
+                let backupURL = self.directory.appendingPathComponent(backupItemName ?? "missing.bak")
+                try Data(contentsOf: originalURL).write(to: backupURL, options: [])
+                try Data(contentsOf: replacementURL).write(to: originalURL, options: [])
+            },
+            reserveBackup: { url in
+                reservationAttempts.append(url.lastPathComponent)
+                if url.lastPathComponent == first {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EEXIST))
+                }
+                try Data("placeholder".utf8).write(to: url, options: .withoutOverwriting)
+            }
+        )
+
+        XCTAssertEqual(result, .applied(backupSecured: true))
+        XCTAssertEqual(reservationAttempts, [first, second])
+        XCTAssertEqual(replacementBackupName, second)
+        XCTAssertEqual(
+            try String(contentsOf: directory.appendingPathComponent(second), encoding: .utf8),
+            original
+        )
+    }
+
+    /// I2 red reproduction: a failed replacement must remove the placeholder reserved for the
+    /// backup name, rather than leaving an empty artifact beside the untouched config.
+    func testItem22BackupReservationPlaceholderIsRemovedWhenReplacementFails() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        try Data(#"{"schemaVersion":1}"#.utf8).write(to: config)
+        var reservedURL: URL?
+
+        XCTAssertThrowsError(try CmuxAutomation.writeAutomation(
+            configURL: config,
+            status: { .reachable },
+            sleep: { _ in },
+            replaceItem: { _, _, _ in
+                throw NSError(domain: "CmuxAutomationTests", code: 2)
+            },
+            reserveBackup: { url in
+                reservedURL = url
+                try Data("placeholder".utf8).write(to: url, options: .withoutOverwriting)
+            }
+        ))
+
+        guard let reservedURL else {
+            return XCTFail("the backup name was not atomically reserved")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reservedURL.path))
+    }
+
+    /// I2 red reproduction: a successful replacement must turn the reserved placeholder into the
+    /// bytes evicted from the config, not leave the placeholder as the backup content.
+    func testItem22BackupReservationPreservesBytesInTheReservedBackup() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let original = #"{"schemaVersion":1}"#
+        try Data(original.utf8).write(to: config)
+        var reservedURL: URL?
+
+        let result = try CmuxAutomation.writeAutomation(
+            configURL: config,
+            status: { .reachable },
+            sleep: { _ in },
+            replaceItem: { originalURL, replacementURL, _ in
+                guard let reservedURL else { return XCTFail("no reserved backup URL") }
+                try Data(contentsOf: originalURL).write(to: reservedURL, options: [])
+                try Data(contentsOf: replacementURL).write(to: originalURL, options: [])
+            },
+            reserveBackup: { url in
+                reservedURL = url
+                try Data("placeholder".utf8).write(to: url, options: .withoutOverwriting)
+            }
+        )
+
+        XCTAssertEqual(result, .applied(backupSecured: true))
+        guard let reservedURL else {
+            return XCTFail("the backup name was not atomically reserved")
+        }
+        XCTAssertEqual(try String(contentsOf: reservedURL, encoding: .utf8), original)
+    }
+
+    /// I6 contract: an existing whitespace-only file carries no content to preserve, so it takes
+    /// the same minimal-config path as a missing file while still receiving the ordinary backup.
+    func testItem22WriteTreatsWhitespaceOnlyExistingConfigAsEmptyAndBacksItUp() throws {
+        let config = directory.appendingPathComponent("cmux.json")
+        let whitespace = " \n\t"
+        try Data(whitespace.utf8).write(to: config)
+
+        let result = try CmuxAutomation.writeAutomation(
+            configURL: config,
+            status: { .reachable },
+            sleep: { _ in }
+        )
+
+        XCTAssertEqual(result, .applied(backupSecured: true))
+        XCTAssertEqual(
+            try String(contentsOf: config, encoding: .utf8),
+            "{\n  \"automation\": {\n    \"socketControlMode\": \"automation\"\n  }\n}\n"
+        )
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "bak" }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try String(contentsOf: try XCTUnwrap(backups.first), encoding: .utf8), whitespace)
     }
 
     private func permissions(of url: URL) throws -> Int {

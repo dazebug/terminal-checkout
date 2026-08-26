@@ -43,35 +43,33 @@ final class CmuxTests: XCTestCase {
         XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
     }
 
-    /// F6: cmux's CLI discovers its own socket (`CMUX_SOCKET_PATH` and
-    /// `/tmp/cmux-last-socket-path` are fallbacks), so a successful ping must prevent opening
-    /// cmux even when the app's default socket path is absent.
-    func testItem5CmuxLaunchNeededDependsOnPingWhenSocketIsMissing() {
-        XCTAssertFalse(cmuxLaunchNeeded(socketExists: false, pingSucceeded: true))
-        XCTAssertTrue(cmuxLaunchNeeded(socketExists: false, pingSucceeded: false))
-        XCTAssertFalse(cmuxLaunchNeeded(socketExists: true, pingSucceeded: false))
-    }
-
-    /// H3 red reproduction: D12 launches only for missing socket plus failed ping, while D7
-    /// keeps a present socket on the normal two-RPC path without a preliminary ping.
-    func testCmuxPreflightUsesSocketPresenceAndOptionalPing() {
+    /// I5 red reproduction: socket denial cannot be repaired by launching cmux, while an ordinary
+    /// first workspace failure can be retried after one launch attempt. The retry must not repeat
+    /// after launch has already been attempted.
+    func testCmuxRecoveryActionRetriesOnlyARecoverableFirstFailure() {
         XCTAssertEqual(
-            cmuxPreflight(socketExists: true, pingStatus: nil), .proceed
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxSocketDenied, launchAttempted: false
+            ),
+            .rethrow
         )
         XCTAssertEqual(
-            cmuxPreflight(socketExists: false, pingStatus: .denied), .denied
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxRPCFailed("workspace.create: failed"), launchAttempted: false
+            ),
+            .launchAndRetry
         )
         XCTAssertEqual(
-            cmuxPreflight(socketExists: false, pingStatus: .reachable), .proceed
+            cmuxRecoveryAction(
+                afterFirstFailure: .cmuxRPCFailed("workspace.create: failed"), launchAttempted: true
+            ),
+            .rethrow
         )
         XCTAssertEqual(
-            cmuxPreflight(socketExists: false, pingStatus: .notRunning), .launch
-        )
-        XCTAssertEqual(
-            cmuxPreflight(socketExists: true, pingStatus: .failed("boom")), .proceed
-        )
-        XCTAssertEqual(
-            cmuxPreflight(socketExists: true, pingStatus: .denied), .denied
+            cmuxRecoveryAction(
+                afterFirstFailure: .timeout("cmux socket"), launchAttempted: false
+            ),
+            .launchAndRetry
         )
     }
 

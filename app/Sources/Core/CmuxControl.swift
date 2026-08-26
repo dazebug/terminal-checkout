@@ -82,31 +82,23 @@ public func cmuxSocketPath(
     return fileExists(path) ? path : nil
 }
 
-func cmuxLaunchNeeded(socketExists: Bool, pingSucceeded: Bool) -> Bool {
-    !socketExists && !pingSucceeded
+enum CmuxRecovery: Equatable {
+    case rethrow
+    case launchAndRetry
 }
 
-enum CmuxPreflight: Equatable {
-    case proceed
-    case launch
-    case denied
-}
-
-/// A present socket is enough to proceed without a ping: D12 launches only when both the socket
-/// and ping are absent, while D7 keeps the normal path to workspace.create and surface.send_text.
-/// If the socket is present but automation is denied, workspace.create reports that RPC denial
-/// and the existing cmuxRPCFailure classifier preserves the cmuxSocketDenied diagnosis.
-func cmuxPreflight(
-    socketExists: Bool, pingStatus: CmuxSocketStatus?
-) -> CmuxPreflight {
-    guard let pingStatus else {
-        return socketExists ? .proceed : .launch
-    }
-    switch pingStatus {
-    case .reachable: return .proceed
-    case .denied: return .denied
-    case .failed: return socketExists ? .proceed : .launch
-    case .notInstalled, .notRunning: return .launch
+/// A workspace denial is a configuration diagnosis, not a launch failure: opening cmux cannot
+/// change a running instance's socket mode. Other first failures may mean cmux is stale, stopped,
+/// or using a socket the default-path probe cannot see, so one launch-and-retry is allowed before
+/// the error is returned. A second launch is never attempted.
+func cmuxRecoveryAction(
+    afterFirstFailure: TerminalError, launchAttempted: Bool
+) -> CmuxRecovery {
+    switch afterFirstFailure {
+    case .cmuxSocketDenied:
+        return .rethrow
+    default:
+        return launchAttempted ? .rethrow : .launchAndRetry
     }
 }
 

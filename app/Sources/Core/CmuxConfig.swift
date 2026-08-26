@@ -336,7 +336,9 @@ private func cmuxConfigLeadingIndentation(
 }
 
 /// Enables cmux's external automation mode without parsing and reserializing the user's JSONC.
-/// Comments, key order, whitespace, and all unrelated bytes therefore remain in the file.
+/// Comments, key order, whitespace, and all unrelated bytes therefore remain in the file. A missing
+/// or whitespace-only file has no content to preserve and is replaced with the minimal config;
+/// token-bearing malformed JSONC is rejected without editing.
 public func cmuxConfigEnablingAutomation(existing: String?) throws -> CmuxConfigEditResult {
     guard let existing, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         return .edited(cmuxMinimalAutomationConfig + "\n")

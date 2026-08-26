@@ -15,6 +15,7 @@ let setupTextWidth: CGFloat = setupContentWidth - 28
 enum CmuxAutomationFeedback: Equatable {
     case alreadyEnabled
     case notApplied
+    case backupUnsecured
 }
 
 /// Returns a case rather than a key string because only literal keys are visible to catalogue audit.
@@ -24,9 +25,13 @@ func cmuxAutomationFeedback(
     switch result {
     case .alreadyEnabled:
         return liveStatus == .reachable ? .alreadyEnabled : nil
-    case .notApplied:
+    case .applied(let backupSecured):
+        // Backup protection is a separate safety axis and takes priority over live-state
+        // feedback: a successful setting change must not hide an unsecured recovery file.
+        return backupSecured ? nil : .backupUnsecured
+    case .notApplied(let backupSecured):
+        guard backupSecured else { return .backupUnsecured }
         return liveStatus == .reachable ? nil : .notApplied
-    case .applied: return nil
     }
 }
 
@@ -282,6 +287,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         return "\(liveText) — \(feedback)"
     }
 
+    /// The live cmux-only measurement was `Error: Failed to write to socket`, which classifies as
+    /// `.failed`; the recovery control must remain available in that state rather than disappearing
+    /// with the diagnostic. The repair action has to stay alive in the state that needs it.
+    static func cmuxAutomationButtonEnabled(
+        for status: CmuxSocketStatus, inFlight: Bool
+    ) -> Bool {
+        guard !inFlight else { return false }
+        switch status {
+        case .reachable, .notInstalled: return false
+        case .notRunning, .denied, .failed: return true
+        }
+    }
+
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
@@ -328,6 +346,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// The status read by the most recent refresh; button feedback may only supplement that same
     /// live observation, never replace it with the write result.
     private var lastCmuxStatus: CmuxSocketStatus?
+    /// Refreshes can arrive while the JSON write and live probe are in flight. This flag is read
+    /// before the live status so an unrelated refresh cannot re-enable the action mid-write.
+    private var cmuxAutomationInFlight = false
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -1352,7 +1373,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             let status = PermissionChecker.cmuxSocketStatus()
             cmuxStatus = status
             apply(cmuxSetupState(status), to: cmuxStatusLabel)
-            cmuxAutomationButton.isEnabled = status == .notRunning || status == .denied
+            cmuxAutomationButton.isEnabled = Self.cmuxAutomationButtonEnabled(
+                for: status, inFlight: cmuxAutomationInFlight
+            )
             cmuxRefreshButton.isEnabled = true
         }
         lastCmuxStatus = cmuxStatus
@@ -1704,14 +1727,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// This is the only path that edits cmux.json. It is an explicit user action; installation,
     /// launch, and ordinary refreshes only read the live ping state.
     @objc private func enableCmuxAutomation() {
+        guard !cmuxAutomationInFlight else { return }
         // The button is disabled for the whole in-flight operation; completion calls refresh(),
         // which is the only owner allowed to decide whether it becomes enabled again.
+        cmuxAutomationInFlight = true
         cmuxAutomationButton.isEnabled = false
         CmuxAutomation.enableAutomation { [weak self] result in
             guard let self else { return }
+            self.cmuxAutomationInFlight = false
+            self.refresh()
             switch result {
             case .success(let result):
-                self.refresh()
                 if let liveStatus = self.lastCmuxStatus,
                    let feedbackCase = cmuxAutomationFeedback(
                        result: result, liveStatus: liveStatus
@@ -1722,6 +1748,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                         feedback = localized("app.status.cmux.automationAlreadyEnabled")
                     case .notApplied:
                         feedback = localized("app.status.cmux.automationNotApplied")
+                    case .backupUnsecured:
+                        feedback = localized("app.status.cmux.backupProtectionIncomplete")
                     }
                     // refresh() has already applied the live label and its color. Append only the
                     // compatible feedback, leaving that live state as the color oracle.
@@ -1730,7 +1758,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     )
                 }
             case .failure(let error):
-                self.refresh()
                 self.showError(localized("app.alert.cmuxConfigFailed"), error)
             }
         }

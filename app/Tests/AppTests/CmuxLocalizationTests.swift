@@ -80,7 +80,7 @@ final class CmuxLocalizationTests: XCTestCase {
             "app.alert.cmuxConfigFailed", "app.button.enableCmuxAutomation",
             "app.button.refreshCmuxStatus", "app.error.cmux.config", "app.section.cmux.help",
             "app.section.cmux.title", "app.status.cmux.automationAlreadyEnabled",
-            "app.status.cmux.automationNotApplied",
+            "app.status.cmux.automationNotApplied", "app.status.cmux.backupProtectionIncomplete",
         ]
         for tag in supportedLocales {
             AppLocalization.tagOverrideForTesting = tag

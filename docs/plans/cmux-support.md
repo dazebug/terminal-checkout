@@ -97,7 +97,7 @@ CLAUDE.md의 우회 금지 조항 중 이 작업에 걸리는 것 전부:
 
 1. 쓰기 전 타임스탬프 `.bak` 백업(cmux CLI 자신의 Agent Help가 권고하는 절차)
 2. **명시적 버튼으로만 발동** — 설치·기동 중 자동 변경 금지
-3. 기존 파일의 주석·다른 키 보존 — JSONC라 파싱-재직렬화 금지, **텍스트 삽입 편집**으로 한다. 비주석 `automation` 키가 이미 있으면 값만 교체, 파일이 없으면 최소 JSON 생성. 편집 로직은 순수 함수로 떼어 단위 테스트로 고정
+3. 기존 파일의 주석·다른 키 보존 — JSONC라 파싱-재직렬화 금지, **텍스트 삽입 편집**으로 한다. 비주석 `automation` 키가 이미 있으면 값만 교체, 파일이 없거나 공백뿐이면 잃을 내용이 없으므로 최소 JSON을 생성하고, 토큰이 있는 깨진 JSONC만 거부한다. 편집 로직은 순수 함수로 떼어 단위 테스트로 고정
 4. 적용 확인은 `cmux ping` 라이브 프로브 — 파일 변경이 자동 반영되지 않으면(→ R1-m) 버튼이 cmux 재시작 안내를 띄운다
 
 README·설정 창 문구에 automation 모드의 의미(**같은 uid의 아무 프로세스나 cmux를 조종할 수 있게 됨**)를 명시한다 — 사용자 승인됨.
@@ -270,19 +270,27 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 
 ### D11. cmux.json은 백업 뒤 교체 직전 재읽기
 
-**[채택 — 2026-08-26]** timestamp 백업 이름을 정한 뒤 원자적 교체 직전에 설정 파일 바이트를 다시 읽어 최초 읽기와 비교한다. 불일치하면 백업 경로를 포함해 던지고 stale 결과를 덮어쓰지 않는다. 비교로 탐지한 경합은 거부하고, 탐지하지 못한 경합도 `replaceItem`의 `backupItemName`이 교체된 바이트를 보존하게 한다. 백업 이름이 이미 있으면 건너뛴다 — `backupItemName`은 동명 항목을 제거한다(H1). 병합은 어느 편집자의 의도를 보존할지 추측하게 되므로 하지 않는다. 백업과 새로 생성하는 설정 파일은 0600으로 만들고, 이미 있던 설정 파일의 권한은 그대로 보존한다(cmux가 만든 파일이면 0600이며 `socketPassword`를 담을 수 있다). 백업 권한 좁히기는 교체 뒤 마무리이므로 실패해도 라이브 상태를 거짓으로 만들지 않는다(H2).
+**[채택 — 2026-08-26]** timestamp 백업 이름을 정한 뒤 원자적 교체 직전에 설정 파일 바이트를 다시 읽어 최초 읽기와 비교한다. 불일치하면 백업 경로를 포함해 던지고 stale 결과를 덮어쓰지 않는다. 비교로 탐지한 경합은 거부하고, 탐지하지 못한 경합도 `replaceItem`의 `backupItemName`이 교체된 바이트를 보존하게 한다. 백업 이름이 이미 있으면 건너뛴다 — `backupItemName`은 동명 항목을 제거한다(H1). 병합은 어느 편집자의 의도를 보존할지 추측하게 되므로 하지 않는다. 백업과 새로 생성하는 설정 파일은 0600으로 만들고, 이미 있던 설정 파일의 권한은 그대로 보존한다(cmux가 만든 파일이면 0600이며 `socketPassword`를 담을 수 있다). 백업 권한 좁히기는 교체 뒤 마무리이므로 실패해도 라이브 상태를 거짓으로 만들지 않는다(H2). I1에서는 그 실패를 `backupSecured: false`로 결과에 실어 UI가 라이브 상태와 별도로 경고한다. I2에서는 이름을 확인 후 사용하는 대신 후보를 `O_EXCL` placeholder로 원자 예약한다 — `backupItemName`의 동명 항목 제거 창을 예약 자체로 닫는다.
 
 ### D12. cmux ping PONG/거부가 기본 소켓 파일보다 우선
 
-**[채택 — 2026-08-26]** cmux CLI는 `CMUX_SOCKET_PATH`와 `/tmp/cmux-last-socket-path`로 소켓을 스스로 찾으므로 PONG은 기본 소켓 파일 부재보다 먼저 `reachable`, Access denied는 `denied`로 분류한다. 두 결과가 모두 아니고 기본 소켓도 없을 때만 `notRunning`이며, 기동 필요 판정은 소켓 부재와 ping 실패의 동시 조건이다. Access denied는 cmux를 다시 띄워 고칠 수 없으므로 즉시 `cmuxSocketDenied`로 실패시켜야 한다. 소켓 파일이 있으면 ping을 생략하고 진행하며, automation 거부 진단은 `workspace.create`의 RPC 분류로 보존한다(H3).
+**[채택 — 2026-08-26]** cmux CLI는 `CMUX_SOCKET_PATH`와 `/tmp/cmux-last-socket-path`로 소켓을 스스로 찾으므로 PONG은 기본 소켓 파일 부재보다 먼저 `reachable`, Access denied는 `denied`로 분류한다. 두 결과가 모두 아니고 기본 소켓도 없을 때만 `notRunning`이며, 기동 필요 판정은 소켓 부재와 ping 실패의 동시 조건이다. Access denied는 cmux를 다시 띄워 고칠 수 없으므로 즉시 `cmuxSocketDenied`로 실패시켜야 한다. 소켓 파일이 있으면 ping을 생략하고 진행하며, automation 거부 진단은 `workspace.create`의 RPC 분류로 보존한다(H3). **[교체 — I5, 2026-08-26]** 실행 경로는 ping을 쓰지 않고 `workspace.create`를 정본 진단으로 삼는다. 첫 RPC가 `cmuxSocketDenied`면 즉시 던지고, 그 밖의 실패에서만 한 번 기동·소켓 폴링·`workspace.create` 한 번의 재시도를 한다. 설정 창 라이브 상태 프로브의 ping 정본과 실행 경로의 `workspace.create` 정본은 서로 다른 계약이다.
 
 ### D13. 자동화 버튼 후처리는 라이브 상태를 덮지 않는다
 
-**[채택 — 2026-08-26]** 자동화 기록 결과의 추가 문구는 `refresh()`가 방금 읽은 라이브 상태와 모순되지 않을 때만 붙인다. 추가 문구는 라이브 진단을 대체하지 않고 덧붙인다(H4). 버튼 활성/비활성·상태 라벨의 정본은 `refresh()`이고, 결과만 보고 초록 또는 경고를 덧씌우는 방식은 cmuxOnly·꺼짐 상태의 거짓 성공과 상태 변동 사이의 거짓 경고를 만들므로 기각한다.
+**[채택 — 2026-08-26]** 자동화 기록 결과의 추가 문구는 `refresh()`가 방금 읽은 라이브 상태와 모순되지 않을 때만 붙인다. 추가 문구는 라이브 진단을 대체하지 않고 덧붙인다(H4). 버튼 활성/비활성·상태 라벨의 정본은 `refresh()`이고, 결과만 보고 초록 또는 경고를 덧씌우는 방식은 cmuxOnly·꺼짐 상태의 거짓 성공과 상태 변동 사이의 거짓 경고를 만들므로 기각한다. I3·I4에서는 `.failed`에도 복구 버튼을 살리고, 작업 중에는 `refresh()`가 라이브 상태와 무관하게 버튼을 비활성으로 유지한다. 분류가 흔들리므로 복구 수단은 넓은 쪽에 걸어야 한다.
 
 ### D14. cmux 화면 읽기 오류 억제는 surface별이며 성공 시 초기화
 
-**[채택 — 2026-08-26]** 화면 읽기 오류 로그는 surface UUID별 마지막 메시지만 억제하고, 같은 surface의 성공한 read가 그 기록을 지운다. 전달 종료 시 해당 surface의 기록을 삭제하고, 실패만 이어지는 경우에도 32개 상한에서 stale 기록을 비워 맵을 제한한다(H5). 프로세스 전역 마지막 문자열만 비교하는 방식은 다른 surface의 같은 오류와 성공 뒤 재발한 오류를 삼키므로 기각한다.
+**[채택 — 2026-08-26]** 화면 읽기 오류 로그는 surface UUID별 마지막 메시지만 억제하고, 같은 surface의 성공한 read가 그 기록을 지운다. 전달 종료 시 해당 surface의 기록을 삭제하고, 실패만 이어지는 경우에도 32개 상한에서 stale 기록을 비워 맵을 제한한다(H5). 프로세스 전역 마지막 문자열만 비교하는 방식은 다른 surface의 같은 오류와 성공 뒤 재발한 오류를 삼키므로 기각한다. I5의 실행 복구도 첫 실패 뒤 한 번만 재시도하며, 성공한 workspace를 다시 만들지 않는다.
+
+### D15. cmux.json 무효 입력 경계
+
+**[채택 — 2026-08-26]** 파일이 없거나 공백뿐이면 보존할 내용이 없으므로 최소 JSON을 만들고 백업한다. 토큰이 있는데 JSONC 스캔·파싱에 실패한 문서는 거부하고 파일을 바꾸지 않는다. 두 경우를 하나의 "빈 입력"으로 취급하면 사용자가 작성한 깨진 설정을 덮어쓸 수 있어 기각한다(I6).
+
+### D16. `runProcess` 종료 상한
+
+**[채택 — 2026-08-26]** timeout 뒤 SIGTERM에 2초 유예를 주고 SIGKILL로 에스컬레이션한 뒤, 자식·손자가 파이프를 붙든 경우에도 drain을 최대 1초와 마지막 0.25초로만 기다린다. 성공 경로는 그대로 두고, 종료를 무시하는 자식 때문에 공용 subprocess helper가 무기한 대기하는 것을 기각한다(I7).
 
 ## 작업 항목
 
@@ -405,6 +413,7 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 - F7 로그 방식: tty 폴링은 포기 시점에 마지막 RPC 오류 1회만 남기고, 화면 읽기는 연속 동일 오류를 억제하며 다른 오류로 바뀌면 기록한다.
 - cold review 2차(2026-08-26, 5300f75): 판정 no, 차단 3건 + 비차단 1건 — G1 비교∼교체 사이 유실 창(`backupItemName`으로 교체된 바이트 보존), G2 실행 경로가 Access denied를 Bool로 뭉갬(즉시 `cmuxSocketDenied`), G3 자동화 버튼 후처리가 라이브 상태를 덮음(`refresh()`가 정본), G4 화면 읽기 오류 억제가 프로세스 수명·surface 무구분. 1차 지적 중 F1·F3·F4는 닫힘 확인. red: clone에서 `swift test --filter` 6개 → Executed 6 tests, with 7 failures, exit 1 — G1 `.bak`에 V3 없음, G2 `.denied`가 `launch`, G3 세 케이스가 nil 아님, G4 성공 초기화·surface 구분 모두 실패. 억제 테스트 1개만 통과. / green: swift 543(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. 실측: R1-j 4회째 PASS(13.7s), G2 실측 — automation을 끈 상태에서 0.2초에 automation 문구로 실패(이전에는 10초 timeout 오진).
 - cold review 3차(2026-08-26, c8b42e4): 판정 no, 차단 4건 + 비차단 1건 — H1 `backupItemName`이 같은 이름의 기존 백업을 삭제(Foundation 계약)·버튼 in-flight 비활성화 소실, H2 교체 성공 뒤 chmod 실패를 전체 실패로 보고, H3 `.failed`에 기동·정상 경로 ping 추가로 D12·D7 위반, H4 정확한 라이브 진단을 generic 문구로 덮음, H5 억제 맵 무한 증가. 2차 지적 G1∼G4는 닫힘 확인. red: 7 테스트 12 실패(드라이버) / green: swift 549(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. 실측: R1-j 5회째 PASS(13.0s), R1-n 재실측 PASS — ping이 `Failed to write to socket`을 돌려준 회차에서도 automation 문구가 나왔다(소켓 존재 시 ping 생략의 근거).
+- cold review 4차(2026-08-26, a5eeb4c): 판정 no, 7건 — I1 백업 chmod 실패가 성공으로 보임, I2 백업 이름 예약의 TOCTOU, **I3 cmuxOnly 실측 상태(`.failed`)에서 [Allow Automation]이 비활성 — 복구 경로가 막혀 있었다**, I4 in-flight 불변 부재, I5 stale 소켓·비기본 소켓의 생존성·진단, I6 공백 파일 계약, I7 `runProcess` timeout이 실제 상한이 아님. red: 10 테스트 15 실패(전체 30.1초가 I7의 증거) / green: swift 555(1 skip)·node 220·build.sh·e2e 9/9, 0 실패. 실측: R1-j 6회째 PASS(5.1s), I3·R1-n — 같은 cmuxOnly 상태가 회차에 따라 `.denied`와 `.failed(Failed to write to socket)` 둘로 관측되므로 두 상태 모두에서 버튼이 활성이어야 한다(실측 2회).
 
 ### 테스트 심사
 
@@ -490,4 +499,4 @@ CLI는 JSON을 stdin으로 받는 수단 없이 `cmux rpc <method> [json-params]
 | R1-k | **[완료]**: cold surface에 send_text → `queued:true`. **queued는 유실이 아니다** — surface가 웜업되면 flush되어 pty에 들어간다(실측: 셸 배너보다 먼저 들어가 프롬프트 라인버퍼에 재등장). 항목 10의 queued 로깅 사유가 이것이다: 보냈다고 착각한 바이트가 나중에 도착할 수 있다 | cold surface send_text 후 웜업·pty 확인(드라이버 실측 2026-08-26) | 우리 workspace 전용 |
 | R1-l | **[완료]**: `workspace.create` 58∼110ms + `surface.send_text` 38ms(각 time 실측) — WezTerm 왕복과 같은 수준, execQueue 예산 안 | 각 RPC 응답의 `time` 기록(드라이버 실측 2026-08-26) | 측정만 |
 | R1-m | **[완료]** cmux.json 변경이 재시작 없이 반영되는가 → **반영된다**(2026-08-23 실측: 기록 직후 외부 ping이 거부→PONG으로 바뀜, 재시작 없음) | 실측 완료 | 버튼 UX 확정: 기록 → `cmux ping` 폴링으로 적용 확인, 재시작 안내는 미반영 시 폴백으로만. `cmux reload-config`는 cmuxOnly에서 외부 호출이 거부되므로 수단이 아님(「재개」) |
-| R1-n | **[완료]** automation을 끈 상태(cmuxOnly, ping이 Access denied)에서 앱 요청 → 0.2초에 `{success:false}`와 automation 안내 문구. 기동·timeout 오진 없음 | 설치본 앱 경로 + cmux.json 모드 토글(드라이버 실측 2026-08-26) | 실측 후 automation으로 원복, 파일 0600 확인 **재실측(H3 적용, 2026-08-26)**: ping이 `Failed to write to socket`이던 회차에도 0.2초에 automation 문구 — `workspace.create`의 거부 분류가 ping보다 정확하다. |
+| R1-n | **[완료]** automation을 끈 상태(cmuxOnly, ping이 Access denied)에서 앱 요청 → 0.2초에 `{success:false}`와 automation 안내 문구. 기동·timeout 오진 없음 | 설치본 앱 경로 + cmux.json 모드 토글(드라이버 실측 2026-08-26) | 실측 후 automation으로 원복, 파일 0600 확인 **재실측(H3 적용, 2026-08-26)**: ping이 `Failed to write to socket`이던 회차에도 0.2초에 automation 문구 — `workspace.create`의 거부 분류가 ping보다 정확하다. **재실측(I3 적용)**: 같은 상태의 분류가 회차에 따라 `.denied`/`.failed`로 갈린다 — 버튼 활성 조건을 '`reachable`·`notInstalled`가 아닌 모든 상태'로 넓힌 근거. |

@@ -454,13 +454,72 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
         XCTAssertNil(cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .denied))
         XCTAssertNil(cmuxAutomationFeedback(result: .alreadyEnabled, liveStatus: .notRunning))
-        XCTAssertNil(cmuxAutomationFeedback(result: .notApplied, liveStatus: .reachable))
+        XCTAssertNil(
+            cmuxAutomationFeedback(
+                result: .notApplied(backupSecured: true), liveStatus: .reachable
+            )
+        )
         XCTAssertEqual(
-            cmuxAutomationFeedback(result: .notApplied, liveStatus: .denied),
+            cmuxAutomationFeedback(
+                result: .notApplied(backupSecured: true), liveStatus: .denied
+            ),
             .notApplied
         )
-        XCTAssertNil(cmuxAutomationFeedback(result: .applied, liveStatus: .reachable))
-        XCTAssertNil(cmuxAutomationFeedback(result: .applied, liveStatus: .denied))
+        XCTAssertNil(
+            cmuxAutomationFeedback(result: .applied(backupSecured: true), liveStatus: .reachable)
+        )
+        XCTAssertNil(
+            cmuxAutomationFeedback(result: .applied(backupSecured: true), liveStatus: .denied)
+        )
+    }
+
+    /// I1 red reproduction: a live result must warn about an unsecured backup even when the
+    /// socket probe is reachable; applying the setting does not secure the evicted file.
+    func testCmuxAutomationFeedbackWarnsWhenBackupIsUnsecured() {
+        XCTAssertEqual(
+            cmuxAutomationFeedback(
+                result: .applied(backupSecured: false), liveStatus: .reachable
+            ),
+            .backupUnsecured
+        )
+        XCTAssertEqual(
+            cmuxAutomationFeedback(
+                result: .applied(backupSecured: false), liveStatus: .denied
+            ),
+            .backupUnsecured
+        )
+    }
+
+    /// I3 red reproduction: cmux itself reports `Error: Failed to write to socket` while in
+    /// cmuxOnly mode, so the control that repairs automation must remain available in `.failed`.
+    func testCmuxAutomationButtonIsEnabledForEveryRepairableStatus() {
+        XCTAssertTrue(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .notRunning, inFlight: false)
+        )
+        XCTAssertTrue(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .denied, inFlight: false)
+        )
+        XCTAssertTrue(
+            SetupWindowController.cmuxAutomationButtonEnabled(
+                for: .failed("Error: Failed to write to socket"), inFlight: false
+            )
+        )
+        XCTAssertFalse(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .reachable, inFlight: false)
+        )
+        XCTAssertFalse(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .notInstalled, inFlight: false)
+        )
+    }
+
+    /// I4 red reproduction: refreshes during an automation write must not re-enable the button.
+    func testCmuxAutomationButtonStaysDisabledWhileInFlight() {
+        XCTAssertFalse(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .denied, inFlight: true)
+        )
+        XCTAssertTrue(
+            SetupWindowController.cmuxAutomationButtonEnabled(for: .denied, inFlight: false)
+        )
     }
 
     /// H4 red reproduction: D13 says feedback supplements the live diagnostic instead of

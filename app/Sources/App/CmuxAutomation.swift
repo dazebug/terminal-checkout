@@ -1,10 +1,11 @@
 import Core
+import Darwin
 import Foundation
 
 enum CmuxAutomationWriteResult: Equatable {
     case alreadyEnabled
-    case applied
-    case notApplied
+    case applied(backupSecured: Bool)
+    case notApplied(backupSecured: Bool)
 }
 
 enum CmuxConfigurationError: Error, CustomStringConvertible {
@@ -28,17 +29,54 @@ enum CmuxConfigurationError: Error, CustomStringConvertible {
 }
 
 enum CmuxAutomation {
-    /// Foundation removes an existing item with the same backupItemName during replacement.
-    /// A seconds-only timestamp cannot protect that older recovery file, so try readable suffixes
-    /// and fail rather than silently overwriting after the bounded search.
-    static func backupFileName(
-        timestamp: String, isTaken: (String) -> Bool
-    ) throws -> String {
-        let base = "cmux.json.\(timestamp).bak"
-        if !isTaken(base) { return base }
-        for suffix in 2...1000 {
-            let candidate = "cmux.json.\(timestamp)-\(suffix).bak"
-            if !isTaken(candidate) { return candidate }
+    private static let backupNameAttemptLimit = 1000
+
+    private static func backupCandidateName(timestamp: String, suffix: Int) -> String {
+        if suffix == 1 { return "cmux.json.\(timestamp).bak" }
+        return "cmux.json.\(timestamp)-\(suffix).bak"
+    }
+
+    private static func errorIsFileExists(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EEXIST)
+    }
+
+    private static func reserveBackupPlaceholder(at url: URL) throws {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
+        }
+        guard descriptor >= 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        guard Darwin.fchmod(descriptor, mode_t(0o600)) == 0 else {
+            let code = errno
+            _ = Darwin.close(descriptor)
+            try? FileManager.default.removeItem(at: url)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        guard Darwin.close(descriptor) == 0 else {
+            let code = errno
+            try? FileManager.default.removeItem(at: url)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+    }
+
+    /// `backupItemName` removes an existing item with that name during replacement, so checking
+    /// then using a path leaves a TOCTOU window. O_EXCL reservation makes the placeholder ours;
+    /// Foundation replaces that placeholder with the bytes it evicts, and failures remove it.
+    private static func reserveBackupURL(
+        timestamp: String, directory: URL, reserve: (URL) throws -> Void
+    ) throws -> URL {
+        for suffix in 1...backupNameAttemptLimit {
+            let name = backupCandidateName(timestamp: timestamp, suffix: suffix)
+            let url = directory.appendingPathComponent(name)
+            do {
+                try reserve(url)
+                return url
+            } catch {
+                if errorIsFileExists(error) { continue }
+                throw CmuxConfigurationError.backupFailed(errorMessage(error))
+            }
         }
         throw CmuxConfigurationError.backupFailed(
             "no available backup name for timestamp \(timestamp)"
@@ -60,7 +98,8 @@ enum CmuxAutomation {
         fileManager: FileManager = .default,
         status: @escaping () -> CmuxSocketStatus = { PermissionChecker.cmuxSocketStatus() },
         sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-        replaceItem: ((_ original: URL, _ replacement: URL, _ backupItemName: String?) throws -> Void)? = nil
+        replaceItem: ((_ original: URL, _ replacement: URL, _ backupItemName: String?) throws -> Void)? = nil,
+        reserveBackup: ((_ url: URL) throws -> Void)? = nil
     ) throws -> CmuxAutomationWriteResult {
         let configURL = suppliedURL ?? defaultConfigURL()
         let exists = fileManager.fileExists(atPath: configURL.path)
@@ -91,7 +130,7 @@ enum CmuxAutomation {
             throw CmuxConfigurationError.editFailed(errorMessage(error))
         }
         guard case .edited(let contents) = edit else {
-            return status() == .reachable ? .alreadyEnabled : .notApplied
+            return status() == .reachable ? .alreadyEnabled : .notApplied(backupSecured: true)
         }
 
         // The replacement operation is the one backup operation for an existing config. If it
@@ -101,14 +140,12 @@ enum CmuxAutomation {
         let directory = configURL.deletingLastPathComponent()
         let backupURL: URL?
         if exists {
-            let backupName = try backupFileName(
-                timestamp: backupTimestamp(now),
-                isTaken: { name in
-                    fileManager.fileExists(atPath: directory.appendingPathComponent(name).path)
-                }
+            let reserve = reserveBackup ?? { url in
+                try reserveBackupPlaceholder(at: url)
+            }
+            backupURL = try reserveBackupURL(
+                timestamp: backupTimestamp(now), directory: directory, reserve: reserve
             )
-            let path = directory.appendingPathComponent(backupName)
-            backupURL = path
         } else {
             backupURL = nil
         }
@@ -122,7 +159,13 @@ enum CmuxAutomation {
         let temporaryURL = directory.appendingPathComponent(
             ".cmux.json.\(UUID().uuidString).tmp"
         )
-        defer { try? fileManager.removeItem(at: temporaryURL) }
+        var backupReservationActive = backupURL != nil
+        defer {
+            try? fileManager.removeItem(at: temporaryURL)
+            if backupReservationActive, let backupURL {
+                try? fileManager.removeItem(at: backupURL)
+            }
+        }
         let replaceItemOperation = replaceItem ?? { original, replacement, backupItemName in
             _ = try fileManager.replaceItemAt(
                 original, withItemAt: replacement, backupItemName: backupItemName,
@@ -142,21 +185,7 @@ enum CmuxAutomation {
                     )
                 }
                 try replaceItemOperation(configURL, temporaryURL, backupURL?.lastPathComponent)
-                // Narrowing a backup loses nothing, and cmux.json may contain socketPassword.
-                if let backupURL {
-                    do {
-                        try fileManager.setAttributes(
-                            [.posixPermissions: 0o600], ofItemAtPath: backupURL.path
-                        )
-                    } catch {
-                        // Replacement already applied the new config; reporting this as a write
-                        // failure would lie about the live state. Keep the diagnosis and probe it.
-                        checkoutLog(
-                            "could not narrow cmux backup permissions to 0600 after replacement"
-                                + " — configuration is already applied (\(errorMessage(error)))"
-                        )
-                    }
-                }
+                backupReservationActive = false
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: configURL)
             }
@@ -166,11 +195,31 @@ enum CmuxAutomation {
             throw CmuxConfigurationError.writeFailed(errorMessage(error))
         }
 
+        // Narrowing loses nothing, and cmux.json may contain socketPassword. This is deliberately
+        // post-replacement: if chmod fails, the new configuration is already live and the result
+        // must report that state rather than falsely calling the write a failure.
+        var backupSecured = true
+        if let backupURL {
+            do {
+                try fileManager.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: backupURL.path
+                )
+            } catch {
+                backupSecured = false
+                // Replacement already applied the new config; reporting this as a write
+                // failure would lie about the live state. Keep the diagnosis and probe it.
+                checkoutLog(
+                    "could not narrow cmux backup permissions to 0600 after replacement"
+                        + " — configuration is already applied (\(errorMessage(error)))"
+                )
+            }
+        }
+
         for attempt in 0...10 {
-            if status() == .reachable { return .applied }
+            if status() == .reachable { return .applied(backupSecured: backupSecured) }
             if attempt < 10 { sleep(0.3) }
         }
-        return .notApplied
+        return .notApplied(backupSecured: backupSecured)
     }
 
     static func enableAutomation(

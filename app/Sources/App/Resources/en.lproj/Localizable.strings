@@ -106,6 +106,7 @@
 "app.status.cmux.failed" = "Status check failed: %@";
 "app.status.cmux.automationAlreadyEnabled" = "Automation already enabled";
 "app.status.cmux.automationNotApplied" = "Not applied — try restarting cmux";
+"app.status.cmux.backupProtectionIncomplete" = "Backup protection is incomplete — check the .bak file permissions.";
 "app.status.manifest.notRegistered" = "Not registered — press [%@]";
 "app.status.manifest.registered" = "Registered";
 "app.status.manifest.wrongExtensionID" = "The extension ID differs from the current setting — refresh it with [%@]";

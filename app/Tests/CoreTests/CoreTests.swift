@@ -3651,6 +3651,39 @@ final class ProcessArgumentBoundaryTests: XCTestCase {
     }
 }
 
+/// I7 red reproduction: terminating the process is not enough when it ignores SIGTERM and a
+/// descendant still owns the pipes. The helper must escalate to SIGKILL and keep the post-kill wait
+/// bounded instead of waiting for the 30-second child.
+final class RunProcessTimeoutTests: XCTestCase {
+    func testRunProcessKillsAChildThatIgnoresTerminationWithinABound() {
+        let started = Date()
+        var thrown: Error?
+        do {
+            _ = try runProcess(
+                "/bin/sh", ["-c", #"trap "" TERM; sleep 30"#], timeout: 0.5
+            )
+        } catch {
+            thrown = error
+        }
+
+        XCTAssertTrue(thrown is TerminalError)
+        if let error = thrown {
+            guard let terminalError = error as? TerminalError else {
+                return XCTFail("timeout was not reported: \(error)")
+            }
+            guard case .timeout = terminalError else {
+                return XCTFail("timeout was not reported: \(error)")
+            }
+        } else {
+            XCTFail("a child that ignores SIGTERM must fail with timeout")
+        }
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 8,
+            "SIGTERM grace plus the post-kill wait must be a real upper bound"
+        )
+    }
+}
+
 // MARK: - The carriers that were changing the user's bytes
 
 /// Every `.swift` file under `app/Sources`, keyed by its path relative to the repository root.
