@@ -37,8 +37,35 @@ DETECTED_TERMINALS=()
 # For Warp, look in the same two locations as the app's findWarpAppBundle() — if the two
 # detection rules diverge, the install passes but the app reports it as "not installed", or vice versa
 { [ -d "/Applications/Warp.app" ] || [ -d "$HOME/Applications/Warp.app" ]; } && DETECTED_TERMINALS+=("Warp")
+
+# Keep this candidate order in lockstep with Core's findCmuxCLI() — if the two detection rules
+# diverge, the install passes but the app reports cmux as "not installed", or vice versa.
+find_cmux_cli() {
+    local candidate path_entry
+    local -a candidates=(
+        "/Applications/cmux.app/Contents/Resources/bin/cmux"
+        "$HOME/Applications/cmux.app/Contents/Resources/bin/cmux"
+        "/opt/homebrew/bin/cmux"
+        "/usr/local/bin/cmux"
+    )
+    local -a path_entries=()
+    IFS=: read -r -a path_entries <<< "${PATH:-}"
+    for path_entry in "${path_entries[@]}"; do
+        [ -n "$path_entry" ] && candidates+=("$path_entry/cmux")
+    done
+    for candidate in "${candidates[@]}"; do
+        if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+CMUX_CLI="$(find_cmux_cli || true)"
+[ -n "$CMUX_CLI" ] && DETECTED_TERMINALS+=("cmux")
 if [ ${#DETECTED_TERMINALS[@]} -eq 0 ]; then
-    MISSING+=("at least one of iTerm2, WezTerm, or Warp")
+    MISSING+=("at least one of iTerm2, WezTerm, Warp, or cmux")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then

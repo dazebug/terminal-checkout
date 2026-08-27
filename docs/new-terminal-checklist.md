@@ -6,7 +6,7 @@ Per-terminal pitfalls already confirmed (WezTerm's window selection and GUI-app 
 
 ## 1. Code touch points
 
-Terminal identifiers are defined by Core's `enum Terminal` (`Terminal.swift`), and the app stores the rawValue under the `terminal` key in `UserDefaults` (`iterm`, `wezterm`, `warp`). The extension doesn't know this value and gets no way to learn it — behaviorally there is nothing to touch on the extension side.
+Terminal identifiers are defined by Core's `enum Terminal` (`Terminal.swift`), and the app stores the rawValue under the `terminal` key in `UserDefaults` (`iterm`, `wezterm`, `warp`, `cmux`). The extension doesn't know this value and gets no way to learn it — behaviorally there is nothing to touch on the extension side.
 
 Adding a case makes every default-less switch (the execution dispatch; the setup window's radio restore, permission section, and pipeline nodes) surface as compile errors. But the compiler only catches switches — visibility conditions and guidance copy written as `==` comparisons, and everything outside code (scripts, docs), are still caught only by the tables below. Don't stop at chasing compile errors.
 
@@ -15,12 +15,12 @@ Adding a case makes every default-less switch (the execution dispatch; the setup
 | Spot | To do |
 |:---|:---|
 | `Terminal` (`Terminal.swift`) | Add the case. Also add a one-line rawValue literal to the stored-value oracle test (`TerminalIdentifierTests`) |
-| `TerminalRunner.runInTerminal(command:terminal:injectsClaudeInput:)` | Add the execution branch (the compile error shows you where). `injectsClaudeInput` matters only for terminals that need separate preparation for input delivery — and it is **not** "this button has claude inputs", it is "these inputs will be typed rather than riding in argv" (`ClaudeInputPlan.swift`), which is **always** true for the three shipped presets that schedule claude input, since all three are `!`-only, and vacuously false for the other eight, which schedule none |
+| `TerminalRunner.runInTerminal(command:terminal:claudeInput: ClaudeDelivery.Admission?)` | Add the execution branch (the compile error shows you where). `claudeInput` is the admission reserved for typed input delivery — and it is **not** "this button has claude inputs", it is "these inputs will be typed rather than riding in argv" (`ClaudeInputPlan.swift`), which is **always** true for the three shipped presets that schedule claude input, since all three are `!`-only, and vacuously false for the other eight, which schedule none |
 | `TerminalRunner.claudeInputBlocker` | Decide what makes typing impossible for this terminal **before anything is created**, and return it. The switch has no `default`, so the compile error brings you here — but returning nil is not the end of the job: if the answer only becomes known deeper in your `runInXxx` (WezTerm learns it when the mux does not answer), raise it there through `claudeInputRejection` while nothing has been spawned yet. Anything discovered *after* the tab exists is a log line, not a rejection |
 | `TerminalRunner.runInXxx(_:)` (new) | Create a new tab → send the command → return a `TerminalSessionHandle` |
 | `TerminalSessionHandle` (`ClaudeInjector.swift`) | Add the case. If no handle can be made (`.none`), claude input is not delivered |
 | `ClaudeInjector.deliverClaudeInputs` | The branch that obtains the tty path from the handle |
-| `ClaudeInjector.sendKeys` | Three kinds: text, CR (`\r` = `claudeSubmitKey`, submit), and Ctrl+U (`\u{15}` = `claudeClearInputKey`, clear the input box) |
+| `ClaudeInjector.sendKeys` | Three kinds: text, CR (`\r` = `claudeSubmitKey`, submit), and the two-byte clear sequence (`\u{15}\u{7F}` = `claudeClearInputKey`, Ctrl+U then Backspace, clear the input box) |
 | `ClaudeInjector.screenText` | Screen-text lookup — snapshot **immediately before and after** typing and compare (`screenReflectsNewInput`). If the screen can't be read, the right answer is to not send input |
 | `ClaudeSessionIO.screenNeedsPaneProof` | true for terminals whose screen lookup can't be pinned to the session — every input then first proves the pane with a nonce probe. Leave the default (false) for terminals that read exactly by pane/session id |
 | `ClaudeDelivery` (`ClaudeInjector.swift`) | Only if your terminal leaves a **process alive in the pane** (Warp's injection helper is the one today). The registry already brackets every delivery, so the language restart is blocked while yours runs — but `liveWarpSockets` and `endEveryHelper` match on `.warp` alone, so a second helper would need its own case or it is never told to stop. Nothing to do for a terminal that spawns no helper |
@@ -42,11 +42,12 @@ A terminal with no API to address a pane at all (Warp) is covered instead by a h
 | `Settings.terminal` | Auto-detection order when there is no stored value (the unknown-stored-value fallback to iTerm2 lives in `Terminal(storedValue:)` alone — nothing to touch) |
 | `PermissionChecker.isXxxInstalled` | Install detection. If AppleScript-driven: status lookup, permission request, and opening System Settings too |
 | `SetupWindowController` | Add the radio button, disable when not installed, save (`terminalChanged` — the radio→case mapping is an if-chain the compiler can't catch) and restore, permission-card visibility conditions (`isHidden` comparisons), per-terminal guidance notes, and the pipeline node's name/color/description |
+| `Socket access mode is a prerequisite (cmux)` | Add the live status enum and setup-window card; the non-destructive button copies the settings fragment and opens the existing file or folder without creating or writing it, and a missing socket cannot distinguish a stopped cmux from a denied mode |
 | `app/Info.plist` | `NSAppleEventsUsageDescription` is the single one for the whole app — update it if the copy hard-codes a terminal name |
 | `install.sh` | The preflight's terminal-detection list and guidance copy. Finding none exits 1 and blocks installation, so missing this makes installation itself fail on machines that have only the new terminal (its detection criteria differ from the app's) |
 | `README.md` | Terminal names are hard-coded in the required-terminals list, the architecture diagram, setup steps, permission notes, fallback limits, and troubleshooting. If the code supports it but this is stale, users read it as unsupported |
 
-Terminal names are also embedded in the description in `extension/manifest.json` — that copy is the only thing to touch in the extension.
+Terminal names are also embedded in the description messages in `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json`; `extension/manifest.json` only references that key and remains unchanged.
 
 **Tests**
 
@@ -117,6 +118,19 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] While the user is looking at another tab or app, submission is held and resumes to completion on return (no probe marker may remain in the input box in the meantime)
 - [ ] Revoking the Accessibility permission mid-delivery stops any further injection, and leftover fragments get cleaned up
 - [ ] Whether that terminal's way of persisting session history (per user report, Warp saves only GUI-launched sessions) applies to the tabs we create
+
+**Terminals needing a socket access mode (cmux)**
+
+- [ ] The setup window draws all four live cmux states: `notInstalled`, `notRunning`, `denied`, and `reachable`.
+- [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
+- [ ] The cmux config action opens the existing file or its folder, fills the clipboard with the automation fragment, and never creates or writes a file.
+- [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery, and the storage/send path does not remove those control bytes before the app checks them.
+- [ ] With two cmux windows and the second active, the new workspace appears in that active window (R1-g measured: yes — with the second window active, the workspace landed there).
+- [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).
+- [ ] A `!` input enters claude's shell mode, and the clear sequence uses two separate `surface.send_text` calls, `0x15` then `0x7F`, to remove the shell-mode prefix as well as the text.
+- [ ] The clear key (Ctrl+U, Backspace) was measured **inside a running claude TUI**, not in a raw shell — claude enables the kitty keyboard protocol, and a terminal's key-event path can encode control keys differently under it (cmux's key-event path did; measured 2.1.246).
+- [ ] When cmux's version is raised, confirm all four RPC methods still exist, `debug.terminals` reports a tty basename, `workspace.create` returns `surface_id`, and `cmux ping` prints PONG.
+- [ ] With shell integration disabled in a cmux pane, `debug.terminals` leaves tty null: the command runs, claude input is abandoned, and the reason is logged.
 
 ## 3. Verification tools
 

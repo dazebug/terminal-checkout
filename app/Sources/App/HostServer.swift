@@ -162,7 +162,7 @@ final class HostServer {
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
-                handleRequest(json: json, baseDirectory: Settings.baseDirectory) { resolved in
+                handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: { resolved in
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
@@ -213,7 +213,8 @@ final class HostServer {
                             )
                         }
                     }
-                }
+                    }, message: localizedErrorMessage
+                )
             }
             let payload = (try? JSONSerialization.data(withJSONObject: response))
                 ?? Data(#"{"success":false,"error":"internal error"}"#.utf8)

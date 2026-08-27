@@ -557,6 +557,33 @@ test('two buttons whose native message is byte-identical fingerprint the same', 
   assert.deepEqual(executionPayload(loose), { command: '{cd} && claude', claudeInputs: ['!a', '!b'] });
 });
 
+// The app boundary rejects these bytes; the extension must carry them there unchanged. Only
+// ordinary spaces may be trimmed from a typed input, while display fields such as `face` and
+// `label` keep their own ordinary trim because they never leave the browser.
+test('executionPayload: claude inputs preserve controls and trim only spaces', () => {
+  const { executionPayload } = vm.runInThisContext('({ executionPayload })');
+  const button = {
+    command: '{cd} && claude',
+    claudeInputs: ['\t', '\t!echo x', 'hello\n', '!a ', '', ' !b'],
+  };
+  assert.deepEqual(executionPayload(button), {
+    command: '{cd} && claude',
+    claudeInputs: ['\t', '\t!echo x', 'hello\n', '!a', '!b'],
+  });
+});
+
+test('toStoredButton: claude inputs preserve controls and trim only spaces', () => {
+  const { toStoredButton } = vm.runInThisContext('({ toStoredButton })');
+  const button = {
+    face: ' x ', label: ' Label ', command: '{cd} && claude',
+    claudeInputs: ['\t', '\t!echo x', 'hello\n', '!a ', '', ' !b'],
+  };
+  assert.deepEqual(toStoredButton(button), {
+    face: 'x', label: 'Label', command: '{cd} && claude',
+    claudeInputs: ['\t', '\t!echo x', 'hello\n', '!a', '!b'],
+  });
+});
+
 test('the wire message is built from the payload the fingerprint is taken of', () => {
   // Two normalizations that agree by coincidence are two normalizations that drift. The behaviour
   // above cannot be exercised from here — `runButton` needs the chrome APIs — so what is pinned is

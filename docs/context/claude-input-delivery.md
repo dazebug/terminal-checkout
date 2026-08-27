@@ -95,6 +95,43 @@ Before each input, the app types a throwaway marker, watches it appear, clears t
 
 **Known limit:** only `!` was measured. `/` and `#` are also one character and should be covered by the same sequence, but that is inference, not measurement.
 
+## On cmux those two bytes are two separate one-byte text calls, because the key path is dead under claude
+
+**Type:** incident
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** PR #60; reproduced on an installed build against cmux 0.64.22 and Claude Code 2.1.246
+**Revisit when:** cmux's key encoder learns the kitty keyboard protocol state of the surface it is writing to
+
+cmux exposes `surface.send_key`, and it is unusable here. The clear sequence is sent as two `surface.send_text` calls carrying one byte each — `0x15`, then `0x7F` — and `send_key` was removed from the app's method list entirely.
+
+**What happened:** on an installed build, claude received the message `tctqr20ckbi!echo tc-r1j-input-ok` — the throwaway marker glued to the body, submitted as one line — while the app's own log recorded a clean success. It only surfaced by reading the transcript.
+
+**Cause, measured:** claude turns on the kitty keyboard protocol (flag 1, `CSI > 1 u`) and modifyOtherKeys 2. `send_key` runs libghostty's key encoder, which under that protocol encodes `ctrl+u` as a CSI-u sequence that claude does not act on — so the marker stayed in the box — while `send_key backspace` still deleted exactly one character. Eleven of the marker's twelve characters remained, and the erase check (below) passed them as gone.
+
+**The earlier measurement did not transfer, and that is the lesson.** An earlier round had confirmed `^U` arriving correctly by running `cat -v` in a raw shell — with the protocol *off*, because nothing had turned it on. A clear key has to be measured inside a running claude TUI, not in the shell next to it; `docs/new-terminal-checklist.md` carries that as an item now.
+
+**Rejected alternative — one call carrying both bytes.** Measured: `0x15 0x7F` in a single `send_text` cleared the text and left the `!`. cmux converts `0x7F` (and `0x08`, `0x09`) into a key event, and a key event is not guaranteed to stay ordered behind text buffered in the same call. Two consecutive calls are ordered; only that much is established.
+
+**Rejected alternative — keep `send_key` because cmux uses it itself.** cmux does drive its own agent input box that way, which reads as authority until you notice the box in question is not running a program that has switched the keyboard protocol.
+
+## "The marker is gone" is checked over every 6-character window, not the whole string
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** PR #60; the defect above
+**Revisit when:** the marker stops being random, or its length changes
+
+The erase check counts occurrences of each 6-character window of the marker and requires every one of them back at its pre-typing baseline.
+
+**Reason:** counting the whole 12-character string asks "is the marker intact", and the answer is no as soon as one character is missing — which is exactly the state the incident above produced. A window check asks the question that matters: is any fragment of it still on screen. A random 12-character marker having a 6-character slice appear on screen by coincidence is not a risk worth trading this for.
+
+**Rejected alternative — check the prefix only.** It assumes the remnant is eaten from the end, which is true of Backspace and of nothing else.
+
+**Scope:** this is the marker experiment's disappearance poll. Judging the body after CR is a separate contract with its own tail comparison.
+
 ## Polling reads first and subtracts what the read cost
 
 **Type:** decision

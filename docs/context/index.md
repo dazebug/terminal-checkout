@@ -1,6 +1,8 @@
 # Context index
 
 - [claude-input-delivery.md](claude-input-delivery.md) — how scheduled input reaches a claude session, and the routes that were tried and dropped
+- [cmux-integration.md](cmux-integration.md) — why the app asks the user to set one cmux option instead of setting it, why `rpc` is the only control path, and how a launch retry is decided
+- [subprocess-execution.md](subprocess-execution.md) — what actually bounds a timed-out child process, and why its output is decoded lossily
 - [localization.md](localization.md) — where the catalogues live, how macOS and Chrome independently choose each surface's language, the adjacent-generation compatibility boundary, and which strings may never become machine input
 - [options-page-reordering.md](options-page-reordering.md) — why claude input rows stay in one card, why a redraw cancels a drag, and why the reorder tooltip key is shared by meaning
 - [testing.md](testing.md) — the typed source-audit boundary, the distinction between a source lint and a runtime oracle, why a gate goes on passing after the thing it describes moves, and what a harness that drives its own layout stops measuring

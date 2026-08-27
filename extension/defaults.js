@@ -475,15 +475,24 @@ function readableButtonFields(entry) {
 // terminal choice — the side that executes keeps the single source of truth.
 //
 // Everything a click will hand the app, normalized exactly as the send normalizes it: the inputs are
-// trimmed and the empty ones dropped, which is what runButton did on its way out. It builds its
-// message from this now, so the two cannot disagree — a normalization the fingerprint performs and
-// the send does not is two buttons that are different to us and byte-identical to the app.
+// trimmed for ordinary spaces only and the empty ones dropped, which is what runButton did on its
+// way out. It builds its message from this now, so the two cannot disagree — a normalization the
+// fingerprint performs and the send does not is two buttons that are different to us and byte-
+// identical to the app.
 //
 // Key order is fixed by this literal, which is what makes the JSON of it a stable comparison key.
+// `String.prototype.trim()` also removes TAB, CR and LF, so it once made ["\t"] disappear at save
+// time and changed ["\t!echo x"] before it could reach the app. Those control bytes must reach the
+// app and be rejected there as `{success:false}`. `face` and `label` still use `trim()` below because
+// they are display text, not typed bytes.
+function normalizeClaudeInputs(inputs) {
+  return (inputs || []).map(input => String(input).replace(/^ +| +$/g, '')).filter(Boolean);
+}
+
 function executionPayload(button) {
   return {
     command: button.command || '',
-    claudeInputs: (button.claudeInputs || []).map(input => String(input).trim()).filter(Boolean),
+    claudeInputs: normalizeClaudeInputs(button.claudeInputs),
   };
 }
 
@@ -625,7 +634,7 @@ function toStoredButton(button) {
     face: (button.face ?? '').trim(),
     label: (button.label ?? '').trim(),
     command: button.command ?? '',
-    claudeInputs: (button.claudeInputs || []).map(input => String(input).trim()).filter(Boolean),
+    claudeInputs: normalizeClaudeInputs(button.claudeInputs),
   };
 }
 

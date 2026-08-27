@@ -4,12 +4,15 @@ import Foundation
 public enum TerminalSessionHandle {
     case iterm(sessionID: String, tty: String)
     case wezterm(paneID: String, cliPath: String, socketPath: String?)
+    case cmux(surfaceID: String, workspaceID: String, cliPath: String)
     /// Warp has neither a CLI nor AppleScript that can address a pane, so the socket of the injection helper running inside the pane is the only channel. Even the tty is learned by asking that helper (`ClaudeInjector.warpHelperTTY`).
     case warp(helperSocket: String)
     /// No delivery path (the WezTerm fallback launch, a Warp helper that could not be prepared, and so on).
     case none
 
-    /// Can a screen read be asserted to belong to this session? iTerm2 and WezTerm read exactly that screen by session or pane id, whereas Warp only ever reads "the focused pane" — so only that one needs a pane proof.
+    /// Can a screen read be asserted to belong to this session? iTerm2, WezTerm and cmux read
+    /// exactly that screen by session, pane or surface id, whereas Warp only ever reads "the
+    /// focused pane" — so only that one needs a pane proof.
     var screenNeedsPaneProof: Bool {
         if case .warp = self { return true }
         return false
@@ -21,7 +24,7 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 
 /// The key that submits an input. Why it has to be CR rather than LF is in `submitClaudeInputs`.
 let claudeSubmitKey = "\r"
-/// The **sequence** that empties the input box: Ctrl+U (0x15) followed by Backspace (0x7F). Erasing the marker, clearing before an input, and the end-of-delivery cleanup all use this one constant, so changing it here applies everywhere.
+/// The **sequence** that empties the input box: Ctrl+U (0x15) followed by Backspace (0x7F). Erasing the marker, clearing before an input, and the end-of-delivery cleanup all use this one constant, so changing it here applies everywhere. In cmux, each byte is sent in a separate `surface.send_text` call.
 /// iTerm2 receives AppleScript rather than bytes, but that script is derived from this constant too (`appleScriptCharacters(of:)`) — while 21 and 127 were written out separately, this sentence was false, and changing the constant silently left iTerm2 on the old sequence.
 ///
 /// **Why the Backspace is there — measured (2.1.238, pty).** Ctrl+U does not leave claude's `!` shell mode: sending it on `!text` erases the text and **leaves the `!`**. On screen that looks like an empty input box and even passes the disappearance check, while the plain text typed afterwards was **submitted and executed as a shell command** (`command not found: tcq3hello`). One Backspace after the Ctrl+U removes that `!`, and the plain text after it is submitted as an ordinary message (same measurement). Sending several Backspaces to an already-empty box had no side effect.
@@ -30,6 +33,56 @@ let claudeSubmitKey = "\r"
 ///
 /// Only `!` was measured. The `/` and `#` prefixes are one character too and should be erased by the same sequence, but that is inference, not measurement.
 let claudeClearInputKey = "\u{15}\u{7F}"
+
+struct CmuxRPCOperation: Equatable {
+    let method: String
+    let params: [String: String]
+}
+
+func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
+    if text == claudeClearInputKey {
+        // Measured with cmux 0.64.22 under Claude Code 2.1.246: its Kitty keyboard protocol flag 1 makes the key-event ctrl+u path ineffective. One text call carrying both bytes leaves `!`, while two calls in order empty the box.
+        return [
+            CmuxRPCOperation(
+                method: cmuxSurfaceSendTextMethod,
+                params: ["surface_id": surfaceID, "text": "\u{15}"]
+            ),
+            CmuxRPCOperation(
+                method: cmuxSurfaceSendTextMethod,
+                params: ["surface_id": surfaceID, "text": "\u{7F}"]
+            ),
+        ]
+    }
+    return [
+        CmuxRPCOperation(
+            method: cmuxSurfaceSendTextMethod,
+            params: ["surface_id": surfaceID, "text": text]
+        )
+    ]
+}
+
+/// Every site that emits bytes must pass gate ③ through `send(_:io:)`. cmux was the exception
+/// because one clear operation expands into two RPCs below that call; every operation repeats the
+/// same session-identity check before it can emit its byte. The first check is intentionally
+/// redundant with `send(_:io:)`: one identical question at every byte boundary costs about 9ms
+/// of ps+stty and keeps the rule local to the operation that is about to send.
+func runCmuxOperations(
+    _ operations: [CmuxRPCOperation],
+    sessionIsUnchanged: () -> Bool,
+    send: (CmuxRPCOperation) -> Bool
+) -> Bool {
+    for operation in operations {
+        guard sessionIsUnchanged() else { return false }
+        guard send(operation) else { return false }
+    }
+    return true
+}
+
+private func cmuxRPCParameters(_ parameters: [String: String]) -> [String: Any] {
+    parameters.reduce(into: [String: Any]()) { result, entry in
+        result[entry.key] = entry.value
+    }
+}
 
 /// Returns the PID of the claude that is in the foreground process group (stat contains `+`), out of `ps -t <tty> -o pid=,stat=,comm=` output. nil when there is none. With the shell sitting at its prompt the shell itself is `+`, so the answer is nil — and this gate is the only defence against the mistyping where input goes into the shell and Enter runs it immediately.
 /// A PID is returned rather than a yes/no because the re-wait between inputs has to confirm the session's identity: going by the name and raw mode alone, a claude that came up on the same tty after the original died reads as the same session, and the remaining inputs get submitted into an unrelated one. Restarting claude on the same tty confirmed it — comm (`claude`) and raw mode (true) were identical across the two sessions and only the PID differed, so the PID is the only signal that can tell a session swap apart.
@@ -80,6 +133,24 @@ public func wezTermTTYName(listJSON: Data, paneID: String) -> String? {
     return nil
 }
 
+/// Finds the basename tty attached to a cmux surface. `debug.terminals` reports the tty without
+/// `/dev/`; returning the full device path keeps the rest of the Claude gate identical to the
+/// iTerm2 and WezTerm paths.
+public func cmuxTTYName(debugTerminalsJSON: Data, surfaceID: String) -> String? {
+    guard
+        let object = try? JSONSerialization.jsonObject(with: debugTerminalsJSON),
+        let response = object as? [String: Any],
+        let terminals = response["terminals"] as? [[String: Any]],
+        let terminal = terminals.first(where: { $0["surface_id"] as? String == surfaceID }),
+        let tty = terminal["tty"] as? String,
+        !tty.isEmpty,
+        !tty.contains("/")
+    else {
+        return nil
+    }
+    return "/dev/" + tty
+}
+
 /// The random value used for the pane proof. It can only enter our own tty, so seeing it newly appear on screen is evidence that the screen is our pane. It is alphanumeric so it means nothing special to claude's input box (`/`, `!` and `@` trigger modes and completion), and long enough not to collide by accident.
 public func paneProofToken() -> String {
     let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -117,6 +188,24 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
         rest = rest[found.upperBound...]
     }
     return count
+}
+
+/// Returns true only when every six-character window of the marker has the same screen count as
+/// before the marker was typed. Checking the whole marker alone misses a remnant with one
+/// character removed, which is possible when a terminal's key-event path ignores Ctrl+U but still
+/// processes Backspace.
+func screenShowsMarkerErased(before: String, after: String, marker: String) -> Bool {
+    let compactMarker = marker.filter { !$0.isWhitespace }
+    let characters = Array(compactMarker)
+    guard characters.count >= 6 else { return false }
+
+    for start in 0...(characters.count - 6) {
+        let window = String(characters[start..<(start + 6)])
+        guard probeCount(window, in: after) == probeCount(window, in: before) else {
+            return false
+        }
+    }
+    return true
 }
 
 /// Session I/O — in reality osascript and wezterm cli calls, split out as closures so the delivery order and the failure-recovery verdicts can be exercised without any processes.
@@ -228,8 +317,11 @@ struct InputBoxOwnership {
 public func submitClaudeInputs(
     _ inputs: [String], io: ClaudeSessionIO,
     betweenInputTimeout: TimeInterval = 15, retryConfirmTimeout: TimeInterval = 2,
-    timeline: DeliveryTimeline? = nil
+    timeline: DeliveryTimeline? = nil, onDeliveryEnd: () -> Void = {}
 ) -> Int {
+    // Every return path, including an empty or abandoned delivery, passes one cleanup hook here.
+    defer { onDeliveryEnd() }
+
     // Counting the bytes that go out is how "might a fragment of ours be in the input box" is tracked.
     // The tracking lives inside this function because **there are several failure exits** (a failed session check between inputs, exhausted retries). With the cleanup outside, only one of them would reach it
     var ownership = InputBoxOwnership()
@@ -518,8 +610,7 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
         checkoutLog("failed to clear the input box — retrying (\(attempt)/\(maxAttempts))")
         return false
     }
-    let baseline = probeCount(of: marker, in: before)
-    guard waitUntilProbeCount(baseline, of: marker, io: io) else {
+    guard waitUntilMarkerErased(before: before, marker: marker, io: io) else {
         // The marker did not disappear — either what we saw was not the input box, or the TUI did not process the Ctrl+U. Both mean the same thing: do not send a CR
         checkoutLog("could not confirm the marker being erased from the input box — retrying (\(attempt)/\(maxAttempts))")
         return false
@@ -561,12 +652,12 @@ private func poll(io: ClaudeSessionIO, within deadline: TimeInterval, _ ready: (
     return false
 }
 
-private func waitUntilProbeCount(
-    _ wanted: Int, of text: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
+private func waitUntilMarkerErased(
+    before: String, marker: String, io: ClaudeSessionIO, within deadline: TimeInterval = 2.0
 ) -> Bool {
     poll(io: io, within: deadline) {
         guard let screen = io.screenText() else { return false }
-        return probeCount(of: text, in: screen) == wanted
+        return screenShowsMarkerErased(before: before, after: screen, marker: marker)
     }
 }
 
@@ -886,6 +977,9 @@ public func deliverClaudeInputs(
         ttyPath = tty
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
+    case .cmux(let surfaceID, _, let cliPath):
+        ttyPath = cmuxQueryTTY(cliPath: cliPath, surfaceID: surfaceID)
+        timeline?.step(ttyPath == nil ? "failed waiting for the cmux surface tty" : "cmux surface tty ready")
     case .warp(let socket):
         // Without reading the screen there is no way to confirm claude received the input, and a CR sent without that confirmation submits an empty line while input claude discarded is recorded as "delivered" (measured).
         // So on Warp the Accessibility permission is a **hard requirement** for buttons that schedule claude input — it has nothing to do with running the command itself, and the log records that difference
@@ -919,8 +1013,16 @@ public func deliverClaudeInputs(
     // The "+" on this line is the time taken by cd + the shell rc + claude booting — up to the foreground process becoming claude and the tty switching to raw mode. It is a stretch the app cannot shorten, so a large number here has its cause outside
     timeline?.step("claude ready (pid \(claudePID))")
 
+    let sessionIsUnchanged: () -> Bool = {
+        probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
+    }
     let io = ClaudeSessionIO(
-        sendKeys: { keys in sendKeys(keys, to: handle, expectedPID: claudePID) },
+        sendKeys: { keys in
+            sendKeys(
+                keys, to: handle, expectedPID: claudePID,
+                sessionIsUnchanged: sessionIsUnchanged
+            )
+        },
         screenText: { screenText(of: handle) },
         confirmSession: { limit in
             waitUntilClaudeAcceptsInput(
@@ -929,9 +1031,7 @@ public func deliverClaudeInputs(
             ) != nil
         },
         // The check immediately before sending does not wait — it measures once and only asks whether it is still that claude
-        sessionIsUnchanged: {
-            probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
-        },
+        sessionIsUnchanged: sessionIsUnchanged,
         // A revoked permission makes screen confirmation impossible — no new input is typed then, only the cleanup. The reason travels with the answer so a later diagnosis does not have to guess it back out of a Bool
         screenConfirmation: {
             handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
@@ -940,7 +1040,12 @@ public func deliverClaudeInputs(
         screenNeedsPaneProof: handle.screenNeedsPaneProof
     )
     let sent = submitClaudeInputs(
-        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline
+        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
+        onDeliveryEnd: {
+            if case .cmux(let surfaceID, _, _) = handle {
+                CmuxRPCFailureLog.forgetScreenReadFailures(surface: surfaceID)
+            }
+        }
     )
     timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
     checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
@@ -960,7 +1065,7 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
     ) else {
         return nil
     }
-    // A failed stty is passed on as empty output and treated as "cannot tell" (carrying on with the ps gate alone)
+    // A failed stty is treated as "cannot tell" and closes the gate; ps alone cannot prove raw mode.
     let stty = (try? runProcess("/bin/stty", ["-f", ttyPath, "-a"], timeout: 5))
         .flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
     return acceptingClaudePID(psOutput: ps.stdout, sttyOutput: stty)
@@ -1002,8 +1107,97 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
     return wezTermTTYName(listJSON: Data(result.stdout.utf8), paneID: paneID)
 }
 
+/// Waits for cmux to materialize the pty behind a newly focused surface. The command is already
+/// running while this waits, so a timeout gives up only the scheduled Claude inputs.
+private let cmuxTTYWaitTimeout: TimeInterval = 20
+private let cmuxTTYPollInterval: TimeInterval = 0.2
+
+private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
+    let deadline = Date().addingTimeInterval(cmuxTTYWaitTimeout)
+    var lastRPCError: String?
+    while true {
+        do {
+            let response = try cmuxRPC(
+                cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5
+            )
+            if let data = try? JSONSerialization.data(withJSONObject: response),
+               let tty = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID) {
+                return tty
+            }
+        } catch {
+            lastRPCError = errorMessage(error)
+        }
+        if Date() >= deadline {
+            // Logging every rotation would produce up to 100 lines in 20 seconds; keep only the
+            // last RPC error and attach it at the give-up point.
+            let errorSuffix = lastRPCError.map { " (last rpc error: \($0))" } ?? ""
+            checkoutLog(
+                "cmux surface \(surfaceID) did not report a tty within \(Int(cmuxTTYWaitTimeout))s"
+                    + " — giving up on claude input\(errorSuffix)"
+            )
+            return nil
+        }
+        Thread.sleep(forTimeInterval: cmuxTTYPollInterval)
+    }
+}
+
+enum CmuxRPCFailureLog {
+    static let lock = NSLock()
+    static let maxTrackedScreenReadFailures = 32
+    static var lastScreenReadMessages: [String: String] = [:]
+
+    static func shouldLogScreenReadFailure(surface: String, message: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard lastScreenReadMessages[surface] != message else { return false }
+        if lastScreenReadMessages[surface] == nil,
+           lastScreenReadMessages.count >= maxTrackedScreenReadFailures {
+            // A failed delivery has no later success callback, so clear all stale entries at the
+            // cap; bounded memory is preferable to suppressing a new surface indefinitely.
+            lastScreenReadMessages.removeAll()
+        }
+        lastScreenReadMessages[surface] = message
+        return true
+    }
+
+    static func recordScreenReadSuccess(surface: String) {
+        lock.lock()
+        lastScreenReadMessages.removeValue(forKey: surface)
+        lock.unlock()
+    }
+
+    static func forgetScreenReadFailures(surface: String) {
+        lock.lock()
+        lastScreenReadMessages.removeValue(forKey: surface)
+        lock.unlock()
+    }
+
+    /// Test-only access to the bounded failure map; production uses the map only for suppression.
+    static func testOnlyScreenReadFailureCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastScreenReadMessages.count
+    }
+
+    /// Test-only reset: production state is cleared per surface after a successful read.
+    static func reset() {
+        lock.lock()
+        lastScreenReadMessages.removeAll()
+        lock.unlock()
+    }
+
+    static func recordScreenReadFailure(surface: String, message: String) {
+        if shouldLogScreenReadFailure(surface: surface, message: message) {
+            checkoutLog(message)
+        }
+    }
+}
+
 /// Sends keystrokes as they are, without appending a newline (`claudeSubmitKey` and `claudeClearInputKey` included).
-private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expectedPID: Int) -> Bool {
+private func sendKeys(
+    _ text: String, to handle: TerminalSessionHandle, expectedPID: Int,
+    sessionIsUnchanged: @escaping () -> Bool
+) -> Bool {
     switch handle {
     case .iterm(let sessionID, _):
         // Control characters cannot go into an AppleScript string literal, so these branch to dedicated scripts
@@ -1027,6 +1221,27 @@ private func sendKeys(_ text: String, to handle: TerminalSessionHandle, expected
             input: text, env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         )
         return result?.status == 0
+    case .cmux(let surfaceID, _, let cliPath):
+        return runCmuxOperations(
+            cmuxSendOperations(surfaceID: surfaceID, text: text),
+            sessionIsUnchanged: sessionIsUnchanged
+        ) { operation in
+            do {
+                let response = try cmuxRPC(
+                    cli: cliPath, method: operation.method,
+                    params: cmuxRPCParameters(operation.params), timeout: 5
+                )
+                if response["queued"] as? Bool == true {
+                    checkoutLog("cmux \(operation.method) queued=true")
+                }
+                return true
+            } catch {
+                checkoutLog(
+                    "cmux \(operation.method) failed while delivering input: \(errorMessage(error))"
+                )
+                return false
+            }
+        }
     case .warp(let socket):
         // The helper puts bytes straight into our pane's tty input queue (TIOCSTI) — independent of focus, and unable to leak into another pane or another app. That is why synthetic keystrokes are not used.
         // The expected PID rides along so the helper can also check "the process that will read this tty right now" — we can only look before sending, and who reads what was put in the queue is decided only there
@@ -1062,6 +1277,24 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
             env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         ), result.status == 0 else { return nil }
         return result.stdout
+    case .cmux(let surfaceID, _, let cliPath):
+        do {
+            let response = try cmuxRPC(
+                cli: cliPath, method: cmuxSurfaceReadTextMethod,
+                params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
+            )
+            guard let text = cmuxScreenText(from: response) else { return nil }
+            CmuxRPCFailureLog.recordScreenReadSuccess(surface: surfaceID)
+            return text
+        } catch {
+            let message =
+                "cmux \(cmuxSurfaceReadTextMethod) failed while reading screen: \(errorMessage(error))"
+            // Screen reads run in a 0.15s reflection poll; suppress the same error per surface,
+            // clear that surface's suppression after a successful read, and always record a
+            // changed RPC error so a new failure is not hidden.
+            CmuxRPCFailureLog.recordScreenReadFailure(surface: surfaceID, message: message)
+            return nil
+        }
     case .warp:
         // What Accessibility reads is "the focused pane in Warp", with no guarantee it is ours.
         // It is nevertheless safe because input does not travel this path (see `warpScreenText`) — reading someone else's pane makes the pane proof and the reflection check fail, which sends us back to a retry, and if it fails for good nothing is submitted

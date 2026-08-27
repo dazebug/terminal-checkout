@@ -5,7 +5,7 @@
 
 **One click from GitHub to your Mac terminal.**
 
-Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository pages. Press one and your command runs in a new tab of iTerm2, WezTerm, or Warp — check out the branch, create a worktree, or launch a [Claude Code](https://claude.com/claude-code) session that has already read the issue. It ships as a Chrome extension plus a native macOS app.
+Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository pages. Press one and your command runs in a new tab of iTerm2, WezTerm, Warp, or cmux — check out the branch, create a worktree, or launch a [Claude Code](https://claude.com/claude-code) session that has already read the issue. It ships as a Chrome extension plus a native macOS app.
 
 ## Features
 
@@ -13,7 +13,7 @@ Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository 
 - **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
 - **Claude Code hand-off** — if your command runs `claude`, up to 5 scheduled inputs are handed over for you. `!` lines are typed into claude's shell mode so they really run as commands, with a run of them merged into one line; a list holding exactly one plain-text line is handed over as claude's opening message instead, with no typing at all.
 - **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
-- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm needs no TCC permission, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all three use `!`.
+- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm and cmux need no TCC permission, while cmux requires socket control mode = `automation`, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all three use `!`.
 - **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
 - **Five languages** — English, Korean, Japanese, Simplified Chinese and Traditional Chinese. The app follows macOS (or the language you pick in it); the extension follows Chrome. See [Language](#language) for how each side resolves and which translations are a machine-translated first pass.
 
@@ -25,19 +25,20 @@ macOS attributes Automation (Apple Events) permission to the "responsible proces
 flowchart LR
     EXT["Chrome extension<br>(JavaScript)"] -->|stdio| RELAY["relay<br>(forwarding only, ships in the app bundle)"]
     RELAY -->|unix socket| APP["Terminal Checkout.app<br>(TCC permission attaches here only)"]
-    APP -->|"AppleScript / wezterm cli / Warp Tab Config"| TERM["iTerm2 / WezTerm / Warp"]
+    APP -->|"AppleScript / wezterm cli / cmux rpc / Warp Tab Config"| TERM["iTerm2 / WezTerm / cmux / Warp"]
 ```
 
 - The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
 - **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
-- Turning the scheduled inputs into "what gets typed" and "what rides in argv" happens in the app, before the terminal branch, so it works the same on all three terminals. A request either types everything or appends everything — never both in one session.
+- Turning the scheduled inputs into "what gets typed" and "what rides in argv" happens in the app, before the terminal branch, so it works the same on all four terminals. A request either types everything or appends everything — never both in one session.
 - Warp has one extra piece: it has no API for sending text to a pane, so a button whose claude inputs are **typed** first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the inputs to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why typed claude input on Warp needs the Accessibility permission. A button with no claude input, or whose one input is a plain-text line, launches no helper and needs no permission — 8 of the 11 shipped presets are in that shape, because they schedule no claude input at all.
+- cmux has an addressable surface API: the app creates a workspace with `cmux rpc`, sends the command as text, and reads that surface by UUID. Because the screen read is surface-specific, delivery continues when you switch to another tab; cmux has no Warp-style "keep looking at the tab" constraint and needs no Accessibility permission.
 
 ## Requirements
 
 - macOS 13+
 - Google Chrome
-- One of iTerm2, WezTerm, or Warp
+- One of iTerm2, WezTerm, Warp, or cmux
 - Swift toolchain, for building (Command Line Tools via `xcode-select --install` is enough)
 - A way for the commands to reach your repository on disk: [zoxide](https://github.com/ajeetdsouza/zoxide)/[z.sh](https://github.com/rupa/z), a **base directory** set in the app, or both — see [Getting into the repository](#getting-into-the-repository)
 - Optional: [gh](https://cli.github.com) for the issue presets and for cloning a repository you don't have locally yet, `claude` for claude input
@@ -87,8 +88,9 @@ When the app opens, walk through the setup window in order. Native Host registra
    - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
    - This step is marked complete when the app first receives a request from the extension. After Chrome loads it, open a GitHub PR, issue, or repository page and press any Terminal Checkout button once
 2. **Language** — English, Korean, Japanese, Simplified Chinese, Traditional Chinese, or [Follow the system language] (the default). This is the **app's** language; the extension follows Chrome. See [Language](#language)
-3. **Terminal** — choose iTerm2, WezTerm, or Warp
-4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and Warp need none.
+3. **Terminal** — choose iTerm2, WezTerm, Warp, or cmux
+   - **cmux socket control** (shown only when cmux is selected) — the card shows not installed, not running, denied, or reachable. Automation means every process run by the same macOS user can control cmux. Enable it in cmux Settings → Automation, or use [Open Config File] to copy the setting and open `~/.config/cmux/cmux.json`; cmux applies file changes immediately, so no restart is needed. The app never writes the file.
+4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm and cmux need none, while Warp needs no TCC permission but does need Accessibility for typed claude input.
    - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the three shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path.
 5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
 6. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
@@ -174,6 +176,7 @@ If the command runs `claude`, the options page lets you schedule up to 5 inputs 
 - Delivery holds while claude's trust prompt for a first-time folder is up. Accept within about **15 seconds** and it continues; take longer and it gives up from that input on.
 - The log says **sent**, not delivered. Whether claude turned a submitted line into a message is not something anything outside the TUI can establish, so the app does not claim it. If a return key never took effect, that input is lost and the log still counts it as sent.
 - **On Warp, delivery only runs while you're looking at that tab** (see below).
+- **On cmux, delivery is addressed to the created surface and continues in a background tab**; it does not use Warp's focus-dependent screen proof and needs no Accessibility permission.
 
 Known limits:
 
@@ -256,7 +259,7 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 - Chrome launches the Native Host relay only for whitelisted extension IDs (`allowed_origins`) — enforced by Chrome, not by the relay itself
 - Variable values pass an alphanumeric + `-_./` whitelist, preventing command injection
-- The app socket and the Warp injection helper deliberately trust processes of the same user (uid): mode 0600 + peer verification on the socket, and the helper is killed the moment delivery ends — see [SECURITY.md](SECURITY.md) for the full trust model
+- The app socket, cmux automation mode, and the Warp injection helper deliberately trust processes of the same user (uid): mode 0600 + peer verification on the app socket, and the helper is killed the moment delivery ends — see [SECURITY.md](SECURITY.md) for the full trust model
 - The extension runs only on `https://github.com`
 
 ## Troubleshooting
@@ -264,6 +267,12 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 **"Native host has exited" / the extension doesn't respond** — Open the setup window (launch Terminal Checkout from Spotlight); problem cards appear automatically. If the Chrome connection card shows, press [Register/Update]. If you moved the repository or reinstalled the app, run `./install.sh` again.
 
 **You denied a permission** — [Open System Settings] in the setup window → **Privacy & Security → Automation → Terminal Checkout → iTerm2**. Warp's screen reading is the **Accessibility** item on the same screen.
+
+**cmux socket access is denied** — Enable automation in cmux Settings → Automation, or in the setup window click [Open Config File] to copy the JSON fragment and open `~/.config/cmux/cmux.json`, then set `automation.socketControlMode` to `automation`.
+
+**cmux is not running** — [Run in Terminal] starts cmux without arguments; after its socket appears, use [Check Again]. [Open Config File] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
+
+**The cmux command ran but claude input is missing** — The pane's shell integration may be off, so `debug.terminals` has no tty for the surface; the command is kept, but claude input is abandoned. Check the app log with `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
 
 **claude input isn't delivered on Warp** — Typed input (every `!` input, so all three shipped presets that schedule claude input) needs the Accessibility permission; a lone plain-text input, which rides in the opening message, does not. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
 

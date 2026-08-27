@@ -56,11 +56,17 @@ public func resolveRequest(
 
     var claudeInputs: [String] = []
     for text in rawInputs {
-        let rendered = try renderCommand(
+        let renderedSource = try renderCommand(
             template: text, variables: variables, appVariables: appVariables
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        // The order is contractual: inspect the rendered source before trimming, because trimming
+        // first removes edge TAB/CR/LF and lets them pass; a TAB-only input then disappears with a
+        // success response.
+        try rejectNUL(in: renderedSource, what: "claude_inputs")
+        try rejectLineBreaks(in: renderedSource, what: "claude_inputs")
+        try rejectControlCharacters(in: renderedSource, what: "claude_inputs")
+        let rendered = renderedSource.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rendered.isEmpty else { continue }
-        try rejectNUL(in: rendered, what: "claude_inputs")
         claudeInputs.append(rendered)
     }
     return ResolvedRequest(command: command, claudeInputs: claudeInputs)
@@ -73,6 +79,33 @@ public func resolveRequest(
 private func rejectNUL(in text: String, what: String) throws {
     guard text.utf8.contains(0) else { return }
     throw CommandError.badRequest("\(what) must not contain NUL")
+}
+
+/// `claude_inputs` are typed only after a marker/reflection check, so a line break would submit
+/// before that check on every terminal carrier. `command_template` is different: its CR is the
+/// execution contract and an embedded line break deliberately means another shell command.
+private func rejectLineBreaks(in text: String, what: String) throws {
+    // Character comparison lets the single CRLF Character through; its two Unicode scalars must
+    // be inspected separately.
+    guard !text.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) else {
+        throw CommandError.badRequest(
+            "\(what) must not contain line breaks: they are submitted before screen reflection can be confirmed"
+        )
+    }
+}
+
+/// Typed claude input must not carry control bytes: they are typed into the terminal, DEL acts as
+/// Backspace, and reflection checks only the first 24 characters before the app sends CR. This
+/// guard is not used for `command_template`, whose shell execution treats an embedded line break
+/// as the user's intentional second command.
+private func rejectControlCharacters(in text: String, what: String) throws {
+    guard !text.unicodeScalars.contains(where: { scalar in
+        scalar.value <= 0x1F || scalar.value == 0x7F
+    }) else {
+        throw CommandError.badRequest(
+            "\(what) must not contain control characters: typed bytes can act as keys (DEL is Backspace), and reflection checks only the first 24 characters before CR"
+        )
+    }
 }
 
 /// The variables only the app knows the value of. Today that is `{cd}` (the repository entry
@@ -109,12 +142,13 @@ public func errorMessage(_ error: Error) -> String {
 
 /// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
 public func handleRequest(
-    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void
+    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void,
+    message: (Error) -> String = errorMessage
 ) -> [String: Any] {
     do {
         try run(try resolveRequest(json, baseDirectory: baseDirectory))
         return ["success": true]
     } catch {
-        return ["success": false, "error": errorMessage(error)]
+        return ["success": false, "error": message(error)]
     }
 }

@@ -4,6 +4,7 @@ public enum Terminal: String, CaseIterable {
     case iterm
     case wezterm
     case warp
+    case cmux
 
     /// The single place a stored value is parsed. An unknown value (an identifier left by another version, a hand-edited plist) falls back to iTerm2.
     /// Scattering that fallback across the consumers is how they drift apart — execution going to iTerm2 while the setup window hides the iTerm2 permission section — so it lives here and nowhere else.

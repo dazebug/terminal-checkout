@@ -319,6 +319,103 @@ final class RequestTests: XCTestCase {
         ]))
     }
 
+    /// A newline in a claude input must be rejected before it can reach the typed path: the
+    /// extension's `toStoredButton` trims only the outside, `Request` trims only the outside and
+    /// rejects NUL, then `prepareRequest` reaches its newline guard at line 775 and sends the
+    /// input typed. Every terminal treats that newline as an early submission (cmux's server
+    /// converts LF to CR), so the marker/reflection/CR protocol cannot protect it.
+    func testClaudeInputsWithLineBreaksAreRejectedBeforeTypedDelivery() {
+        let lineBreaks = ["!echo first\n!echo second", "!echo first\r!echo second", "!echo first\r\n!echo second"]
+        for input in lineBreaks {
+            XCTAssertThrowsError(try resolveRequest([
+                "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+                "claude_inputs": [input],
+            ])) { error in
+                XCTAssertTrue(errorMessage(error).contains("claude_inputs"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertNoThrow(try resolveRequest([
+            "command_template": "z {repo} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["!echo first !echo second"],
+        ]))
+    }
+
+    /// N1 red reproduction: the DEL at the end of a 25-character input is outside the first
+    /// 24 reflected characters but still reaches TIOCSTI as the project's Backspace byte. Tabs
+    /// and ESC are the same class of unsafe input. NUL and CR/LF keep their existing diagnostics;
+    /// command_template remains on the shell-execution boundary and accepts DEL.
+    func testClaudeInputsRejectControlBytesWithoutChangingSpecificDiagnostics() {
+        func request(_ input: String) -> [String: Any] {
+            [
+                "command_template": "claude",
+                "claude_inputs": [input],
+            ]
+        }
+
+        let controls = [
+            "!printf '%s\\n' 123456789012345678901234Z\u{7F}",
+            "tab\u{09}input",
+            "escape\u{1B}input",
+        ]
+        for input in controls {
+            XCTAssertThrowsError(try resolveRequest(request(input))) { error in
+                XCTAssertTrue(errorMessage(error).contains("claude_inputs"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertThrowsError(try resolveRequest(request("pre\u{0}post"))) { error in
+            XCTAssertTrue(errorMessage(error).contains("must not contain NUL"), "unexpected error: \(error)")
+        }
+        for lineBreak in ["pre\npost", "pre\rpost"] {
+            XCTAssertThrowsError(try resolveRequest(request(lineBreak))) { error in
+                XCTAssertTrue(errorMessage(error).contains("must not contain line breaks"), "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertNoThrow(try resolveRequest(request("!안녕 🦄")))
+        XCTAssertNoThrow(try resolveRequest([
+            "command_template": "claude\u{7F}",
+        ]))
+    }
+
+    /// O1 red reproduction: extension storage and Request trim outside whitespace before the
+    /// typed-input guard, so an edge TAB can disappear with a success response, a leading TAB can
+    /// alter the body, and a trailing newline can skip the line-break diagnostic. The guard must
+    /// inspect the rendered source before trimming, while ordinary whitespace remains discardable.
+    func testClaudeInputsRejectControlCharactersBeforeTrimmingEdges() {
+        func request(_ input: String) -> [String: Any] {
+            ["command_template": "claude", "claude_inputs": [input]]
+        }
+
+        for input in ["\t", "\t!echo tc-edge", "\u{7F}"] {
+            XCTAssertThrowsError(try resolveRequest(request(input))) { error in
+                XCTAssertTrue(
+                    errorMessage(error).contains("claude_inputs"),
+                    "edge control byte was not diagnosed: \(error)"
+                )
+                if input == "\u{7F}" || input.contains("\t") {
+                    XCTAssertTrue(
+                        errorMessage(error).contains("control characters"),
+                        "wrong control-byte diagnosis: \(error)"
+                    )
+                }
+            }
+        }
+
+        XCTAssertThrowsError(try resolveRequest(request("hello\n"))) { error in
+            XCTAssertTrue(
+                errorMessage(error).contains("line breaks"),
+                "trailing newline lost its specific diagnosis: \(error)"
+            )
+        }
+
+        let trimmed = try? resolveRequest(request("  hello  "))
+        XCTAssertEqual(trimmed?.claudeInputs, ["hello"])
+        let empty = try? resolveRequest(request("   "))
+        XCTAssertEqual(empty?.claudeInputs, [])
+    }
+
     func testNULInTheCommandIsRejected() {
         XCTAssertThrowsError(try resolveRequest([
             "command_template": "z {repo}\u{0} && claude", "variables": ["repo": "remy"],
@@ -675,14 +772,16 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal.iterm.rawValue, "iterm")
         XCTAssertEqual(Terminal.wezterm.rawValue, "wezterm")
         XCTAssertEqual(Terminal.warp.rawValue, "warp")
+        XCTAssertEqual(Terminal.cmux.rawValue, "cmux")
         // Oracle completeness: a new case has to gain a literal line in the list above too
-        XCTAssertEqual(Terminal.allCases.count, 3)
+        XCTAssertEqual(Terminal.allCases.count, 4)
     }
 
     func testStoredValueParsingFallsBackToITerm() {
         XCTAssertEqual(Terminal(storedValue: "iterm"), .iterm)
         XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
         XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
+        XCTAssertEqual(Terminal(storedValue: "cmux"), .cmux)
         // An unknown stored value (an identifier left by another version, a hand-edited plist) falls back to iTerm2 — the contract that gathers the fallback into the single parsing point so it cannot diverge per consumer
         XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
         XCTAssertEqual(Terminal(storedValue: ""), .iterm)
@@ -2017,6 +2116,9 @@ private final class FakeClaudeSession {
     /// CLI call returning success means the terminal took the bytes, not that claude processed
     /// them (measured)
     var clearDoesNothing = false
+    /// R1-j reproduction: Kitty keyboard protocol makes cmux's key-event ctrl+u path ineffective under
+    /// claude, while the following backspace still removes one character.
+    var ctrlUIsIgnored = false
     /// **Measured (2.1.238, pty)**: Ctrl+U on a `!…` line clears the text but **leaves the `!`**,
     /// so the box stays in shell mode and looks empty. Whatever is typed next is submitted as a
     /// shell command. One Backspace after the Ctrl+U removes the prefix (also measured)
@@ -2072,7 +2174,7 @@ private final class FakeClaudeSession {
                     // Backspace from the clear sequence shows up here rather than passing
                     for character in keys {
                         switch character {
-                        case "\u{15}" where !clearDoesNothing:
+                        case "\u{15}" where !clearDoesNothing && !ctrlUIsIgnored:
                             box = clearLeavesModePrefix && box.hasPrefix("!") ? "!" : ""
                         case "\u{15}":
                             break // the write was accepted, the TUI ignored it
@@ -2411,6 +2513,26 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
         XCTAssertTrue(session.submitted.isEmpty)
         XCTAssertFalse(session.keystrokes.contains("!git status"), "the body was typed without confirmation")
+    }
+
+    /// **R1-j reproduction (cmux 0.64.22, Claude Code 2.1.246):** the app logged
+    /// "input 1/1 body reflection confirmed → submission (CR) sent → delivery finished — sent 1 of 1",
+    /// but the transcript contained `tctqr20ckbi!echo tc-r1j-input-ok`: an observed 12-character
+    /// `paneProofToken` lost only its final character before the body was typed on top. Claude
+    /// enabled Kitty keyboard protocol flag 1 (`CSI > 1 u`) and modifyOtherKeys 2 (`CSI > 4;2 m`);
+    /// under that mode cmux's key-event `ctrl+u` was ignored while the following Backspace still
+    /// removed one character. The old whole-marker count check therefore accepted the 11-character remnant.
+    func testItem10KittyKeyboardModeLeavesMarkerRemnantAndStopsBeforeTyping() {
+        let session = FakeClaudeSession()
+        session.ctrlUIsIgnored = true
+
+        XCTAssertEqual(submitClaudeInputs(["!echo tc-r1j-input-ok"], io: session.io), 0)
+        XCTAssertTrue(session.submitted.isEmpty)
+        XCTAssertFalse(
+            session.keystrokes.contains("!echo tc-r1j-input-ok"),
+            "the body was typed on top of a marker remnant"
+        )
+        XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
     }
 
     /// Cleanup is one Ctrl+U through the same gate, and the terminal CLI does fail one call now and
@@ -2827,6 +2949,39 @@ final class ClaudeInputDeliveryTests: XCTestCase {
 
 final class ScreenReflectionTests: XCTestCase {
     private let input = "!gh issue view 1415"
+
+    func testScreenShowsMarkerErasedRejectsAnElevenCharacterRemnant() {
+        XCTAssertFalse(
+            screenShowsMarkerErased(
+                before: "", after: "tctqr20ckbi", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedAcceptsAnEmptyScreen() {
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: "", after: "", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedIgnoresUnrelatedText() {
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: "existing screen", after: "existing screen unrelated text", marker: "tctqr20ckbiq"
+            )
+        )
+    }
+
+    func testScreenShowsMarkerErasedAcceptsAnUnchangedExistingOccurrence() {
+        let marker = "tctqr20ckbiq"
+        XCTAssertTrue(
+            screenShowsMarkerErased(
+                before: marker, after: marker, marker: marker
+            )
+        )
+    }
 
     func testNewlyAppearedInputIsReflection() {
         XCTAssertTrue(screenReflectsNewInput(before: "❯ ", after: "❯ " + input, input: input))
@@ -3571,6 +3726,72 @@ final class ProcessArgumentBoundaryTests: XCTestCase {
     }
 }
 
+/// I7 red reproduction: terminating the process is not enough when it ignores SIGTERM and a
+/// descendant still owns the pipes. The helper must escalate to SIGKILL and keep the post-kill wait
+/// bounded instead of waiting for the 30-second child.
+final class RunProcessTimeoutTests: XCTestCase {
+    func testRunProcessKillsAChildThatIgnoresTerminationWithinABound() {
+        let started = Date()
+        var thrown: Error?
+        do {
+            _ = try runProcess(
+                "/bin/sh", ["-c", #"trap "" TERM; sleep 30"#], timeout: 0.5
+            )
+        } catch {
+            thrown = error
+        }
+
+        XCTAssertTrue(thrown is TerminalError)
+        if let error = thrown {
+            guard let terminalError = error as? TerminalError else {
+                return XCTFail("timeout was not reported: \(error)")
+            }
+            guard case .timeout = terminalError else {
+                return XCTFail("timeout was not reported: \(error)")
+            }
+        } else {
+            XCTFail("a child that ignores SIGTERM must fail with timeout")
+        }
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 8,
+            "SIGTERM grace plus the post-kill wait must be a real upper bound"
+        )
+    }
+
+    /// J3 red reproduction: a parent can exit normally while a background child keeps the pipe
+    /// open. The normal drain must be bounded too, and should return the parent's successful result
+    /// with whatever output was read before the bound closed the pipe. L6's reader/caller race is
+    /// not reproduced deterministically in a test; the green lock removes that window instead.
+    func testRunProcessReturnsAfterParentExitsWithBackgroundChildWithinABound() {
+        let started = Date()
+        var result: (status: Int32, stdout: String, stderr: String)?
+        var thrown: Error?
+        do {
+            result = try runProcess(
+                "/bin/sh", ["-c", "sleep 30 &"], timeout: 0.5
+            )
+        } catch {
+            thrown = error
+        }
+
+        XCTAssertNil(thrown)
+        XCTAssertEqual(result?.status, 0)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started), 8,
+            "a normally exited parent must not make pipe draining unbounded"
+        )
+    }
+
+    /// L5: a truncated final UTF-8 scalar must not erase the valid prefix from stdout when the
+    /// bounded drain closes a pipe after collecting it.
+    func testRunProcessKeepsValidPrefixBeforeInvalidUTF8() throws {
+        let result = try runProcess(
+            "/bin/sh", ["-c", #"printf 'ok'; printf '\303'"#], timeout: 10
+        )
+        XCTAssertTrue(result.stdout.hasPrefix("ok"), result.stdout)
+    }
+}
+
 // MARK: - The carriers that were changing the user's bytes
 
 /// Every `.swift` file under `app/Sources`, keyed by its path relative to the repository root.
@@ -4080,12 +4301,22 @@ final class WarpProcessTests: XCTestCase {
 // Whether a screen read can be asserted to belong to that session differs per terminal. Getting this verdict wrong makes iTerm2 and WezTerm pay an unnecessary proof cost, or lets Warp submit without one.
 
 final class PaneProofRoutingTests: XCTestCase {
-    func testOnlyWarpNeedsPaneProof() {
+    func testItem8OnlyWarpNeedsPaneProof() {
         XCTAssertTrue(TerminalSessionHandle.warp(helperSocket: "/tmp/x.sock").screenNeedsPaneProof)
         XCTAssertFalse(TerminalSessionHandle.iterm(sessionID: "s", tty: "/dev/ttys001").screenNeedsPaneProof)
         XCTAssertFalse(
             TerminalSessionHandle.wezterm(paneID: "1", cliPath: "/x", socketPath: nil).screenNeedsPaneProof
         )
+        let cmux = TerminalSessionHandle.cmux(
+            surfaceID: "surface-1", workspaceID: "workspace-1", cliPath: "/cmux"
+        )
+        XCTAssertFalse(cmux.screenNeedsPaneProof)
+        guard case .cmux(let surfaceID, let workspaceID, let cliPath) = cmux else {
+            return XCTFail("item 8 must retain the cmux identifiers")
+        }
+        XCTAssertEqual(surfaceID, "surface-1")
+        XCTAssertEqual(workspaceID, "workspace-1")
+        XCTAssertEqual(cliPath, "/cmux")
         XCTAssertFalse(TerminalSessionHandle.none.screenNeedsPaneProof)
     }
 
