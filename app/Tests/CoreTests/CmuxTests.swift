@@ -33,16 +33,6 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(found, "/custom/bin/cmux")
     }
 
-    func testCmuxSocketPathOnlyReportsAnExistingSocket() {
-        let expected = "/Users/tester/.local/state/cmux/cmux.sock"
-
-        XCTAssertEqual(
-            cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { $0 == expected }),
-            expected
-        )
-        XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
-    }
-
     /// J2 red reproduction: retry is safe only when the first request demonstrably never reached
     /// the server. A timeout or invalid JSON can follow a server-side workspace creation, so the
     /// implementation must rethrow those uncertain outcomes instead of creating a duplicate.
@@ -357,6 +347,20 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"), "/dev/ttys020")
     }
 
+    func testItem9CmuxRawModeProbeUsesTheParserReturnedTTYPath() throws {
+        let json = Data(
+            """
+            {"terminals":[{"surface_id":"surface-1","tty":"ttys020"}]}
+            """.utf8
+        )
+        let ttyPath = try XCTUnwrap(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"))
+
+        XCTAssertEqual(
+            cmuxRawModeProbeArguments(ttyPath: ttyPath),
+            ["-f", "/dev/ttys020", "-a"]
+        )
+    }
+
     func testItem9CmuxTTYNameReturnsNilForNullTTY() {
         let json = Data(
             #"{"terminals":[{"surface_id":"surface-1","tty":null}]}"#.utf8
@@ -519,6 +523,181 @@ final class CmuxTests: XCTestCase {
             ),
             .failed("unexpected reply")
         )
+    }
+
+    // MARK: - Canonical-limit send gate
+
+    // This test pins the canonical-limit constant; Darwin's measurement is documented on `darwinCanonicalLineLimit`.
+    func testCanonicalLineLimitIsTheMeasured1024() {
+        XCTAssertEqual(darwinCanonicalLineLimit, 1024)
+    }
+
+    func testCommandSendGateSendsOnlyWhenTheShellIsReading() {
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: false, payloadByteCount: 5000),
+            .send
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: true, payloadByteCount: 5000),
+            .send
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: false, deadlineExpired: false, payloadByteCount: 10),
+            .waitLonger
+        )
+        // "Cannot tell" is not "raw" — the same rule as the claude session gate.
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: nil, deadlineExpired: false, payloadByteCount: 10),
+            .waitLonger
+        )
+    }
+
+    func testCommandSendGateFallsBackBySizeAtTheDeadline() {
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: nil, deadlineExpired: true,
+                payloadByteCount: darwinCanonicalLineLimit
+            ),
+            .sendDespiteCanonical
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: false, deadlineExpired: true,
+                payloadByteCount: darwinCanonicalLineLimit + 1
+            ),
+            .refuseTooLong
+        )
+    }
+
+    // MARK: - Channels
+
+    func testCmuxChannelsCarryTheirOwnBundleAndSocketPointer() {
+        XCTAssertEqual(CmuxChannel.stable.bundleID, "com.cmuxterm.app")
+        XCTAssertEqual(CmuxChannel.nightly.bundleID, "com.cmuxterm.app.nightly")
+        XCTAssertEqual(CmuxChannel.stable.lastSocketPathFileName, "last-socket-path")
+        XCTAssertEqual(CmuxChannel.nightly.lastSocketPathFileName, "nightly-last-socket-path")
+    }
+
+    func testCmuxNightlyCLICandidatesAreTheBundlePathsOnly() {
+        // A bare `cmux` on PATH cannot testify to its channel, so nightly searches only the
+        // bundle installations.
+        XCTAssertEqual(
+            cmuxCLICandidatePaths(channel: .nightly, homeDirectory: "/Users/u", path: "/opt/x:/usr/bin"),
+            [
+                "/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux",
+                "/Users/u/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux",
+            ]
+        )
+    }
+
+    func testCmuxStableCLICandidatesAreUnchangedByTheChannelParameter() {
+        XCTAssertEqual(
+            cmuxCLICandidatePaths(homeDirectory: "/Users/u", path: nil),
+            [
+                "/Applications/cmux.app/Contents/Resources/bin/cmux",
+                "/Users/u/Applications/cmux.app/Contents/Resources/bin/cmux",
+                "/opt/homebrew/bin/cmux",
+                "/usr/local/bin/cmux",
+            ]
+        )
+    }
+
+    func testCmuxSocketPinDistinguishesPinnedDiscoverAndNoLiveSocket() {
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { channel in
+                channel == .nightly ? "/tmp/nightly.sock" : "/tmp/stable.sock"
+            },
+            .pinned("/tmp/nightly.sock")
+        )
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { _ in nil },
+            .discover
+        )
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { channel in
+                channel == .stable ? "/tmp/stable.sock" : nil
+            },
+            .noLiveSocket
+        )
+    }
+
+    func testCmuxSocketPointerCandidatesPreferStateThenTmpAndRequireALiveTarget() {
+        XCTAssertEqual(
+            cmuxSocketPointerPaths(channel: .stable, homeDirectory: "/Users/u"),
+            [
+                "/Users/u/.local/state/cmux/last-socket-path",
+                "/tmp/cmux-last-socket-path",
+            ]
+        )
+        XCTAssertEqual(
+            cmuxSocketPointerPaths(channel: .nightly, homeDirectory: "/Users/u"),
+            [
+                "/Users/u/.local/state/cmux/nightly-last-socket-path",
+                "/tmp/cmux-nightly-last-socket-path",
+            ]
+        )
+
+        XCTAssertEqual(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { $0 == "/state.sock" || $0 == "/tmp.sock" }
+            ),
+            "/state.sock"
+        )
+        XCTAssertEqual(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { $0 == "/tmp.sock" }
+            ),
+            "/tmp.sock"
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { _ in false }
+            )
+        )
+        XCTAssertEqual(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/single.sock\n"],
+                fileExists: { $0 == "/single.sock" }
+            ),
+            "/single.sock"
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/single.sock\n"],
+                fileExists: { _ in false }
+            )
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["   \n"],
+                fileExists: { _ in true }
+            )
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: [nil],
+                fileExists: { _ in true }
+            )
+        )
+    }
+
+    func testCmuxRPCEnvironmentPinsTheSocketAndKeepsTheInheritedEnvironment() {
+        XCTAssertNil(cmuxRPCEnvironment(socketPath: nil, base: ["PATH": "/usr/bin"]))
+        XCTAssertEqual(
+            cmuxRPCEnvironment(socketPath: "/tmp/a.sock", base: ["PATH": "/usr/bin"]),
+            ["PATH": "/usr/bin", "CMUX_SOCKET_PATH": "/tmp/a.sock"]
+        )
+    }
+
+    func testTerminalStoresCmuxNightlyAsItsOwnIdentifier() {
+        XCTAssertEqual(Terminal(storedValue: "cmux-nightly"), .cmuxNightly)
+        XCTAssertEqual(Terminal.cmuxNightly.rawValue, "cmux-nightly")
+        XCTAssertEqual(Terminal.cmuxNightly.cmuxChannel, .nightly)
+        XCTAssertEqual(Terminal.cmux.cmuxChannel, .stable)
+        XCTAssertNil(Terminal.warp.cmuxChannel)
     }
 
 }

@@ -16,8 +16,8 @@ public enum CmuxSocketStatus: Equatable {
 }
 
 /// Classifies one live `cmux ping` observation. A successful PONG or an access denial wins over
-/// the default socket path because the CLI discovers sockets through `CMUX_SOCKET_PATH` and
-/// `/tmp/cmux-last-socket-path`; only a missing default socket with neither result means stopped.
+/// the socket-existence hint because a CLI may still reach a server through discovery; only a
+/// missing resolved socket with neither result means stopped.
 public func classifyCmuxSocketStatus(
     socketExists: Bool, pingStatus: Int32, stdout: String, stderr: String
 ) -> CmuxSocketStatus {
@@ -42,20 +42,87 @@ public enum CmuxRPCError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// A cmux release channel. Stable and NIGHTLY are separate app bundles running from one codebase:
+/// each server records its live socket in two pointer files, with the state-directory copy read
+/// before the `/tmp` copy. Both binaries carry all four channel file names — stable, nightly, dev,
+/// staging — measured with `strings` on 0.64.22 and 0.64.22-nightly. An unpinned CLI
+/// "auto-discovers tagged/debug sockets" beyond its channel file, and with both servers running
+/// that discovery reached across channels (nightly CLI answered PONG while only its stable sibling
+/// was assumed up), so a live pointer pins `CMUX_SOCKET_PATH` and a missing selected-channel
+/// pointer never permits a cross-channel discovery.
+public enum CmuxChannel: CaseIterable, Equatable {
+    case stable
+    case nightly
+
+    public var bundleID: String {
+        switch self {
+        case .stable: return "com.cmuxterm.app"
+        case .nightly: return "com.cmuxterm.app.nightly"
+        }
+    }
+
+    /// The pointer file the channel's server rewrites on every start. The stable channel's file
+    /// is the unprefixed name; a restart can change the socket's own basename (`cmux.sock` →
+    /// `cmux-501.sock`, observed across versions), so the pointer is read fresh, never cached.
+    public var lastSocketPathFileName: String {
+        switch self {
+        case .stable: return "last-socket-path"
+        case .nightly: return "nightly-last-socket-path"
+        }
+    }
+
+    var appBundleName: String {
+        switch self {
+        case .stable: return "cmux.app"
+        case .nightly: return "cmux NIGHTLY.app"
+        }
+    }
+
+    var temporarySocketPointerFileName: String {
+        switch self {
+        case .stable: return "cmux-last-socket-path"
+        case .nightly: return "cmux-nightly-last-socket-path"
+        }
+    }
+}
+
+public enum CmuxSocketPin: Equatable {
+    case pinned(String)
+    case discover
+    case noLiveSocket
+}
+
+/// Answers what to do with the selected channel's socket in one place: pin it, discover it,
+/// or do not ask for it. `.discover` is safe for a single-channel user because when no other
+/// channel is live, the only server discovery can reach is the selected channel's own.
+public func cmuxSocketPin(
+    channel: CmuxChannel, resolvedSocketPath: (CmuxChannel) -> String?
+) -> CmuxSocketPin {
+    if let socketPath = resolvedSocketPath(channel) {
+        return .pinned(socketPath)
+    }
+    return CmuxChannel.allCases.contains {
+        $0 != channel && resolvedSocketPath($0) != nil
+    } ? .noLiveSocket : .discover
+}
+
 /// The explicit locations are first because the app's PATH is normally only `/usr/bin:/bin`.
-/// The cmux bundle's resource executable is the canonical installation, followed by the two
-/// conventional standalone locations and then the user's PATH.
+/// The cmux bundle's resource executable is the canonical installation; the stable channel then
+/// falls back to the two conventional standalone locations and the user's PATH, while nightly
+/// searches only its bundle installations — a bare `cmux` on PATH cannot testify to its channel.
 public func cmuxCLICandidatePaths(
+    channel: CmuxChannel = .stable,
     homeDirectory: String = NSHomeDirectory(), path: String? = ProcessInfo.processInfo.environment["PATH"]
 ) -> [String] {
+    let bundleCLI = "Contents/Resources/bin/cmux"
     var candidates = [
-        "/Applications/cmux.app/Contents/Resources/bin/cmux",
+        "/Applications/\(channel.appBundleName)/\(bundleCLI)",
         (homeDirectory as NSString).appendingPathComponent(
-            "Applications/cmux.app/Contents/Resources/bin/cmux"
+            "Applications/\(channel.appBundleName)/\(bundleCLI)"
         ),
-        "/opt/homebrew/bin/cmux",
-        "/usr/local/bin/cmux",
     ]
+    guard channel == .stable else { return candidates }
+    candidates += ["/opt/homebrew/bin/cmux", "/usr/local/bin/cmux"]
 
     if let path {
         candidates += path.split(separator: ":", omittingEmptySubsequences: true).map {
@@ -66,20 +133,113 @@ public func cmuxCLICandidatePaths(
 }
 
 public func findCmuxCLI(
+    channel: CmuxChannel = .stable,
     homeDirectory: String = NSHomeDirectory(), path: String? = ProcessInfo.processInfo.environment["PATH"],
     isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
 ) -> String? {
-    cmuxCLICandidatePaths(homeDirectory: homeDirectory, path: path).first(where: isExecutable)
+    cmuxCLICandidatePaths(channel: channel, homeDirectory: homeDirectory, path: path)
+        .first(where: isExecutable)
 }
 
-/// cmux discovers its own socket. This helper only answers whether the default socket says that
-/// cmux is alive; its result is deliberately not passed as an argument to the CLI.
-public func cmuxSocketPath(
-    homeDirectory: String = NSHomeDirectory(),
+/// The channel's state-directory socket pointer path. The target is resolved from the pointer
+/// rather than a fixed socket name because the socket basename changes across restarts and versions.
+public func cmuxLastSocketPointerPath(
+    channel: CmuxChannel, homeDirectory: String = NSHomeDirectory()
+) -> String {
+    (homeDirectory as NSString)
+        .appendingPathComponent(".local/state/cmux/\(channel.lastSocketPathFileName)")
+}
+
+/// The state path is first because `/tmp` is periodically cleaned, so its copy stays accurate
+/// longer; `/tmp` is second because it is the only remaining clue when the state path is absent.
+public func cmuxSocketPointerPaths(
+    channel: CmuxChannel, homeDirectory: String = NSHomeDirectory()
+) -> [String] {
+    [
+        cmuxLastSocketPointerPath(channel: channel, homeDirectory: homeDirectory),
+        "/tmp/\(channel.temporarySocketPointerFileName)",
+    ]
+}
+
+/// A pointer whose target is gone means the channel's server left nothing behind — treat it the
+/// same as no pointer at all rather than pinning a dead path.
+public func cmuxResolvedSocketPath(
+    pointerContents: String?, fileExists: (String) -> Bool
+) -> String? {
+    guard let contents = pointerContents else { return nil }
+    let target = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !target.isEmpty, fileExists(target) else { return nil }
+    return target
+}
+
+/// Resolves pointer contents in caller-provided order and returns the first live target.
+public func cmuxFirstLiveSocketPath(
+    pointerContents: [String?], fileExists: (String) -> Bool
+) -> String? {
+    for contents in pointerContents {
+        if let path = cmuxResolvedSocketPath(pointerContents: contents, fileExists: fileExists) {
+            return path
+        }
+    }
+    return nil
+}
+
+/// Reads the channel's pointer file and answers the socket path to pin, or nil when the channel
+/// has no live socket file to point at. The caller decides whether nil permits discovery or is a
+/// missing channel identity that must launch or fail visibly.
+public func cmuxChannelSocketPath(
+    channel: CmuxChannel, homeDirectory: String = NSHomeDirectory(),
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
 ) -> String? {
-    let path = (homeDirectory as NSString).appendingPathComponent(".local/state/cmux/cmux.sock")
-    return fileExists(path) ? path : nil
+    let pointerContents = cmuxSocketPointerPaths(
+        channel: channel, homeDirectory: homeDirectory
+    ).map {
+        try? String(contentsOfFile: $0, encoding: .utf8)
+    }
+    return cmuxFirstLiveSocketPath(
+        pointerContents: pointerContents,
+        fileExists: fileExists
+    )
+}
+
+/// nil socket keeps the inherited environment untouched (CLI discovery); a socket merges on top
+/// of the base so the child still has PATH and HOME. Socket paths here are file-system paths, so
+/// Foundation's NFD re-encoding of `Process.environment` is absorbed by APFS name resolution.
+public func cmuxRPCEnvironment(
+    socketPath: String?, base: [String: String] = ProcessInfo.processInfo.environment
+) -> [String: String]? {
+    guard let socketPath else { return nil }
+    var env = base
+    env["CMUX_SOCKET_PATH"] = socketPath
+    return env
+}
+
+/// Measured on Darwin 25.4.0 (pty probe with the master drained like a terminal emulator does):
+/// a canonical-mode tty keeps exactly 1024 bytes of an unread line and silently discards the
+/// rest — the CR included, and the writer sees every byte accepted. 1023 bytes + CR survive
+/// whole. A command longer than this sent before the shell reads is truncated with no error
+/// anywhere, and without its CR it sits unsubmitted in the prompt.
+public let darwinCanonicalLineLimit = 1024
+
+public enum CmuxCommandGate: Equatable {
+    case send
+    case waitLonger
+    case sendDespiteCanonical
+    case refuseTooLong
+}
+
+/// Whether the command may be typed into the pane yet. Raw mode means a line editor is reading —
+/// no canonical buffer, any length is safe. Until the deadline, "not raw" and "cannot tell" both
+/// wait (the same rule as the claude session gate: unknown is not raw). At the deadline the
+/// measured canonical limit decides: a payload that fits is sent the way every earlier version
+/// sent it, and one that does not fit is refused — a visible failure instead of a silent
+/// truncation that reports success.
+public func cmuxCommandSendGate(
+    rawModeObserved: Bool?, deadlineExpired: Bool, payloadByteCount: Int
+) -> CmuxCommandGate {
+    if rawModeObserved == true { return .send }
+    guard deadlineExpired else { return .waitLonger }
+    return payloadByteCount <= darwinCanonicalLineLimit ? .sendDespiteCanonical : .refuseTooLong
 }
 
 enum CmuxRecovery: Equatable {
@@ -237,7 +397,8 @@ public func cmuxRPCFailure(method: String, status: Int32, stderr: String) -> Ter
 /// user's text while launching the child process.
 @discardableResult
 public func cmuxRPC(
-    cli: String, method: String, params: [String: Any] = [:], timeout: TimeInterval = 10
+    cli: String, method: String, params: [String: Any] = [:], timeout: TimeInterval = 10,
+    socketPath: String? = nil
 ) throws -> [String: Any] {
     let arguments: [String]
     do {
@@ -248,7 +409,9 @@ public func cmuxRPC(
 
     let result: (status: Int32, stdout: String, stderr: String)
     do {
-        result = try runProcess(cli, arguments, timeout: timeout)
+        result = try runProcess(
+            cli, arguments, env: cmuxRPCEnvironment(socketPath: socketPath), timeout: timeout
+        )
     } catch let error as TerminalError {
         throw error
     } catch {

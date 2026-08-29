@@ -24,6 +24,52 @@ cmux only accepts socket commands from processes it can prove are its own descen
 
 **Consequence, accepted:** cmux costs zero macOS TCC permissions — the same grade as WezTerm — in exchange for one setting the user changes by hand, once. A second consequence is diagnostic: with no socket the app cannot tell "cmux is not running" from "cmux refused us," so it never reads the settings file to guess which one it is; `Access denied` is reported as itself, because launching cmux cannot fix it.
 
+## The send waits for raw mode, because the writer cannot see the truncation
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/CmuxControl.swift`; Darwin 25.4.0 pty probe with the master drained as a terminal; PR #64
+**Revisit when:** cmux exposes a reliable indication that the shell line editor is reading the new surface
+
+The command waits until the pane's tty reports raw mode before sending its text and CR. If that observation does not arrive before the deadline, a payload within the canonical limit is sent through the existing path, while a larger payload is refused before it can be truncated.
+
+**Reason:** canonical mode keeps exactly 1024 bytes of an unread line and silently discards the rest, including CR, even though the writer sees every byte as accepted. A 1023-byte payload plus CR survives, but a longer command can therefore appear successful while remaining truncated and unsubmitted. Raw mode is the observation that removes that buffer from the path; the bounded fallback preserves short commands and makes the unsafe case visible.
+
+**Rejected alternative — always send immediately.** This is the former behavior: it reaches the canonical buffer before the shell reads and can silently lose the tail and CR.
+
+**Rejected alternative — truncate based on length.** The app would change the user's command and still would not make the resulting command correct.
+
+**Rejected alternative — always wait until the deadline.** A slow but healthy shell would add the full ten-second delay to every command, including payloads that could be sent safely.
+
+**Rejected alternative — send the text first and CR later.** The canonical buffer has already crossed its 1024-byte boundary before CR is sent, so delaying CR cannot restore the discarded bytes.
+
+**Consequence, accepted:** short commands can still use the bounded fallback when raw mode is unavailable, while an oversized command fails visibly before transmission instead of being silently altered in the pane. The `.refuseTooLong` path occurs after `workspace.create`, so it leaves one empty tab; that is accepted because a visible failure is safer than silent truncation and the error still reaches the button.
+
+## Each cmux channel is pinned to its own socket, because discovery crosses channels
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed
+**Source:** `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Sources/App/PermissionChecker.swift`; stable/NIGHTLY pointer and cross-channel PONG measurements; PR #64
+**Revisit when:** cmux changes its per-channel pointer files or makes CLI discovery channel-safe without an explicit socket
+
+Stable and NIGHTLY each write the same live socket path to two pointer files. The state-directory candidate is read first, followed by the `/tmp` candidate, and the first candidate whose target exists is passed through `CMUX_SOCKET_PATH`; the state copy is preferred because `/tmp` is periodically cleaned, while `/tmp` remains the only clue when state is absent. The socket basename is never cached as a fixed name, so each new request and launch retry resolves the candidates again, while later RPCs keep the target that created the surface. If the selected channel has no live pointer but another channel does, the app does not use unpinned discovery; if neither channel has a live pointer, `.discover` preserves the existing single-channel behavior.
+
+> Superseded 2026-08: the fixed-name `cmux.sock` lookup is superseded by channel-specific socket-pointer resolution.
+
+**Reason:** both channel binaries contain the names of all channel pointer files, and an unpinned NIGHTLY CLI reached the stable server while both were running. A pointer target is the only measured channel-specific socket identity, so carrying it from workspace creation through readiness, input, screen reads, and the setup ping keeps the server that answers deterministic.
+
+**Rejected alternative — keep the fixed name `cmux.sock`.** That name was stale on this machine after a restart, while the live basename had changed.
+
+**Rejected alternative — ignore the pointer and use CLI auto-discovery.** The cross-channel PONG measurement shows that auto-discovery can answer from the wrong server.
+
+**Rejected alternative — use different CLIs but share one socket.** Choosing the right executable does not constrain the server when the CLI itself performs unpinned discovery, so the same cross-channel error remains.
+
+**Rejected alternative — discover whenever the selected channel has no pointer.** With the selected channel stopped and the other channel running, this creates the workspace on the other channel's server and makes the setup window report a false reachable state.
+
+**Consequence, accepted:** stable and NIGHTLY remain separate choices and never fall back to one another; a live pointer is always honored, a missing selected-channel pointer blocks cross-channel discovery, and discovery remains only when no channel has a live pointer. No settings file is modified by the app.
+
 ## `cmux rpc` is the only control path, and it carries four methods
 
 **Type:** decision

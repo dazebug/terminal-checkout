@@ -293,6 +293,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
     private var cmuxRadio: NSButton!
+    private var cmuxNightlyRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
     /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
     /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
@@ -883,10 +884,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
         weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
         warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
-        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled)
+        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled(channel: .stable))
+        cmuxNightlyRadio = radio("cmux NIGHTLY", installed: PermissionChecker.isCmuxInstalled(channel: .nightly))
 
-        // Stacked vertically: four of them side by side do not fit the card's width
-        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio])
+        // Stacked vertically: the radios do not fit side by side in the card's width
+        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio, cmuxNightlyRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
         radioColumn.spacing = 7
@@ -1215,6 +1217,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     @objc private func terminalChanged() {
         if cmuxRadio.state == .on {
             select(terminal: .cmux)
+        } else if cmuxNightlyRadio.state == .on {
+            select(terminal: .cmuxNightly)
         } else if weztermRadio.state == .on {
             select(terminal: .wezterm)
         } else if warpRadio.state == .on {
@@ -1239,6 +1243,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
         case .cmux: cmuxRadio.state = .on
+        case .cmuxNightly: cmuxNightlyRadio.state = .on
         }
         // Scheduled claude input is delivered only once claude is up, so it takes a while — and
         // anything the user types in the meantime mixes into it
@@ -1325,20 +1330,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
         case .cmux:
-            let status = PermissionChecker.cmuxSocketStatus()
-            cmuxStatus = status
-            apply(cmuxSetupState(status), to: cmuxStatusLabel)
-            // A refresh is the live-status oracle. Clear transient click feedback so an old
-            // action is not mistaken for the current diagnosis after a redraw.
-            cmuxFeedbackLabel.stringValue = ""
-            cmuxFeedbackLabel.textColor = Theme.textDim
-            cmuxConfigButton.isEnabled = true
-            cmuxRefreshButton.isEnabled = true
+            cmuxStatus = updateCmuxStatus(channel: .stable)
+        case .cmuxNightly:
+            cmuxStatus = updateCmuxStatus(channel: .nightly)
         }
         var granted = false
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
-        cmuxSection.isHidden = Settings.terminal != .cmux
+        cmuxSection.isHidden = Settings.terminal.cmuxChannel == nil
         accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
 
         pipeline.update(pipelineNodes(
@@ -1348,6 +1347,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ))
         // No resize call here on purpose: the content view resizes the window from inside its
         // own layout pass, which is the only moment the measurement is valid.
+    }
+
+    private func updateCmuxStatus(channel: CmuxChannel) -> CmuxSocketStatus {
+        let status = PermissionChecker.cmuxSocketStatus(channel: channel)
+        apply(cmuxSetupState(status), to: cmuxStatusLabel)
+        // A refresh is the live-status oracle. Clear transient click feedback so an old
+        // action is not mistaken for the current diagnosis after a redraw.
+        cmuxFeedbackLabel.stringValue = ""
+        cmuxFeedbackLabel.textColor = Theme.textDim
+        cmuxConfigButton.isEnabled = true
+        cmuxRefreshButton.isEnabled = true
+        return status
     }
 
     /// Redraws the base directory card from what is stored. The field is not touched while the
@@ -1465,6 +1476,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             case .error: return Theme.err
             }
         }
+        func cmuxPipelineState(_ status: CmuxSocketStatus?) -> (NSColor, String) {
+            guard let status else { return (Theme.warn, localized("app.status.unknown")) }
+            let color: NSColor
+            switch status {
+            case .reachable:
+                color = Theme.ok
+            case .notRunning, .failed:
+                color = Theme.warn
+            case .denied, .notInstalled:
+                color = Theme.err
+            }
+            return (color, status.label)
+        }
         let terminalName: String
         let terminalColor: NSColor
         let terminalDetail: String
@@ -1497,20 +1521,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             }
         case .cmux:
             terminalName = "cmux"
-            if let cmuxStatus {
-                switch cmuxStatus {
-                case .reachable:
-                    terminalColor = Theme.ok
-                case .notRunning, .failed:
-                    terminalColor = Theme.warn
-                case .denied, .notInstalled:
-                    terminalColor = Theme.err
-                }
-                terminalDetail = cmuxStatus.label
-            } else {
-                terminalColor = Theme.warn
-                terminalDetail = localized("app.status.unknown")
-            }
+            let state = cmuxPipelineState(cmuxStatus)
+            terminalColor = state.0
+            terminalDetail = state.1
+        case .cmuxNightly:
+            terminalName = "cmux NIGHTLY"
+            let state = cmuxPipelineState(cmuxStatus)
+            terminalColor = state.0
+            terminalDetail = state.1
         }
         return [
             .init(

@@ -252,7 +252,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         let controller = makeController(.iterm)
         let window = try XCTUnwrap(controller.window)
         controller.rootStack.visibleFrameOverride = roomyScreen
-        for terminal in [Terminal.warp, .wezterm, .warp, .iterm, .warp] {
+        for terminal in [Terminal.warp, .wezterm, .cmux, .cmuxNightly, .iterm, .warp] {
             controller.select(terminal: terminal)
             SetupWindowTestSupport.settle(window)
             XCTAssertGreaterThanOrEqual(
@@ -407,13 +407,13 @@ final class SetupWindowLayoutTests: XCTestCase {
     ///
     /// What is checked is the **frame**, not the wording: a node's text has to be a catalogue
     /// value, or a catalogue value's frame with its `%@` filled in — the payload is allowed to be
-    /// anything, including a product name. `iTerm2`, `WezTerm` and `Warp` are the declared
-    /// exceptions, because a product name is the same word in every language.
+    /// anything, including a product name. Terminal product names are the declared exceptions,
+    /// because a product name is the same word in every language.
     ///
     /// The states handed in are synthetic and built from that locale's own catalogue, so the case
     /// enumerates the rows it means instead of whatever this machine's manifest happens to say.
     func testPipelineNodesAreLocalized() throws {
-        let productNames: Set<String> = ["iTerm2", "WezTerm", "Warp", "cmux"]
+        let productNames: Set<String> = ["iTerm2", "WezTerm", "Warp", "cmux", "cmux NIGHTLY"]
         var renderings: [String: [String]] = [:]
 
         for tag in SetupWindowLayoutTests.populatedLocales {
@@ -482,6 +482,23 @@ final class SetupWindowLayoutTests: XCTestCase {
             "cmux card has no separate empty feedback label"
         )
         XCTAssertEqual(feedback.stringValue, "")
+    }
+
+    func testItem14CmuxNightlyUsesTheCmuxSectionAndPipelineProductName() throws {
+        let controller = makeController(.cmuxNightly)
+        let window = try XCTUnwrap(controller.window)
+        controller.rootStack.visibleFrameOverride = roomyScreen
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let cmuxSection = controller.refillableSectionsForTesting[1]
+        XCTAssertFalse(cmuxSection.isHidden)
+
+        let nodes = controller.pipelineNodes(
+            manifest: .ok("registered"), extensionState: .ok("ready"), socketAlive: true,
+            permission: nil, accessibilityGranted: true, cmuxStatus: .reachable
+        )
+        XCTAssertEqual(nodes.last?.label, "cmux NIGHTLY")
+        XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.reachable"))
     }
 
 

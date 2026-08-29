@@ -7,12 +7,13 @@ enum Settings {
     /// Chooses the first installed terminal in the supported priority order. Keeping the decision
     /// pure makes the order testable without consulting this Mac's applications or UserDefaults.
     static func terminalForInstalledTerminals(
-        iterm: Bool, wezterm: Bool, warp: Bool, cmux: Bool
+        iterm: Bool, wezterm: Bool, warp: Bool, cmux: Bool, cmuxNightly: Bool
     ) -> Terminal {
         if iterm { return .iterm }
         if wezterm { return .wezterm }
         if warp { return .warp }
         if cmux { return .cmux }
+        if cmuxNightly { return .cmuxNightly }
         return .iterm
     }
 
@@ -22,13 +23,16 @@ enum Settings {
                 return Terminal(storedValue: value)
             }
             // The default detects what is installed. The order is how long each has been supported
-            // and worn in by real use — cmux is last because it is the newest integration and needs
-            // its user's socket automation setting in addition to the installed CLI
+            // and worn in by real use — cmux is last because it is the newest integration and
+            // needs its user's socket automation setting in addition to the installed CLI, and
+            // its NIGHTLY channel follows stable so someone with both installed defaults to the
+            // release build
             return terminalForInstalledTerminals(
                 iterm: PermissionChecker.isITermInstalled,
                 wezterm: PermissionChecker.isWezTermInstalled,
                 warp: PermissionChecker.isWarpInstalled,
-                cmux: PermissionChecker.isCmuxInstalled
+                cmux: PermissionChecker.isCmuxInstalled(channel: .stable),
+                cmuxNightly: PermissionChecker.isCmuxInstalled(channel: .nightly)
             )
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "terminal") }

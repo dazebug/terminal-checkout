@@ -773,8 +773,9 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal.wezterm.rawValue, "wezterm")
         XCTAssertEqual(Terminal.warp.rawValue, "warp")
         XCTAssertEqual(Terminal.cmux.rawValue, "cmux")
+        XCTAssertEqual(Terminal.cmuxNightly.rawValue, "cmux-nightly")
         // Oracle completeness: a new case has to gain a literal line in the list above too
-        XCTAssertEqual(Terminal.allCases.count, 4)
+        XCTAssertEqual(Terminal.allCases.count, 5)
     }
 
     func testStoredValueParsingFallsBackToITerm() {
@@ -782,6 +783,7 @@ final class TerminalIdentifierTests: XCTestCase {
         XCTAssertEqual(Terminal(storedValue: "wezterm"), .wezterm)
         XCTAssertEqual(Terminal(storedValue: "warp"), .warp)
         XCTAssertEqual(Terminal(storedValue: "cmux"), .cmux)
+        XCTAssertEqual(Terminal(storedValue: "cmux-nightly"), .cmuxNightly)
         // An unknown stored value (an identifier left by another version, a hand-edited plist) falls back to iTerm2 — the contract that gathers the fallback into the single parsing point so it cannot diverge per consumer
         XCTAssertEqual(Terminal(storedValue: "kitty"), .iterm)
         XCTAssertEqual(Terminal(storedValue: ""), .iterm)
@@ -4308,15 +4310,16 @@ final class PaneProofRoutingTests: XCTestCase {
             TerminalSessionHandle.wezterm(paneID: "1", cliPath: "/x", socketPath: nil).screenNeedsPaneProof
         )
         let cmux = TerminalSessionHandle.cmux(
-            surfaceID: "surface-1", workspaceID: "workspace-1", cliPath: "/cmux"
+            surfaceID: "surface-1", workspaceID: "workspace-1", cliPath: "/cmux", socketPath: nil
         )
         XCTAssertFalse(cmux.screenNeedsPaneProof)
-        guard case .cmux(let surfaceID, let workspaceID, let cliPath) = cmux else {
+        guard case .cmux(let surfaceID, let workspaceID, let cliPath, let socketPath) = cmux else {
             return XCTFail("item 8 must retain the cmux identifiers")
         }
         XCTAssertEqual(surfaceID, "surface-1")
         XCTAssertEqual(workspaceID, "workspace-1")
         XCTAssertEqual(cliPath, "/cmux")
+        XCTAssertNil(socketPath)
         XCTAssertFalse(TerminalSessionHandle.none.screenNeedsPaneProof)
     }
 
