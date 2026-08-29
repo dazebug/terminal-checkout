@@ -583,21 +583,13 @@ public func runInCmux(
     case .send:
         break
     case .waitLonger:
-        // Waiting is not proof that the tty is raw, so apply the same bounded fallback as a
-        // deadline expiry.
-        if payload.utf8.count <= darwinCanonicalLineLimit {
-            checkoutLog(
-                "cmux pane did not confirm raw mode; sending "
-                    + "\(payload.utf8.count) bytes inside the canonical line limit"
-            )
-        } else {
-            throw TerminalError.cmuxRPCFailed(
-                "\(cmuxSurfaceSendTextMethod): the pane's shell did not confirm raw mode, and "
-                    + "\(payload.utf8.count) bytes exceed the canonical line buffer "
-                    + "(\(darwinCanonicalLineLimit) bytes) — the tail would be silently dropped, "
-                    + "so nothing was sent"
-            )
-        }
+        // cmuxAwaitShellReading only returns when the gate is not .waitLonger, so this case is
+        // unreachable; re-deciding by size here would duplicate the gate's judgment, so an
+        // impossible return fails visibly instead.
+        throw TerminalError.cmuxRPCFailed(
+            "\(cmuxSurfaceSendTextMethod): internal inconsistency — the shell-reading wait "
+                + "returned waitLonger"
+        )
     case .sendDespiteCanonical:
         checkoutLog(
             "cmux pane has not confirmed raw mode; sending "

@@ -44,7 +44,7 @@ When raw mode is observed, any payload is sent immediately. Without that observa
 
 **Rejected alternative — send the text first and CR later.** The canonical buffer has already crossed its 1024-byte boundary before CR is sent, so delaying CR cannot restore the discarded bytes.
 
-**Consequence, accepted:** payloads within the canonical limit leave immediately regardless of shell preparation; if the pty does not yet exist, cmux queues the payload and flushes it after warm-up (measured), while oversized payloads still wait for raw mode and fail visibly before transmission instead of being silently altered in the pane. The `.refuseTooLong` path occurs after `workspace.create`, so it leaves one empty tab; that is accepted because a visible failure is safer than silent truncation and the error still reaches the button.
+**Consequence, accepted:** payloads within the canonical limit leave immediately regardless of shell preparation; if the pty does not yet exist, cmux queues the payload and flushes it after warm-up (measured), while oversized payloads still wait for raw mode and fail visibly before transmission instead of being silently altered in the pane. Removing the command-gate wait means the scheduled Claude-input tty discovery deadline now carries the full window alone, so it is 30 seconds; previously the 10-second gate plus the 20-second discovery deadline happened to total the same amount. The `.refuseTooLong` path occurs after `workspace.create`, so it leaves one empty tab; that is accepted because a visible failure is safer than silent truncation and the error still reaches the button.
 
 ## Each cmux channel is pinned to its own socket, because discovery crosses channels
 
