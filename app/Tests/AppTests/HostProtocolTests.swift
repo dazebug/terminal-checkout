@@ -316,6 +316,149 @@ final class HostProtocolTests: XCTestCase {
         }
     }
 
+    /// A deadline-cut item still owns a labeled timeline and records why it was not launched.
+    func testDeadlineCutBatchItemEmitsItsNotLaunchedTimelineStep() throws {
+        let request: [String: Any] = [
+            "command": "echo cut-timeline",
+            "items": (1...8).map { ["variables": ["repo": "repo\($0)"]] },
+        ]
+        let directory = "/tmp/tc-batch-cut-timeline-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let clockLock = NSLock()
+        var fakeMonotonicNow: TimeInterval = 0
+        var launches = 0
+        var linesByItem: [String: [String]] = [:]
+        let linesLock = NSLock()
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                clockLock.lock()
+                launches += 1
+                fakeMonotonicNow += 150
+                clockLock.unlock()
+                return .none
+            },
+            timelineFactory: { _, label in
+                let itemLabel = label ?? "legacy"
+                return DeliveryTimeline(
+                    emit: { message in
+                        linesLock.lock()
+                        linesByItem[itemLabel, default: []].append(message)
+                        linesLock.unlock()
+                    },
+                    label: label
+                )
+            },
+            monotonicNow: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeMonotonicNow
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        _ = try XCTUnwrap(relay.answer)
+
+        linesLock.lock()
+        let cutItemLines = linesByItem["item 2/8"] ?? []
+        linesLock.unlock()
+        XCTAssertEqual(launches, 1)
+        XCTAssertEqual(cutItemLines.count, 1, "a cut item must still emit one timeline step")
+        XCTAssertTrue(
+            cutItemLines.first?.hasPrefix(
+                "[item 2/8] not launched — response deadline exceeded"
+            ) == true,
+            "the cut item's timeline must identify the deadline rejection"
+        )
+    }
+
+    /// Issue #72: two launches can each fit under 180 seconds while their aggregate crosses it.
+    /// This characterizes the accepted v1 boundary rather than changing the synchronous launcher.
+    func testIssue72AllowsTwoSubDeadlineLaunchesAcrossAggregateRelayWindow() throws {
+        let request: [String: Any] = [
+            "command": "echo issue-72",
+            "items": [
+                ["variables": ["repo": "first"]],
+                ["variables": ["repo": "second"]],
+            ],
+        ]
+        let directory = "/tmp/tc-issue-72-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let clockLock = NSLock()
+        var fakeMonotonicNow: TimeInterval = 0
+        var launches = 0
+        var launchDurations: [TimeInterval] = []
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                clockLock.lock()
+                let start = fakeMonotonicNow
+                let duration: TimeInterval = launches == 0 ? 149 : 32
+                launches += 1
+                fakeMonotonicNow += duration
+                launchDurations.append(fakeMonotonicNow - start)
+                clockLock.unlock()
+                return .none
+            },
+            monotonicNow: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeMonotonicNow
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer)
+        XCTAssertEqual(actual["success"] as? Bool, true)
+        let results = try XCTUnwrap(actual["items"] as? [[String: Any]])
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.allSatisfy { result in
+            result.count == 1 && result["success"] as? Bool == true
+        })
+
+        clockLock.lock()
+        let observedLaunches = launches
+        let observedDurations = launchDurations
+        clockLock.unlock()
+        XCTAssertEqual(observedLaunches, 2)
+        XCTAssertEqual(observedDurations, [149, 32])
+        XCTAssertTrue(observedDurations.allSatisfy { $0 < 180 })
+    }
+
     /// The response budget uses monotonic elapsed time even when the wall clock moves backward.
     func testBatchLaunchBudgetUsesMonotonicElapsedTimeWhenWallClockMovesBackward() throws {
         let request: [String: Any] = [

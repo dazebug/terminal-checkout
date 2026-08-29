@@ -197,13 +197,14 @@ final class HostServer {
                 // and `{cd}` assembly belong to Core (no logic here)
                 return handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
                     resolved, position in
+                    let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
+                    let timeline = self.timelineFactory(requestArrival, timelineLabel)
                     if let position,
                        position.index > 1,
                        monotonicNow() - requestArrivalMonotonic >= batchLaunchResponseBudget {
+                        timeline.step(batchResponseDeadlineExceededMessage)
                         throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
                     }
-                    let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
-                    let timeline = self.timelineFactory(requestArrival, timelineLabel)
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
