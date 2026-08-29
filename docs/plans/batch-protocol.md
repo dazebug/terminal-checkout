@@ -3,8 +3,8 @@
 - Procedure source: `/Users/choongjaelee/.claude/skills/drive-agent-loop/assets/plan-template.md`
 - Target: `batch-protocol` in `/Users/choongjaelee/Codes/terminal-checkout-batch-protocol-work`
 - Starting commit: `42ba068` (`fix: send cmux payloads within the canonical limit without waiting for raw mode (#65)`)
-- Current: R0b design review applied; no implementation or test edit has been made.
-- Recent verdict: driver decisions D3–D12 are recorded below; `node --test` passed with 222 tests in R0, and the Swift gate belongs to the driver.
+- Current: R1 class 1 is claimed with uncommitted Core and test changes; classes 2–4 remain untouched.
+- Recent verdict: driver decisions D3–D12 are recorded below; the direct legacy and batch Core probes passed, while the Swift gate remains driver-only because this sandbox cannot build the manifest.
 
 ## Background — confirmed sources
 
@@ -96,7 +96,7 @@ Mode: ultrafast
 | Worktree base | configured as `head` | `/Users/choongjaelee/.claude/settings.json:68-70` reports `"baseRef": "head"`. |
 | Probe worktree ignore | not ignored; no probe created | `git check-ignore -q .claude/worktrees/probe` produced no match, and this R0 task created no probe worktree. |
 | Repository overlay | present | `.claude/drive-agent-loop.md` supplies the app-only Swift gate limitation, Node gate, and cmux canonical-mode constraint. |
-| cmux panel | pending — driver opens `cmux markdown open <plan path>` after first promotion and records the pane id here | Driver invocation context identifies cmux execution; the pane id is filled after the command. |
+| cmux panel | pane:32 / surface:36 (driver opened) | Driver opened the plan in cmux after promotion. |
 | Dependency sync | not applicable | The planned changes use the existing local SwiftPM and extension test setup; no dependency refresh is authorized in R0. |
 | Local asset environment | none | The local drive-agent-loop overlay declares no additional asset environment. |
 | App gate | deferred to driver | `cd app && swift test` is explicitly unavailable in the implementer sandbox and is not run here. |
@@ -108,7 +108,7 @@ Implementation order: 1 → 3 → 2 → 4.
 
 | # | Item | Class | Confirmed defect | File set | Depends | Status | Evidence | Promotion |
 |---|---|---|---|---|---|---|---|---|
-| 1 | Core batch schema and canonical per-item resolution | protocol / validation | (a) `resolveRequest` currently requires `command_template` and returns one `ResolvedRequest`; (b) there is no `items[]` parser or item cap; (c) the pre-#66 batch-shaped response is not fixed by a red compatibility test; (d) legacy and batch item resolution have no shared entry point because the batch entry point does not exist. | `app/Sources/Core/Request.swift`; `app/Tests/CoreTests/BatchProtocolTests.swift` (new) | — | todo | `app/Sources/Core/Request.swift:20-72,143-154`; rerun with `rg -n 'command_template|claude_inputs|handleRequest' app/Sources/Core/Request.swift`. | — |
+| 1 | Core batch schema and canonical per-item resolution | protocol / validation | (a) `resolveRequest` currently requires `command_template` and returns one `ResolvedRequest`; (b) there is no `items[]` parser or item cap; (c) the pre-#66 batch-shaped response is not fixed by a red compatibility test; (d) legacy and batch item resolution have no shared entry point because the batch entry point does not exist. | `app/Sources/Core/Request.swift`; `app/Tests/CoreTests/BatchProtocolTests.swift` | — | verified | 13 focused tests: `LegacyRequestByteCorpusTests.testLegacyRequestResponseBytesStayAtTheCapturedBaseline` plus 12 `BatchRequestTests` cases covering the shared resolver, pre-#66 fall-through, ambiguity, five structural/preflight boundaries, canonical Claude-input rejection, exact success items, and launch continuation; rerun with `cd app && swift test --filter BatchRequestTests` or `cd app && swift test --filter LegacyRequestByteCorpusTests`; direct Core probes returned exit 0 with `legacy byte corpus probe: passed 6 fixtures` and `batch probe: passed`; source typecheck returned exit 0. verified — driver reran cd app && swift test in the clone: exit 0, Executed 570 tests, 0 failures (baseline 557 + 13 new). | — |
 | 2 | Core batch fan-out orchestration and thin HostServer response path | execution / response | (a) Core currently models one resolved request and one run callback; (b) HostServer invokes the request handler and terminal runner once per frame; (c) there is no all-item validation preflight, ordered item result, or validated-launch failure continuation rule; (d) there is no batch-level Warp typed-delivery warning or per-item timeline path. | `app/Sources/Core/Request.swift`; `app/Sources/App/HostServer.swift`; `app/Tests/CoreTests/BatchProtocolTests.swift`; `app/Tests/AppTests/HostProtocolTests.swift` | 1, 3 | todo | `app/Sources/Core/Request.swift:143-154`; `app/Sources/App/HostServer.swift:150-223`; rerun with `rg -n 'execQueue|handleRequest|runInTerminal|deliverClaudeInputs|writeFrame' app/Sources/App/HostServer.swift`. | — |
 | 3 | Bounded parallel Claude delivery | concurrency / lifecycle | (a) every current delivery is dispatched directly to a global utility queue; (b) `ClaudeDelivery.Admission` tracks lifecycle and helper cleanup but imposes no active-delivery cap; (c) batch fan-out would therefore run unbounded `ps`/`stty`/screen polling; (d) there is no scheduler test proving a global cap of 4, whole-call coverage, release, or shutdown behavior. | `app/Sources/Core/ClaudeInjector.swift`; `app/Tests/CoreTests/BatchDeliveryTests.swift` (new) | — | todo | `app/Sources/App/HostServer.swift:188-214`; `app/Sources/Core/ClaudeInjector.swift:709-784,953-1064`; rerun with `rg -n 'DispatchQueue\.global|Admission|deliverClaudeInputs' app/Sources/App/HostServer.swift app/Sources/Core/ClaudeInjector.swift`. | — |
 | 4 | Verification corpus and terminal checklist | verification / documentation | (a) `app/e2e.sh` exercises only legacy failure cases; (b) `docs/new-terminal-checklist.md` has no batch launch, result, cap, or parallel-delivery path; (c) Warp fan-out visibility, the cross-terminal batch oracle, and the driver cmux pane check are not documented. | `app/e2e.sh`; `docs/new-terminal-checklist.md` | 1, 2, 3 | todo | `app/e2e.sh:1-85`; `docs/new-terminal-checklist.md:63-141`; rerun with `rg -n 'batch|fan|concurr|Warp|cmux' app/e2e.sh docs/new-terminal-checklist.md`. | — |
@@ -157,16 +157,16 @@ Implementation order: 1 → 3 → 2 → 4.
 #### Design review — R0b · promotion — · review — · round trips 1 · source —
 
 - Objection: The R0 draft had an incorrect mode, an incomplete cmux-panel state, no explicit 1 → 3 → 2 → 4 start order, and unresolved questions that the driver had already decided.
-- Handling: The mode is `ultrafast`, the cmux panel is pending the driver command after first promotion, the work-item order is explicit, and D3–D12 replace the closed questions; only genuine residuals remain open.
+- Handling: The mode is `ultrafast`, the cmux panel records `pane:32 / surface:36 (driver opened)`, the work-item order is explicit, and D3–D12 replace the closed questions; only genuine residuals remain open.
 - Measurement: `node --test` returned exit status 0 with 222 executed and 222 passed; `cd app && swift test` remains driver-only.
 - Verdict: Plan updated for driver review; implementation is still not promoted.
 
-#### R1 — placeholder
+#### R1 — class 1 · promotion — · review — · round trips 1 · source —
 
-- Objection: —
-- Handling: —
-- Measurement: —
-- Verdict: —
+- Objection: The SwiftPM test gate cannot write `/Users/choongjaelee/.cache/clang/ModuleCache` in this sandbox, so XCTest red/green execution is unavailable here; no environment failure is treated as a code verdict.
+- Handling: The corpus test was added before production changes, contract tests were authored before the Core implementation, and the implementation was checked with reverse-and-reapply direct probes; the driver runs `cd app && swift test` in the clone.
+- Measurement: Start `2026-08-30T06:15:27+0900` at creation of the corpus test file; completion `2026-08-30T06:28:14+0900`; direct probe red on HEAD was exit 133 with `Fatal error: batch contract not implemented: {"error":"command_template is required","success":false}`, current probes were exit 0 with `legacy byte corpus probe: passed 6 fixtures` and `batch probe: passed`, and Core typecheck was exit 0.
+- Verdict: Class 1 is claimed and left uncommitted for driver comparison; classes 2–4 remain untouched.
 
 ## Open questions
 
