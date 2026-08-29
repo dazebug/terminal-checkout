@@ -645,16 +645,31 @@ final class CmuxTests: XCTestCase {
                 fileExists: { _ in false }
             )
         )
-    }
-
-    func testCmuxResolvedSocketPathRequiresALivePointerTarget() {
         XCTAssertEqual(
-            cmuxResolvedSocketPath(pointerContents: "/tmp/a.sock\n", fileExists: { $0 == "/tmp/a.sock" }),
-            "/tmp/a.sock"
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/single.sock\n"],
+                fileExists: { $0 == "/single.sock" }
+            ),
+            "/single.sock"
         )
-        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: "/tmp/a.sock\n", fileExists: { _ in false }))
-        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: "   \n", fileExists: { _ in true }))
-        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: nil, fileExists: { _ in true }))
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/single.sock\n"],
+                fileExists: { _ in false }
+            )
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["   \n"],
+                fileExists: { _ in true }
+            )
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: [nil],
+                fileExists: { _ in true }
+            )
+        )
     }
 
     func testCmuxRPCEnvironmentPinsTheSocketAndKeepsTheInheritedEnvironment() {

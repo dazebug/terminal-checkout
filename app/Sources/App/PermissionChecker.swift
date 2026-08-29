@@ -87,9 +87,10 @@ enum PermissionChecker {
         case .discover:
             socketPath = nil
         case .noLiveSocket:
-            // A live cmux server writes its pointer regardless of whether socket-control auth
-            // later denies ping; with another channel live, an unpinned PONG would be its false
-            // green. Treat the selected channel as not running instead of asking the wrong one.
+            // Measured: the channel pointers exist while automation is on. We infer that a server
+            // writes its pointer when it starts and that socket-control denial is determined when
+            // we connect. If that inference is wrong, this misreports a denied live channel as
+            // not running.
             return .notRunning
         }
         do {
