@@ -479,9 +479,9 @@ func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
     ["-f", ttyPath, "-a"]
 }
 
-/// Polls until the surface's tty exists and answers the send gate. A payload within
-/// `darwinCanonicalLineLimit` returns after the first gate observation without waiting for raw
-/// mode because the canonical buffer preserves the complete payload, CR included (measured).
+/// Answers the send gate, polling only while the gate keeps returning `.waitLonger`. A payload
+/// within `darwinCanonicalLineLimit` returns after the first gate observation without waiting for
+/// raw mode because the canonical buffer preserves the complete payload, CR included (measured).
 /// Only an oversized payload continues polling for raw mode; sending it earlier lands in a
 /// canonical-mode line buffer that silently discards the excess and CR while every layer reports
 /// success, leaving the command truncated and unsubmitted with the kernel's echo ahead of the

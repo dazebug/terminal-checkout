@@ -1112,12 +1112,12 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
 }
 
 /// Waits for cmux to materialize the pty behind a newly focused surface. The command is already
-/// running while this waits, so a timeout gives up only the scheduled Claude inputs. The command
-/// gate no longer waits in front of this search, so this deadline alone carries the full window:
-/// shell integration reported the tty about ∼11s after workspace creation in measurement, while
-/// the old 10s gate plus 20s tty search happened to provide a 30s window that this restores
-/// explicitly. Trade-off: a pane without shell integration may take 30s to log abandoned inputs;
-/// because this runs on a background thread, it does not block the user's response.
+/// running while this waits, so a timeout gives up only the scheduled Claude inputs. This
+/// deadline alone carries the whole window for the tty to appear — nothing upstream waits for
+/// the pane anymore, and shell integration reported the tty about ∼11s after workspace creation
+/// (measured); the sizing history is in docs/context/cmux-integration.md. Trade-off: a pane
+/// without shell integration may take 30s to log abandoned inputs; because this runs on a
+/// background thread, it does not block the user's response.
 private let cmuxTTYWaitTimeout: TimeInterval = 30
 private let cmuxTTYPollInterval: TimeInterval = 0.2
 
