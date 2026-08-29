@@ -1138,7 +1138,7 @@ private func cmuxQueryTTY(cliPath: String, socketPath: String?, surfaceID: Strin
             lastRPCError = errorMessage(error)
         }
         if Date() >= deadline {
-            // Logging every rotation would produce up to 100 lines in 20 seconds; keep only the
+            // Logging every rotation would produce up to 150 lines in 30 seconds; keep only the
             // last RPC error and attach it at the give-up point.
             let errorSuffix = lastRPCError.map { " (last rpc error: \($0))" } ?? ""
             checkoutLog(
