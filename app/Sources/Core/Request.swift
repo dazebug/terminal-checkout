@@ -222,10 +222,17 @@ public func errorMessage(_ error: Error) -> String {
     String(describing: error) // when the error conforms to CustomStringConvertible this is its description verbatim
 }
 
-/// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
+/// The optional item position is `nil` for legacy requests and non-`nil` for batch entries.
+public struct BatchItemPosition {
+    public let index: Int
+    public let total: Int
+}
+
+/// Handles a request: resolve → run → a success/failure response JSON. The batch-position overload is
+/// what HostServer uses so each item can be labeled without request re-parsing.
 public func handleRequest(
-    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void,
-    message: (Error) -> String = errorMessage
+    json: [String: Any], baseDirectory: String = "",
+    run: (ResolvedRequest, BatchItemPosition?) throws -> Void, message: (Error) -> String = errorMessage
 ) -> [String: Any] {
     if json["items"] != nil {
         return handleBatchRequest(
@@ -236,17 +243,28 @@ public func handleRequest(
         )
     }
     do {
-        try run(try resolveRequest(json, baseDirectory: baseDirectory))
+        try run(try resolveRequest(json, baseDirectory: baseDirectory), nil)
         return ["success": true]
     } catch {
         return ["success": false, "error": message(error)]
     }
 }
 
+/// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
+public func handleRequest(
+    json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void,
+    message: (Error) -> String = errorMessage
+) -> [String: Any] {
+    return handleRequest(
+        json: json, baseDirectory: baseDirectory,
+        run: { resolved, _ in try run(resolved) }, message: message
+    )
+}
+
 private func handleBatchRequest(
     json: [String: Any],
     baseDirectory: String,
-    run: (ResolvedRequest) throws -> Void,
+    run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
     message: (Error) -> String
 ) -> [String: Any] {
     do {
@@ -286,9 +304,11 @@ private func handleBatchRequest(
         var results: [[String: Any]] = []
         results.reserveCapacity(resolvedItems.count)
         var failedCount = 0
-        for resolved in resolvedItems {
+        for index in resolvedItems.indices {
+            let resolved = resolvedItems[index]
+            let position = BatchItemPosition(index: index + 1, total: resolvedItems.count)
             do {
-                try run(resolved!)
+                try run(resolved!, position)
                 results.append(["success": true])
             } catch {
                 failedCount += 1

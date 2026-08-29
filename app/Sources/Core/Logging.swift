@@ -30,10 +30,13 @@ public final class DeliveryTimeline: @unchecked Sendable {
     private let started: Date
     private var previous: Date
 
-    public init(now: @escaping () -> Date = Date.init, emit: @escaping (String) -> Void = checkoutLog) {
+    public init(
+        now: @escaping () -> Date = Date.init, emit: @escaping (String) -> Void = checkoutLog,
+        startedAt: Date? = nil
+    ) {
         self.now = now
         self.emit = emit
-        let start = now()
+        let start = startedAt ?? now()
         self.started = start
         self.previous = start
     }

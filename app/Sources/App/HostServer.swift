@@ -35,13 +35,30 @@ final class HostServer {
     private let lifecycle = NSLock()
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
+    private let runInTerminalFactory: (
+        String, Terminal, ClaudeDelivery.Admission?
+    ) throws -> TerminalSessionHandle
+    private let timelineFactory: (Date) -> DeliveryTimeline
+    private let log: (String) -> Void
 
     /// A test-only pause lets the ownership suite hold startup between binding and arming the
     /// accept loop. Production leaves it nil; the lifecycle lock remains the real guarantee.
     var beforeAccepting: (() -> Void)?
 
-    init(socketPath: String) {
+    init(
+        socketPath: String,
+        runInTerminal: @escaping (
+            _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?
+        ) throws -> TerminalSessionHandle = Core.runInTerminal,
+        timelineFactory: @escaping (Date) -> DeliveryTimeline = { arrival in
+            DeliveryTimeline(startedAt: arrival)
+        },
+        log: @escaping (String) -> Void = checkoutLog
+    ) {
         self.socketPath = socketPath
+        self.runInTerminalFactory = runInTerminal
+        self.timelineFactory = timelineFactory
+        self.log = log
     }
 
     /// Binds the socket, records the file identity, and then arms the accept loop. Every request is
@@ -154,15 +171,23 @@ final class HostServer {
             // Chrome → relay → socket path works
             Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
-            // A stopwatch over the steps of the success path. It starts **when the request
-            // arrived**, so every "total" below it is on the same axis as the wait the user feels
-            // after pressing the button
-            let timeline = DeliveryTimeline()
+            // A stopwatch over each item's success path. It starts **when the request arrived**, before
+            // the serial launch queue, so every item's "total" stays on the same axis as the wait the
+            // user feels after pressing the button.
+            let requestArrival = Date()
+            // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
+            let terminal = Settings.terminal
+            var hasLoggedBatchWarpWarning = false
             let response = execQueue.sync {
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
-                handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: { resolved in
+                handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
+                    resolved, position in
+                    let timeline = self.timelineFactory(requestArrival)
+                    if let position {
+                        timeline.step("item \(position.index)/\(position.total)")
+                    }
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
@@ -173,9 +198,16 @@ final class HostServer {
                         ? (resolved.claudeInputs.isEmpty ? "no claude input" : "merged into argv")
                         : "typing \(prepared.claudeInputs.count)"
                     timeline.step("request received — \(resolved.claudeInputs.count) claude input(s), \(route)")
-                    // The terminal choice has the app's settings as its single source — the
-                    // request's `terminal` field is ignored
-                    let terminal = Settings.terminal
+                    if let position,
+                       position.total > 1, terminal == .warp,
+                       !prepared.claudeInputs.isEmpty,
+                       !hasLoggedBatchWarpWarning {
+                        hasLoggedBatchWarpWarning = true
+                        log(
+                            "batch request with typed inputs across \(position.total) Warp items"
+                                + " may require the terminal tab to stay visible for each typed delivery"
+                        )
+                    }
                     // **The slot is reserved before anything can launch a helper**, not when the
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
                     // below runs asynchronously, so a registration taken there is late by that whole
@@ -194,9 +226,7 @@ final class HostServer {
                     // back, including the throwing ones
                     var deliveryStarted = false
                     defer { if let admission, !deliveryStarted { admission.end() } }
-                    let handle = try runInTerminal(
-                        command: prepared.command, terminal: terminal, claudeInput: admission
-                    )
+                    let handle = try self.runInTerminalFactory(prepared.command, terminal, admission)
                     timeline.step("\(terminal.rawValue) tab created")
                     // The reservation **is** "this request has input to deliver" — the same value the
                     // launch was given, so the launch and the watch cannot disagree about it
