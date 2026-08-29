@@ -887,7 +887,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled(channel: .stable))
         cmuxNightlyRadio = radio("cmux NIGHTLY", installed: PermissionChecker.isCmuxInstalled(channel: .nightly))
 
-        // Stacked vertically: four of them side by side do not fit the card's width
+        // Stacked vertically: the radios do not fit side by side in the card's width
         let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio, cmuxNightlyRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
@@ -1329,8 +1329,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     : .warning(localized("app.status.accessibility.denied")),
                 to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
-        case .cmux:
-            let status = PermissionChecker.cmuxSocketStatus()
+        case .cmux, .cmuxNightly:
+            let status = PermissionChecker.cmuxSocketStatus(
+                channel: Settings.terminal.cmuxChannel ?? .stable
+            )
             cmuxStatus = status
             apply(cmuxSetupState(status), to: cmuxStatusLabel)
             // A refresh is the live-status oracle. Clear transient click feedback so an old
@@ -1343,7 +1345,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         var granted = false
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
-        cmuxSection.isHidden = Settings.terminal != .cmux
+        cmuxSection.isHidden = Settings.terminal.cmuxChannel == nil
         accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
 
         pipeline.update(pipelineNodes(
@@ -1500,8 +1502,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.warn
                 terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
-        case .cmux:
-            terminalName = "cmux"
+        case .cmux, .cmuxNightly:
+            let channel = Settings.terminal.cmuxChannel ?? .stable
+            terminalName = channel == .nightly ? "cmux NIGHTLY" : "cmux"
             if let cmuxStatus {
                 switch cmuxStatus {
                 case .reachable:

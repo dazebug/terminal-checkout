@@ -64,8 +64,26 @@ find_cmux_cli() {
 
 CMUX_CLI="$(find_cmux_cli || true)"
 [ -n "$CMUX_CLI" ] && DETECTED_TERMINALS+=("cmux")
+# NIGHTLY has its own bundle and channel, so do not fall back to a stable CLI or PATH entry here.
+find_cmux_nightly_cli() {
+    local candidate
+    local -a candidates=(
+        "/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux"
+        "$HOME/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+CMUX_NIGHTLY_CLI="$(find_cmux_nightly_cli || true)"
+[ -n "$CMUX_NIGHTLY_CLI" ] && DETECTED_TERMINALS+=("cmux NIGHTLY")
 if [ ${#DETECTED_TERMINALS[@]} -eq 0 ]; then
-    MISSING+=("at least one of iTerm2, WezTerm, Warp, or cmux")
+    MISSING+=("at least one of iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY")
 fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then

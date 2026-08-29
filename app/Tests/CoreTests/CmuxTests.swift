@@ -33,16 +33,6 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(found, "/custom/bin/cmux")
     }
 
-    func testCmuxSocketPathOnlyReportsAnExistingSocket() {
-        let expected = "/Users/tester/.local/state/cmux/cmux.sock"
-
-        XCTAssertEqual(
-            cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { $0 == expected }),
-            expected
-        )
-        XCTAssertNil(cmuxSocketPath(homeDirectory: "/Users/tester", fileExists: { _ in false }))
-    }
-
     /// J2 red reproduction: retry is safe only when the first request demonstrably never reached
     /// the server. A timeout or invalid JSON can follow a server-side workspace creation, so the
     /// implementation must rethrow those uncertain outcomes instead of creating a duplicate.

@@ -93,8 +93,8 @@ README·CLAUDE.md·검사목록·context·설치 preflight·확장 설명이 이
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| A | 1024바이트 초과 cmux command를 안전하게 보내는 raw-mode/canonical-limit 게이트를 baseline 검증과 함께 마무리 | 명령 전송 게이트 | — | `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Tests/CoreTests/CmuxTests.swift` | — | todo | 드라이버 pty 측정: canonical mode가 정확히 1024B를 보관하고 초과분·CR을 버림; `e2e9c43` diff에 `darwinCanonicalLineLimit`, `CmuxCommandGate`, `cmuxAwaitShellReading`과 red 테스트가 있음 | |
-| B | cmux NIGHTLY를 App의 다섯 번째 terminal 선택지로 배선하고 baseline의 App 컴파일 미완료를 복구 | NIGHTLY App 배선 | (a) `SetupWindowController`에 NIGHTLY를 추가한 뒤 permission/status/pipeline switch가 exhaustive하지 않음 (b) NIGHTLY radio와 양방향 선택 mapping이 부분 배선임 | `app/Sources/App/PermissionChecker.swift`, `app/Sources/App/Settings.swift`, `app/Sources/App/SetupWindowController.swift`, `app/Sources/Core/Terminal.swift`, `app/Tests/AppTests/CmuxDetectionTests.swift`, `app/Tests/AppTests/SetupWindowLayoutTests.swift`, `app/Tests/CoreTests/CoreTests.swift` | A (B→A; 같은 channel contract와 실행 handle을 전제) | todo | `e2e9c43` commit message가 “App target still has three non-exhaustive switches”와 partial NIGHTLY wiring을 명시; NIGHTLY-only와 stable-over-NIGHTLY red detection cases가 diff에 있음 | |
+| A | 1024바이트 초과 cmux command를 안전하게 보내는 raw-mode/canonical-limit 게이트를 baseline 검증과 함께 마무리 | 명령 전송 게이트 | — | `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Tests/CoreTests/CmuxTests.swift` | — | claimed | 드라이버 게이트: swift test 컴파일 실패(cmuxSocketPath 미해결, CmuxTests.swift:40,43) → 낡은 대역 1건 삭제 후 재실행 예정 | |
+| B | cmux NIGHTLY를 App의 다섯 번째 terminal 선택지로 배선하고 baseline의 App 컴파일 미완료를 복구 | NIGHTLY App 배선 | (a) `SetupWindowController`에 NIGHTLY를 추가한 뒤 permission/status/pipeline switch가 exhaustive하지 않음 (b) NIGHTLY radio와 양방향 선택 mapping이 부분 배선임 | `app/Sources/App/PermissionChecker.swift`, `app/Sources/App/Settings.swift`, `app/Sources/App/SetupWindowController.swift`, `app/Sources/Core/Terminal.swift`, `app/Tests/AppTests/CmuxDetectionTests.swift`, `app/Tests/AppTests/SetupWindowLayoutTests.swift`, `app/Tests/CoreTests/CoreTests.swift` | A (B→A; 같은 channel contract와 실행 handle을 전제) | claimed | SetupWindowController +9/-6 · SetupWindowLayoutTests +21/-4 · CoreTests +6/-3 · install.sh +19/-1; bash -n install.sh 통과 | |
 | C | command gate와 두 cmux channel을 사용자 문서·설치 preflight·context의 이유로 일치시키고 fixed socket 판단을 supersede로 기록 | 문서·운영 계약 | (a) README·CLAUDE.md·checklist·설치 preflight가 네 terminal만 말함 (b) 고정 socket/default discovery 설명이 channel pointer 사실과 충돌함 | `README.md`, `CLAUDE.md`, `docs/new-terminal-checklist.md`, `docs/context/cmux-integration.md`, `install.sh` | A·B (C→A·B) | todo | driver facts: `com.cmuxterm.app` / `com.cmuxterm.app.nightly`, 두 pointer file, cross-channel unpinned PONG, shared `cmux.json`; 기존 cmux context는 pointer decision이 없음 | |
 | D | 모든 cmux RPC의 socketPath pin, 모든 Terminal switch, radio 양방향, `cmuxSection`과 `refresh()`의 channel 분기를 전수 소탕 | 전수 소탕 | (a) unpinned CLI discovery는 살아 있는 반대 channel 서버로 갈 수 있음 (b) stable-only status/UI branch가 NIGHTLY 선택에서 잘못된 상태를 그릴 수 있음 | `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/ClaudeInjector.swift`, `app/Sources/Core/Terminal.swift`, `app/Sources/App/PermissionChecker.swift`, `app/Sources/App/Settings.swift`, `app/Sources/App/SetupWindowController.swift`, `app/Tests/CoreTests/CoreTests.swift`, `app/Tests/CoreTests/CmuxTests.swift`, `app/Tests/AppTests/CmuxDetectionTests.swift`, `app/Tests/AppTests/SetupWindowLayoutTests.swift` | A·B | todo | source sweep 대상: `cmuxRPC` 정의/호출, `Terminal` switch, `terminalChanged`, `updateTerminalControls`, `cmuxSection.isHidden`, `refresh()` channel status; driver가 양채널 workspace·input을 종결 단계에서 확인 | |
 
@@ -121,6 +121,7 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 | D7 | 드라이버 | 설정 파일 자동 수정은 권한·소유권·성공 판정을 넓힘 | 앱은 shared `cmux.json`을 쓰지 않고 fragment copy와 file/folder open만 한다 | [`docs/context/cmux-integration.md`](../context/cmux-integration.md)와 기존 `CmuxConfigHelp` 계약 | cmux가 향후 외부 automation 설정 API를 제공할 때만 revisit |
 | D8 | 드라이버 | NIGHTLY를 확장 설명에 나열할지 | extDescription 5개 locale은 불변 — NIGHTLY는 cmux의 채널이지 별도 제품이 아니다 | R0 설계 리뷰 | 스토어 문구 정책이 바뀌면 revisit |
 | D9 | 드라이버 | A만 따로 승격하면 게이트 불가 | A·B는 한 승격으로 묶는다 — App이 컴파일되기 전에는 swift test 자체가 돌지 않아 A의 green을 독립적으로 낼 수 없다 | R0 설계 리뷰 | 없음 |
+| D10 | 드라이버 | 제거된 Core 심볼을 참조하는 낡은 테스트가 남아 컴파일을 막음 | 고정 이름 socket 대역은 삭제하고 포인터 해석 대역으로 대체한다 | swift test 컴파일 오류 CmuxTests.swift:40,43; 대체 대역 testCmuxResolvedSocketPathRequiresALivePointerTarget | 없음 |
 
 ## 전수 소탕 표
 
@@ -164,12 +165,11 @@ append-only. 결정의 이유, 기각한 반박과 근거, 잔여 불확실성 �
 - 실측: 게이트 214 green · 실코퍼스 1,427건 거부 0 · 산출물 sha256 불변
 - 판정: "항목 1 차단 확인. 우회 없음." → 항목 1 `cleared`
 
-#### 리뷰 <k> — <증분/최종/cold> · <해시>∼<해시> · 승격 hh:mm · 리뷰 hh:mm∼hh:mm · 왕복 <n> · 원문 `<경로>`
+#### 리뷰 2 — 증분 · 커밋 전 · 드라이버 게이트 보고
 
-- 차단: <지적 한 줄, 재현 입력 포함>
-- 수정: <무엇을, 재사용한 함수 이름> (배정 hh:mm · 완료 hh:mm)
-- 실측: <실코퍼스 거부 수·산출물 바이트 대조·테스트 수>
-- 판정: <최종 판정 문장만> → <상태 변경>
+- 차단: A 점검 보고가 컴파일을 확인하지 않아 낡은 대역 1건이 남았다 (재현: `swift test --package-path app` → `cannot find 'cmuxSocketPath' in scope`)
+- 수정: 항목 A′, 낡은 대역 삭제 + 제거·변경 심볼 전수 훑기
+- 판정: "A 단독으로는 green을 낼 수 없다 — D9대로 A·B 단일 승격, 게이트 재실행 후 판정."
 
 ## 열린 질문
 
