@@ -263,6 +263,19 @@ final class BatchRequestTests: XCTestCase {
         }
     }
 
+    func testBatchCommandNULRejectionNamesTheCommandWireKey() {
+        let response = handleRequest(
+            json: batchRequest(
+                command: "echo \u{0} unsafe",
+                items: [["variables": ["repo": "first"]]]
+            ),
+            run: { _ in XCTFail("NUL validation must launch zero items") }
+        )
+
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "command must not contain NUL")
+    }
+
     func testBatchSuccessfulItemResultsContainOnlySuccess() throws {
         let response = handleRequest(
             json: batchRequest(items: [

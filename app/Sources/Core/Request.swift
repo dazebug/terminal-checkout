@@ -33,7 +33,8 @@ public func resolveRequest(
         commandTemplate: template,
         claudeInputTemplates: rawInputs,
         variables: variables,
-        baseDirectory: baseDirectory
+        baseDirectory: baseDirectory,
+        templateWireKey: "command_template"
     )
 }
 
@@ -124,7 +125,8 @@ private func resolveRequestItem(
     commandTemplate: String,
     claudeInputTemplates: [String],
     variables: [String: String],
-    baseDirectory: String
+    baseDirectory: String,
+    templateWireKey: String
 ) throws -> ResolvedRequest {
     let appVariables = try appProvidedVariables(
         usedIn: [commandTemplate] + claudeInputTemplates,
@@ -134,7 +136,7 @@ private func resolveRequestItem(
     let command = try renderCommand(
         template: commandTemplate, variables: variables, appVariables: appVariables
     )
-    try rejectNUL(in: command, what: "command_template")
+    try rejectNUL(in: command, what: templateWireKey)
 
     var claudeInputs: [String] = []
     for text in claudeInputTemplates {
@@ -280,7 +282,8 @@ private func handleBatchRequest(
                     commandTemplate: batch.commandTemplate,
                     claudeInputTemplates: batch.claudeInputTemplates,
                     variables: batch.itemVariables[index],
-                    baseDirectory: baseDirectory
+                    baseDirectory: baseDirectory,
+                    templateWireKey: "command"
                 )
             } catch {
                 validationErrors[index] = message(error)
