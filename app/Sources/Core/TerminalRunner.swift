@@ -473,7 +473,7 @@ private let cmuxShellReadingWaitTimeout: TimeInterval = 10
 private let cmuxShellReadingPollInterval: TimeInterval = 0.1
 
 /// Do not prepend `/dev/` here: `cmuxTTYName` already does, and doubling the path makes `stty`
-/// fail, which the gate reads as "not raw" and makes every command wait to its deadline.
+/// fail, which the gate reads as "not raw" and makes every oversized command wait to its deadline.
 /// The probe passes the parser's complete device path unchanged to `stty`.
 func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
     ["-f", ttyPath, "-a"]
