@@ -527,9 +527,7 @@ final class CmuxTests: XCTestCase {
 
     // MARK: - Canonical-limit send gate
 
-    // Measured on Darwin 25.4.0 (pty probe, master draining echo like a terminal emulator):
-    // a canonical-mode tty keeps exactly 1024 bytes of an unread line and silently discards the
-    // rest, CR included — the writer sees every byte accepted. 1023 bytes + CR survive whole.
+    // This test pins the canonical-limit constant; Darwin's measurement is documented on `darwinCanonicalLineLimit`.
     func testCanonicalLineLimitIsTheMeasured1024() {
         XCTAssertEqual(darwinCanonicalLineLimit, 1024)
     }

@@ -92,7 +92,9 @@ public enum CmuxSocketPin: Equatable {
     case noLiveSocket
 }
 
-/// `.discover` preserves the existing path for a single-channel user because no live other channel can be crossed into.
+/// Answers what to do with the selected channel's socket in one place: pin it, discover it,
+/// or do not ask for it. `.discover` is safe for a single-channel user because when no other
+/// channel is live, the only server discovery can reach is the selected channel's own.
 public func cmuxSocketPin(
     channel: CmuxChannel, resolvedSocketPath: (CmuxChannel) -> String?
 ) -> CmuxSocketPin {
@@ -139,8 +141,8 @@ public func findCmuxCLI(
         .first(where: isExecutable)
 }
 
-/// The channel's state-directory socket pointer. Its target is the only channel-accurate way to
-/// find the live socket: the socket basename itself changes across restarts and versions.
+/// The channel's state-directory socket pointer path. The target is resolved from the pointer
+/// rather than a fixed socket name because the socket basename changes across restarts and versions.
 public func cmuxLastSocketPointerPath(
     channel: CmuxChannel, homeDirectory: String = NSHomeDirectory()
 ) -> String {

@@ -472,7 +472,9 @@ private func launchCmuxAndWait(cliPath: String, channel: CmuxChannel) throws {
 private let cmuxShellReadingWaitTimeout: TimeInterval = 10
 private let cmuxShellReadingPollInterval: TimeInterval = 0.1
 
-/// `cmuxTTYName` returns a complete `/dev/...` path; stty receives it unchanged.
+/// Do not prepend `/dev/` here: `cmuxTTYName` already does, and doubling the path makes `stty`
+/// fail, which the gate reads as "not raw" and makes every command wait to its deadline.
+/// The probe passes the parser's complete device path unchanged to `stty`.
 func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
     ["-f", ttyPath, "-a"]
 }
@@ -579,8 +581,8 @@ public func runInCmux(
     case .send:
         break
     case .waitLonger:
-        // Keep this future-proof if the polling helper ever returns early: waiting is not proof
-        // that the tty is raw, so apply the same bounded fallback as a deadline expiry.
+        // Waiting is not proof that the tty is raw, so apply the same bounded fallback as a
+        // deadline expiry.
         if payload.utf8.count <= darwinCanonicalLineLimit {
             checkoutLog(
                 "cmux pane did not confirm raw mode; sending "
