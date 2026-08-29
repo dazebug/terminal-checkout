@@ -28,22 +28,24 @@ public final class DeliveryTimeline: @unchecked Sendable {
     private let now: () -> Date
     private let emit: (String) -> Void
     private let started: Date
+    private let label: String?
     private var previous: Date
 
     public init(
         now: @escaping () -> Date = Date.init, emit: @escaping (String) -> Void = checkoutLog,
-        startedAt: Date? = nil
+        startedAt: Date? = nil, label: String? = nil
     ) {
         self.now = now
         self.emit = emit
         let start = startedAt ?? now()
         self.started = start
+        self.label = label
         self.previous = start
     }
 
-    /// Logs one stage as `<message> (+1.2s, total 3.4s)`. Safe to call from either the request queue
-    /// or the delivery queue — they never overlap today, and the lock keeps that from being a
-    /// premise a future caller has to know about.
+    /// Logs one stage as `[label] <message> (+1.2s, total 3.4s)` when a label exists. Safe to call
+    /// from either the request queue or the delivery queue — they never overlap today, and the lock
+    /// keeps that from being a premise a future caller has to know about.
     public func step(_ message: String) {
         lock.lock()
         let instant = now()
@@ -51,7 +53,8 @@ public final class DeliveryTimeline: @unchecked Sendable {
         let total = instant.timeIntervalSince(started)
         previous = instant
         lock.unlock()
-        emit("\(message) (+\(seconds(sincePrevious))s, total \(seconds(total))s)")
+        let prefix = label.map { "[\($0)] " } ?? ""
+        emit("\(prefix)\(message) (+\(seconds(sincePrevious))s, total \(seconds(total))s)")
     }
 
     private func seconds(_ value: TimeInterval) -> String {

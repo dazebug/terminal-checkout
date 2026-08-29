@@ -11,6 +11,12 @@ public struct ResolvedRequest {
 /// when it learns the batch shape; Core owns the side-effect boundary and therefore enforces it.
 public let batchItemLimit = 8
 
+/// The relay waits 180 seconds for a response; reserve 30 seconds for framing and JSON
+/// serialization so sequential batch launches stop within the remaining response budget.
+public let batchLaunchResponseBudget: TimeInterval = 150
+
+public let batchResponseDeadlineExceededMessage = "not launched — response deadline exceeded"
+
 /// Resolves the request JSON the Chrome extension sent: { command_template, variables, claude_inputs? }.
 /// Which terminal to run in has the app's settings as its single source, so a `terminal` field riding along in the request is never read.
 ///

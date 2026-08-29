@@ -161,8 +161,141 @@ final class HostProtocolTests: XCTestCase {
         )
     }
 
-    /// Each transport item gets its own timeline label, so per-item response ordering is observable
-    /// at the app layer and can be timed independently from delivery.
+    /// A legacy request snapshots the settings terminal only after it reaches the serial launch queue.
+    func testLegacyTerminalSnapshotOccursAfterExecQueueAdmission() throws {
+        let request: [String: Any] = ["command_template": "echo terminal-snapshot"]
+        let directory = "/tmp/tc-terminal-snapshot-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let firstRunnerEntered = DispatchSemaphore(value: 0)
+        let releaseFirstRunner = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var terminals: [Terminal] = []
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, terminal, _ in
+                lock.lock()
+                let index = terminals.count
+                terminals.append(terminal)
+                lock.unlock()
+                if index == 0 {
+                    firstRunnerEntered.signal()
+                    releaseFirstRunner.wait()
+                }
+                return .none
+            }
+        )
+        try server.start()
+        defer {
+            releaseFirstRunner.signal()
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let first = RelayAtTheDoor()
+        first.connectAndAsk(request, at: path, givingUp: 10)
+        XCTAssertEqual(
+            firstRunnerEntered.wait(timeout: .now() + 2), .success,
+            "the first request did not reach the injected runner"
+        )
+
+        let second = RelayAtTheDoor()
+        second.connectAndAsk(request, at: path, givingUp: 10)
+        let askedDeadline = Date().addingTimeInterval(2)
+        while !second.asked, Date() < askedDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        XCTAssertTrue(second.asked, "the second legacy frame did not arrive")
+
+        UserDefaults.standard.set(Terminal.warp.rawValue, forKey: "terminal")
+        releaseFirstRunner.signal()
+
+        let answerDeadline = Date().addingTimeInterval(10)
+        while (first.answer == nil || second.answer == nil), Date() < answerDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+
+        lock.lock()
+        let observed = terminals
+        lock.unlock()
+        XCTAssertEqual(observed, [.iterm, .warp])
+    }
+
+    /// A batch stops launching at the response budget and marks the remaining items as unlaunched.
+    func testBatchLaunchesStopBeforeResponseDeadline() throws {
+        let request: [String: Any] = [
+            "command": "echo deadline",
+            "items": (1...8).map { ["variables": ["repo": "repo\($0)"]] },
+        ]
+        let directory = "/tmp/tc-batch-deadline-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let clockLock = NSLock()
+        var fakeNow = Date(timeIntervalSince1970: 0)
+        var launches = 0
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                clockLock.lock()
+                launches += 1
+                fakeNow = fakeNow.addingTimeInterval(30)
+                clockLock.unlock()
+                return .none
+            },
+            now: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeNow
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer)
+        XCTAssertEqual(actual["success"] as? Bool, false)
+        XCTAssertEqual(actual["error"] as? String, "3 of 8 items failed")
+
+        let results = try XCTUnwrap(actual["items"] as? [[String: Any]])
+        XCTAssertEqual(results.count, 8)
+        clockLock.lock()
+        let observedLaunches = launches
+        clockLock.unlock()
+        XCTAssertEqual(observedLaunches, 5, "the sixth item reaches the 150-second budget and is not launched")
+        for result in results.prefix(5) {
+            XCTAssertEqual(result.count, 1)
+            XCTAssertEqual(result["success"] as? Bool, true)
+        }
+        for result in results.suffix(3) {
+            XCTAssertEqual(result["success"] as? Bool, false)
+            XCTAssertEqual(
+                result["error"] as? String,
+                "not launched — response deadline exceeded"
+            )
+        }
+    }
+
+    /// Each transport item gets its own timeline label on every emitted stage, including follow-ups.
     func testServeWritesOneTimelinePerBatchItem() throws {
         let request: [String: Any] = [
             "command": "echo item-metrics",
@@ -182,18 +315,23 @@ final class HostProtocolTests: XCTestCase {
         )
 
         UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
-        var lines: [String] = []
+        var linesByItem: [String: [String]] = [:]
         let lock = NSLock()
         let server = HostServer(
             socketPath: path,
             runInTerminal: { _, _, _ in .none },
-            timelineFactory: { _ in
-                DeliveryTimeline(
+            timelineFactory: { _, label in
+                let itemLabel = label ?? "legacy"
+                lock.lock()
+                linesByItem[itemLabel] = []
+                lock.unlock()
+                return DeliveryTimeline(
                     emit: { message in
                         lock.lock()
-                        lines.append(message)
+                        linesByItem[itemLabel, default: []].append(message)
                         lock.unlock()
-                    }
+                    },
+                    label: label
                 )
             }
         )
@@ -218,15 +356,18 @@ final class HostProtocolTests: XCTestCase {
         )
 
         lock.lock()
-        let captured = lines
+        let firstItemLines = linesByItem["item 1/2"] ?? []
+        let secondItemLines = linesByItem["item 2/2"] ?? []
         lock.unlock()
+        XCTAssertEqual(firstItemLines.count, 2, "the first item emits two launch-path timeline stages")
+        XCTAssertEqual(secondItemLines.count, 2, "the second item emits two launch-path timeline stages")
         XCTAssertTrue(
-            captured.contains { $0.contains("item 1/2") },
-            "the first item timeline was not labeled"
+            firstItemLines.allSatisfy { $0.hasPrefix("[item 1/2] ") },
+            "every first-item timeline stage must carry its own label"
         )
         XCTAssertTrue(
-            captured.contains { $0.contains("item 2/2") },
-            "the second item timeline was not labeled"
+            secondItemLines.allSatisfy { $0.hasPrefix("[item 2/2] ") },
+            "every second-item timeline stage must carry its own label"
         )
     }
 
@@ -260,7 +401,7 @@ final class HostProtocolTests: XCTestCase {
                 clockLock.unlock()
                 return .none
             },
-            timelineFactory: { arrival in
+            timelineFactory: { arrival, label in
                 clockLock.lock()
                 if fakeNow == nil { fakeNow = arrival }
                 clockLock.unlock()
@@ -277,7 +418,8 @@ final class HostProtocolTests: XCTestCase {
                         lines.append(message)
                         linesLock.unlock()
                     },
-                    startedAt: arrival
+                    startedAt: arrival,
+                    label: label
                 )
             }
         )
@@ -380,16 +522,17 @@ final class HostProtocolTests: XCTestCase {
     /// Warp batch warnings are logged once for a qualifying batch and never for the same batch on non-Warp.
     func testServeLogsOneWarpBatchWarningOnlyWhenApplicable() throws {
         let request: [String: Any] = [
-            "command": "echo warp-batch",
-            "claude_inputs": ["!echo hello"],
+            "command": "claude",
+            "claude_inputs": ["{number}"],
             "items": [
-                ["variables": ["repo": "one"]],
-                ["variables": ["repo": "two"]],
+                ["variables": ["number": "/review"]],
+                ["variables": ["number": "plain"]],
             ],
         ]
         let expected = handleRequest(json: request) { _ in }
         let expectedBytes = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
-        let warningNeedle = "batch request with typed inputs across 2 Warp items"
+        let warningNeedle =
+            "a Warp batch of 2 item(s) schedules typed claude input (first at item 1) — delivery needs the Accessibility permission and each tab watched"
 
         let directory = "/tmp/tc-batch-protocol-\(UUID().uuidString.prefix(8))"
         let path = directory + "/s.sock"
@@ -409,7 +552,10 @@ final class HostProtocolTests: XCTestCase {
             }
         )
         try server.start()
+        let previousToolExecutables = Settings.toolExecutables
+        Settings.toolExecutables = ["claude": true]
         defer {
+            Settings.toolExecutables = previousToolExecutables
             server.stop()
             _ = canonical
             try? FileManager.default.removeItem(atPath: directory)

@@ -38,8 +38,9 @@ final class HostServer {
     private let runInTerminalFactory: (
         String, Terminal, ClaudeDelivery.Admission?
     ) throws -> TerminalSessionHandle
-    private let timelineFactory: (Date) -> DeliveryTimeline
+    private let timelineFactory: (Date, String?) -> DeliveryTimeline
     private let log: (String) -> Void
+    private let now: () -> Date
 
     /// A test-only pause lets the ownership suite hold startup between binding and arming the
     /// accept loop. Production leaves it nil; the lifecycle lock remains the real guarantee.
@@ -50,15 +51,17 @@ final class HostServer {
         runInTerminal: @escaping (
             _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?
         ) throws -> TerminalSessionHandle = Core.runInTerminal,
-        timelineFactory: @escaping (Date) -> DeliveryTimeline = { arrival in
-            DeliveryTimeline(startedAt: arrival)
+        timelineFactory: @escaping (Date, String?) -> DeliveryTimeline = { arrival, label in
+            DeliveryTimeline(startedAt: arrival, label: label)
         },
-        log: @escaping (String) -> Void = checkoutLog
+        log: @escaping (String) -> Void = checkoutLog,
+        now: @escaping () -> Date = Date.init
     ) {
         self.socketPath = socketPath
         self.runInTerminalFactory = runInTerminal
         self.timelineFactory = timelineFactory
         self.log = log
+        self.now = now
     }
 
     /// Binds the socket, records the file identity, and then arms the accept loop. Every request is
@@ -174,20 +177,18 @@ final class HostServer {
             // A stopwatch over each item's success path. It starts **when the request arrived**, before
             // the serial launch queue, so every item's "total" stays on the same axis as the wait the
             // user feels after pressing the button.
-            let requestArrival = Date()
-            // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
-            let terminal = Settings.terminal
+            let requestArrival = now()
             var hasLoggedBatchWarpWarning = false
             let response = execQueue.sync {
+                // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
+                let terminal = Settings.terminal
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
-                handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
+                return handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
                     resolved, position in
-                    let timeline = self.timelineFactory(requestArrival)
-                    if let position {
-                        timeline.step("item \(position.index)/\(position.total)")
-                    }
+                    let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
+                    let timeline = self.timelineFactory(requestArrival, timelineLabel)
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
@@ -204,9 +205,15 @@ final class HostServer {
                        !hasLoggedBatchWarpWarning {
                         hasLoggedBatchWarpWarning = true
                         log(
-                            "batch request with typed inputs across \(position.total) Warp items"
-                                + " may require the terminal tab to stay visible for each typed delivery"
+                            "a Warp batch of \(position.total) item(s) schedules typed claude input"
+                                + " (first at item \(position.index)) — delivery needs the Accessibility permission"
+                                + " and each tab watched"
                         )
+                    }
+                    if let position,
+                       position.index > 1,
+                       now().timeIntervalSince(requestArrival) >= batchLaunchResponseBudget {
+                        throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
                     }
                     // **The slot is reserved before anything can launch a helper**, not when the
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
