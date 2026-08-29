@@ -532,7 +532,7 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(darwinCanonicalLineLimit, 1024)
     }
 
-    func testCommandSendGateSendsOnlyWhenTheShellIsReading() {
+    func testCommandSendGateSendsImmediatelyWhenRawModeIsObserved() {
         XCTAssertEqual(
             cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: false, payloadByteCount: 5000),
             .send
@@ -541,13 +541,42 @@ final class CmuxTests: XCTestCase {
             cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: true, payloadByteCount: 5000),
             .send
         )
+    }
+
+    func testCommandSendGateSendsWithinCanonicalLimitWithoutWaiting() {
+        // These gate return values cover that cmuxAwaitShellReading does not enter its polling
+        // loop for a payload within the canonical limit; the loop continues only for .waitLonger.
         XCTAssertEqual(
-            cmuxCommandSendGate(rawModeObserved: false, deadlineExpired: false, payloadByteCount: 10),
+            cmuxCommandSendGate(
+                rawModeObserved: false, deadlineExpired: false,
+                payloadByteCount: darwinCanonicalLineLimit
+            ),
+            .sendDespiteCanonical
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: nil, deadlineExpired: false,
+                payloadByteCount: darwinCanonicalLineLimit
+            ),
+            .sendDespiteCanonical
+        )
+    }
+
+    func testCommandSendGateWaitsOnlyForOversizedPayloadBeforeDeadline() {
+        // "Cannot tell" is not "raw" — the same rule as the claude session gate remains in
+        // force for oversized payloads, which are the only payloads that may wait.
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: false, deadlineExpired: false,
+                payloadByteCount: darwinCanonicalLineLimit + 1
+            ),
             .waitLonger
         )
-        // "Cannot tell" is not "raw" — the same rule as the claude session gate.
         XCTAssertEqual(
-            cmuxCommandSendGate(rawModeObserved: nil, deadlineExpired: false, payloadByteCount: 10),
+            cmuxCommandSendGate(
+                rawModeObserved: nil, deadlineExpired: false,
+                payloadByteCount: darwinCanonicalLineLimit + 1
+            ),
             .waitLonger
         )
     }

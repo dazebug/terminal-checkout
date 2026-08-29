@@ -4,7 +4,7 @@
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-cmux-send-gate-work`
 - 시작 커밋: `0a9e142`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/cmux-send-gate-review` (`worktree-cmux-send-gate-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-cmux-send-gate-work` (`cmux-send-gate-work`)
-- 현재: R0 설계 리뷰 반영 · 첫 승격 대기
+- 현재: R1 항목 1 verified · 커밋 대기
 - 최근 검증자 판정: 미요청 · 원문 없음
 
 이 파일은 실행한 계획과 실행할 계획의 기록이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실을 기록한다. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다.
@@ -81,7 +81,7 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | 게이트 재정렬 + 호출부 로그 + TDD red→green | 게이트 판정·호출부 | (a) raw mode가 아직 관측되지 않은 한도 이내 payload가 deadline 전에도 `.waitLonger`가 되어 불필요하게 10초 폴링한다. (b) `runInCmux`의 `.sendDespiteCanonical` 로그 문구가 'never reported raw mode within 10s'라고 대기를 주장한다 — 새 동작(즉시 전송)에서는 거짓 로그가 된다. 대기 주장 없는 문구로 교체(예: sending N bytes inside the canonical line limit without waiting for raw mode). | `app/Sources/Core/CmuxControl.swift` · `app/Sources/Core/TerminalRunner.swift` · `app/Tests/CoreTests/CmuxTests.swift` | — | todo | 재현 경계: `cmuxCommandSendGate(rawModeObserved: false, deadlineExpired: false, payloadByteCount: darwinCanonicalLineLimit)`; 현재 `.waitLonger`, 목표 `.sendDespiteCanonical`. | — |
+| 1 | 게이트 재정렬 + 호출부 로그 + TDD red→green | 게이트 판정·호출부 | (a) raw mode가 아직 관측되지 않은 한도 이내 payload가 deadline 전에도 `.waitLonger`가 되어 불필요하게 10초 폴링한다. (b) `runInCmux`의 `.sendDespiteCanonical` 로그 문구가 'never reported raw mode within 10s'라고 대기를 주장한다 — 새 동작(즉시 전송)에서는 거짓 로그가 된다. 대기 주장 없는 문구로 교체(예: sending N bytes inside the canonical line limit without waiting for raw mode). | `app/Sources/Core/CmuxControl.swift` · `app/Sources/Core/TerminalRunner.swift` · `app/Tests/CoreTests/CmuxTests.swift` | — | verified | red 재실행(드라이버): cd app && swift test → exit 1, 557 tests, failures 2 (CmuxTests.swift:549·556, waitLonger ≠ sendDespiteCanonical)<br>green 재실행(드라이버): cd app && swift test → exit 0, 557 tests, 0 failures | — |
 | 2 | 결정 문서와 운영 서술을 새 gate case 의미에 맞게 갱신 | 문서·결정 기록 | 현재 “raw mode 뒤에만 전송” 및 “deadline까지 기다린다”는 서술이 한도 이내 즉시 전송을 누락한다. | `docs/context/cmux-integration.md` · `CLAUDE.md` | 항목 1의 `.sendDespiteCanonical` 의미 확정 | todo | `rg -n "The send waits for raw mode|cmux command text is sent only after" docs/context/cmux-integration.md CLAUDE.md`로 현재 두 문구를 재확인한다. | — |
 | 3 | 종결: 테스트 심사 + 계획 파일 삭제 | 종결 | — | `app/Tests/CoreTests/CmuxTests.swift` · `docs/plans/cmux-send-gate.md` | 항목 1·2 | todo | 종결 재실행: `cd app && swift test`와 `node --test`; 각 exit status와 실행 테스트 수를 기록한 뒤 이 계획 파일만 삭제한다. | — |
 

@@ -229,17 +229,16 @@ public enum CmuxCommandGate: Equatable {
 }
 
 /// Whether the command may be typed into the pane yet. Raw mode means a line editor is reading —
-/// no canonical buffer, any length is safe. Until the deadline, "not raw" and "cannot tell" both
-/// wait (the same rule as the claude session gate: unknown is not raw). At the deadline the
-/// measured canonical limit decides: a payload that fits is sent the way every earlier version
-/// sent it, and one that does not fit is refused — a visible failure instead of a silent
-/// truncation that reports success.
+/// no canonical buffer, so any length is safe. Without that observation, a payload within the
+/// measured canonical limit is safe to send immediately because the buffer preserves all of it,
+/// including CR. Only a larger payload waits for raw mode; if raw mode is still unknown at the
+/// deadline, that payload is refused rather than silently truncated.
 public func cmuxCommandSendGate(
     rawModeObserved: Bool?, deadlineExpired: Bool, payloadByteCount: Int
 ) -> CmuxCommandGate {
     if rawModeObserved == true { return .send }
-    guard deadlineExpired else { return .waitLonger }
-    return payloadByteCount <= darwinCanonicalLineLimit ? .sendDespiteCanonical : .refuseTooLong
+    if payloadByteCount <= darwinCanonicalLineLimit { return .sendDespiteCanonical }
+    return deadlineExpired ? .refuseTooLong : .waitLonger
 }
 
 enum CmuxRecovery: Equatable {

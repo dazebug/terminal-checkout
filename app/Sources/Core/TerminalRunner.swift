@@ -465,10 +465,10 @@ private func launchCmuxAndWait(cliPath: String, channel: CmuxChannel) throws {
     )
 }
 
-/// How long the command send waits for the pane's shell to start reading (raw mode). A zsh with
-/// shell integration reaches its prompt well inside this on the measured machine (the tty itself
-/// appears at ~1.4s); the deadline exists for shells that never enter raw mode, where the
-/// canonical-limit gate falls back by payload size.
+/// How long an oversized command waits for the pane's shell to start reading (raw mode). A zsh
+/// with shell integration reaches its prompt well inside this on the measured machine (the tty
+/// itself appears at ~1.4s); payloads within the canonical limit bypass this wait, while the
+/// deadline remains for shells that never enter raw mode before an oversized send.
 private let cmuxShellReadingWaitTimeout: TimeInterval = 10
 private let cmuxShellReadingPollInterval: TimeInterval = 0.1
 
@@ -479,11 +479,13 @@ func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
     ["-f", ttyPath, "-a"]
 }
 
-/// Polls until the surface's tty exists and is in raw mode, then answers the send gate. Sending
-/// earlier lands the bytes in a canonical-mode line buffer that keeps exactly
-/// `darwinCanonicalLineLimit` bytes of an unread line and silently discards the rest, CR
-/// included (measured) — the command then sits truncated and unsubmitted while every layer
-/// reports success, and the kernel's own echo paints it once more ahead of the prompt.
+/// Polls until the surface's tty exists and answers the send gate. A payload within
+/// `darwinCanonicalLineLimit` returns after the first gate observation without waiting for raw
+/// mode because the canonical buffer preserves the complete payload, CR included (measured).
+/// Only an oversized payload continues polling for raw mode; sending it earlier lands in a
+/// canonical-mode line buffer that silently discards the excess and CR while every layer reports
+/// success, leaving the command truncated and unsubmitted with the kernel's echo ahead of the
+/// prompt.
 func cmuxAwaitShellReading(
     cliPath: String, socketPath: String?, surfaceID: String, payloadByteCount: Int
 ) -> CmuxCommandGate {
@@ -598,8 +600,9 @@ public func runInCmux(
         }
     case .sendDespiteCanonical:
         checkoutLog(
-            "cmux pane never reported raw mode within \(Int(cmuxShellReadingWaitTimeout))s; "
-                + "sending \(payload.utf8.count) bytes inside the canonical line limit"
+            "cmux pane has not confirmed raw mode; sending "
+                + "\(payload.utf8.count) bytes inside the canonical line limit without waiting "
+                + "for raw mode"
         )
     case .refuseTooLong:
         throw TerminalError.cmuxRPCFailed(
