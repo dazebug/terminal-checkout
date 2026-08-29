@@ -4,7 +4,7 @@
 - 대상: `/Users/choongjaelee/Codes/terminal-checkout-cmux-send-gate-work`
 - 시작 커밋: `0a9e142`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/cmux-send-gate-review` (`worktree-cmux-send-gate-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-cmux-send-gate-work` (`cmux-send-gate-work`)
-- 현재: R1 항목 1 verified · 커밋 대기
+- 현재: R1 항목 2 verified · 문서 커밋 대기 · 마지막 승격 86df7cc
 - 최근 검증자 판정: 미요청 · 원문 없음
 
 이 파일은 실행한 계획과 실행할 계획의 기록이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실을 기록한다. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다.
@@ -81,8 +81,8 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | 게이트 재정렬 + 호출부 로그 + TDD red→green | 게이트 판정·호출부 | (a) raw mode가 아직 관측되지 않은 한도 이내 payload가 deadline 전에도 `.waitLonger`가 되어 불필요하게 10초 폴링한다. (b) `runInCmux`의 `.sendDespiteCanonical` 로그 문구가 'never reported raw mode within 10s'라고 대기를 주장한다 — 새 동작(즉시 전송)에서는 거짓 로그가 된다. 대기 주장 없는 문구로 교체(예: sending N bytes inside the canonical line limit without waiting for raw mode). | `app/Sources/Core/CmuxControl.swift` · `app/Sources/Core/TerminalRunner.swift` · `app/Tests/CoreTests/CmuxTests.swift` | — | verified | red 재실행(드라이버): cd app && swift test → exit 1, 557 tests, failures 2 (CmuxTests.swift:549·556, waitLonger ≠ sendDespiteCanonical)<br>green 재실행(드라이버): cd app && swift test → exit 0, 557 tests, 0 failures | — |
-| 2 | 결정 문서와 운영 서술을 새 gate case 의미에 맞게 갱신 | 문서·결정 기록 | 현재 “raw mode 뒤에만 전송” 및 “deadline까지 기다린다”는 서술이 한도 이내 즉시 전송을 누락한다. | `docs/context/cmux-integration.md` · `CLAUDE.md` | 항목 1의 `.sendDespiteCanonical` 의미 확정 | todo | `rg -n "The send waits for raw mode|cmux command text is sent only after" docs/context/cmux-integration.md CLAUDE.md`로 현재 두 문구를 재확인한다. | — |
+| 1 | 게이트 재정렬 + 호출부 로그 + TDD red→green | 게이트 판정·호출부 | (a) raw mode가 아직 관측되지 않은 한도 이내 payload가 deadline 전에도 `.waitLonger`가 되어 불필요하게 10초 폴링한다. (b) `runInCmux`의 `.sendDespiteCanonical` 로그 문구가 'never reported raw mode within 10s'라고 대기를 주장한다 — 새 동작(즉시 전송)에서는 거짓 로그가 된다. 대기 주장 없는 문구로 교체(예: sending N bytes inside the canonical line limit without waiting for raw mode). | `app/Sources/Core/CmuxControl.swift` · `app/Sources/Core/TerminalRunner.swift` · `app/Tests/CoreTests/CmuxTests.swift` | — | cleared | red 재실행(드라이버): cd app && swift test → exit 1, 557 tests, failures 2 (CmuxTests.swift:549·556, waitLonger ≠ sendDespiteCanonical)<br>green 재실행(드라이버): cd app && swift test → exit 0, 557 tests, 0 failures<br>토글(드라이버, 기준 트리): git apply -R(86df7cc의 CmuxControl 훅) → swift test exit 1·557 tests·failures 2(CmuxTests.swift:549·556 동일 2건) → git apply 재적용 → porcelain clean. 소탕 재확인: rg로 producer 1(cmuxCommandSendGate)·polling consumer 1(cmuxAwaitShellReading)·switch 1(runInCmux)만 존재 | — |
+| 2 | 결정 문서와 운영 서술을 새 gate case 의미에 맞게 갱신 | 문서·결정 기록 | 현재 “raw mode 뒤에만 전송” 및 “deadline까지 기다린다”는 서술이 한도 이내 즉시 전송을 누락한다. | `docs/context/cmux-integration.md` · `CLAUDE.md` | 항목 1의 `.sendDespiteCanonical` 의미 확정 | verified | rg 재확인: 두 문구가 새 서술로 대체됨, `rg -n "sent only after|waits for raw mode" CLAUDE.md docs/context/cmux-integration.md` 결과 줄: `CLAUDE.md:61`, `docs/context/cmux-integration.md:27`, `docs/context/cmux-integration.md:35`<br>green 재실행(드라이버, 문서 변경 후): cd app && swift test → exit 0, 557 tests, 0 failures | — |
 | 3 | 종결: 테스트 심사 + 계획 파일 삭제 | 종결 | — | `app/Tests/CoreTests/CmuxTests.swift` · `docs/plans/cmux-send-gate.md` | 항목 1·2 | todo | 종결 재실행: `cd app && swift test`와 `node --test`; 각 exit status와 실행 테스트 수를 기록한 뒤 이 계획 파일만 삭제한다. | — |
 
 - 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶고, 파일 집합이 겹치지 않는 부류만 따로 승격할 수 있다.
@@ -109,13 +109,13 @@ append-only — 첫 승격 이후부터다. 이 R0 초안에는 아직 인용된
 |:--|:--|:--|
 | `cmuxCommandSendGate` 호출자 `cmuxAwaitShellReading` | 항목 1 대상 | `app/Sources/Core/TerminalRunner.swift:487-517`; `.waitLonger`일 때만 polling loop가 계속된다. |
 | `CmuxCommandGate` case를 switch하는 `runInCmux` | 항목 1 대상 | `app/Sources/Core/TerminalRunner.swift:577-610`; `.send`는 무로그, 비raw safe-send와 oversize 처리는 별도 로그·실패 경계를 갖는다. |
-| 결정 문서 서술 | 항목 2 대상 | `docs/context/cmux-integration.md:27-47`; 현재 제목·본문·기각 대안·consequence가 기존 전 동작을 전제로 한다. |
-| 운영 서술 | 항목 2 대상 | `CLAUDE.md:61`; 현재 “only after raw mode” 문장이 한도 이내 즉시 전송을 누락한다. |
+| 결정 문서 서술 | 항목 2 완료 | `docs/context/cmux-integration.md:27-47`; 제목·본문·Reason·기각 대안·Consequence를 새 raw-mode 대기 경계와 2026-08-30 실측에 맞춰 갱신했다. |
+| 운영 서술 | 항목 2 완료 | `CLAUDE.md:61`; 한도 이내 즉시 전송과 한도 초과의 raw-mode 대기·deadline 거부를 한 논리 줄로 갱신했다. |
 | 그 밖의 `cmuxCommandSendGate`·`CmuxCommandGate` 참조 | 안전 | `rg -n "cmuxCommandSendGate|CmuxCommandGate|sendDespiteCanonical|waitLonger|refuseTooLong" app docs CLAUDE.md` 결과 위 네 지점 외에는 테스트와 정의만 있다. |
 
 ## 라운드 로그
 
-라운드는 검증자의 전체 판정 사이의 구간이다. R0 설계 리뷰에서 반박 5건을 모두 계획에 반영했으며 아직 승격 커밋은 없다.
+라운드는 검증자의 전체 판정 사이의 구간이다. R0 설계 리뷰에서 반박 5건을 모두 계획에 반영했고, R1 증분 리뷰에서 항목 1 차단을 확인했다.
 
 ### R0
 
@@ -133,7 +133,12 @@ append-only — 첫 승격 이후부터다. 이 R0 초안에는 아직 인용된
 
 ### R1
 
-아직 없음 — R0 초안이며 증분 리뷰가 시작되지 않았다.
+#### 리뷰 1 — 증분 · 86df7cc · 승격 04:16 · 리뷰 04:16∼04:21 · 왕복 0 · 원문 없음(드라이버 직접)
+
+- 차단: 없음
+- 수정: 없음 (항목 1은 이 리뷰의 대상 승격분)
+- 실측: 토글 red 557/2 재현·재적용 clean · green 557/0 · 소비 지점 3곳 소탕 일치
+- 판정: "드라이버 판정(증분 ①②): 항목 1 차단 확인 — 게이트 재정렬이 red 2건을 막고, 새 표면의 우회 소비 지점 없음." → 항목 1 `cleared`
 
 ## 열린 질문
 
