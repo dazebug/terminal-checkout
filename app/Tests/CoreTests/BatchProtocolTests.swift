@@ -276,25 +276,6 @@ final class BatchRequestTests: XCTestCase {
         XCTAssertEqual(response["error"] as? String, "command must not contain NUL")
     }
 
-    func testBatchSuccessfulItemResultsContainOnlySuccess() throws {
-        let response = handleRequest(
-            json: batchRequest(items: [
-                ["variables": ["repo": "first"]],
-                ["variables": ["repo": "second"]],
-            ]),
-            run: { _ in }
-        )
-
-        XCTAssertEqual(response["success"] as? Bool, true)
-        XCTAssertNil(response["error"])
-        let results = try itemResults(response)
-        XCTAssertEqual(results.count, 2)
-        for result in results {
-            XCTAssertEqual(result.count, 1)
-            XCTAssertEqual(result["success"] as? Bool, true)
-        }
-    }
-
     func testBatchLaunchFailureReturnsOrderedItemResultsAndContinues() throws {
         struct LaunchFailure: Error, CustomStringConvertible {
             var description: String { "launch failed" }

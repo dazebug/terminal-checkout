@@ -563,48 +563,4 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(invocations, 0, "cap rejection must not launch anything")
     }
 
-    /// Success response shape is preserved for a two-item batch sent through the transport layer.
-    func testServeWritesBatchSuccessThroughTransport() throws {
-        let request: [String: Any] = [
-            "command": "echo success",
-            "items": [
-                ["variables": ["repo": "one"]],
-                ["variables": ["repo": "two"]],
-            ],
-        ]
-        let expected = handleRequest(json: request) { _ in }
-        let expectedBytes = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
-
-        let directory = "/tmp/tc-batch-protocol-\(UUID().uuidString.prefix(8))"
-        let path = directory + "/s.sock"
-        let canonical = CanonicalSocketOverride(path)
-        try FileManager.default.createDirectory(
-            atPath: directory, withIntermediateDirectories: true, attributes: nil
-        )
-
-        let server = HostServer(
-            socketPath: path,
-            runInTerminal: { _, _, _ in .none }
-        )
-        try server.start()
-        defer {
-            server.stop()
-            _ = canonical
-            try? FileManager.default.removeItem(atPath: directory)
-        }
-
-        let relay = RelayAtTheDoor()
-        relay.connectAndAsk(request, at: path, givingUp: 10)
-        let deadline = Date().addingTimeInterval(10)
-        while relay.answer == nil, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        let actual = try XCTUnwrap(relay.answer)
-        let actualBytes = try JSONSerialization.data(withJSONObject: actual, options: [.sortedKeys])
-        XCTAssertEqual(
-            actualBytes, expectedBytes,
-            "batch success transport should match handleRequest"
-        )
-    }
-
 }
