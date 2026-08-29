@@ -29,7 +29,7 @@ cmux only accepts socket commands from processes it can prove are its own descen
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/CmuxControl.swift`; Darwin 25.4.0 pty probe with the master drained as a terminal
+**Source:** `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/CmuxControl.swift`; Darwin 25.4.0 pty probe with the master drained as a terminal; PR #64
 **Revisit when:** cmux exposes a reliable indication that the shell line editor is reading the new surface
 
 The command waits until the pane's tty reports raw mode before sending its text and CR. If that observation does not arrive before the deadline, a payload within the canonical limit is sent through the existing path, while a larger payload is refused before it can be truncated.
@@ -51,7 +51,7 @@ The command waits until the pane's tty reports raw mode before sending its text 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Sources/App/PermissionChecker.swift`; stable/NIGHTLY pointer and cross-channel PONG measurements
+**Source:** `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Sources/App/PermissionChecker.swift`; stable/NIGHTLY pointer and cross-channel PONG measurements; PR #64
 **Revisit when:** cmux changes its per-channel pointer files or makes CLI discovery channel-safe without an explicit socket
 
 Stable and NIGHTLY each write the same live socket path to two pointer files. The state-directory candidate is read first, followed by the `/tmp` candidate, and the first candidate whose target exists is passed through `CMUX_SOCKET_PATH`; the state copy is preferred because `/tmp` is periodically cleaned, while `/tmp` remains the only clue when state is absent. The socket basename is never cached as a fixed name, so each new request and launch retry resolves the candidates again, while later RPCs keep the target that created the surface. If the selected channel has no live pointer but another channel does, the app does not use unpinned discovery; if neither channel has a live pointer, `.discover` preserves the existing single-channel behavior.
