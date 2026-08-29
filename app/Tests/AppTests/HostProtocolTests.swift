@@ -173,6 +173,10 @@ final class HostProtocolTests: XCTestCase {
 
         let firstRunnerEntered = DispatchSemaphore(value: 0)
         let releaseFirstRunner = DispatchSemaphore(value: 0)
+        let secondBeforeQueue = DispatchSemaphore(value: 0)
+        let releaseSecondBeforeQueue = DispatchSemaphore(value: 0)
+        let admissionLock = NSLock()
+        var admissionCount = 0
         let lock = NSLock()
         var terminals: [Terminal] = []
         let server = HostServer(
@@ -187,6 +191,16 @@ final class HostProtocolTests: XCTestCase {
                     releaseFirstRunner.wait()
                 }
                 return .none
+            },
+            beforeExecQueueAdmission: {
+                admissionLock.lock()
+                admissionCount += 1
+                let index = admissionCount
+                admissionLock.unlock()
+                if index == 2 {
+                    secondBeforeQueue.signal()
+                    releaseSecondBeforeQueue.wait()
+                }
             }
         )
         try server.start()
@@ -207,13 +221,13 @@ final class HostProtocolTests: XCTestCase {
 
         let second = RelayAtTheDoor()
         second.connectAndAsk(request, at: path, givingUp: 10)
-        let askedDeadline = Date().addingTimeInterval(2)
-        while !second.asked, Date() < askedDeadline {
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        XCTAssertTrue(second.asked, "the second legacy frame did not arrive")
+        XCTAssertEqual(
+            secondBeforeQueue.wait(timeout: .now() + 2), .success,
+            "the server did not hold the second request before queue admission"
+        )
 
         UserDefaults.standard.set(Terminal.warp.rawValue, forKey: "terminal")
+        releaseSecondBeforeQueue.signal()
         releaseFirstRunner.signal()
 
         let answerDeadline = Date().addingTimeInterval(10)
@@ -242,6 +256,7 @@ final class HostProtocolTests: XCTestCase {
 
         let clockLock = NSLock()
         var fakeNow = Date(timeIntervalSince1970: 0)
+        var fakeMonotonicNow: TimeInterval = 0
         var launches = 0
         let server = HostServer(
             socketPath: path,
@@ -249,6 +264,7 @@ final class HostProtocolTests: XCTestCase {
                 clockLock.lock()
                 launches += 1
                 fakeNow = fakeNow.addingTimeInterval(30)
+                fakeMonotonicNow += 30
                 clockLock.unlock()
                 return .none
             },
@@ -256,6 +272,11 @@ final class HostProtocolTests: XCTestCase {
                 clockLock.lock()
                 defer { clockLock.unlock() }
                 return fakeNow
+            },
+            monotonicNow: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeMonotonicNow
             }
         )
         try server.start()
@@ -293,6 +314,210 @@ final class HostProtocolTests: XCTestCase {
                 "not launched — response deadline exceeded"
             )
         }
+    }
+
+    /// The response budget uses monotonic elapsed time even when the wall clock moves backward.
+    func testBatchLaunchBudgetUsesMonotonicElapsedTimeWhenWallClockMovesBackward() throws {
+        let request: [String: Any] = [
+            "command": "echo monotonic-deadline",
+            "items": (1...8).map { ["variables": ["repo": "repo\($0)"]] },
+        ]
+        let directory = "/tmp/tc-batch-monotonic-deadline-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let clockLock = NSLock()
+        var fakeWallClock = Date(timeIntervalSince1970: 0)
+        var fakeMonotonicNow: TimeInterval = 0
+        var launches = 0
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                clockLock.lock()
+                launches += 1
+                fakeMonotonicNow += 40
+                if launches == 1 {
+                    fakeWallClock = fakeWallClock.addingTimeInterval(-3600)
+                }
+                clockLock.unlock()
+                return .none
+            },
+            now: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeWallClock
+            },
+            monotonicNow: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeMonotonicNow
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer)
+        XCTAssertEqual(actual["success"] as? Bool, false)
+        XCTAssertEqual(actual["error"] as? String, "4 of 8 items failed")
+
+        let results = try XCTUnwrap(actual["items"] as? [[String: Any]])
+        XCTAssertEqual(results.count, 8)
+        clockLock.lock()
+        let observedLaunches = launches
+        clockLock.unlock()
+        XCTAssertEqual(observedLaunches, 4, "the fifth item reaches 160 monotonic seconds")
+        for result in results.prefix(4) {
+            XCTAssertEqual(result.count, 1)
+            XCTAssertEqual(result["success"] as? Bool, true)
+        }
+        for result in results.suffix(4) {
+            XCTAssertEqual(result["success"] as? Bool, false)
+            XCTAssertEqual(
+                result["error"] as? String,
+                "not launched — response deadline exceeded"
+            )
+        }
+    }
+
+    /// A one-item typed batch still emits the batch-level Warp warning exactly once.
+    func testServeLogsOneWarpWarningForOneItemTypedBatch() throws {
+        let request: [String: Any] = [
+            "command": "claude",
+            "claude_inputs": ["/review"],
+            "items": [["variables": [String: Any]()]],
+        ]
+        let warningNeedle =
+            "a Warp batch of 1 item(s) schedules typed claude input (first at item 1) — delivery needs the Accessibility permission and each tab watched"
+
+        let directory = "/tmp/tc-batch-warp-one-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+        let logsLock = NSLock()
+        var logs: [String] = []
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in .none },
+            log: { message in
+                logsLock.lock()
+                logs.append(message)
+                logsLock.unlock()
+            }
+        )
+        try server.start()
+        let previousToolExecutables = Settings.toolExecutables
+        Settings.toolExecutables = ["claude": true]
+        defer {
+            Settings.toolExecutables = previousToolExecutables
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.warp.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        _ = try XCTUnwrap(relay.answer)
+
+        logsLock.lock()
+        let warnings = logs.filter { $0.contains(warningNeedle) }
+        logsLock.unlock()
+        XCTAssertEqual(warnings.count, 1, "one-item typed batches should emit one Warp warning")
+    }
+
+    /// A typed item cut by the response budget must not emit a Warp warning before it is prepared.
+    func testServeDoesNotWarnForTypedItemCutByResponseDeadline() throws {
+        let request: [String: Any] = [
+            "command": "claude",
+            "claude_inputs": ["{number}"],
+            "items": [
+                ["variables": ["number": "plain"]],
+                ["variables": ["number": "/review"]],
+            ],
+        ]
+        let warningNeedle =
+            "a Warp batch of 2 item(s) schedules typed claude input (first at item 2) — delivery needs the Accessibility permission and each tab watched"
+
+        let directory = "/tmp/tc-batch-warp-deadline-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+        let clockLock = NSLock()
+        var fakeNow = Date(timeIntervalSince1970: 0)
+        var fakeMonotonicNow: TimeInterval = 0
+        let logsLock = NSLock()
+        var logs: [String] = []
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                clockLock.lock()
+                fakeNow = fakeNow.addingTimeInterval(150)
+                fakeMonotonicNow += 150
+                clockLock.unlock()
+                return .none
+            },
+            log: { message in
+                logsLock.lock()
+                logs.append(message)
+                logsLock.unlock()
+            },
+            now: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeNow
+            },
+            monotonicNow: {
+                clockLock.lock()
+                defer { clockLock.unlock() }
+                return fakeMonotonicNow
+            }
+        )
+        try server.start()
+        let previousToolExecutables = Settings.toolExecutables
+        Settings.toolExecutables = ["claude": true]
+        defer {
+            Settings.toolExecutables = previousToolExecutables
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.warp.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer)
+        XCTAssertEqual(actual["success"] as? Bool, false)
+
+        logsLock.lock()
+        let warnings = logs.filter { $0.contains(warningNeedle) }
+        logsLock.unlock()
+        XCTAssertEqual(warnings.count, 0, "a deadline-cut typed item must not warn")
     }
 
     /// Each transport item gets its own timeline label on every emitted stage, including follow-ups.

@@ -88,7 +88,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 
 - [ ] Send one batch-capable request with N items → N terminal tabs launch in source order, each command send completes before the next launch, and the response contains N source-ordered per-item results without waiting for Claude delivery
 - [ ] Hold a batch behind a busy launch queue → the app log has one timeline per item labeled `item i/N`, and each total uses the request-arrival anchor so item 2 includes the time spent launching item 1
-- [ ] On Warp, send a batch with typed `claude_inputs` → exactly one warning names the affected item count and reminds the user to keep each tab visible; no per-item duplicate warning appears
+- [ ] On Warp, send a batch with typed `claude_inputs` → exactly one warning states the batch size and first typed item (`first at item i`), and says `each tab watched`; that visibility requirement applies to typed-delivery tabs, not argv-only items, and no duplicate warning appears
 - [ ] Start at least five long typed deliveries in one or overlapping batches → no more than four occupy the delivery gate at once, the fifth waits for a permit, and it completes after an earlier delivery releases its permit
 - [ ] With a two-item cmux batch, switch away from the active tab during delivery → both surface-addressed deliveries complete in their background tabs and no item is dropped
 

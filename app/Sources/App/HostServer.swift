@@ -41,6 +41,9 @@ final class HostServer {
     private let timelineFactory: (Date, String?) -> DeliveryTimeline
     private let log: (String) -> Void
     private let now: () -> Date
+    private let monotonicNow: () -> TimeInterval
+    /// Test-only pause before serial admission; production leaves it nil.
+    private let beforeExecQueueAdmission: (() -> Void)?
 
     /// A test-only pause lets the ownership suite hold startup between binding and arming the
     /// accept loop. Production leaves it nil; the lifecycle lock remains the real guarantee.
@@ -55,13 +58,17 @@ final class HostServer {
             DeliveryTimeline(startedAt: arrival, label: label)
         },
         log: @escaping (String) -> Void = checkoutLog,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        beforeExecQueueAdmission: (() -> Void)? = nil
     ) {
         self.socketPath = socketPath
         self.runInTerminalFactory = runInTerminal
         self.timelineFactory = timelineFactory
         self.log = log
         self.now = now
+        self.monotonicNow = monotonicNow
+        self.beforeExecQueueAdmission = beforeExecQueueAdmission
     }
 
     /// Binds the socket, records the file identity, and then arms the accept loop. Every request is
@@ -178,7 +185,10 @@ final class HostServer {
             // the serial launch queue, so every item's "total" stays on the same axis as the wait the
             // user feels after pressing the button.
             let requestArrival = now()
+            // Date remains the display anchor; uptime keeps clock adjustments from reopening the response budget.
+            let requestArrivalMonotonic = monotonicNow()
             var hasLoggedBatchWarpWarning = false
+            beforeExecQueueAdmission?()
             let response = execQueue.sync {
                 // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
                 let terminal = Settings.terminal
@@ -187,6 +197,11 @@ final class HostServer {
                 // and `{cd}` assembly belong to Core (no logic here)
                 return handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
                     resolved, position in
+                    if let position,
+                       position.index > 1,
+                       monotonicNow() - requestArrivalMonotonic >= batchLaunchResponseBudget {
+                        throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
+                    }
                     let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
                     let timeline = self.timelineFactory(requestArrival, timelineLabel)
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
@@ -200,7 +215,7 @@ final class HostServer {
                         : "typing \(prepared.claudeInputs.count)"
                     timeline.step("request received — \(resolved.claudeInputs.count) claude input(s), \(route)")
                     if let position,
-                       position.total > 1, terminal == .warp,
+                       terminal == .warp,
                        !prepared.claudeInputs.isEmpty,
                        !hasLoggedBatchWarpWarning {
                         hasLoggedBatchWarpWarning = true
@@ -209,11 +224,6 @@ final class HostServer {
                                 + " (first at item \(position.index)) — delivery needs the Accessibility permission"
                                 + " and each tab watched"
                         )
-                    }
-                    if let position,
-                       position.index > 1,
-                       now().timeIntervalSince(requestArrival) >= batchLaunchResponseBudget {
-                        throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
                     }
                     // **The slot is reserved before anything can launch a helper**, not when the
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
