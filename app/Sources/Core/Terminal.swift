@@ -5,10 +5,21 @@ public enum Terminal: String, CaseIterable {
     case wezterm
     case warp
     case cmux
+    case cmuxNightly = "cmux-nightly"
 
     /// The single place a stored value is parsed. An unknown value (an identifier left by another version, a hand-edited plist) falls back to iTerm2.
     /// Scattering that fallback across the consumers is how they drift apart — execution going to iTerm2 while the setup window hides the iTerm2 permission section — so it lives here and nowhere else.
     public init(storedValue: String) {
         self = Terminal(rawValue: storedValue) ?? .iterm
+    }
+
+    /// The two cmux channels share every code path; this is the one mapping from the stored
+    /// identifier to the channel those shared paths are parameterized by.
+    public var cmuxChannel: CmuxChannel? {
+        switch self {
+        case .cmux: return .stable
+        case .cmuxNightly: return .nightly
+        case .iterm, .wezterm, .warp: return nil
+        }
     }
 }

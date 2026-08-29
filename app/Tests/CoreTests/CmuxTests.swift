@@ -521,4 +521,109 @@ final class CmuxTests: XCTestCase {
         )
     }
 
+    // MARK: - Canonical-limit send gate
+
+    // Measured on Darwin 25.4.0 (pty probe, master draining echo like a terminal emulator):
+    // a canonical-mode tty keeps exactly 1024 bytes of an unread line and silently discards the
+    // rest, CR included — the writer sees every byte accepted. 1023 bytes + CR survive whole.
+    func testCanonicalLineLimitIsTheMeasured1024() {
+        XCTAssertEqual(darwinCanonicalLineLimit, 1024)
+    }
+
+    func testCommandSendGateSendsOnlyWhenTheShellIsReading() {
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: false, payloadByteCount: 5000),
+            .send
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: true, deadlineExpired: true, payloadByteCount: 5000),
+            .send
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: false, deadlineExpired: false, payloadByteCount: 10),
+            .waitLonger
+        )
+        // "Cannot tell" is not "raw" — the same rule as the claude session gate.
+        XCTAssertEqual(
+            cmuxCommandSendGate(rawModeObserved: nil, deadlineExpired: false, payloadByteCount: 10),
+            .waitLonger
+        )
+    }
+
+    func testCommandSendGateFallsBackBySizeAtTheDeadline() {
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: nil, deadlineExpired: true,
+                payloadByteCount: darwinCanonicalLineLimit
+            ),
+            .sendDespiteCanonical
+        )
+        XCTAssertEqual(
+            cmuxCommandSendGate(
+                rawModeObserved: false, deadlineExpired: true,
+                payloadByteCount: darwinCanonicalLineLimit + 1
+            ),
+            .refuseTooLong
+        )
+    }
+
+    // MARK: - Channels
+
+    func testCmuxChannelsCarryTheirOwnBundleAndSocketPointer() {
+        XCTAssertEqual(CmuxChannel.stable.bundleID, "com.cmuxterm.app")
+        XCTAssertEqual(CmuxChannel.nightly.bundleID, "com.cmuxterm.app.nightly")
+        XCTAssertEqual(CmuxChannel.stable.lastSocketPathFileName, "last-socket-path")
+        XCTAssertEqual(CmuxChannel.nightly.lastSocketPathFileName, "nightly-last-socket-path")
+    }
+
+    func testCmuxNightlyCLICandidatesAreTheBundlePathsOnly() {
+        // A bare `cmux` on PATH cannot testify to its channel, so nightly searches only the
+        // bundle installations.
+        XCTAssertEqual(
+            cmuxCLICandidatePaths(channel: .nightly, homeDirectory: "/Users/u", path: "/opt/x:/usr/bin"),
+            [
+                "/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux",
+                "/Users/u/Applications/cmux NIGHTLY.app/Contents/Resources/bin/cmux",
+            ]
+        )
+    }
+
+    func testCmuxStableCLICandidatesAreUnchangedByTheChannelParameter() {
+        XCTAssertEqual(
+            cmuxCLICandidatePaths(homeDirectory: "/Users/u", path: nil),
+            [
+                "/Applications/cmux.app/Contents/Resources/bin/cmux",
+                "/Users/u/Applications/cmux.app/Contents/Resources/bin/cmux",
+                "/opt/homebrew/bin/cmux",
+                "/usr/local/bin/cmux",
+            ]
+        )
+    }
+
+    func testCmuxResolvedSocketPathRequiresALivePointerTarget() {
+        XCTAssertEqual(
+            cmuxResolvedSocketPath(pointerContents: "/tmp/a.sock\n", fileExists: { $0 == "/tmp/a.sock" }),
+            "/tmp/a.sock"
+        )
+        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: "/tmp/a.sock\n", fileExists: { _ in false }))
+        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: "   \n", fileExists: { _ in true }))
+        XCTAssertNil(cmuxResolvedSocketPath(pointerContents: nil, fileExists: { _ in true }))
+    }
+
+    func testCmuxRPCEnvironmentPinsTheSocketAndKeepsTheInheritedEnvironment() {
+        XCTAssertNil(cmuxRPCEnvironment(socketPath: nil, base: ["PATH": "/usr/bin"]))
+        XCTAssertEqual(
+            cmuxRPCEnvironment(socketPath: "/tmp/a.sock", base: ["PATH": "/usr/bin"]),
+            ["PATH": "/usr/bin", "CMUX_SOCKET_PATH": "/tmp/a.sock"]
+        )
+    }
+
+    func testTerminalStoresCmuxNightlyAsItsOwnIdentifier() {
+        XCTAssertEqual(Terminal(storedValue: "cmux-nightly"), .cmuxNightly)
+        XCTAssertEqual(Terminal.cmuxNightly.rawValue, "cmux-nightly")
+        XCTAssertEqual(Terminal.cmuxNightly.cmuxChannel, .nightly)
+        XCTAssertEqual(Terminal.cmux.cmuxChannel, .stable)
+        XCTAssertNil(Terminal.warp.cmuxChannel)
+    }
+
 }

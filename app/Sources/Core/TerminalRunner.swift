@@ -112,7 +112,7 @@ public func claudeInputBlocker(
         guard accessibilityTrusted() else { return .warpAccessibility }
         guard injectionHelperReady() else { return .warpHelperUnavailable }
         return nil
-    case .cmux: return nil
+    case .cmux, .cmuxNightly: return nil
     }
 }
 
@@ -331,7 +331,8 @@ public func runInTerminal(
     case .iterm: return try runInITerm(command)
     case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
     case .warp: return try runInWarp(command, claudeInput: claudeInput)
-    case .cmux: return try runInCmux(command)
+    case .cmux: return try runInCmux(command, channel: .stable)
+    case .cmuxNightly: return try runInCmux(command, channel: .nightly)
     }
 }
 
@@ -357,9 +358,12 @@ func cmuxReadinessTimeoutDescription(
 /// After launching, a successful `debug.terminals` RPC is the server-side readiness proof. A
 /// denied response is surfaced immediately; a missing socket path is not consulted because cmux
 /// may be reachable through its alternate discovery paths. The normal first `workspace.create`
-/// success path never calls this poll, preserving the two-RPC budget.
+/// success path never calls this poll, preserving the two-RPC budget. The channel's socket
+/// pointer is re-resolved on every attempt: the launched server writes it only once it is up,
+/// and until then the poll runs unpinned against the CLI's own discovery.
 private func waitForCmuxReadiness(
-    cliPath: String, launchExitStatus: Int32?, initialError: TerminalError? = nil
+    cliPath: String, channel: CmuxChannel, launchExitStatus: Int32?,
+    initialError: TerminalError? = nil
 ) throws {
     let deadline = Date().addingTimeInterval(cmuxReadinessWaitTimeout)
     var lastError: TerminalError?
@@ -380,7 +384,8 @@ private func waitForCmuxReadiness(
         do {
             _ = try cmuxRPC(
                 cli: cliPath, method: cmuxDebugTerminalsMethod,
-                timeout: min(3, remaining)
+                timeout: min(3, remaining),
+                socketPath: cmuxChannelSocketPath(channel: channel)
             )
             return
         } catch let error as TerminalError {
@@ -409,11 +414,58 @@ private func waitForCmuxReadiness(
     }
 }
 
+/// How long the command send waits for the pane's shell to start reading (raw mode). A zsh with
+/// shell integration reaches its prompt well inside this on the measured machine (the tty itself
+/// appears at ~1.4s); the deadline exists for shells that never enter raw mode, where the
+/// canonical-limit gate falls back by payload size.
+private let cmuxShellReadingWaitTimeout: TimeInterval = 10
+private let cmuxShellReadingPollInterval: TimeInterval = 0.1
+
+/// Polls until the surface's tty exists and is in raw mode, then answers the send gate. Sending
+/// earlier lands the bytes in a canonical-mode line buffer that keeps exactly
+/// `darwinCanonicalLineLimit` bytes of an unread line and silently discards the rest, CR
+/// included (measured) — the command then sits truncated and unsubmitted while every layer
+/// reports success, and the kernel's own echo paints it once more ahead of the prompt.
+func cmuxAwaitShellReading(
+    cliPath: String, socketPath: String?, surfaceID: String, payloadByteCount: Int
+) -> CmuxCommandGate {
+    let deadline = Date().addingTimeInterval(cmuxShellReadingWaitTimeout)
+    var ttyName: String?
+    while true {
+        if ttyName == nil {
+            let response = try? cmuxRPC(
+                cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5,
+                socketPath: socketPath
+            )
+            if let response, let data = try? JSONSerialization.data(withJSONObject: response) {
+                ttyName = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID)
+            }
+        }
+        var rawMode: Bool?
+        if let ttyName,
+           let stty = try? runProcess("/bin/stty", ["-f", "/dev/" + ttyName, "-a"], timeout: 5) {
+            // A failed stty stays nil — "cannot tell", which the gate treats as not raw, the same
+            // rule as the claude session gate.
+            rawMode = ttyIsRawMode(sttyOutput: stty.stdout + stty.stderr)
+        }
+        let gate = cmuxCommandSendGate(
+            rawModeObserved: rawMode,
+            deadlineExpired: Date() >= deadline,
+            payloadByteCount: payloadByteCount
+        )
+        if gate != .waitLonger { return gate }
+        Thread.sleep(forTimeInterval: cmuxShellReadingPollInterval)
+    }
+}
+
 /// Opens a workspace in cmux and starts the command on its returned surface. cmux chooses the
 /// user's last active window; the command itself owns cwd through its assembled `{cd}` clause.
 @discardableResult
-public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
-    guard let cliPath = findCmuxCLI() else { throw TerminalError.cmuxNotFound }
+public func runInCmux(
+    _ command: String, channel: CmuxChannel = .stable
+) throws -> TerminalSessionHandle {
+    guard let cliPath = findCmuxCLI(channel: channel) else { throw TerminalError.cmuxNotFound }
+    var socketPath = cmuxChannelSocketPath(channel: channel)
 
     // The execution path deliberately does not ping first: workspace.create is the authoritative
     // diagnosis for the request, and a normal run stays at D7's two RPCs. A first denial is final;
@@ -423,7 +475,8 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
     do {
         workspace = try cmuxRPC(
             cli: cliPath, method: cmuxWorkspaceCreateMethod,
-            params: cmuxWorkspaceCreateParameters()
+            params: cmuxWorkspaceCreateParameters(),
+            socketPath: socketPath
         )
     } catch let firstFailure as TerminalError {
         switch cmuxRecoveryAction(afterFirstFailure: firstFailure, launchAttempted: false) {
@@ -436,7 +489,7 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
             var launchError: TerminalError?
             do {
                 launchExitStatus = try runProcess(
-                    "/usr/bin/open", ["-b", "com.cmuxterm.app"], timeout: 15
+                    "/usr/bin/open", ["-b", channel.bundleID], timeout: 15
                 ).status
             } catch let error as TerminalError {
                 launchError = error
@@ -445,12 +498,17 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
             }
             try waitForCmuxReadiness(
                 cliPath: cliPath,
+                channel: channel,
                 launchExitStatus: launchExitStatus,
                 initialError: launchError
             )
+            // The restarted server wrote a fresh socket pointer; the pre-launch resolution may
+            // still name the socket it left behind.
+            socketPath = cmuxChannelSocketPath(channel: channel)
             workspace = try cmuxRPC(
                 cli: cliPath, method: cmuxWorkspaceCreateMethod,
-                params: cmuxWorkspaceCreateParameters()
+                params: cmuxWorkspaceCreateParameters(),
+                socketPath: socketPath
             )
         }
     } catch {
@@ -462,11 +520,33 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
         )
     }
 
+    let payload = command + claudeSubmitKey
+    switch cmuxAwaitShellReading(
+        cliPath: cliPath, socketPath: socketPath,
+        surfaceID: identifiers.surfaceID, payloadByteCount: payload.utf8.count
+    ) {
+    case .send, .waitLonger:
+        break
+    case .sendDespiteCanonical:
+        checkoutLog(
+            "cmux pane never reported raw mode within \(Int(cmuxShellReadingWaitTimeout))s; "
+                + "sending \(payload.utf8.count) bytes inside the canonical line limit"
+        )
+    case .refuseTooLong:
+        throw TerminalError.cmuxRPCFailed(
+            "\(cmuxSurfaceSendTextMethod): the pane's shell did not start reading within "
+                + "\(Int(cmuxShellReadingWaitTimeout))s, and \(payload.utf8.count) bytes exceed "
+                + "the canonical line buffer (\(darwinCanonicalLineLimit) bytes) — the tail would "
+                + "be silently dropped, so nothing was sent"
+        )
+    }
+
     let sendResponse = try cmuxRPC(
         cli: cliPath, method: cmuxSurfaceSendTextMethod,
         params: cmuxSurfaceSendTextParameters(
-            surfaceID: identifiers.surfaceID, text: command + claudeSubmitKey
-        )
+            surfaceID: identifiers.surfaceID, text: payload
+        ),
+        socketPath: socketPath
     )
     if sendResponse["queued"] as? Bool == true {
         checkoutLog("cmux \(cmuxSurfaceSendTextMethod) queued=true")
@@ -474,7 +554,8 @@ public func runInCmux(_ command: String) throws -> TerminalSessionHandle {
     return .cmux(
         surfaceID: identifiers.surfaceID,
         workspaceID: identifiers.workspaceID,
-        cliPath: cliPath
+        cliPath: cliPath,
+        socketPath: socketPath
     )
 }
 

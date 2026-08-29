@@ -66,26 +66,31 @@ enum PermissionChecker {
 
     /// Uses the same executable lookup Core uses for cmux execution — detection and execution must
     /// not disagree about whether the CLI is installed.
-    static var isCmuxInstalled: Bool {
-        findCmuxCLI() != nil
+    static func isCmuxInstalled(channel: CmuxChannel = .stable) -> Bool {
+        findCmuxCLI(channel: channel) != nil
     }
 
-    /// Reads cmux's live socket state on every call. The result is intentionally not stored: cmux
-    /// may reload its control mode while this window remains open, and the ping itself has no lockout.
-    static func cmuxSocketStatus() -> CmuxSocketStatus {
-        guard let cli = findCmuxCLI() else { return .notInstalled }
-        let socketExists = cmuxSocketPath() != nil
+    /// Reads the channel's live socket state on every call. The result is intentionally not
+    /// stored: cmux may reload its control mode while this window remains open, and the ping
+    /// itself has no lockout. The ping is pinned to the channel's own socket when one exists —
+    /// with two channels installed, an unpinned ping can answer PONG from the *other* channel's
+    /// server (measured), which would paint a stopped channel as reachable.
+    static func cmuxSocketStatus(channel: CmuxChannel) -> CmuxSocketStatus {
+        guard let cli = findCmuxCLI(channel: channel) else { return .notInstalled }
+        let socketPath = cmuxChannelSocketPath(channel: channel)
         do {
-            let result = try runProcess(cli, ["ping"], timeout: 5)
+            let result = try runProcess(
+                cli, ["ping"], env: cmuxRPCEnvironment(socketPath: socketPath), timeout: 5
+            )
             return classifyCmuxSocketStatus(
-                socketExists: socketExists,
+                socketExists: socketPath != nil,
                 pingStatus: result.status,
                 stdout: result.stdout,
                 stderr: result.stderr
             )
         } catch {
             return classifyCmuxSocketStatus(
-                socketExists: socketExists,
+                socketExists: socketPath != nil,
                 pingStatus: -1,
                 stdout: "",
                 stderr: errorMessage(error)

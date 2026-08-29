@@ -293,6 +293,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var weztermRadio: NSButton!
     private var warpRadio: NSButton!
     private var cmuxRadio: NSButton!
+    private var cmuxNightlyRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
     /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
     /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
@@ -883,10 +884,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
         weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
         warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
-        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled)
+        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled(channel: .stable))
+        cmuxNightlyRadio = radio("cmux NIGHTLY", installed: PermissionChecker.isCmuxInstalled(channel: .nightly))
 
         // Stacked vertically: four of them side by side do not fit the card's width
-        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio])
+        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio, cmuxNightlyRadio])
         radioColumn.orientation = .vertical
         radioColumn.alignment = .leading
         radioColumn.spacing = 7
@@ -1215,6 +1217,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     @objc private func terminalChanged() {
         if cmuxRadio.state == .on {
             select(terminal: .cmux)
+        } else if cmuxNightlyRadio.state == .on {
+            select(terminal: .cmuxNightly)
         } else if weztermRadio.state == .on {
             select(terminal: .wezterm)
         } else if warpRadio.state == .on {
@@ -1239,6 +1243,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         case .wezterm: weztermRadio.state = .on
         case .warp: warpRadio.state = .on
         case .cmux: cmuxRadio.state = .on
+        case .cmuxNightly: cmuxNightlyRadio.state = .on
         }
         // Scheduled claude input is delivered only once claude is up, so it takes a while — and
         // anything the user types in the meantime mixes into it

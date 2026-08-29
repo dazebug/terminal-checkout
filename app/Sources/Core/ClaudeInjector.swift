@@ -4,7 +4,11 @@ import Foundation
 public enum TerminalSessionHandle {
     case iterm(sessionID: String, tty: String)
     case wezterm(paneID: String, cliPath: String, socketPath: String?)
-    case cmux(surfaceID: String, workspaceID: String, cliPath: String)
+    /// `socketPath` is the channel's pinned socket (nil = the CLI's own discovery). It rides in
+    /// the handle so every later RPC — tty lookup, screen read, typed bytes — talks to the same
+    /// server that created the surface: with two channels installed, unpinned discovery can
+    /// reach the other channel's server, where this surface id does not exist.
+    case cmux(surfaceID: String, workspaceID: String, cliPath: String, socketPath: String?)
     /// Warp has neither a CLI nor AppleScript that can address a pane, so the socket of the injection helper running inside the pane is the only channel. Even the tty is learned by asking that helper (`ClaudeInjector.warpHelperTTY`).
     case warp(helperSocket: String)
     /// No delivery path (the WezTerm fallback launch, a Warp helper that could not be prepared, and so on).
@@ -977,8 +981,8 @@ public func deliverClaudeInputs(
         ttyPath = tty
     case .wezterm(let paneID, let cliPath, let socketPath):
         ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
-    case .cmux(let surfaceID, _, let cliPath):
-        ttyPath = cmuxQueryTTY(cliPath: cliPath, surfaceID: surfaceID)
+    case .cmux(let surfaceID, _, let cliPath, let socketPath):
+        ttyPath = cmuxQueryTTY(cliPath: cliPath, socketPath: socketPath, surfaceID: surfaceID)
         timeline?.step(ttyPath == nil ? "failed waiting for the cmux surface tty" : "cmux surface tty ready")
     case .warp(let socket):
         // Without reading the screen there is no way to confirm claude received the input, and a CR sent without that confirmation submits an empty line while input claude discarded is recorded as "delivered" (measured).
@@ -1042,7 +1046,7 @@ public func deliverClaudeInputs(
     let sent = submitClaudeInputs(
         inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
         onDeliveryEnd: {
-            if case .cmux(let surfaceID, _, _) = handle {
+            if case .cmux(let surfaceID, _, _, _) = handle {
                 CmuxRPCFailureLog.forgetScreenReadFailures(surface: surfaceID)
             }
         }
@@ -1112,13 +1116,14 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
 private let cmuxTTYWaitTimeout: TimeInterval = 20
 private let cmuxTTYPollInterval: TimeInterval = 0.2
 
-private func cmuxQueryTTY(cliPath: String, surfaceID: String) -> String? {
+private func cmuxQueryTTY(cliPath: String, socketPath: String?, surfaceID: String) -> String? {
     let deadline = Date().addingTimeInterval(cmuxTTYWaitTimeout)
     var lastRPCError: String?
     while true {
         do {
             let response = try cmuxRPC(
-                cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5
+                cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5,
+                socketPath: socketPath
             )
             if let data = try? JSONSerialization.data(withJSONObject: response),
                let tty = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID) {
@@ -1221,7 +1226,7 @@ private func sendKeys(
             input: text, env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         )
         return result?.status == 0
-    case .cmux(let surfaceID, _, let cliPath):
+    case .cmux(let surfaceID, _, let cliPath, let socketPath):
         return runCmuxOperations(
             cmuxSendOperations(surfaceID: surfaceID, text: text),
             sessionIsUnchanged: sessionIsUnchanged
@@ -1229,7 +1234,8 @@ private func sendKeys(
             do {
                 let response = try cmuxRPC(
                     cli: cliPath, method: operation.method,
-                    params: cmuxRPCParameters(operation.params), timeout: 5
+                    params: cmuxRPCParameters(operation.params), timeout: 5,
+                    socketPath: socketPath
                 )
                 if response["queued"] as? Bool == true {
                     checkoutLog("cmux \(operation.method) queued=true")
@@ -1277,11 +1283,12 @@ private func screenText(of handle: TerminalSessionHandle) -> String? {
             env: wezTermEnvironment(socketPath: socketPath), timeout: 5
         ), result.status == 0 else { return nil }
         return result.stdout
-    case .cmux(let surfaceID, _, let cliPath):
+    case .cmux(let surfaceID, _, let cliPath, let socketPath):
         do {
             let response = try cmuxRPC(
                 cli: cliPath, method: cmuxSurfaceReadTextMethod,
-                params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5
+                params: cmuxSurfaceReadTextParameters(surfaceID: surfaceID), timeout: 5,
+                socketPath: socketPath
             )
             guard let text = cmuxScreenText(from: response) else { return nil }
             CmuxRPCFailureLog.recordScreenReadSuccess(surface: surfaceID)
