@@ -472,6 +472,11 @@ private func launchCmuxAndWait(cliPath: String, channel: CmuxChannel) throws {
 private let cmuxShellReadingWaitTimeout: TimeInterval = 10
 private let cmuxShellReadingPollInterval: TimeInterval = 0.1
 
+/// `cmuxTTYName` returns a complete `/dev/...` path; stty receives it unchanged.
+func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
+    ["-f", ttyPath, "-a"]
+}
+
 /// Polls until the surface's tty exists and is in raw mode, then answers the send gate. Sending
 /// earlier lands the bytes in a canonical-mode line buffer that keeps exactly
 /// `darwinCanonicalLineLimit` bytes of an unread line and silently discards the rest, CR
@@ -481,20 +486,22 @@ func cmuxAwaitShellReading(
     cliPath: String, socketPath: String?, surfaceID: String, payloadByteCount: Int
 ) -> CmuxCommandGate {
     let deadline = Date().addingTimeInterval(cmuxShellReadingWaitTimeout)
-    var ttyName: String?
+    var ttyPath: String?
     while true {
-        if ttyName == nil {
+        if ttyPath == nil {
             let response = try? cmuxRPC(
                 cli: cliPath, method: cmuxDebugTerminalsMethod, params: [:], timeout: 5,
                 socketPath: socketPath
             )
             if let response, let data = try? JSONSerialization.data(withJSONObject: response) {
-                ttyName = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID)
+                ttyPath = cmuxTTYName(debugTerminalsJSON: data, surfaceID: surfaceID)
             }
         }
         var rawMode: Bool?
-        if let ttyName,
-           let stty = try? runProcess("/bin/stty", ["-f", "/dev/" + ttyName, "-a"], timeout: 5) {
+        if let ttyPath,
+           let stty = try? runProcess(
+               "/bin/stty", cmuxRawModeProbeArguments(ttyPath: ttyPath), timeout: 5
+           ) {
             // A failed stty stays nil — "cannot tell", which the gate treats as not raw, the same
             // rule as the claude session gate.
             rawMode = ttyIsRawMode(sttyOutput: stty.stdout + stty.stderr)

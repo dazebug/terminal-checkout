@@ -347,6 +347,20 @@ final class CmuxTests: XCTestCase {
         XCTAssertEqual(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"), "/dev/ttys020")
     }
 
+    func testItem9CmuxRawModeProbeUsesTheParserReturnedTTYPath() throws {
+        let json = Data(
+            """
+            {"terminals":[{"surface_id":"surface-1","tty":"ttys020"}]}
+            """.utf8
+        )
+        let ttyPath = try XCTUnwrap(cmuxTTYName(debugTerminalsJSON: json, surfaceID: "surface-1"))
+
+        XCTAssertEqual(
+            cmuxRawModeProbeArguments(ttyPath: ttyPath),
+            ["-f", "/dev/ttys020", "-a"]
+        )
+    }
+
     func testItem9CmuxTTYNameReturnsNilForNullTTY() {
         let json = Data(
             #"{"terminals":[{"surface_id":"surface-1","tty":null}]}"#.utf8
