@@ -24,27 +24,27 @@ cmux only accepts socket commands from processes it can prove are its own descen
 
 **Consequence, accepted:** cmux costs zero macOS TCC permissions — the same grade as WezTerm — in exchange for one setting the user changes by hand, once. A second consequence is diagnostic: with no socket the app cannot tell "cmux is not running" from "cmux refused us," so it never reads the settings file to guess which one it is; `Access denied` is reported as itself, because launching cmux cannot fix it.
 
-## The send waits for raw mode, because the writer cannot see the truncation
+## Only an oversized send waits for raw mode, because the writer cannot see the truncation
 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed
-**Source:** `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/CmuxControl.swift`; Darwin 25.4.0 pty probe with the master drained as a terminal; PR #64
+**Source:** `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/CmuxControl.swift`; Darwin 25.4.0 pty probe with the master drained as a terminal; PR #64; 2026-08-30 unified log
 **Revisit when:** cmux exposes a reliable indication that the shell line editor is reading the new surface
 
-The command waits until the pane's tty reports raw mode before sending its text and CR. If that observation does not arrive before the deadline, a payload within the canonical limit is sent through the existing path, while a larger payload is refused before it can be truncated.
+When raw mode is observed, any payload is sent immediately. Without that observation, a payload at or below the 1024-byte canonical limit is sent immediately because Darwin's canonical buffer preserves the complete payload, including CR; only a larger payload waits for raw mode, and if raw mode is still not observed at the deadline it is refused before `surface.send_text`.
 
-**Reason:** canonical mode keeps exactly 1024 bytes of an unread line and silently discards the rest, including CR, even though the writer sees every byte as accepted. A 1023-byte payload plus CR survives, but a longer command can therefore appear successful while remaining truncated and unsubmitted. Raw mode is the observation that removes that buffer from the path; the bounded fallback preserves short commands and makes the unsafe case visible.
+**Reason:** canonical mode keeps exactly 1024 bytes of an unread line and silently discards the rest, including CR, even though the writer sees every byte as accepted. A 1023-byte payload plus CR survives whole, so waiting for raw mode adds no safety to a payload within the limit. The 2026-08-30 unified log measured the cost of that wait on a slow shell-integration pane: a 24.7-second button press spent 10.4 seconds in this gate, and its 317-byte payload was sent the same way after the deadline.
 
-**Rejected alternative — always send immediately.** This is the former behavior: it reaches the canonical buffer before the shell reads and can silently lose the tail and CR.
+**Rejected alternative — always send immediately.** This remains rejected for payloads over the 1024-byte limit: before raw mode, the canonical buffer can silently discard the excess and CR. The measured risk does not apply to payloads within the limit, so those now use immediate send.
 
 **Rejected alternative — truncate based on length.** The app would change the user's command and still would not make the resulting command correct.
 
-**Rejected alternative — always wait until the deadline.** A slow but healthy shell would add the full ten-second delay to every command, including payloads that could be sent safely.
+**Rejected alternative — always wait until the deadline.** A slow but healthy shell would add the full ten-second delay to every command, including payloads that could be sent safely; this concern precisely predicted the 2026-08-30 defect, where 10.4 seconds of a 24.7-second button press bought no additional safety for a 317-byte payload.
 
 **Rejected alternative — send the text first and CR later.** The canonical buffer has already crossed its 1024-byte boundary before CR is sent, so delaying CR cannot restore the discarded bytes.
 
-**Consequence, accepted:** short commands can still use the bounded fallback when raw mode is unavailable, while an oversized command fails visibly before transmission instead of being silently altered in the pane. The `.refuseTooLong` path occurs after `workspace.create`, so it leaves one empty tab; that is accepted because a visible failure is safer than silent truncation and the error still reaches the button.
+**Consequence, accepted:** payloads within the canonical limit leave immediately regardless of shell preparation; if the pty does not yet exist, cmux queues the payload and flushes it after warm-up (measured), while oversized payloads still wait for raw mode and fail visibly before transmission instead of being silently altered in the pane. Removing the command-gate wait means the scheduled Claude-input tty discovery deadline now carries the full window alone, so it is 30 seconds; previously the 10-second gate plus the 20-second discovery deadline happened to total the same amount. The `.refuseTooLong` path occurs after `workspace.create`, so it leaves one empty tab; that is accepted because a visible failure is safer than silent truncation and the error still reaches the button.
 
 ## Each cmux channel is pinned to its own socket, because discovery crosses channels
 

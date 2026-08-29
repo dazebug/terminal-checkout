@@ -1112,8 +1112,13 @@ private func wezTermQueryTTY(cliPath: String, socketPath: String?, paneID: Strin
 }
 
 /// Waits for cmux to materialize the pty behind a newly focused surface. The command is already
-/// running while this waits, so a timeout gives up only the scheduled Claude inputs.
-private let cmuxTTYWaitTimeout: TimeInterval = 20
+/// running while this waits, so a timeout gives up only the scheduled Claude inputs. This
+/// deadline alone carries the whole window for the tty to appear — nothing upstream waits for
+/// the pane anymore, and shell integration reported the tty about ∼11s after workspace creation
+/// (measured); the sizing history is in docs/context/cmux-integration.md. Trade-off: a pane
+/// without shell integration may take 30s to log abandoned inputs; because this runs on a
+/// background thread, it does not block the user's response.
+private let cmuxTTYWaitTimeout: TimeInterval = 30
 private let cmuxTTYPollInterval: TimeInterval = 0.2
 
 private func cmuxQueryTTY(cliPath: String, socketPath: String?, surfaceID: String) -> String? {
@@ -1133,7 +1138,7 @@ private func cmuxQueryTTY(cliPath: String, socketPath: String?, surfaceID: Strin
             lastRPCError = errorMessage(error)
         }
         if Date() >= deadline {
-            // Logging every rotation would produce up to 100 lines in 20 seconds; keep only the
+            // Logging every rotation would produce up to 150 lines in 30 seconds; keep only the
             // last RPC error and attach it at the give-up point.
             let errorSuffix = lastRPCError.map { " (last rpc error: \($0))" } ?? ""
             checkoutLog(

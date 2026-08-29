@@ -465,25 +465,27 @@ private func launchCmuxAndWait(cliPath: String, channel: CmuxChannel) throws {
     )
 }
 
-/// How long the command send waits for the pane's shell to start reading (raw mode). A zsh with
-/// shell integration reaches its prompt well inside this on the measured machine (the tty itself
-/// appears at ~1.4s); the deadline exists for shells that never enter raw mode, where the
-/// canonical-limit gate falls back by payload size.
+/// How long an oversized command waits for the pane's shell to start reading (raw mode). A zsh
+/// with shell integration reaches its prompt well inside this on the measured machine (the tty
+/// itself appears at ~1.4s); payloads within the canonical limit bypass this wait, while the
+/// deadline remains for shells that never enter raw mode before an oversized send.
 private let cmuxShellReadingWaitTimeout: TimeInterval = 10
 private let cmuxShellReadingPollInterval: TimeInterval = 0.1
 
 /// Do not prepend `/dev/` here: `cmuxTTYName` already does, and doubling the path makes `stty`
-/// fail, which the gate reads as "not raw" and makes every command wait to its deadline.
+/// fail, which the gate reads as "not raw" and makes every oversized command wait to its deadline.
 /// The probe passes the parser's complete device path unchanged to `stty`.
 func cmuxRawModeProbeArguments(ttyPath: String) -> [String] {
     ["-f", ttyPath, "-a"]
 }
 
-/// Polls until the surface's tty exists and is in raw mode, then answers the send gate. Sending
-/// earlier lands the bytes in a canonical-mode line buffer that keeps exactly
-/// `darwinCanonicalLineLimit` bytes of an unread line and silently discards the rest, CR
-/// included (measured) — the command then sits truncated and unsubmitted while every layer
-/// reports success, and the kernel's own echo paints it once more ahead of the prompt.
+/// Answers the send gate, polling only while the gate keeps returning `.waitLonger`. A payload
+/// within `darwinCanonicalLineLimit` returns after the first gate observation without waiting for
+/// raw mode because the canonical buffer preserves the complete payload, CR included (measured).
+/// Only an oversized payload continues polling for raw mode; sending it earlier lands in a
+/// canonical-mode line buffer that silently discards the excess and CR while every layer reports
+/// success, leaving the command truncated and unsubmitted with the kernel's echo ahead of the
+/// prompt.
 func cmuxAwaitShellReading(
     cliPath: String, socketPath: String?, surfaceID: String, payloadByteCount: Int
 ) -> CmuxCommandGate {
@@ -581,25 +583,18 @@ public func runInCmux(
     case .send:
         break
     case .waitLonger:
-        // Waiting is not proof that the tty is raw, so apply the same bounded fallback as a
-        // deadline expiry.
-        if payload.utf8.count <= darwinCanonicalLineLimit {
-            checkoutLog(
-                "cmux pane did not confirm raw mode; sending "
-                    + "\(payload.utf8.count) bytes inside the canonical line limit"
-            )
-        } else {
-            throw TerminalError.cmuxRPCFailed(
-                "\(cmuxSurfaceSendTextMethod): the pane's shell did not confirm raw mode, and "
-                    + "\(payload.utf8.count) bytes exceed the canonical line buffer "
-                    + "(\(darwinCanonicalLineLimit) bytes) — the tail would be silently dropped, "
-                    + "so nothing was sent"
-            )
-        }
+        // cmuxAwaitShellReading only returns when the gate is not .waitLonger, so this case is
+        // unreachable; re-deciding by size here would duplicate the gate's judgment, so an
+        // impossible return fails visibly instead.
+        throw TerminalError.cmuxRPCFailed(
+            "\(cmuxSurfaceSendTextMethod): internal inconsistency — the shell-reading wait "
+                + "returned waitLonger"
+        )
     case .sendDespiteCanonical:
         checkoutLog(
-            "cmux pane never reported raw mode within \(Int(cmuxShellReadingWaitTimeout))s; "
-                + "sending \(payload.utf8.count) bytes inside the canonical line limit"
+            "cmux pane has not confirmed raw mode; sending "
+                + "\(payload.utf8.count) bytes inside the canonical line limit without waiting "
+                + "for raw mode"
         )
     case .refuseTooLong:
         throw TerminalError.cmuxRPCFailed(
