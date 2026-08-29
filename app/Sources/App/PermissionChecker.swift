@@ -77,7 +77,21 @@ enum PermissionChecker {
     /// server (measured), which would paint a stopped channel as reachable.
     static func cmuxSocketStatus(channel: CmuxChannel) -> CmuxSocketStatus {
         guard let cli = findCmuxCLI(channel: channel) else { return .notInstalled }
-        let socketPath = cmuxChannelSocketPath(channel: channel)
+        let socketPin = cmuxSocketPin(channel: channel) {
+            cmuxChannelSocketPath(channel: $0)
+        }
+        let socketPath: String?
+        switch socketPin {
+        case .pinned(let path):
+            socketPath = path
+        case .discover:
+            socketPath = nil
+        case .noLiveSocket:
+            // A live cmux server writes its pointer regardless of whether socket-control auth
+            // later denies ping; with another channel live, an unpinned PONG would be its false
+            // green. Treat the selected channel as not running instead of asking the wrong one.
+            return .notRunning
+        }
         do {
             let result = try runProcess(
                 cli, ["ping"], env: cmuxRPCEnvironment(socketPath: socketPath), timeout: 5

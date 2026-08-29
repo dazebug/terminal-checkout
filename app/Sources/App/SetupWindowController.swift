@@ -1329,18 +1329,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                     : .warning(localized("app.status.accessibility.denied")),
                 to: accessibilityStatusLabel, format: "app.status.accessibility.format"
             )
-        case .cmux, .cmuxNightly:
-            let status = PermissionChecker.cmuxSocketStatus(
-                channel: Settings.terminal.cmuxChannel ?? .stable
-            )
-            cmuxStatus = status
-            apply(cmuxSetupState(status), to: cmuxStatusLabel)
-            // A refresh is the live-status oracle. Clear transient click feedback so an old
-            // action is not mistaken for the current diagnosis after a redraw.
-            cmuxFeedbackLabel.stringValue = ""
-            cmuxFeedbackLabel.textColor = Theme.textDim
-            cmuxConfigButton.isEnabled = true
-            cmuxRefreshButton.isEnabled = true
+        case .cmux:
+            cmuxStatus = updateCmuxStatus(channel: .stable)
+        case .cmuxNightly:
+            cmuxStatus = updateCmuxStatus(channel: .nightly)
         }
         var granted = false
         if let permission, case .ok = permission { granted = true }
@@ -1355,6 +1347,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ))
         // No resize call here on purpose: the content view resizes the window from inside its
         // own layout pass, which is the only moment the measurement is valid.
+    }
+
+    private func updateCmuxStatus(channel: CmuxChannel) -> CmuxSocketStatus {
+        let status = PermissionChecker.cmuxSocketStatus(channel: channel)
+        apply(cmuxSetupState(status), to: cmuxStatusLabel)
+        // A refresh is the live-status oracle. Clear transient click feedback so an old
+        // action is not mistaken for the current diagnosis after a redraw.
+        cmuxFeedbackLabel.stringValue = ""
+        cmuxFeedbackLabel.textColor = Theme.textDim
+        cmuxConfigButton.isEnabled = true
+        cmuxRefreshButton.isEnabled = true
+        return status
     }
 
     /// Redraws the base directory card from what is stored. The field is not touched while the
@@ -1472,6 +1476,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             case .error: return Theme.err
             }
         }
+        func cmuxPipelineState(_ status: CmuxSocketStatus?) -> (NSColor, String) {
+            guard let status else { return (Theme.warn, localized("app.status.unknown")) }
+            let color: NSColor
+            switch status {
+            case .reachable:
+                color = Theme.ok
+            case .notRunning, .failed:
+                color = Theme.warn
+            case .denied, .notInstalled:
+                color = Theme.err
+            }
+            return (color, status.label)
+        }
         let terminalName: String
         let terminalColor: NSColor
         let terminalDetail: String
@@ -1502,23 +1519,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 terminalColor = Theme.warn
                 terminalDetail = localized("app.pipeline.warp.noAccessibility")
             }
-        case .cmux, .cmuxNightly:
-            let channel = Settings.terminal.cmuxChannel ?? .stable
-            terminalName = channel == .nightly ? "cmux NIGHTLY" : "cmux"
-            if let cmuxStatus {
-                switch cmuxStatus {
-                case .reachable:
-                    terminalColor = Theme.ok
-                case .notRunning, .failed:
-                    terminalColor = Theme.warn
-                case .denied, .notInstalled:
-                    terminalColor = Theme.err
-                }
-                terminalDetail = cmuxStatus.label
-            } else {
-                terminalColor = Theme.warn
-                terminalDetail = localized("app.status.unknown")
-            }
+        case .cmux:
+            terminalName = "cmux"
+            let state = cmuxPipelineState(cmuxStatus)
+            terminalColor = state.0
+            terminalDetail = state.1
+        case .cmuxNightly:
+            terminalName = "cmux NIGHTLY"
+            let state = cmuxPipelineState(cmuxStatus)
+            terminalColor = state.0
+            terminalDetail = state.1
         }
         return [
             .init(

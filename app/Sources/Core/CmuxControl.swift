@@ -16,8 +16,8 @@ public enum CmuxSocketStatus: Equatable {
 }
 
 /// Classifies one live `cmux ping` observation. A successful PONG or an access denial wins over
-/// the default socket path because the CLI discovers sockets through `CMUX_SOCKET_PATH` and
-/// `/tmp/cmux-last-socket-path`; only a missing default socket with neither result means stopped.
+/// the socket-existence hint because a CLI may still reach a server through discovery; only a
+/// missing resolved socket with neither result means stopped.
 public func classifyCmuxSocketStatus(
     socketExists: Bool, pingStatus: Int32, stdout: String, stderr: String
 ) -> CmuxSocketStatus {
@@ -43,12 +43,13 @@ public enum CmuxRPCError: Error, Equatable, CustomStringConvertible {
 }
 
 /// A cmux release channel. Stable and NIGHTLY are separate app bundles running from one codebase:
-/// each server records its live socket in its **own** pointer file under `~/.local/state/cmux/`
-/// (both binaries carry all four channel file names — stable, nightly, dev, staging — measured
-/// with `strings` on 0.64.22 and 0.64.22-nightly). An unpinned CLI "auto-discovers tagged/debug
-/// sockets" beyond its channel file, and with both servers running that discovery reached across
-/// channels (nightly CLI answered PONG while only its stable sibling was assumed up), so every
-/// RPC pins `CMUX_SOCKET_PATH` to the channel's own pointer target instead of trusting discovery.
+/// each server records its live socket in two pointer files, with the state-directory copy read
+/// before the `/tmp` copy. Both binaries carry all four channel file names — stable, nightly, dev,
+/// staging — measured with `strings` on 0.64.22 and 0.64.22-nightly. An unpinned CLI
+/// "auto-discovers tagged/debug sockets" beyond its channel file, and with both servers running
+/// that discovery reached across channels (nightly CLI answered PONG while only its stable sibling
+/// was assumed up), so a live pointer pins `CMUX_SOCKET_PATH` and a missing selected-channel
+/// pointer never permits a cross-channel discovery.
 public enum CmuxChannel: CaseIterable, Equatable {
     case stable
     case nightly
@@ -76,6 +77,31 @@ public enum CmuxChannel: CaseIterable, Equatable {
         case .nightly: return "cmux NIGHTLY.app"
         }
     }
+
+    var temporarySocketPointerFileName: String {
+        switch self {
+        case .stable: return "cmux-last-socket-path"
+        case .nightly: return "cmux-nightly-last-socket-path"
+        }
+    }
+}
+
+public enum CmuxSocketPin: Equatable {
+    case pinned(String)
+    case discover
+    case noLiveSocket
+}
+
+/// `.discover` preserves the existing path for a single-channel user because no live other channel can be crossed into.
+public func cmuxSocketPin(
+    channel: CmuxChannel, resolvedSocketPath: (CmuxChannel) -> String?
+) -> CmuxSocketPin {
+    if let socketPath = resolvedSocketPath(channel) {
+        return .pinned(socketPath)
+    }
+    return CmuxChannel.allCases.contains {
+        $0 != channel && resolvedSocketPath($0) != nil
+    } ? .noLiveSocket : .discover
 }
 
 /// The explicit locations are first because the app's PATH is normally only `/usr/bin:/bin`.
@@ -113,13 +139,24 @@ public func findCmuxCLI(
         .first(where: isExecutable)
 }
 
-/// The channel's socket pointer file. Reading it is the only channel-accurate way to find the
-/// live socket: the socket basename itself changes across restarts and versions.
+/// The channel's state-directory socket pointer. Its target is the only channel-accurate way to
+/// find the live socket: the socket basename itself changes across restarts and versions.
 public func cmuxLastSocketPointerPath(
     channel: CmuxChannel, homeDirectory: String = NSHomeDirectory()
 ) -> String {
     (homeDirectory as NSString)
         .appendingPathComponent(".local/state/cmux/\(channel.lastSocketPathFileName)")
+}
+
+/// The state path is first because `/tmp` is periodically cleaned, so its copy stays accurate
+/// longer; `/tmp` is second because it is the only remaining clue when the state path is absent.
+public func cmuxSocketPointerPaths(
+    channel: CmuxChannel, homeDirectory: String = NSHomeDirectory()
+) -> [String] {
+    [
+        cmuxLastSocketPointerPath(channel: channel, homeDirectory: homeDirectory),
+        "/tmp/\(channel.temporarySocketPointerFileName)",
+    ]
 }
 
 /// A pointer whose target is gone means the channel's server left nothing behind — treat it the
@@ -133,16 +170,32 @@ public func cmuxResolvedSocketPath(
     return target
 }
 
+/// Resolves pointer contents in caller-provided order and returns the first live target.
+public func cmuxFirstLiveSocketPath(
+    pointerContents: [String?], fileExists: (String) -> Bool
+) -> String? {
+    for contents in pointerContents {
+        if let path = cmuxResolvedSocketPath(pointerContents: contents, fileExists: fileExists) {
+            return path
+        }
+    }
+    return nil
+}
+
 /// Reads the channel's pointer file and answers the socket path to pin, or nil when the channel
-/// has no live socket file to point at (then the CLI runs unpinned and discovers on its own —
-/// the behaviour older cmux versions with a different pointer layout rely on).
+/// has no live socket file to point at. The caller decides whether nil permits discovery or is a
+/// missing channel identity that must launch or fail visibly.
 public func cmuxChannelSocketPath(
     channel: CmuxChannel, homeDirectory: String = NSHomeDirectory(),
     fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
 ) -> String? {
-    let pointer = cmuxLastSocketPointerPath(channel: channel, homeDirectory: homeDirectory)
-    return cmuxResolvedSocketPath(
-        pointerContents: try? String(contentsOfFile: pointer, encoding: .utf8),
+    let pointerContents = cmuxSocketPointerPaths(
+        channel: channel, homeDirectory: homeDirectory
+    ).map {
+        try? String(contentsOfFile: $0, encoding: .utf8)
+    }
+    return cmuxFirstLiveSocketPath(
+        pointerContents: pointerContents,
         fileExists: fileExists
     )
 }

@@ -590,6 +590,63 @@ final class CmuxTests: XCTestCase {
         )
     }
 
+    func testCmuxSocketPinDistinguishesPinnedDiscoverAndNoLiveSocket() {
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { channel in
+                channel == .nightly ? "/tmp/nightly.sock" : "/tmp/stable.sock"
+            },
+            .pinned("/tmp/nightly.sock")
+        )
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { _ in nil },
+            .discover
+        )
+        XCTAssertEqual(
+            cmuxSocketPin(channel: .nightly) { channel in
+                channel == .stable ? "/tmp/stable.sock" : nil
+            },
+            .noLiveSocket
+        )
+    }
+
+    func testCmuxSocketPointerCandidatesPreferStateThenTmpAndRequireALiveTarget() {
+        XCTAssertEqual(
+            cmuxSocketPointerPaths(channel: .stable, homeDirectory: "/Users/u"),
+            [
+                "/Users/u/.local/state/cmux/last-socket-path",
+                "/tmp/cmux-last-socket-path",
+            ]
+        )
+        XCTAssertEqual(
+            cmuxSocketPointerPaths(channel: .nightly, homeDirectory: "/Users/u"),
+            [
+                "/Users/u/.local/state/cmux/nightly-last-socket-path",
+                "/tmp/cmux-nightly-last-socket-path",
+            ]
+        )
+
+        XCTAssertEqual(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { $0 == "/state.sock" || $0 == "/tmp.sock" }
+            ),
+            "/state.sock"
+        )
+        XCTAssertEqual(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { $0 == "/tmp.sock" }
+            ),
+            "/tmp.sock"
+        )
+        XCTAssertNil(
+            cmuxFirstLiveSocketPath(
+                pointerContents: ["/state.sock\n", "/tmp.sock\n"],
+                fileExists: { _ in false }
+            )
+        )
+    }
+
     func testCmuxResolvedSocketPathRequiresALivePointerTarget() {
         XCTAssertEqual(
             cmuxResolvedSocketPath(pointerContents: "/tmp/a.sock\n", fileExists: { $0 == "/tmp/a.sock" }),
