@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "This generation adds separate buttons for PR and issue list pages; existing commands are not rewritten."
   },
+  "ext_migration_v3_describe": {
+    "message": "The list pages renamed {pr}/{issue} to the {number} the detail pages already use; a saved list button still holding the old names would stop rendering."
+  },
   "ext_override_empty": {
     "message": "No overrides yet."
   },
@@ -446,7 +449,7 @@
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable."
   },
   "ext_section_issueList_claudeHelp": {
-    "message": "The default list button opens claude and types <code>!gh issue view {issue} --comments</code> into claude's shell mode."
+    "message": "The default list button opens claude and types <code>!gh issue view {number} --comments</code> into claude's shell mode."
   },
   "ext_section_issueList_help": {
     "message": "Buttons for an issue list page (up to $ARG1$). Configure the command that each selected issue will run in its own terminal session.",
@@ -460,7 +463,7 @@
     "message": "issueListButtons <span class=\"section-where\">— Issue list pages</span>"
   },
   "ext_section_issueList_variables": {
-    "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{issue}</code> <span class=\"faint\">(issue number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>."
+    "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(issue number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>."
   },
   "ext_section_main_help": {
     "message": "How <code>{main}</code> is resolved: per-repository override → detected from the page → the default below. Detection reads the base branch on a PR page, and the repository default branch on repository and issue pages — the setting below is the fallback for when detection fails. To always use the branch a PR will actually be merged into, use <code>{base}</code>, which skips both the override and the default."
@@ -511,7 +514,7 @@
     "message": "prListButtons <span class=\"section-where\">— PR list pages</span>"
   },
   "ext_section_prList_variables": {
-    "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{pr}</code> <span class=\"faint\">(PR number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>; use <code>gh pr checkout {pr}</code> to resolve the branch locally."
+    "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(PR number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>; use <code>gh pr checkout {number}</code> to resolve the branch locally."
   },
   "ext_section_repo_help": {
     "message": "Buttons that sit next to the repository name in the header of a repository page (code, issue list, Actions, and so on) — up to $ARG1$. Unlike the PR and issue buttons these look like GitHub's green action button, so a name such as <code>$ARG2$</code> suits the <b>$ARG3$</b> better than an emoji. On GitHub pages that are neither a PR nor an issue, clicking the extension icon runs the first button here.",

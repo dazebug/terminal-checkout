@@ -74,7 +74,7 @@ const PR_PRESETS = [
 const PR_LIST_PRESETS = [
   definePreset({
     id: 'pr-list.checkoutClaude', nameKey: 'ext.preset.prList.checkoutClaude', face: '🤖',
-    command: '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude',
+    command: '{cd} && ([ -d ../{repo}-pr-{number} ] || git worktree add -f --detach ../{repo}-pr-{number}) && cd ../{repo}-pr-{number} && gh pr checkout {number} --detach && claude',
   }),
 ];
 
@@ -107,7 +107,7 @@ const ISSUE_LIST_PRESETS = [
   definePreset({
     id: 'issue-list.triageClaude', nameKey: 'ext.preset.issueList.triageClaude', face: '📋',
     command: '{cd} && claude',
-    claudeInputs: ['!gh issue view {issue} --comments'],
+    claudeInputs: ['!gh issue view {number} --comments'],
   }),
 ];
 
@@ -196,7 +196,7 @@ const BUTTON_KINDS = {
   },
   'pr-list': {
     storageKey: 'prListButtons', presets: PR_LIST_PRESETS, defaults: DEFAULT_PR_LIST_BUTTONS,
-    variables: ['repo', 'owner', 'pr'],
+    variables: ['repo', 'owner', 'number'],
   },
   issue: {
     storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
@@ -204,7 +204,7 @@ const BUTTON_KINDS = {
   },
   'issue-list': {
     storageKey: 'issueListButtons', presets: ISSUE_LIST_PRESETS, defaults: DEFAULT_ISSUE_LIST_BUTTONS,
-    variables: ['repo', 'owner', 'issue'],
+    variables: ['repo', 'owner', 'number'],
   },
   repo: {
     storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
@@ -239,7 +239,7 @@ function buttonUsesAllowedVariables(kind, button) {
 // not, and must never move it (see migrations.js).
 // This constant is the single source of truth for the current generation, and a test pins the
 // registry in `extension/migrations.js` to carry one entry per step up to it.
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 
 // The version rides alongside the settings in storage.sync, and therefore in the export/import
 // JSON, so reviewing once clears the notice on every machine on the account.
@@ -286,7 +286,7 @@ function pageTypeOf(pathname) {
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
-const MAX_BATCH_ITEMS = 8;
+const MAX_BATCH_ITEMS = 25;
 const LIST_BATCH_ACTION = 'execute_list_batch';
 const LIST_BATCH_RESULT_KEY_PROTOCOL = 1;
 
@@ -516,7 +516,7 @@ function buildListBatchItems(target, selected) {
     if (!parsed || parsed.kind !== kind || parsed.owner !== target.owner || parsed.repo !== target.repo) {
       return null;
     }
-    items.push({ variables: { repo: target.repo, owner: target.owner, [kind]: parsed.number } });
+    items.push({ variables: { repo: target.repo, owner: target.owner, number: parsed.number } });
   }
   return items;
 }

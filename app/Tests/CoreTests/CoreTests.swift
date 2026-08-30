@@ -24,22 +24,6 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(cmd, "r a/b release/2 develop a_b 1402 frograms")
     }
 
-    func testRenderPullRequestVariable() throws {
-        let cmd = try renderCommand(
-            template: "echo {pr}",
-            variables: ["pr": "7"]
-        )
-        XCTAssertEqual(cmd, "echo 7")
-    }
-
-    func testRenderIssueVariable() throws {
-        let cmd = try renderCommand(
-            template: "echo {issue}",
-            variables: ["issue": "42"]
-        )
-        XCTAssertEqual(cmd, "echo 42")
-    }
-
     // {base} is the branch this PR will actually be merged into — it can differ from {main}, which goes through the per-repository override and the global default, so the two have to substitute different values
     func testRenderBaseIsIndependentOfMain() throws {
         let cmd = try renderCommand(

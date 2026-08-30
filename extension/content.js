@@ -146,6 +146,7 @@ const LIST_ROW_SELECTOR = '[role="row"], [role="listitem"], li, div[class~="Box-
 const OWNED_LIST_CHECKBOX_CLASS = 'terminal-list-checkbox';
 const LIST_ROW_ANCHOR_PATTERN = /^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/;
 const LIST_BUTTON_CLASS = 'terminal-list-btn';
+const LIST_BUTTON_ROW_CLASS = 'terminal-list-btn-row';
 const LIST_RESULT_BADGE_CLASS = 'terminal-list-result-badge';
 const LIST_BUTTON_STYLE = `
   background: transparent;
@@ -405,7 +406,7 @@ function tryInsertListSelection(kind) {
   const rows = readListRows(document, expectedKind, target);
   if (rows.length === 0) {
     resetListSelectionState();
-    document.querySelectorAll(`.${LIST_BUTTON_CLASS}`).forEach(button => button.remove());
+    document.querySelectorAll(`.${LIST_BUTTON_CLASS}, .${LIST_BUTTON_ROW_CLASS}`).forEach(node => node.remove());
     return false;
   }
 
@@ -454,6 +455,31 @@ function listToolbarAnchor(rows) {
     if (documentElementBefore(candidate, firstRow) && listToolbarLooksLike(candidate)) preceding = candidate;
   }
   return preceding;
+}
+
+// Where the list buttons mount — two GitHub list generations, two chosen spots. The new issue-list
+// UI has a visible page-title h1 row ("All issues") with empty space beside the title, so the
+// buttons go inline right after that h1. The legacy PR-list UI has no visible h1 (only a
+// screen-reader one, which offsetWidth filters out) — there the buttons get a dedicated full-width
+// row right above the filter/search block. Hashed module class names cannot be selectors, so both
+// anchors are structural.
+function listButtonMount(rows) {
+  const firstRow = rows[0]?.element;
+  if (!firstRow) return null;
+
+  let heading = null;
+  for (const h1 of document.querySelectorAll('h1')) {
+    if (h1.offsetWidth > 1 && h1.offsetHeight > 1 && documentElementBefore(h1, firstRow)) heading = h1;
+  }
+  if (heading?.parentElement) {
+    return { parent: heading.parentElement, before: heading.nextSibling, inline: true };
+  }
+
+  const toolbar = listToolbarAnchor(rows);
+  if (toolbar?.parentElement) {
+    return { parent: toolbar.parentElement, before: toolbar, inline: false };
+  }
+  return null;
 }
 
 function listBatchBadgeLabel(result) {
@@ -566,18 +592,32 @@ async function tryInsertListButtons(kind) {
   const target = pageTargetOfUrl(location.href);
   const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
   const rows = readListRows(document, expectedKind, target);
-  const toolbar = listToolbarAnchor(rows);
-  if (!toolbar) return false;
+  const mount = listButtonMount(rows);
+  if (!mount) return false;
 
   const buttons = await loadButtonConfigs(kind);
   if (!buttons) return false;
 
   if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
 
-  buttons
+  const visible = buttons
     .map((config, index) => ({ config, index }))
-    .filter(({ config }) => buttonUsesAllowedVariables(kind, config))
-    .forEach(({ config, index }) => toolbar.appendChild(createListBatchButton(config, index, kind)));
+    .filter(({ config }) => buttonUsesAllowedVariables(kind, config));
+  if (visible.length === 0) return true;
+
+  const host = document.createElement(mount.inline ? 'span' : 'div');
+  host.className = LIST_BUTTON_ROW_CLASS;
+  host.style.display = mount.inline ? 'inline-flex' : 'flex';
+  host.style.alignItems = 'center';
+  host.style.gap = '8px';
+  if (mount.inline) {
+    host.style.marginLeft = '12px';
+    host.style.verticalAlign = 'middle';
+  } else {
+    host.style.margin = '0 0 8px';
+  }
+  visible.forEach(({ config, index }) => host.appendChild(createListBatchButton(config, index, kind)));
+  mount.parent.insertBefore(host, mount.before);
   return true;
 }
 
@@ -837,8 +877,8 @@ let lastTarget = pageTargetOfUrl(location.href);
 // could survive onto PR #2, where their position and the header around them mean something else.
 // Removing them makes the next insert redraw for the page that is actually showing.
 function removeInsertedButtons() {
-  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .terminal-list-btn')
-    .forEach(button => button.remove());
+  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .terminal-list-btn, .terminal-list-btn-row')
+    .forEach(node => node.remove());
   resetListSelectionState();
 }
 

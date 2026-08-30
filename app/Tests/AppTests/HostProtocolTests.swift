@@ -1117,7 +1117,7 @@ final class HostProtocolTests: XCTestCase {
     func testServeReturnsCapExceededFailureBeforeLaunch() throws {
         let request: [String: Any] = [
             "command": "echo cap",
-            "items": (1...9).map { ["variables": ["repo": "repo\($0)"]] },
+            "items": (0...batchItemLimit).map { ["variables": ["repo": "repo\($0)"]] },
         ]
         let expected = handleRequest(json: request) { _ in
             XCTFail("run must not be called on cap failure")

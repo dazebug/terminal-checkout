@@ -143,8 +143,8 @@ This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup wind
 
 ### PR and issue list pages
 
-Select rows with GitHub's checkboxes, or Terminal Checkout's fallback checkboxes when GitHub does not expose them, then click a list button above the list. Each selected row opens its own terminal session; one batch handles up to 8 rows, and clicking with no rows selected is an error.
-The default PR-list preset gives each row its own worktree (`../<repo>-pr-<number>`) and checks the PR out there with a detached HEAD (`gh pr checkout --detach`) — sessions from one batch cannot switch branches under each other, and no local branch is created that could collide with a worktree you already have. It needs `gh`, and fork PRs work too.
+Select rows with GitHub's checkboxes, or Terminal Checkout's fallback checkboxes when GitHub does not expose them, then click a list button above the list. Each selected row opens its own terminal session; one batch handles up to 25 rows, and clicking with no rows selected is an error.
+The default PR-list preset gives each row its own worktree (`../<repo>-pr-<number>`) and checks the PR out there with a detached HEAD (`gh pr checkout {number} --detach`) — sessions from one batch cannot switch branches under each other, and no local branch is created that could collide with a worktree you already have. It needs `gh`, and fork PRs work too.
 On list pages, clicking the extension icon runs the first repository button for the page, since the icon path cannot see list selections.
 
 ### Repository pages
@@ -235,14 +235,12 @@ The value lives in the app rather than the extension because it is machine-speci
 | `{repo}` | repository name | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{main}` | main branch (per-repo override → page detection → global default) | ✓ | — | ✓ | — | ✓ |
-| `{number}` | PR/issue number (digits only) | ✓ | — | ✓ | — | — |
+| `{number}` | PR/issue number (digits only; on a list page, from the selected row) | ✓ | ✓ | ✓ | ✓ | — |
 | `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — | — | — |
 | `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — | — | — |
 | `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — | — | — |
-| `{pr}` | PR number from the selected list row (digits only) | — | ✓ | — | — | — |
-| `{issue}` | issue number from the selected list row (digits only) | — | — | — | ✓ | — |
 
-Variables work identically in commands and claude inputs. A PR list supplies `{repo}`, `{owner}`, and `{pr}`, and an issue list supplies `{repo}`, `{owner}`, and `{issue}`; list pages have no `{branch}`, `{base}`, `{main}`, or `{number}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
+Variables work identically in commands and claude inputs. A list page supplies `{repo}`, `{owner}`, and `{number}` per selected row — the same `{number}` as the detail pages, so a detail-page command works on a list unchanged; list pages have no `{branch}`, `{base}`, or `{main}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
 
 **`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
 

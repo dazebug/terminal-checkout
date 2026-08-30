@@ -108,8 +108,8 @@ test('selectedListRows and listSelectionStatus expose zero and cap failures with
   assert.deepEqual(listSelectionStatus([]), { count: 0, valid: false, error: 'empty' });
   assert.deepEqual(listSelectionStatus(selected), { count: 2, valid: true, error: null });
   assert.deepEqual(
-    listSelectionStatus(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
-    { count: 9, valid: false, error: 'too-many' },
+    listSelectionStatus(Array.from({ length: 26 }, (_, i) => ({ key: String(i), title: '' }))),
+    { count: 26, valid: false, error: 'too-many' },
   );
 });
 
@@ -117,7 +117,7 @@ test('validateListBatchSelection rejects malformed, empty, and over-cap snapshot
   assert.deepEqual(validateListBatchSelection('not an array'), { valid: false, error: 'not-array' });
   assert.deepEqual(validateListBatchSelection([]), { valid: false, error: 'empty' });
   assert.deepEqual(
-    validateListBatchSelection(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
+    validateListBatchSelection(Array.from({ length: 26 }, (_, i) => ({ key: String(i), title: '' }))),
     { valid: false, error: 'too-many' },
   );
   assert.deepEqual(
@@ -140,8 +140,8 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       ],
     ),
     [
-      { variables: { repo: 'repo', owner: 'owner', pr: '19' } },
-      { variables: { repo: 'repo', owner: 'owner', pr: '7' } },
+      { variables: { repo: 'repo', owner: 'owner', number: '19' } },
+      { variables: { repo: 'repo', owner: 'owner', number: '7' } },
     ],
   );
   assert.deepEqual(
@@ -149,7 +149,7 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       { kind: 'issue-list', owner: 'owner', repo: 'repo' },
       [{ key: 'owner/repo/issue/3', title: 'triage' }],
     ),
-    [{ variables: { repo: 'repo', owner: 'owner', issue: '3' } }],
+    [{ variables: { repo: 'repo', owner: 'owner', number: '3' } }],
   );
 });
 
@@ -159,7 +159,7 @@ test('buildListBatchItems includes owner so {cd} clone fallback stays correct', 
       { kind: 'pr-list', owner: 'octo', repo: 'repo' },
       [{ key: 'octo/repo/pr/7', title: 'needs owner' }],
     ),
-    [{ variables: { repo: 'repo', owner: 'octo', pr: '7' } }],
+    [{ variables: { repo: 'repo', owner: 'octo', number: '7' } }],
   );
 });
 
@@ -316,8 +316,8 @@ test('listBatchSelectionNotice turns empty and cap verdicts into localized butto
     { messageKey: 'ext.list.batch.selection.empty', args: [] },
   );
   assert.deepEqual(
-    listBatchSelectionNotice({ count: 9, valid: false, error: 'too-many' }),
-    { messageKey: 'ext.list.batch.selection.tooMany', args: [9, 8] },
+    listBatchSelectionNotice({ count: 26, valid: false, error: 'too-many' }),
+    { messageKey: 'ext.list.batch.selection.tooMany', args: [26, 25] },
   );
   assert.equal(listBatchSelectionNotice({ count: 2, valid: true, error: null }), null);
 });
