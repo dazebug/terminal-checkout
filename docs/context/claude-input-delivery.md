@@ -18,7 +18,7 @@ An input starting with `!` is typed into the running TUI so that claude's own sh
 
 **Implementation consideration — keeping pre-execution behind a switch.** Written down as a rejected alternative once, and demoted here because it never was one: `git log -S`, the commit body of PR #36 and that PR's comments carry no proposal, no branch, and no reproduction for it (searched round 10). What is true is the reason it was not built — a second delivery path is a second path every later change has to be correct in — and that is a design consideration rather than a road anyone took.
 
-**Consequence, accepted:** every shipped preset that schedules claude input is `!`-only, so all of them are typed. On Warp that makes the Accessibility permission a hard requirement for those three buttons, where the paste route had needed nothing.
+**Consequence, accepted:** every shipped preset that schedules claude input is `!`-only, so all of them are typed. On Warp that makes the Accessibility permission a hard requirement for those four buttons, where the paste route had needed nothing.
 
 ## Consecutive `!` inputs merge into one typed line, joined with `;`
 

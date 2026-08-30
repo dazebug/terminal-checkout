@@ -9,11 +9,11 @@ Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository 
 
 ## Features
 
-- **Buttons where you work** — up to 3 buttons each on PR, issue, and repository pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
+- **Buttons where you work** — up to 3 buttons each on PR, issue, repository, and their list pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
 - **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
 - **Claude Code hand-off** — if your command runs `claude`, up to 5 scheduled inputs are handed over for you. `!` lines are typed into claude's shell mode so they really run as commands, with a run of them merged into one line; a list holding exactly one plain-text line is handed over as claude's opening message instead, with no typing at all.
 - **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
-- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm, cmux, and cmux NIGHTLY need no TCC permission, while both cmux channels require socket control mode = `automation`, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all three use `!`.
+- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm, cmux, and cmux NIGHTLY need no TCC permission, while both cmux channels require socket control mode = `automation`, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all four use `!`.
 - **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
 - **Five languages** — English, Korean, Japanese, Simplified Chinese and Traditional Chinese. The app follows macOS (or the language you pick in it); the extension follows Chrome. See [Language](#language) for how each side resolves and which translations are a machine-translated first pass.
 
@@ -31,7 +31,7 @@ flowchart LR
 - The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
 - **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
 - Turning the scheduled inputs into "what gets typed" and "what rides in argv" happens in the app, before the terminal branch, so it works the same on all supported terminals. A request either types everything or appends everything — never both in one session.
-- Warp has one extra piece: it has no API for sending text to a pane, so a button whose claude inputs are **typed** first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the inputs to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why typed claude input on Warp needs the Accessibility permission. A button with no claude input, or whose one input is a plain-text line, launches no helper and needs no permission — 8 of the 11 shipped presets are in that shape, because they schedule no claude input at all.
+- Warp has one extra piece: it has no API for sending text to a pane, so a button whose claude inputs are **typed** first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the inputs to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why typed claude input on Warp needs the Accessibility permission. A button with no claude input, or whose one input is a plain-text line, launches no helper and needs no permission — 9 of the 13 shipped presets are in that shape, because they schedule no claude input at all.
 - cmux and cmux NIGHTLY have an addressable surface API: the app creates a workspace with `cmux rpc`, sends the command as text, and reads that surface by UUID. Because the screen read is surface-specific, delivery continues when you switch to another tab; neither cmux channel has Warp's "keep looking at the tab" constraint or needs Accessibility permission.
 
 ## Requirements
@@ -91,7 +91,7 @@ When the app opens, walk through the setup window in order. Native Host registra
 3. **Terminal** — choose iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY. cmux NIGHTLY is a separate app bundle and a separate choice; it never falls back to stable.
    - **cmux socket control** (shown only when cmux or cmux NIGHTLY is selected) — the card shows not installed, not running, denied, or reachable. Automation means every process run by the same macOS user can control cmux. Enable it in cmux Settings → Automation, or use [Open Config File] to copy the setting and open `~/.config/cmux/cmux.json`; both channels share this file, so enabling automation once covers both. cmux applies file changes immediately, so no restart is needed. The app never writes the file.
 4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm, cmux, and cmux NIGHTLY need none, while Warp needs no TCC permission but does need Accessibility for typed claude input.
-   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the three shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path.
+   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the four shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path.
 5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
 6. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
@@ -140,6 +140,11 @@ A button appears next to the status badge (Open/Closed), configured separately f
 ```
 
 This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup window warns you if it's missing.
+
+### PR and issue list pages
+
+Select rows with GitHub's checkboxes, or Terminal Checkout's fallback checkboxes when GitHub does not expose them, then click a list button above the list. Each selected row opens its own terminal session; one batch handles up to 8 rows, and clicking with no rows selected is an error.
+On list pages, clicking the extension icon runs the first repository button for the page, since the icon path cannot see list selections.
 
 ### Repository pages
 
@@ -223,18 +228,20 @@ The value lives in the app rather than the extension because it is machine-speci
 
 ### Variables
 
-| Variable | Value | PR | Issue | Repo |
-|:---|:---|:---:|:---:|:---:|
-| `{cd}` | move into the repository — filled in by the app, not the page ([above](#getting-into-the-repository)) | ✓ | ✓ | ✓ |
-| `{repo}` | repository name | ✓ | ✓ | ✓ |
-| `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ |
-| `{main}` | main branch (per-repo override → page detection → global default) | ✓ | ✓ | ✓ |
-| `{number}` | PR/issue number (digits only) | ✓ | ✓ | — |
-| `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — |
-| `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — |
-| `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — |
+| Variable | Value | PR | PR list | Issue | Issue list | Repo |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| `{cd}` | move into the repository — filled in by the app, not the page ([above](#getting-into-the-repository)) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `{repo}` | repository name | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | — | ✓ | — | ✓ |
+| `{main}` | main branch (per-repo override → page detection → global default) | ✓ | — | ✓ | — | ✓ |
+| `{number}` | PR/issue number (digits only) | ✓ | — | ✓ | — | — |
+| `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — | — | — |
+| `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — | — | — |
+| `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — | — | — |
+| `{pr}` | PR number from the selected list row (digits only) | — | ✓ | — | — | — |
+| `{issue}` | issue number from the selected list row (digits only) | — | — | — | ✓ | — |
 
-Variables work identically in commands and claude inputs. Using a variable the page doesn't have (the `{branch}` family on issue/repo buttons, `{number}` on repo buttons) gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
+Variables work identically in commands and claude inputs. A PR list supplies only `{repo}` and `{pr}`, and an issue list supplies only `{repo}` and `{issue}`; list pages have no `{branch}`, `{base}`, `{main}`, `{owner}`, or `{number}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
 
 **`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
 
@@ -274,7 +281,7 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **The cmux or cmux NIGHTLY command ran but claude input is missing** — The pane's shell integration may be off, so `debug.terminals` has no tty for the surface; the command is kept, but claude input is abandoned. Check the app log with `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
 
-**claude input isn't delivered on Warp** — Typed input (every `!` input, so all three shipped presets that schedule claude input) needs the Accessibility permission; a lone plain-text input, which rides in the opening message, does not. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
+**claude input isn't delivered on Warp** — Typed input (every `!` input, so all four shipped presets that schedule claude input) needs the Accessibility permission; a lone plain-text input, which rides in the opening message, does not. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
 
 **A claude input was typed instead of riding in the opening message** — That is the normal path for anything with a `!`, a slash command or a `#` line in the list: only a list holding exactly one plain-text input is appended to the command (two plain lines would need a newline between them, so they are typed). If a single plain-text input is still being typed, the command has to end in a bare `claude` (no trailing flag, redirect, pipe or comment), every word of it has to be readable and safe as a command name (`git add .`, `-m 'msg'`, `export …` and `PATH=…` all stop it), the message must be single-line, your login shell has to be POSIX-family, and `claude` has to be a real executable rather than a function or an alias.
 
