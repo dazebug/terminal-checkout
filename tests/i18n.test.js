@@ -1561,6 +1561,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   const DECLARED_EXPRESSIONS = {
     'buttonConfig.label': "the user's own button label, read back from their settings and shown as "
       + 'its tooltip — it is theirs, and translating it would rename the button they named',
+    'row.title': "GitHub's own row title, shown on the extension-owned list checkbox — it is page "
+      + 'content rather than extension prose',
   };
   // The one shape of a computed name that ships text we can see: `el[name] = 'Copy to clipboard'`.
   // Nothing writes one, and the day something does it is declared here with the reason its receiver
@@ -1581,8 +1583,10 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // set would stop noticing that one of two identical sites went away. Changing this list is a
   // reviewed edit: it says which attribute came or went, and what filled it.
   assert.deepEqual(found.map(([file, site]) => siteIdentity(file, site)).sort(), [
+    'content.js aria-label = row.title',
     'content.js title = buttonConfig.label',
     'content.js title = buttonConfig.label',
+    'content.js title = row.title',
     'options.html placeholder = main',
     "options.js aria-label = ${t('ext.card.reorder.aria')}",
     "options.js aria-label = ${t('ext.claudeInput.reorder.aria', j + 1)}",
@@ -1606,7 +1610,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 16, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(repeated.length, 17, `${repeated.length} sites share a (file, attribute) pair`);
   assert.equal(new Set(repeated).size, 4, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);

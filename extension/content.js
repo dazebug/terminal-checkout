@@ -123,6 +123,231 @@ async function loadButtonConfigs(kind) {
   }
 }
 
+// GitHub list rows have changed their module class names over time. These are structural anchors:
+// semantic rows first, the stable Primer Box-row token second, and no hashed class name.
+const LIST_ROW_SELECTOR = '[role="row"], [role="listitem"], li, div[class~="Box-row"]';
+const OWNED_LIST_CHECKBOX_CLASS = 'terminal-list-checkbox';
+const nativeListCheckboxVisibility = new WeakMap();
+let listSelectionState = null;
+
+function listRowElementFor(anchor) {
+  return anchor.closest(LIST_ROW_SELECTOR);
+}
+
+function checkboxAttributeText(control) {
+  return [
+    control.getAttribute('aria-label'),
+    control.getAttribute('name'),
+    control.getAttribute('id'),
+    control.getAttribute('data-testid'),
+    control.getAttribute('title'),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function isSelectAllCheckbox(control) {
+  if (control.matches('[data-check-all], [data-select-all]')) return true;
+  return /\b(?:select|check)\s+all\b|\ball\s+(?:issues|pull requests|items)\b/.test(checkboxAttributeText(control));
+}
+
+function nativeCheckboxesIn(row) {
+  return [...row.querySelectorAll('input[type="checkbox"], [role="checkbox"]')]
+    .filter(control => !control.classList.contains(OWNED_LIST_CHECKBOX_CLASS))
+    .filter(control => !isSelectAllCheckbox(control));
+}
+
+function ownedCheckboxIn(row) {
+  return row.querySelector(`.${OWNED_LIST_CHECKBOX_CLASS}`);
+}
+
+// DOM reading is deliberately separate from parseListRowAnchor and the selection contracts in
+// defaults.js. The pure functions stay testable without pretending a jsdom fixture proves which
+// GitHub surface is live today.
+function readListRows(root = document, expectedKind) {
+  const anchors = [];
+  if (root.matches?.('a[href]')) anchors.push(root);
+  if (root.querySelectorAll) anchors.push(...root.querySelectorAll('a[href]'));
+
+  const rowsByKey = new Map();
+  for (const anchor of anchors) {
+    const parsed = parseListRowAnchor(anchor.getAttribute('href') ?? anchor.href, anchor.textContent);
+    if (!parsed || (expectedKind && parsed.kind !== expectedKind)) continue;
+
+    const element = listRowElementFor(anchor);
+    if (!element) continue;
+    const nativeCheckboxes = nativeCheckboxesIn(element);
+    const candidate = {
+      ...parsed,
+      element,
+      anchor,
+      nativeCheckboxes,
+      native: nativeCheckboxes.length > 0,
+      ownedCheckbox: ownedCheckboxIn(element),
+    };
+    const current = rowsByKey.get(parsed.key);
+    // A row can expose the same canonical link more than once. Prefer the occurrence that gives us
+    // native coverage, then the one with the more useful title, while retaining one row per key.
+    if (!current || (candidate.native && !current.native) || candidate.title.length > current.title.length) {
+      rowsByKey.set(parsed.key, candidate);
+    }
+  }
+  return [...rowsByKey.values()];
+}
+
+function readCheckboxChecked(control) {
+  if (!control) return false;
+  if ('checked' in control) return control.checked === true;
+  return control.getAttribute('aria-checked') === 'true';
+}
+
+function setCheckboxChecked(control, checked) {
+  if (!control) return;
+  if ('checked' in control) {
+    control.checked = checked;
+  } else {
+    control.setAttribute('aria-checked', String(checked));
+  }
+}
+
+function listCheckboxForRow(row, mode) {
+  if (mode === 'native') return row.nativeCheckboxes?.[0] || null;
+  return row.ownedCheckbox || ownedCheckboxIn(row.element);
+}
+
+function rowsWithListChecks(rows, mode) {
+  return rows.map(row => ({ ...row, checked: readCheckboxChecked(listCheckboxForRow(row, mode)) }));
+}
+
+function readListSelection(root = document, expectedKind) {
+  const rows = readListRows(root, expectedKind);
+  const mode = listCheckboxMode(rows);
+  const selected = selectedListRows(rowsWithListChecks(rows, mode));
+  return { rows, mode, selected, status: listSelectionStatus(selected) };
+}
+
+function readSelectedListRows(root = document, expectedKind) {
+  return readListSelection(root, expectedKind).selected;
+}
+
+function rememberNativeListCheckbox(control) {
+  if (!nativeListCheckboxVisibility.has(control)) {
+    nativeListCheckboxVisibility.set(control, {
+      hidden: control.hidden,
+      ariaHidden: control.getAttribute('aria-hidden'),
+    });
+  }
+  return nativeListCheckboxVisibility.get(control);
+}
+
+function setNativeListCheckboxVisible(control, visible) {
+  if (!control) return;
+  const original = rememberNativeListCheckbox(control);
+  if (visible) {
+    control.hidden = original.hidden;
+    if (original.ariaHidden === null) control.removeAttribute('aria-hidden');
+    else control.setAttribute('aria-hidden', original.ariaHidden);
+  } else {
+    control.hidden = true;
+    control.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function restoreNativeListCheckboxes(rows) {
+  for (const row of rows || []) {
+    for (const control of row.nativeCheckboxes || []) setNativeListCheckboxVisible(control, true);
+  }
+}
+
+function removeOwnedListCheckboxes(root = document) {
+  const checkboxes = [];
+  if (root.matches?.(`.${OWNED_LIST_CHECKBOX_CLASS}`)) checkboxes.push(root);
+  if (root.querySelectorAll) checkboxes.push(...root.querySelectorAll(`.${OWNED_LIST_CHECKBOX_CLASS}`));
+  for (const checkbox of checkboxes) checkbox.remove();
+}
+
+function sameListRows(previousRows, currentRows) {
+  if (!Array.isArray(previousRows) || previousRows.length !== currentRows.length) return false;
+  const previousByKey = new Map(previousRows.map(row => [row.key, row.element]));
+  return currentRows.every(row => previousByKey.get(row.key) === row.element);
+}
+
+function listControlsAttached(rows, mode) {
+  return rows.every(row => {
+    const controls = mode === 'native' ? row.nativeCheckboxes : [row.ownedCheckbox || ownedCheckboxIn(row.element)];
+    return controls.length > 0 && controls.every(control => control && row.element.contains(control));
+  });
+}
+
+function createOwnedListCheckbox(row, checked) {
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = OWNED_LIST_CHECKBOX_CLASS;
+  checkbox.checked = checked;
+  checkbox.dataset.listRowKey = row.key;
+  checkbox.title = row.title || row.number;
+  checkbox.setAttribute('aria-label', row.title || row.number);
+  checkbox.style.cssText = 'margin: 0 8px 0 0; vertical-align: middle;';
+  checkbox.addEventListener('click', event => event.stopPropagation());
+
+  const before = row.anchor === row.element.firstElementChild ? row.anchor : row.element.firstElementChild;
+  row.element.insertBefore(checkbox, before || null);
+  return checkbox;
+}
+
+function syncListSelectionControls(kind, rows, mode) {
+  const previous = listSelectionState;
+  const sameRows = previous?.kind === kind && sameListRows(previous.rows, rows);
+  const canCarry = sameRows && listControlsAttached(previous.rows, previous.mode);
+  const selectedKeys = canCarry
+    ? checkedListRowKeys(rowsWithListChecks(previous.rows, previous.mode))
+    : [];
+
+  // A stable DOM and stable mode need no work on the one-second poll; in particular, don't replace
+  // a focused native checkbox while the user is selecting rows.
+  if (sameRows && canCarry && previous.mode === mode) {
+    listSelectionState = { kind, mode, rows };
+    return;
+  }
+
+  restoreNativeListCheckboxes(previous?.rows);
+  restoreNativeListCheckboxes(rows);
+  removeOwnedListCheckboxes();
+
+  if (mode === 'owned') {
+    for (const row of rows) {
+      for (const control of row.nativeCheckboxes) setNativeListCheckboxVisible(control, false);
+    }
+    const carriedRows = carryListRowChecks(rows, selectedKeys);
+    for (const row of carriedRows) {
+      const current = rows.find(candidate => candidate.key === row.key);
+      current.ownedCheckbox = createOwnedListCheckbox(current, row.checked);
+    }
+  } else if (mode === 'native' && canCarry && previous.mode !== 'native') {
+    for (const row of carryListRowChecks(rows, selectedKeys)) {
+      setCheckboxChecked(listCheckboxForRow(row, mode), row.checked);
+    }
+  }
+
+  listSelectionState = { kind, mode, rows };
+}
+
+function resetListSelectionState() {
+  restoreNativeListCheckboxes(listSelectionState?.rows);
+  removeOwnedListCheckboxes();
+  listSelectionState = null;
+}
+
+function tryInsertListSelection(kind) {
+  const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
+  const rows = readListRows(document, expectedKind);
+  if (rows.length === 0) {
+    resetListSelectionState();
+    return false;
+  }
+
+  syncListSelectionControls(kind, rows, listCheckboxMode(rows));
+  return true;
+}
+
 // Create the custom command button next to the PR branch or the issue badge (emoji icon or text pill)
 function createCommandIconButton(buttonConfig, index, { action, className }) {
   const face = buttonFace(buttonConfig);
@@ -362,6 +587,8 @@ async function tryInsertButton() {
     result = await tryInsertPRButtons() || result;
   } else if (target.kind === 'issue') {
     result = await tryInsertIssueButtons() || result;
+  } else if (target.kind === 'pr-list' || target.kind === 'issue-list') {
+    result = tryInsertListSelection(target.kind) || result;
   }
 
   return result;
@@ -378,6 +605,7 @@ let lastTarget = pageTargetOfUrl(location.href);
 function removeInsertedButtons() {
   document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn')
     .forEach(button => button.remove());
+  resetListSelectionState();
 }
 
 function onUrlChange() {
@@ -407,8 +635,10 @@ history.replaceState = function(...args) {
 
 window.addEventListener('popstate', onUrlChange);
 
-// MutationObserver: detect when the header area is added
+// MutationObserver: detect when the header area or a list row is added
 const observer = new MutationObserver((mutations) => {
+  const target = pageTargetOfUrl(location.href);
+  const listKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
@@ -416,7 +646,8 @@ const observer = new MutationObserver((mutations) => {
         if (node.classList?.contains('gh-header-actions') ||
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
-            node.querySelector?.('.AppHeader-context-full')) {
+            node.querySelector?.('.AppHeader-context-full') ||
+            (listKind && readListRows(node, listKind).length > 0)) {
           tryInsertButton();
           return;
         }

@@ -281,6 +281,7 @@ function pageTypeOf(pathname) {
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
+const MAX_BATCH_ITEMS = 8;
 
 // The button's display text. `face` is the current key; `emoji` is kept for values saved by older versions.
 function buttonFace(config) {
@@ -361,6 +362,80 @@ function pageTargetOfUrl(url) {
   }
   if (parsed.origin !== GITHUB_ORIGIN) return null;
   return pageTargetOf(parsed.pathname);
+}
+
+// A list row's identity comes from GitHub's canonical detail link, never from its position in the
+// document. The same shape works for a repository's own links and links to a fork: the owner and
+// repository in the href identify the checkout target that `gh` will resolve.
+function parseListRowAnchor(href, text) {
+  if (typeof href !== 'string') return null;
+
+  let parsed;
+  try {
+    parsed = new URL(href, GITHUB_ORIGIN);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== GITHUB_ORIGIN) return null;
+
+  const match = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/);
+  if (!match) return null;
+
+  const [, owner, repo, pathKind, number] = match;
+  const kind = pathKind === 'pull' ? 'pr' : 'issue';
+  const rowTitle = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+  return {
+    key: `${owner}/${repo}/${kind}/${number}`,
+    owner,
+    repo,
+    kind,
+    number,
+    title: rowTitle,
+  };
+}
+
+// A native checkbox is usable only when every eligible row has one. Mixing GitHub's controls with
+// ours would make one visible selection have two different sources of truth, so an empty list is
+// no mode and any incomplete coverage selects the all-owned mode.
+function listCheckboxMode(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows.every(row => row?.native === true) ? 'native' : 'owned';
+}
+
+function checkedListRowKeys(rows) {
+  const keys = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+    seen.add(row.key);
+    keys.push(row.key);
+  }
+  return keys;
+}
+
+// Copying checked state by key is the only state transfer permitted when the control source changes.
+// It also makes a redraw independent of whatever order GitHub happened to render the rows in.
+function carryListRowChecks(rows, selectedKeys) {
+  const selected = new Set(selectedKeys || []);
+  return (rows || []).map(row => ({ ...row, checked: selected.has(row.key) }));
+}
+
+function selectedListRows(rows) {
+  const selected = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+    seen.add(row.key);
+    selected.push({ key: row.key, title: typeof row.title === 'string' ? row.title : '' });
+  }
+  return selected;
+}
+
+function listSelectionStatus(selected, limit = MAX_BATCH_ITEMS) {
+  const count = Array.isArray(selected) ? selected.length : 0;
+  if (count === 0) return { count, valid: false, error: 'empty' };
+  if (count > limit) return { count, valid: false, error: 'too-many' };
+  return { count, valid: true, error: null };
 }
 
 // The last question asked before a command runs. Three answers, from three different moments, and
