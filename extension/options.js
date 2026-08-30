@@ -1,13 +1,15 @@
 // defaults.js is the single source of truth for button defaults, presets, and face rules
 // (options.html loads it first)
 
-// PR, issue, and repository buttons differ in both their storage key and the variables they can
-// use (BUTTON_KINDS in defaults.js). Everything else about editing them is identical, so here we
-// only add the DOM slot each set of cards goes into and share one renderer and one set of event
-// handlers.
+// PR, PR-list, issue, issue-list, and repository buttons differ in both their storage key and the
+// variables they can use (BUTTON_KINDS in defaults.js). Everything else about editing them is
+// identical, so here we only add the DOM slot each set of cards goes into and share one renderer and
+// one set of event handlers.
 const SECTIONS = [
   { kind: 'pr', container: 'pr-buttons', addButton: 'pr-add', addHint: 'pr-add-hint' },
+  { kind: 'pr-list', container: 'pr-list-buttons', addButton: 'pr-list-add', addHint: 'pr-list-add-hint' },
   { kind: 'issue', container: 'issue-buttons', addButton: 'issue-add', addHint: 'issue-add-hint' },
+  { kind: 'issue-list', container: 'issue-list-buttons', addButton: 'issue-list-add', addHint: 'issue-list-add-hint' },
   { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
 ].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
 
@@ -48,7 +50,9 @@ function tHTML(key, ...args) {
 const STATIC_TEXT_ARGS = {
   'ext.section.pr.help1': () => [MAX_BUTTONS, t('ext.field.face'), t('ext.field.tooltip')],
   'ext.section.pr.help2': () => [t('ext.card.duplicate')],
+  'ext.section.prList.help': () => [MAX_BUTTONS],
   'ext.section.issue.help': () => [MAX_BUTTONS],
+  'ext.section.issueList.help': () => [MAX_BUTTONS],
   'ext.section.repo.help': () => [
     MAX_BUTTONS,
     presetById(section('repo').presets, 'repo.open').name,

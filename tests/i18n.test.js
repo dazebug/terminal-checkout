@@ -659,13 +659,14 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **102 sites are expected after the two claude row handle attributes are added.** The count is
+  // **105 sites are expected after the v2 migration description and two list-help argument fills
+  // are added.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 102, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 105, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1968,7 +1969,8 @@ test('no text ships in the markup without a message behind it', () => {
 // a command — a false positive on its very first run. A gate that cries wolf is a gate somebody
 // switches off (the standard gate set), so the bare-word literals are matched as words.
 const COMMAND_LITERALS = [
-  /\{cd\}/g, /\{repo\}/g, /\{owner\}/g, /\{number\}/g, /\{branch\}/g, /\{base\}/g,
+  /\{cd\}/g, /\{repo\}/g, /\{owner\}/g, /\{number\}/g, /\{pr\}/g, /\{issue\}/g,
+  /\{branch\}/g, /\{base\}/g,
   /\{main\}/g, /\{branch_underbar\}/g, /z \{repo\}/g,
   /\bstorage\.sync\b/g, /chrome:\/\/extensions/g, /\bgit pull\b/g,
   /\bgh\b/g, /\bclaude\b/g, /\bzoxide\b/g, /\bbrew install\b/g,

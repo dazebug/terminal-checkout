@@ -90,6 +90,13 @@ test('the registry covers every step from 0 to the current version', () => {
 test('every registry entry declares what kind of change it is, and can describe it', () => {
   // "A migration that cannot articulate which of the two it is doesn't ship" (issue #31)
   for (const entry of MIGRATIONS) {
+    if (entry.reviewOnly) {
+      assert.equal(entry.rewrites.size, 0, `${entry.from}->${entry.to}: review-only step must not rewrite commands`);
+      assert.equal(entry.promote, undefined, `${entry.from}->${entry.to}: review-only step has no promotion`);
+      assert.equal(typeof entry.describe, 'string');
+      assert.ok(entry.describe.length > 0, `${entry.from}->${entry.to}: describe is empty`);
+      continue;
+    }
     // Declared per candidate kind, not per step: replacing a preset we shipped is not the same
     // promise as replacing the first clause of a command someone else wrote.
     for (const field of ['verbatimEffect', 'prefixEffect']) {
@@ -105,6 +112,20 @@ test('every registry entry declares what kind of change it is, and can describe 
     assert.equal(typeof entry.customNote, 'string');
     assert.ok(entry.customNote.length > 0, `${entry.from}->${entry.to}: customNote is empty`);
   }
+});
+
+test('the 1->2 registry step is review-only and leaves existing commands alone', () => {
+  assert.equal(SETTINGS_VERSION, 2);
+  const step = MIGRATIONS.find(entry => entry.from === 1 && entry.to === 2);
+  assert.equal(step.reviewOnly, true);
+  assert.equal(step.rewrites.size, 0);
+  assert.equal(step.promote, undefined);
+});
+
+test('a v1 profile without list keys stays v1 until the user explicitly reviews it', () => {
+  assert.equal(storedSchemaVersion({ version: 1, buttons: [] }), 1);
+  assert.equal(versionToSave({ loadedVersion: 1, reviewed: false }), 1);
+  assert.equal(versionToSave({ loadedVersion: 1, reviewed: true }), 2);
 });
 
 // --- Planning a migration ---
@@ -366,9 +387,11 @@ test('a fractional version can never skip a step, even if one leaks in', () => {
 test('the registry covers exactly the current presets, pair for pair', () => {
   // Derived rather than listed: deleting a pair, or adding a preset without one, has to fail here.
   // This cross-check also runs on a shallow CI checkout.
+  // The v0→v1 map covers only the kinds that existed when that step was authored; later-generation kinds are not its targets.
   const entry = MIGRATIONS.find(step => step.to === 1);
   const current = new Set(
-    Object.values(BUTTON_KINDS).flatMap(kind => [...kind.presets, ...kind.defaults].map(b => b.command))
+    ['pr', 'issue', 'repo'].flatMap(kind =>
+      [...BUTTON_KINDS[kind].presets, ...BUTTON_KINDS[kind].defaults].map(b => b.command))
   );
   const expected = new Set();
   for (const command of current) {

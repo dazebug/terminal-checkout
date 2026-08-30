@@ -64,6 +64,15 @@ const PR_PRESETS = [
   }),
 ];
 
+// PR list pages: one terminal session per selected row. The app can resolve the branch from the PR
+// number through `gh`, so the list has no need to invent a `{branch}` or `{base}` value.
+const PR_LIST_PRESETS = [
+  definePreset({
+    id: 'pr-list.checkoutClaude', nameKey: 'ext.preset.prList.checkoutClaude', face: '🤖',
+    command: '{cd} && gh pr checkout {pr} && claude',
+  }),
+];
+
 // Issue pages: buttons on the status badge row. There is no head branch, so the {branch} family and {base} are unavailable
 const ISSUE_PRESETS = [
   definePreset({
@@ -85,6 +94,15 @@ const ISSUE_PRESETS = [
     id: 'issue.open', nameKey: 'ext.preset.issue.open', face: '📂',
     command: '{cd}',
     claudeInputs: [],
+  }),
+];
+
+// Issue list pages: the issue number is enough for gh to put the issue discussion in front of claude.
+const ISSUE_LIST_PRESETS = [
+  definePreset({
+    id: 'issue-list.triageClaude', nameKey: 'ext.preset.issueList.triageClaude', face: '📋',
+    command: '{cd} && claude',
+    claudeInputs: ['!gh issue view {issue} --comments'],
   }),
 ];
 
@@ -144,7 +162,11 @@ function defaultFromPreset(presets, id) {
 
 const DEFAULT_BUTTONS = [defaultFromPreset(PR_PRESETS, 'pr.checkout')];
 
+const DEFAULT_PR_LIST_BUTTONS = [defaultFromPreset(PR_LIST_PRESETS, 'pr-list.checkoutClaude')];
+
 const DEFAULT_ISSUE_BUTTONS = [defaultFromPreset(ISSUE_PRESETS, 'issue.read')];
+
+const DEFAULT_ISSUE_LIST_BUTTONS = [defaultFromPreset(ISSUE_LIST_PRESETS, 'issue-list.triageClaude')];
 
 const DEFAULT_REPO_BUTTONS = [defaultFromPreset(REPO_PRESETS, 'repo.open')];
 
@@ -167,15 +189,42 @@ const BUTTON_KINDS = {
     storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,
     variables: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
   },
+  'pr-list': {
+    storageKey: 'prListButtons', presets: PR_LIST_PRESETS, defaults: DEFAULT_PR_LIST_BUTTONS,
+    variables: ['repo', 'pr'],
+  },
   issue: {
     storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
     variables: ['repo', 'owner', 'number', 'main'],
+  },
+  'issue-list': {
+    storageKey: 'issueListButtons', presets: ISSUE_LIST_PRESETS, defaults: DEFAULT_ISSUE_LIST_BUTTONS,
+    variables: ['repo', 'issue'],
   },
   repo: {
     storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
     variables: ['repo', 'owner', 'main'],
   },
 };
+
+// A button is visible only when every placeholder in its command and every scheduled claude input
+// can be supplied for its page kind. Keeping this predicate here makes the list of variables in
+// BUTTON_KINDS the one authority shared by the content script and service worker; the app's own
+// renderer remains the final fail-closed check when a request leaves the extension.
+function buttonUsesAllowedVariables(kind, button) {
+  if (typeof kind !== 'string' || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
+  if (!button || typeof button !== 'object' || typeof button.command !== 'string') return false;
+  if (button.claudeInputs !== undefined && !Array.isArray(button.claudeInputs)) return false;
+
+  const allowed = new Set([...BUTTON_KINDS[kind].variables, ...APP_VARIABLES]);
+  for (const template of [button.command, ...(button.claudeInputs || [])]) {
+    if (typeof template !== 'string') return false;
+    for (const [, name] of template.matchAll(/\{(\w+)\}/g)) {
+      if (!allowed.has(name)) return false;
+    }
+  }
+  return true;
+}
 
 // --- Settings schema version ---
 // Saved commands are snapshots of the presets at save time, so improving a preset never reaches
@@ -185,7 +234,7 @@ const BUTTON_KINDS = {
 // not, and must never move it (see migrations.js).
 // This constant is the single source of truth for the current generation, and a test pins the
 // registry in `extension/migrations.js` to carry one entry per step up to it.
-const SETTINGS_VERSION = 1;
+const SETTINGS_VERSION = 2;
 
 // The version rides alongside the settings in storage.sync, and therefore in the export/import
 // JSON, so reviewing once clears the notice on every machine on the account.

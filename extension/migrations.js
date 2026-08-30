@@ -91,6 +91,16 @@ const MIGRATIONS = [
     // listed forever with nothing to do about it. The leading boundary keeps `xyz {repo}` out.
     isStale: command => /(?:^|[^\w])z\s+\{repo\}/.test(command),
   },
+  {
+    from: 1,
+    to: 2,
+    // The list-page settings are a new namespace, not a rewrite of a command the user already owns.
+    // The review still matters: it is the explicit acknowledgement that the form now includes the
+    // two current list presets, and only that act may move the stored generation to 2.
+    reviewOnly: true,
+    rewrites: new Map(),
+    get describe() { return tr('ext.migration.v2.describe'); },
+  },
 ];
 
 // A version is a non-negative **integer** or it is not a version. Anything else — a fraction, a

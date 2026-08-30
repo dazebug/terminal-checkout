@@ -25,6 +25,8 @@ const { PR_PRESETS, ISSUE_PRESETS, REPO_PRESETS } =
 const { presetById, presetOptions } = vm.runInThisContext('({ presetById, presetOptions })');
 const { isTextFace } = vm.runInThisContext('({ isTextFace })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
+const { buttonUsesAllowedVariables } =
+  vm.runInThisContext('({ buttonUsesAllowedVariables })');
 // Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
@@ -277,6 +279,29 @@ test('app-provided variables are not in any page\'s variable list', () => {
       assert.ok(!variables.includes(name), `${kind}: {${name}} must not be sent by the extension`);
     }
   }
+});
+
+test('list kinds have separate storage, list-safe variables, and one preset each', () => {
+  assert.deepEqual(BUTTON_KINDS['pr-list'].variables, ['repo', 'pr']);
+  assert.deepEqual(BUTTON_KINDS['issue-list'].variables, ['repo', 'issue']);
+  assert.equal(BUTTON_KINDS['pr-list'].storageKey, 'prListButtons');
+  assert.equal(BUTTON_KINDS['issue-list'].storageKey, 'issueListButtons');
+  assert.equal(BUTTON_KINDS['pr-list'].defaults.length, 1);
+  assert.equal(BUTTON_KINDS['issue-list'].defaults.length, 1);
+  assert.equal(BUTTON_KINDS['pr-list'].defaults[0].command, '{cd} && gh pr checkout {pr} && claude');
+  assert.deepEqual(BUTTON_KINDS['issue-list'].defaults[0].claudeInputs,
+    ['!gh issue view {issue} --comments']);
+});
+
+test('buttonUsesAllowedVariables is one pure, kind-scoped visibility predicate', () => {
+  const pr = { command: '{cd} && gh pr checkout {pr} && claude', claudeInputs: [] };
+  const issue = { command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] };
+  assert.equal(buttonUsesAllowedVariables('pr-list', pr), true);
+  assert.equal(buttonUsesAllowedVariables('issue-list', issue), true);
+  assert.equal(buttonUsesAllowedVariables('pr-list', { command: '{cd} && {issue}', claudeInputs: [] }), false);
+  assert.equal(buttonUsesAllowedVariables('issue-list', { command: '{cd} && {pr}', claudeInputs: [] }), false);
+  assert.equal(buttonUsesAllowedVariables('pr-list', { command: '{cd}', claudeInputs: ['!echo {branch}'] }), false);
+  assert.equal(buttonUsesAllowedVariables('not-a-kind', pr), false);
 });
 
 test('each page type has its own storage key', () => {
