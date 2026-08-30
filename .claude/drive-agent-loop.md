@@ -14,6 +14,8 @@ None.
 
 ## ultrafast mode — implementer sandbox measurements
 
+The implementer sandbox cannot connect to the cmux socket (cmux ping → exit 1, Operation not permitted, errno 1) — cmux measurements run in the driver.
+
 The Swift gate does not run in the implementer sandbox (measured in earlier loops) — the driver runs it instead with `cd <clone>/app && swift test`. `node --test` stays the extension gate per the README.md Development section; record its result as exit status plus executed-test count.
 
 ## Repo-specific lines to add to assignment messages
