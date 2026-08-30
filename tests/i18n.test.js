@@ -659,8 +659,7 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **110 sites are expected after the v2 migration description, two list-help argument fills,
-  // and the list result UI argument fills are added.** The count is
+  // **110 argument-supplying sites are expected.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
