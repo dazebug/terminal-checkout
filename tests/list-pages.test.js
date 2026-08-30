@@ -23,6 +23,7 @@ const {
   sameListSelectionKeys,
   buildListBatchMessage,
   interpretListBatchResponse,
+  validateListBatchResultKeyProtocol,
   listBatchSelectionNotice,
   listBatchButtonIdentity,
   listBatchResultView,
@@ -40,6 +41,7 @@ const {
   sameListSelectionKeys,
   buildListBatchMessage,
   interpretListBatchResponse,
+  validateListBatchResultKeyProtocol,
   listBatchSelectionNotice,
   listBatchButtonIdentity,
   listBatchResultView,
@@ -196,6 +198,14 @@ test('sameListSelectionKeys rejects a changed key set while ignoring document or
 });
 
 test('attachedCheckedListRowKeys keeps only keys whose controls are still attached', () => {
+  const checkedNative = {
+    id: 'native-keep',
+    checked: true,
+  };
+  const detachedNative = {
+    id: 'native-drop',
+    checked: true,
+  };
   const staleElement = {
     contains: node => node?.id === 'native-keep',
   };
@@ -205,18 +215,16 @@ test('attachedCheckedListRowKeys keeps only keys whose controls are still attach
   const rows = [
     {
       key: 'owner/repo/pr/7',
-      checked: true,
-      nativeCheckboxes: [{ id: 'native-keep' }],
+      selectionControl: checkedNative,
       element: liveElement,
     },
     {
       key: 'owner/repo/pr/8',
-      checked: true,
-      nativeCheckboxes: [{ id: 'native-drop' }],
+      selectionControl: detachedNative,
       element: staleElement,
     },
   ];
-  assert.deepEqual(attachedCheckedListRowKeys(rows, 'native'), ['owner/repo/pr/7']);
+  assert.deepEqual(attachedCheckedListRowKeys(rows), ['owner/repo/pr/7']);
 });
 
 test('buildListBatchMessage carries snapshot comparison data and the clicked button identity', () => {
@@ -228,10 +236,18 @@ test('buildListBatchMessage carries snapshot comparison data and the clicked but
       action: 'execute_list_batch',
       buttonIndex: 1,
       shown: 'fingerprint',
+      resultKeyProtocol: 1,
       target,
       selected,
     },
   );
+});
+
+test('validateListBatchResultKeyProtocol requires the active protocol token', () => {
+  assert.equal(validateListBatchResultKeyProtocol({}), false);
+  assert.equal(validateListBatchResultKeyProtocol({ resultKeyProtocol: 0 }), false);
+  assert.equal(validateListBatchResultKeyProtocol({ resultKeyProtocol: 1 }), true);
+  assert.equal(validateListBatchResultKeyProtocol({ resultKeyProtocol: 2 }), false);
 });
 
 test('interpretListBatchResponse preserves transport and app failure layers with per-item results', () => {

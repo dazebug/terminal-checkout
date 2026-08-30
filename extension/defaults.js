@@ -283,6 +283,7 @@ const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
 const MAX_BATCH_ITEMS = 8;
 const LIST_BATCH_ACTION = 'execute_list_batch';
+const LIST_BATCH_RESULT_KEY_PROTOCOL = 1;
 
 // The button's display text. `face` is the current key; `emoji` is kept for values saved by older versions.
 function buttonFace(config) {
@@ -427,22 +428,29 @@ function carryListRowChecks(rows, selectedKeys) {
   return (rows || []).map(row => ({ ...row, checked: selected.has(row.key) }));
 }
 
-function attachedCheckedListRowKeys(rows, mode) {
+// Control selection is caller-decided: this helper only checks whether the caller-provided control is
+// still attached to the row and actually checked.
+function attachedCheckedListRowKeys(rows) {
   const keys = [];
   const seen = new Set();
   for (const row of rows || []) {
-    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+    if (typeof row.key !== 'string' || seen.has(row.key)) continue;
 
-    const controls = mode === 'native'
-      ? (row.nativeCheckboxes || [])
-      : [row.ownedCheckbox];
-    const control = controls.find(Boolean);
-    if (!control || typeof control !== 'object' || !row.element?.contains || !row.element.contains(control)) continue;
+    const control = row.selectionControl;
+    if (!control || typeof control !== 'object') continue;
+    if (!row.element?.contains?.(control)) continue;
+    if (!isCheckboxChecked(control)) continue;
 
     seen.add(row.key);
     keys.push(row.key);
   }
   return keys;
+}
+
+function isCheckboxChecked(control) {
+  if (!control) return false;
+  if ('checked' in control) return control.checked === true;
+  return control.getAttribute?.('aria-checked') === 'true';
 }
 
 function selectedListRows(rows) {
@@ -540,9 +548,14 @@ function buildListBatchMessage(buttonIndex, shown, target, selected) {
     action: LIST_BATCH_ACTION,
     buttonIndex,
     shown,
+    resultKeyProtocol: LIST_BATCH_RESULT_KEY_PROTOCOL,
     target,
     selected,
   };
+}
+
+function validateListBatchResultKeyProtocol(message) {
+  return message?.resultKeyProtocol === LIST_BATCH_RESULT_KEY_PROTOCOL;
 }
 
 // `success` exists at two boundaries: the worker's outer response says whether transport and

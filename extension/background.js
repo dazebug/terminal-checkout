@@ -588,6 +588,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (typeof message?.action !== 'string') return;
 
   if (message.action === LIST_BATCH_ACTION) {
+    if (!validateListBatchResultKeyProtocol(message)) {
+      sendResponse({ success: false, error: 'Unsupported list batch protocol.' });
+      return;
+    }
     if (!Number.isInteger(message.buttonIndex)) {
       sendResponse({ success: false, error: 'Invalid list batch button index.' });
       return;

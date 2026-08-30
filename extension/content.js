@@ -341,7 +341,12 @@ function syncListSelectionControls(kind, rows, mode) {
   const previous = listSelectionState;
   const sameRows = previous?.kind === kind && sameListRows(previous.rows, rows);
   const canCarry = previous?.kind === kind && sameRows;
-  const selectedKeys = canCarry ? attachedCheckedListRowKeys(previous.rows, previous.mode) : [];
+  const selectedKeys = canCarry
+    ? attachedCheckedListRowKeys(previous.rows.map(row => ({
+      ...row,
+      selectionControl: listCheckboxForRow(row, previous.mode),
+    })))
+    : [];
 
   // A stable DOM and stable mode need no work on the one-second poll; in particular, don't replace
   // a focused native checkbox while the user is selecting rows.
