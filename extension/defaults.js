@@ -66,10 +66,15 @@ const PR_PRESETS = [
 
 // PR list pages: one terminal session per selected row. The app can resolve the branch from the PR
 // number through `gh`, so the list has no need to invent a `{branch}` or `{base}` value.
+// Every row must get its own worktree — a fan-out that checks rows out in the shared `{cd}` tree
+// has the later rows switching the branch under the earlier sessions. `--detach` on both commands
+// keeps the fan-out conflict-free: no local branch is created, so rows cannot collide with each
+// other or with a worktree that already holds the PR's branch, and the FETCH_HEAD that
+// `gh pr checkout` resolves is a per-worktree ref, so parallel rows cannot cross.
 const PR_LIST_PRESETS = [
   definePreset({
     id: 'pr-list.checkoutClaude', nameKey: 'ext.preset.prList.checkoutClaude', face: '🤖',
-    command: '{cd} && gh pr checkout {pr} && claude',
+    command: '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude',
   }),
 ];
 

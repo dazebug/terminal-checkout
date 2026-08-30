@@ -288,7 +288,11 @@ test('list kinds have separate storage, list-safe variables, and one preset each
   assert.equal(BUTTON_KINDS['issue-list'].storageKey, 'issueListButtons');
   assert.equal(BUTTON_KINDS['pr-list'].defaults.length, 1);
   assert.equal(BUTTON_KINDS['issue-list'].defaults.length, 1);
-  assert.equal(BUTTON_KINDS['pr-list'].defaults[0].command, '{cd} && gh pr checkout {pr} && claude');
+  assert.equal(BUTTON_KINDS['pr-list'].defaults[0].command,
+    '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude');
+  // A shipped list preset that uses a variable outside its kind's set would never render a button
+  assert.equal(buttonUsesAllowedVariables('pr-list', BUTTON_KINDS['pr-list'].defaults[0]), true);
+  assert.equal(buttonUsesAllowedVariables('issue-list', BUTTON_KINDS['issue-list'].defaults[0]), true);
   assert.deepEqual(BUTTON_KINDS['issue-list'].defaults[0].claudeInputs,
     ['!gh issue view {issue} --comments']);
 });

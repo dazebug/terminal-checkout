@@ -144,6 +144,7 @@ This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup wind
 ### PR and issue list pages
 
 Select rows with GitHub's checkboxes, or Terminal Checkout's fallback checkboxes when GitHub does not expose them, then click a list button above the list. Each selected row opens its own terminal session; one batch handles up to 8 rows, and clicking with no rows selected is an error.
+The default PR-list preset gives each row its own worktree (`../<repo>-pr-<number>`) and checks the PR out there with a detached HEAD (`gh pr checkout --detach`) — sessions from one batch cannot switch branches under each other, and no local branch is created that could collide with a worktree you already have. It needs `gh`, and fork PRs work too.
 On list pages, clicking the extension icon runs the first repository button for the page, since the icon path cannot see list selections.
 
 ### Repository pages
