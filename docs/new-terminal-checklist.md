@@ -84,6 +84,14 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Fallback when the chosen window closed just before tab creation (giving up here pops a new window)
 - [ ] With the terminal not running at all — does it open as a new window, and is claude input abandoned in that case?
 
+**batch fan-out**
+
+- [ ] Send one batch-capable request with N items → N terminal tabs launch in source order, each command send completes before the next launch, and the response contains N source-ordered per-item results without waiting for Claude delivery
+- [ ] Hold a batch behind a busy launch queue → the app log has one timeline per item labeled `item i/N`, and each total uses the request-arrival anchor so item 2 includes the time spent launching item 1
+- [ ] On Warp, send a batch with typed `claude_inputs` → exactly one warning states the batch size and first typed item (`first at item i`), and says `each tab watched`; that visibility requirement applies to typed-delivery tabs, not argv-only items, and no duplicate warning appears
+- [ ] Start at least five long typed deliveries in one or overlapping batches → no more than four occupy the delivery gate at once, the fifth waits for a permit, and it completes after an earlier delivery releases its permit
+- [ ] With a two-item cmux batch, switch away from the active tab during delivery → both surface-addressed deliveries complete in their background tabs and no item is dropped
+
 **claude input — argv route (a list holding exactly one plain-text input, and nothing else: no permission, no helper, no screen reading)**
 
 - [ ] A **plain-text-only** button (no `!`, no slash, no `#`) → claude starts with that text already submitted, and nothing is typed. Shipped presets are all `!`, so they do **not** take this route any more — they are typed (see below)

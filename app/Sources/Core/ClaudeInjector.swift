@@ -38,6 +38,19 @@ let claudeSubmitKey = "\r"
 /// Only `!` was measured. The `/` and `#` prefixes are one character too and should be erased by the same sequence, but that is inference, not measurement.
 let claudeClearInputKey = "\u{15}\u{7F}"
 
+/// Batch fan-out and future parallel callers must stay bounded at the same app-wide level.
+let claudeDeliveryConcurrencyLimit = 4
+private let claudeDeliveryConcurrencySemaphore = DispatchSemaphore(value: claudeDeliveryConcurrencyLimit)
+
+/// Wrap one delivery path in a bounded permit. The permit covers the whole function call,
+/// including tty discovery, readiness wait, body submission, and cleanup so every exit path
+/// releases a slot exactly once.
+internal func withClaudeDeliveryPermit<T>(_ operation: () throws -> T) rethrows -> T {
+    claudeDeliveryConcurrencySemaphore.wait()
+    defer { claudeDeliveryConcurrencySemaphore.signal() }
+    return try operation()
+}
+
 struct CmuxRPCOperation: Equatable {
     let method: String
     let params: [String: String]
@@ -967,99 +980,101 @@ public func deliverClaudeInputs(
     timeline: DeliveryTimeline? = nil,
     admission: ClaudeDelivery.Admission
 ) {
-    // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends.
-    // The farewell goes out **before** the register is cleared, so that "nothing in flight" implies "no helper of ours still alive".
-    defer {
-        if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }
-        admission.end()
-    }
-    guard !inputs.isEmpty else { return }
+    withClaudeDeliveryPermit {
+        // The Warp helper must not become a process left drifting in the pane — it is terminated on whichever path this ends.
+        // The farewell goes out **before** the register is cleared, so that "nothing in flight" implies "no helper of ours still alive".
+        defer {
+            if case .warp(let socket) = handle { _ = warpHelperRequest(.bye, socket: socket) }
+            admission.end()
+        }
+        guard !inputs.isEmpty else { return }
 
-    let ttyPath: String?
-    switch handle {
-    case .iterm(_, let tty):
-        ttyPath = tty
-    case .wezterm(let paneID, let cliPath, let socketPath):
-        ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
-    case .cmux(let surfaceID, _, let cliPath, let socketPath):
-        ttyPath = cmuxQueryTTY(cliPath: cliPath, socketPath: socketPath, surfaceID: surfaceID)
-        timeline?.step(ttyPath == nil ? "failed waiting for the cmux surface tty" : "cmux surface tty ready")
-    case .warp(let socket):
-        // Without reading the screen there is no way to confirm claude received the input, and a CR sent without that confirmation submits an empty line while input claude discarded is recorded as "delivered" (measured).
-        // So on Warp the Accessibility permission is a **hard requirement** for buttons that schedule claude input — it has nothing to do with running the command itself, and the log records that difference
-        guard accessibilityIsTrusted() else {
-            checkoutLog(
-                "without the Accessibility permission, \(inputs.count) claude input(s) are not delivered on Warp"
-                    + " (the command still runs in the new tab) — grant it in the app settings window"
-            )
+        let ttyPath: String?
+        switch handle {
+        case .iterm(_, let tty):
+            ttyPath = tty
+        case .wezterm(let paneID, let cliPath, let socketPath):
+            ttyPath = wezTermQueryTTY(cliPath: cliPath, socketPath: socketPath, paneID: paneID)
+        case .cmux(let surfaceID, _, let cliPath, let socketPath):
+            ttyPath = cmuxQueryTTY(cliPath: cliPath, socketPath: socketPath, surfaceID: surfaceID)
+            timeline?.step(ttyPath == nil ? "failed waiting for the cmux surface tty" : "cmux surface tty ready")
+        case .warp(let socket):
+            // Without reading the screen there is no way to confirm claude received the input, and a CR sent without that confirmation submits an empty line while input claude discarded is recorded as "delivered" (measured).
+            // So on Warp the Accessibility permission is a **hard requirement** for buttons that schedule claude input — it has nothing to do with running the command itself, and the log records that difference
+            guard accessibilityIsTrusted() else {
+                checkoutLog(
+                    "without the Accessibility permission, \(inputs.count) claude input(s) are not delivered on Warp"
+                        + " (the command still runs in the new tab) — grant it in the app settings window"
+                )
+                return
+            }
+            ttyPath = warpHelperTTY(socket: socket)
+            // Waiting for the helper can stretch to 20 seconds — the "+" on this line is how much of that was actually spent
+            timeline?.step(ttyPath == nil ? "failed waiting for the Warp injection helper" : "Warp injection helper ready")
+        case .none:
+            checkoutLog("cannot deliver claude input — no session handle")
             return
         }
-        ttyPath = warpHelperTTY(socket: socket)
-        // Waiting for the helper can stretch to 20 seconds — the "+" on this line is how much of that was actually spent
-        timeline?.step(ttyPath == nil ? "failed waiting for the Warp injection helper" : "Warp injection helper ready")
-    case .none:
-        checkoutLog("cannot deliver claude input — no session handle")
-        return
-    }
-    guard let ttyPath, ttyPath.hasPrefix("/dev/") else {
-        checkoutLog("cannot deliver claude input — the session tty is unknown")
-        return
-    }
-    let ttyName = String(ttyPath.dropFirst("/dev/".count))
-
-    guard let claudePID = waitUntilClaudeAcceptsInput(
-        ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
-    ) else {
-        timeline?.step("timed out waiting for claude to start")
-        checkoutLog("claude did not reach a state to accept input within \(Int(timeout))s, so \(inputs.count) input(s) were not sent")
-        return
-    }
-    // The "+" on this line is the time taken by cd + the shell rc + claude booting — up to the foreground process becoming claude and the tty switching to raw mode. It is a stretch the app cannot shorten, so a large number here has its cause outside
-    timeline?.step("claude ready (pid \(claudePID))")
-
-    let sessionIsUnchanged: () -> Bool = {
-        probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
-    }
-    let io = ClaudeSessionIO(
-        sendKeys: { keys in
-            sendKeys(
-                keys, to: handle, expectedPID: claudePID,
-                sessionIsUnchanged: sessionIsUnchanged
-            )
-        },
-        screenText: { screenText(of: handle) },
-        confirmSession: { limit in
-            waitUntilClaudeAcceptsInput(
-                ttyName: ttyName, ttyPath: ttyPath,
-                pollInterval: pollInterval, timeout: limit, expecting: claudePID
-            ) != nil
-        },
-        // The check immediately before sending does not wait — it measures once and only asks whether it is still that claude
-        sessionIsUnchanged: sessionIsUnchanged,
-        // A revoked permission makes screen confirmation impossible — no new input is typed then, only the cleanup. The reason travels with the answer so a later diagnosis does not have to guess it back out of a Bool
-        screenConfirmation: {
-            handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
-        },
-        // True for Warp alone — what Accessibility reads is "the focused pane", with no guarantee it is ours
-        screenNeedsPaneProof: handle.screenNeedsPaneProof
-    )
-    let sent = submitClaudeInputs(
-        inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
-        onDeliveryEnd: {
-            if case .cmux(let surfaceID, _, _, _) = handle {
-                CmuxRPCFailureLog.forgetScreenReadFailures(surface: surfaceID)
-            }
+        guard let ttyPath, ttyPath.hasPrefix("/dev/") else {
+            checkoutLog("cannot deliver claude input — the session tty is unknown")
+            return
         }
-    )
-    timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
-    checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
-    // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know.
-    // **The advice comes from the same value that made the answer no.** A reason that cannot name
-    // itself gets the first half of the line and no advice; the delivery path does not invent one.
-    // One branch and not two: "cannot confirm" and "here is why" are now the same value, so there
-    // is no state where the first is true and the second unavailable
-    if sent < inputs.count, let blocker = io.screenConfirmation() {
-        checkoutLog("the means of confirming the screen disappeared mid-delivery — \(blocker.message)")
+        let ttyName = String(ttyPath.dropFirst("/dev/".count))
+
+        guard let claudePID = waitUntilClaudeAcceptsInput(
+            ttyName: ttyName, ttyPath: ttyPath, pollInterval: pollInterval, timeout: timeout
+        ) else {
+            timeline?.step("timed out waiting for claude to start")
+            checkoutLog("claude did not reach a state to accept input within \(Int(timeout))s, so \(inputs.count) input(s) were not sent")
+            return
+        }
+        // The "+" on this line is the time taken by cd + the shell rc + claude booting — up to the foreground process becoming claude and the tty switching to raw mode. It is a stretch the app cannot shorten, so a large number here has its cause outside
+        timeline?.step("claude ready (pid \(claudePID))")
+
+        let sessionIsUnchanged: () -> Bool = {
+            probeAcceptingClaudePID(ttyName: ttyName, ttyPath: ttyPath) == claudePID
+        }
+        let io = ClaudeSessionIO(
+            sendKeys: { keys in
+                sendKeys(
+                    keys, to: handle, expectedPID: claudePID,
+                    sessionIsUnchanged: sessionIsUnchanged
+                )
+            },
+            screenText: { screenText(of: handle) },
+            confirmSession: { limit in
+                waitUntilClaudeAcceptsInput(
+                    ttyName: ttyName, ttyPath: ttyPath,
+                    pollInterval: pollInterval, timeout: limit, expecting: claudePID
+                ) != nil
+            },
+            // The check immediately before sending does not wait — it measures once and only asks whether it is still that claude
+            sessionIsUnchanged: sessionIsUnchanged,
+            // A revoked permission makes screen confirmation impossible — no new input is typed then, only the cleanup. The reason travels with the answer so a later diagnosis does not have to guess it back out of a Bool
+            screenConfirmation: {
+                handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
+            },
+            // True for Warp alone — what Accessibility reads is "the focused pane", with no guarantee it is ours
+            screenNeedsPaneProof: handle.screenNeedsPaneProof
+        )
+        let sent = submitClaudeInputs(
+            inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
+            onDeliveryEnd: {
+                if case .cmux(let surfaceID, _, _, _) = handle {
+                    CmuxRPCFailureLog.forgetScreenReadFailures(surface: surfaceID)
+                }
+            }
+        )
+        timeline?.step("delivery finished — sent \(sent) of \(inputs.count) input(s)")
+        checkoutLog("claude(pid \(claudePID)): sent \(sent) of \(inputs.count) input(s) (receipt is not confirmed)")
+        // Cleaning up whatever fragment is left in the input box is done by `submitClaudeInputs` at the single failure-exit point — the cleanup condition is "we did not finish", not the permission. Only the diagnosis is left here: the most common reason delivery stalls on Warp is a revoked permission, and without the log saying what to grant the user cannot know.
+        // **The advice comes from the same value that made the answer no.** A reason that cannot name
+        // itself gets the first half of the line and no advice; the delivery path does not invent one.
+        // One branch and not two: "cannot confirm" and "here is why" are now the same value, so there
+        // is no state where the first is true and the second unavailable
+        if sent < inputs.count, let blocker = io.screenConfirmation() {
+            checkoutLog("the means of confirming the screen disappeared mid-delivery — \(blocker.message)")
+        }
     }
 }
 

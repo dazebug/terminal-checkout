@@ -40,6 +40,66 @@ run_case() {
   fi
 }
 
+# Batch cases inspect the decoded response fields in Python and use its exit status as the verdict;
+# the response text is printed only when a case fails.
+assert_batch_response() {
+  local kind="$1" response="$2"
+  BATCH_RESPONSE="$response" python3 - "$kind" <<'PY'
+import json
+import os
+import sys
+
+kind = sys.argv[1]
+
+try:
+    response = json.loads(os.environ["BATCH_RESPONSE"])
+except (KeyError, json.JSONDecodeError) as error:
+    print(f"invalid JSON response: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+if response.get("success") is not False:
+    fail(f"expected success=false, got {response!r}")
+
+expected_errors = {
+    "cap": "items must contain at most 8 item(s)",
+    "empty": "items must not be empty",
+    "ambiguous": "ambiguous batch request: items cannot be combined with command_template",
+}
+if kind in expected_errors:
+    if response.get("error") != expected_errors[kind]:
+        fail(f"unexpected error: {response!r}")
+    if "items" in response:
+        fail(f"structural failure unexpectedly carried items: {response!r}")
+elif kind == "content":
+    expected_items = [
+        {"success": False, "error": "Variable {repo} not provided"},
+        {"success": False, "error": "not launched — batch rejected during validation"},
+    ]
+    if response.get("error") != expected_items[0]["error"]:
+        fail(f"unexpected validation summary: {response!r}")
+    if response.get("items") != expected_items:
+        fail(f"unexpected per-item validation results: {response!r}")
+else:
+    fail(f"unknown batch assertion kind: {kind}")
+PY
+}
+
+run_batch_case() {
+  local name="$1" payload="$2" kind="$3" out=""
+  if out=$(frame "$payload" | "$RELAY" | unframe) && assert_batch_response "$kind" "$out"; then
+    echo "PASS: $name"
+  else
+    echo "FAIL: $name — got: $out"
+    exit 1
+  fi
+}
+
 run_case "unknown variable" \
   '{"command_template":"z {repo}","variables":{"evil":"x"},"terminal":"iterm"}' \
   'Unknown variable: {evil}'
@@ -82,4 +142,21 @@ run_case "app-provided variable cannot come from the extension" \
   '{"command_template":"{cd}","variables":{"cd":"rm -rf /"}}' \
   'Unknown variable: {cd}'
 
-echo "e2e: all cases passed"
+# These batch validation failures all reject before the run closure, so they do not open a terminal.
+run_batch_case "batch cap exceeds eight items" \
+  '{"command":"echo cap","items":[{"variables":{"repo":"r1"}},{"variables":{"repo":"r2"}},{"variables":{"repo":"r3"}},{"variables":{"repo":"r4"}},{"variables":{"repo":"r5"}},{"variables":{"repo":"r6"}},{"variables":{"repo":"r7"}},{"variables":{"repo":"r8"}},{"variables":{"repo":"r9"}}]}' \
+  cap
+
+run_batch_case "batch items cannot be empty" \
+  '{"command":"echo empty","items":[]}' \
+  empty
+
+run_batch_case "batch shape cannot be ambiguous" \
+  '{"command":"echo ambiguous","command_template":"echo legacy","items":[{"variables":{}}]}' \
+  ambiguous
+
+run_batch_case "batch content validation launches no items" \
+  '{"command":"echo {repo}","items":[{"variables":{}},{"variables":{"repo":"good"}}]}' \
+  content
+
+echo "e2e: all 13 cases passed"

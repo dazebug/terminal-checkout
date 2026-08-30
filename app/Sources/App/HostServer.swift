@@ -35,13 +35,40 @@ final class HostServer {
     private let lifecycle = NSLock()
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
+    private let runInTerminalFactory: (
+        String, Terminal, ClaudeDelivery.Admission?
+    ) throws -> TerminalSessionHandle
+    private let timelineFactory: (Date, String?) -> DeliveryTimeline
+    private let log: (String) -> Void
+    private let now: () -> Date
+    private let monotonicNow: () -> TimeInterval
+    /// Test-only pause before serial admission; production leaves it nil.
+    private let beforeExecQueueAdmission: (() -> Void)?
 
     /// A test-only pause lets the ownership suite hold startup between binding and arming the
     /// accept loop. Production leaves it nil; the lifecycle lock remains the real guarantee.
     var beforeAccepting: (() -> Void)?
 
-    init(socketPath: String) {
+    init(
+        socketPath: String,
+        runInTerminal: @escaping (
+            _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?
+        ) throws -> TerminalSessionHandle = Core.runInTerminal,
+        timelineFactory: @escaping (Date, String?) -> DeliveryTimeline = { arrival, label in
+            DeliveryTimeline(startedAt: arrival, label: label)
+        },
+        log: @escaping (String) -> Void = checkoutLog,
+        now: @escaping () -> Date = Date.init,
+        monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        beforeExecQueueAdmission: (() -> Void)? = nil
+    ) {
         self.socketPath = socketPath
+        self.runInTerminalFactory = runInTerminal
+        self.timelineFactory = timelineFactory
+        self.log = log
+        self.now = now
+        self.monotonicNow = monotonicNow
+        self.beforeExecQueueAdmission = beforeExecQueueAdmission
     }
 
     /// Binds the socket, records the file identity, and then arms the accept loop. Every request is
@@ -154,15 +181,30 @@ final class HostServer {
             // Chrome → relay → socket path works
             Settings.recordRequestEvidence()
             let json = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
-            // A stopwatch over the steps of the success path. It starts **when the request
-            // arrived**, so every "total" below it is on the same axis as the wait the user feels
-            // after pressing the button
-            let timeline = DeliveryTimeline()
+            // A stopwatch over each item's success path. It starts **when the request arrived**, before
+            // the serial launch queue, so every item's "total" stays on the same axis as the wait the
+            // user feels after pressing the button.
+            let requestArrival = now()
+            // Date remains the display anchor; uptime keeps clock adjustments from reopening the response budget.
+            let requestArrivalMonotonic = monotonicNow()
+            var hasLoggedBatchWarpWarning = false
+            beforeExecQueueAdmission?()
             let response = execQueue.sync {
+                // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
+                let terminal = Settings.terminal
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
-                handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: { resolved in
+                return handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
+                    resolved, position in
+                    let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
+                    let timeline = self.timelineFactory(requestArrival, timelineLabel)
+                    if let position,
+                       position.index > 1,
+                       monotonicNow() - requestArrivalMonotonic >= batchLaunchResponseBudget {
+                        timeline.step(batchResponseDeadlineExceededMessage)
+                        throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
+                    }
                     // Which route the scheduled claude input takes is `prepareRequest`'s verdict —
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
@@ -173,9 +215,17 @@ final class HostServer {
                         ? (resolved.claudeInputs.isEmpty ? "no claude input" : "merged into argv")
                         : "typing \(prepared.claudeInputs.count)"
                     timeline.step("request received — \(resolved.claudeInputs.count) claude input(s), \(route)")
-                    // The terminal choice has the app's settings as its single source — the
-                    // request's `terminal` field is ignored
-                    let terminal = Settings.terminal
+                    if let position,
+                       terminal == .warp,
+                       !prepared.claudeInputs.isEmpty,
+                       !hasLoggedBatchWarpWarning {
+                        hasLoggedBatchWarpWarning = true
+                        log(
+                            "a Warp batch of \(position.total) item(s) schedules typed claude input"
+                                + " (first at item \(position.index)) — delivery needs the Accessibility permission"
+                                + " and each tab watched"
+                        )
+                    }
                     // **The slot is reserved before anything can launch a helper**, not when the
                     // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
                     // below runs asynchronously, so a registration taken there is late by that whole
@@ -194,9 +244,7 @@ final class HostServer {
                     // back, including the throwing ones
                     var deliveryStarted = false
                     defer { if let admission, !deliveryStarted { admission.end() } }
-                    let handle = try runInTerminal(
-                        command: prepared.command, terminal: terminal, claudeInput: admission
-                    )
+                    let handle = try self.runInTerminalFactory(prepared.command, terminal, admission)
                     timeline.step("\(terminal.rawValue) tab created")
                     // The reservation **is** "this request has input to deliver" — the same value the
                     // launch was given, so the launch and the watch cannot disagree about it
@@ -213,7 +261,17 @@ final class HostServer {
                             )
                         }
                     }
-                    }, message: localizedErrorMessage
+                    },
+                    notLaunched: { position, reason in
+                        // A content-rejected batch never reaches `run`, so the per-item timeline
+                        // contract is honored here: one labeled timeline whose only stage is the
+                        // same reason the item's response carries.
+                        let timeline = self.timelineFactory(
+                            requestArrival, "item \(position.index)/\(position.total)"
+                        )
+                        timeline.step(reason)
+                    },
+                    message: localizedErrorMessage
                 )
             }
             let payload = (try? JSONSerialization.data(withJSONObject: response))

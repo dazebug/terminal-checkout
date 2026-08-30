@@ -7,6 +7,16 @@ public struct ResolvedRequest {
     public let claudeInputs: [String]
 }
 
+/// The maximum number of item requests one batch may carry. The extension will mirror this value
+/// when it learns the batch shape; Core owns the side-effect boundary and therefore enforces it.
+public let batchItemLimit = 8
+
+/// The relay waits 180 seconds for a response; reserve 30 seconds for framing and JSON
+/// serialization so sequential batch launches stop within the remaining response budget.
+public let batchLaunchResponseBudget: TimeInterval = 150
+
+public let batchResponseDeadlineExceededMessage = "not launched — response deadline exceeded"
+
 /// Resolves the request JSON the Chrome extension sent: { command_template, variables, claude_inputs? }.
 /// Which terminal to run in has the app's settings as its single source, so a `terminal` field riding along in the request is never read.
 ///
@@ -21,41 +31,121 @@ public func resolveRequest(
         throw CommandError.badRequest("command_template is required")
     }
 
-    let raw = json["variables"] as? [String: Any] ?? [:]
+    let variables = try stringVariables(from: json["variables"] as? [String: Any] ?? [:]) { key in
+        "Variable {\(key)} must be a string"
+    }
+    let rawInputs = try claudeInputTemplates(from: json)
+    return try resolveRequestItem(
+        commandTemplate: template,
+        claudeInputTemplates: rawInputs,
+        variables: variables,
+        baseDirectory: baseDirectory,
+        templateWireKey: "command_template"
+    )
+}
+
+private struct BatchRequest {
+    let commandTemplate: String
+    let claudeInputTemplates: [String]
+    let itemVariables: [[String: String]]
+}
+
+private let batchValidationNotLaunched = "not launched — batch rejected during validation"
+
+private func stringVariables(
+    from raw: [String: Any], invalidValue: (String) -> String
+) throws -> [String: String] {
     var variables: [String: String] = [:]
     for (key, value) in raw {
         guard let string = value as? String else {
-            throw CommandError.badRequest("Variable {\(key)} must be a string")
+            throw CommandError.badRequest(invalidValue(key))
         }
         variables[key] = string
     }
+    return variables
+}
 
-    // Collect the raw claude inputs before rendering — `{cd}` may appear only on the input side,
-    // so deciding whether to assemble the fragment means looking at the template and the inputs
-    // together
-    var rawInputs: [String] = []
-    if let list = json["claude_inputs"] {
-        guard let elements = list as? [Any] else {
+private func claudeInputTemplates(from json: [String: Any]) throws -> [String] {
+    guard let list = json["claude_inputs"] else { return [] }
+    guard let elements = list as? [Any] else {
+        throw CommandError.badRequest("claude_inputs must be an array of strings")
+    }
+    return try elements.map { element in
+        guard let text = element as? String else {
             throw CommandError.badRequest("claude_inputs must be an array of strings")
         }
-        for element in elements {
-            guard let text = element as? String else {
-                throw CommandError.badRequest("claude_inputs must be an array of strings")
-            }
-            rawInputs.append(text)
-        }
+        return text
+    }
+}
+
+private func parseBatchRequest(_ json: [String: Any]) throws -> BatchRequest {
+    if json["command_template"] != nil {
+        throw CommandError.badRequest(
+            "ambiguous batch request: items cannot be combined with command_template"
+        )
+    }
+    guard let template = json["command"] as? String, !template.isEmpty else {
+        throw CommandError.badRequest("command is required")
+    }
+    guard let rawItems = json["items"] as? [Any] else {
+        throw CommandError.badRequest("items must be an array")
+    }
+    guard !rawItems.isEmpty else {
+        throw CommandError.badRequest("items must not be empty")
+    }
+    guard rawItems.count <= batchItemLimit else {
+        throw CommandError.badRequest(
+            "items must contain at most \(batchItemLimit) item(s)"
+        )
     }
 
+    let rawInputs = try claudeInputTemplates(from: json)
+    var itemVariables: [[String: String]] = []
+    itemVariables.reserveCapacity(rawItems.count)
+    for rawItem in rawItems {
+        guard let item = rawItem as? [String: Any] else {
+            throw CommandError.badRequest("items must contain objects")
+        }
+        guard let rawVariables = item["variables"] else {
+            throw CommandError.badRequest("items[].variables is required")
+        }
+        guard let variablesObject = rawVariables as? [String: Any] else {
+            throw CommandError.badRequest("items[].variables must be an object of strings")
+        }
+        let variables = try stringVariables(from: variablesObject) { _ in
+            "items[].variables must be an object of strings"
+        }
+        itemVariables.append(variables)
+    }
+    return BatchRequest(
+        commandTemplate: template,
+        claudeInputTemplates: rawInputs,
+        itemVariables: itemVariables
+    )
+}
+
+/// Resolves one item after its request-shape parsing has finished. Both the legacy request and the
+/// batch request call this function so app-provided variables, sanitization, command rendering,
+/// and Claude-input rejection cannot drift into two validation pipelines.
+private func resolveRequestItem(
+    commandTemplate: String,
+    claudeInputTemplates: [String],
+    variables: [String: String],
+    baseDirectory: String,
+    templateWireKey: String
+) throws -> ResolvedRequest {
     let appVariables = try appProvidedVariables(
-        usedIn: [template] + rawInputs, variables: variables, baseDirectory: baseDirectory
+        usedIn: [commandTemplate] + claudeInputTemplates,
+        variables: variables,
+        baseDirectory: baseDirectory
     )
     let command = try renderCommand(
-        template: template, variables: variables, appVariables: appVariables
+        template: commandTemplate, variables: variables, appVariables: appVariables
     )
-    try rejectNUL(in: command, what: "command_template")
+    try rejectNUL(in: command, what: templateWireKey)
 
     var claudeInputs: [String] = []
-    for text in rawInputs {
+    for text in claudeInputTemplates {
         let renderedSource = try renderCommand(
             template: text, variables: variables, appVariables: appVariables
         )
@@ -140,14 +230,120 @@ public func errorMessage(_ error: Error) -> String {
     String(describing: error) // when the error conforms to CustomStringConvertible this is its description verbatim
 }
 
+/// The optional item position is `nil` for legacy requests and non-`nil` for batch entries.
+public struct BatchItemPosition {
+    public let index: Int
+    public let total: Int
+}
+
+/// Handles a request: resolve → run → a success/failure response JSON. The batch-position overload is
+/// what HostServer uses so each item can be labeled without request re-parsing.
+///
+/// `notLaunched` fires once per item when the batch is rejected during content validation — the
+/// failing items with their own reason, the valid ones with the shared rejection notice. It exists
+/// so the per-item observability contract (one timeline per item) holds on the one path where
+/// `run` is never reached; a deadline-cut item does not need it because its cut happens inside `run`.
+public func handleRequest(
+    json: [String: Any], baseDirectory: String = "",
+    run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
+    notLaunched: ((BatchItemPosition, String) -> Void)? = nil,
+    message: (Error) -> String = errorMessage
+) -> [String: Any] {
+    if json["items"] != nil {
+        return handleBatchRequest(
+            json: json,
+            baseDirectory: baseDirectory,
+            run: run,
+            notLaunched: notLaunched,
+            message: message
+        )
+    }
+    do {
+        try run(try resolveRequest(json, baseDirectory: baseDirectory), nil)
+        return ["success": true]
+    } catch {
+        return ["success": false, "error": message(error)]
+    }
+}
+
 /// Handles a request: resolve → run → a success/failure response JSON. The run function is injected, which is what makes this testable.
 public func handleRequest(
     json: [String: Any], baseDirectory: String = "", run: (ResolvedRequest) throws -> Void,
     message: (Error) -> String = errorMessage
 ) -> [String: Any] {
+    return handleRequest(
+        json: json, baseDirectory: baseDirectory,
+        run: { resolved, _ in try run(resolved) }, message: message
+    )
+}
+
+private func handleBatchRequest(
+    json: [String: Any],
+    baseDirectory: String,
+    run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
+    notLaunched: ((BatchItemPosition, String) -> Void)?,
+    message: (Error) -> String
+) -> [String: Any] {
     do {
-        try run(try resolveRequest(json, baseDirectory: baseDirectory))
-        return ["success": true]
+        let batch = try parseBatchRequest(json)
+        var resolvedItems = Array<ResolvedRequest?>(
+            repeating: nil, count: batch.itemVariables.count
+        )
+        var validationErrors = Array<String?>(repeating: nil, count: batch.itemVariables.count)
+
+        for index in batch.itemVariables.indices {
+            do {
+                resolvedItems[index] = try resolveRequestItem(
+                    commandTemplate: batch.commandTemplate,
+                    claudeInputTemplates: batch.claudeInputTemplates,
+                    variables: batch.itemVariables[index],
+                    baseDirectory: baseDirectory,
+                    templateWireKey: "command"
+                )
+            } catch {
+                validationErrors[index] = message(error)
+            }
+        }
+
+        if let firstValidationError = validationErrors.compactMap({ $0 }).first {
+            var results: [[String: Any]] = []
+            results.reserveCapacity(validationErrors.count)
+            for index in validationErrors.indices {
+                let reason = validationErrors[index] ?? batchValidationNotLaunched
+                notLaunched?(
+                    BatchItemPosition(index: index + 1, total: validationErrors.count), reason
+                )
+                results.append(["success": false, "error": reason])
+            }
+            return [
+                "success": false,
+                "error": firstValidationError,
+                "items": results,
+            ]
+        }
+
+        var results: [[String: Any]] = []
+        results.reserveCapacity(resolvedItems.count)
+        var failedCount = 0
+        for index in resolvedItems.indices {
+            let resolved = resolvedItems[index]
+            let position = BatchItemPosition(index: index + 1, total: resolvedItems.count)
+            do {
+                try run(resolved!, position)
+                results.append(["success": true])
+            } catch {
+                failedCount += 1
+                results.append(["success": false, "error": message(error)])
+            }
+        }
+        if failedCount == 0 {
+            return ["success": true, "items": results]
+        }
+        return [
+            "success": false,
+            "error": "\(failedCount) of \(results.count) items failed",
+            "items": results,
+        ]
     } catch {
         return ["success": false, "error": message(error)]
     }
