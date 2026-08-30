@@ -290,11 +290,15 @@ test('each page type has its own storage key', () => {
 // verdict. An icon click never goes through the content script, so if the two diverge, a path that
 // isn't a repository reads as one and a command runs against the wrong name.
 
-test('pageTypeOf: PR, issue, repository', () => {
+test('pageTypeOf: PR, issue, repository, and list pages', () => {
   assert.equal(pageTypeOf('/dazebug/terminal-checkout/pull/14'), 'pr');
   assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues/3'), 'issue');
   assert.equal(pageTypeOf('/dazebug/terminal-checkout'), 'repo');
-  assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues'), 'repo');   // the list is a repository tab
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/pulls'), 'pr-list');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/pulls/'), 'pr-list');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues'), 'issue-list');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/issues/'), 'issue-list');
+  assert.equal(pageTypeOf('/dazebug/terminal-checkout/pulls/extra'), 'repo'); // a subpath is not the list
   assert.equal(pageTypeOf('/dazebug/terminal-checkout/tree/feat/x'), 'repo');
 });
 
@@ -683,6 +687,10 @@ test('pageTargetOf: what a request is built from, read off one pathname', () => 
     { kind: 'pr', owner: 'dazebug', repo: 'terminal-checkout', number: '14' });
   assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout/issues/3'),
     { kind: 'issue', owner: 'dazebug', repo: 'terminal-checkout', number: '3' });
+  assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout/pulls/'),
+    { kind: 'pr-list', owner: 'dazebug', repo: 'terminal-checkout', number: null });
+  assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout/issues'),
+    { kind: 'issue-list', owner: 'dazebug', repo: 'terminal-checkout', number: null });
   assert.deepEqual(pageTargetOf('/dazebug/terminal-checkout'),
     { kind: 'repo', owner: 'dazebug', repo: 'terminal-checkout', number: null });
   assert.equal(pageTargetOf('/settings/profile'), null);
@@ -699,8 +707,12 @@ test('sameTarget: a navigation between two PRs is not the same target', () => {
   assert.equal(sameTarget(one, pageTargetOf('/other/r/pull/1')), false);
   assert.equal(sameTarget(one, null), false);
   assert.equal(sameTarget(null, null), false, 'no target is not a match, it is an absence');
-  // Moving between tabs of one repository keeps the target, so the drawn buttons stay valid
-  assert.equal(sameTarget(pageTargetOf('/o/r/issues'), pageTargetOf('/o/r/pulls')), true);
+  // A list kind is its own target: it must not be treated as a PR detail or as the other list
+  const prList = pageTargetOf('/o/r/pulls');
+  const issueList = pageTargetOf('/o/r/issues/');
+  assert.equal(sameTarget(prList, pageTargetOf('/o/r/pull/1')), false);
+  assert.equal(sameTarget(prList, issueList), false);
+  assert.equal(sameTarget(prList, pageTargetOf('/o/r/pulls/')), true);
 });
 
 test('storedItemBytes: an item is its key plus the UTF-8 bytes of its JSON', () => {

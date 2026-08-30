@@ -384,8 +384,8 @@ function onUrlChange() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
   const target = pageTargetOfUrl(location.href);
-  // Only when the *target* changed. Moving between a repository's tabs (/issues → /pulls) leaves the
-  // buttons meaning exactly what they meant, and redrawing there would flicker for nothing.
+  // Only when the *target* changed. Reclassification makes moving between the two lists change the
+  // target and redraw the buttons; query-only pagination or filtering within one list keeps it stable.
   if (!sameTarget(target, lastTarget)) removeInsertedButtons();
   lastTarget = target;
   // On a URL change, wait a moment before trying to insert the buttons

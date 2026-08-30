@@ -219,6 +219,10 @@ const REPO_TABS = 'tree|blob|issues|actions|settings|releases|tags|wiki|security
 function pageTypeOf(pathname) {
   const [, owner, repo] = pathname.split('/');
   if (!owner || !repo || RESERVED_OWNERS.has(owner)) return null;
+  // These are exact repository list pages. Keep the slash optional, but do not let a nested path
+  // such as `/pulls/extra` borrow the list kind.
+  if (/^\/[^/]+\/[^/]+\/pulls\/?$/.test(pathname)) return 'pr-list';
+  if (/^\/[^/]+\/[^/]+\/issues\/?$/.test(pathname)) return 'issue-list';
   if (/\/issues\/\d+/.test(pathname)) return 'issue';
   if (/\/pull\/\d+/.test(pathname)) return 'pr';
   if (/^\/[^/]+\/[^/]+\/?$/.test(pathname)) return 'repo';

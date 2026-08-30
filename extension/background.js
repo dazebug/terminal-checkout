@@ -383,6 +383,12 @@ async function isRepoPage(tab, owner, repo) {
 const RUN_BY_KIND = { pr: executeCommand, issue: executeIssueCommand, repo: executeRepoCommand };
 const ACTION_KIND = { execute_command: 'pr', execute_issue_command: 'issue', execute_repo_command: 'repo' };
 
+// List pages have no DOM selection in the icon path. Preserve the old repository-button behavior
+// by routing those kinds to the existing repo runner; list batch actions start only in content.js.
+function iconRunKind(kind) {
+  return kind === 'pr-list' || kind === 'issue-list' ? 'repo' : kind;
+}
+
 // Extension icon click handler → run the first button for this page (repository buttons when it is
 // neither a PR nor an issue)
 chrome.action.onClicked.addListener(async (tab) => {
@@ -400,7 +406,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     // take the same final gate. It is not a source: every value still comes from the tab and its
     // DOM. (Whether the icon ought to run the button the user can *see* is a separate question,
     // still open — this is only about the tab moving underneath the one it does run.)
-    await RUN_BY_KIND[target.kind](tab, 0, undefined, target);
+    await RUN_BY_KIND[iconRunKind(target.kind)](tab, 0, undefined, target);
   } catch (error) {
     console.error('Error executing command:', error); // an icon click has no button to show the failure on
   }
