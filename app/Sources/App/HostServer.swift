@@ -261,7 +261,17 @@ final class HostServer {
                             )
                         }
                     }
-                    }, message: localizedErrorMessage
+                    },
+                    notLaunched: { position, reason in
+                        // A content-rejected batch never reaches `run`, so the per-item timeline
+                        // contract is honored here: one labeled timeline whose only stage is the
+                        // same reason the item's response carries.
+                        let timeline = self.timelineFactory(
+                            requestArrival, "item \(position.index)/\(position.total)"
+                        )
+                        timeline.step(reason)
+                    },
+                    message: localizedErrorMessage
                 )
             }
             let payload = (try? JSONSerialization.data(withJSONObject: response))

@@ -739,6 +739,97 @@ final class HostProtocolTests: XCTestCase {
         )
     }
 
+    /// A batch rejected during content validation still emits one labeled timeline per item —
+    /// the per-item observability contract does not depend on whether anything launched.
+    func testServeWritesOneTimelinePerContentRejectedBatchItem() throws {
+        let request: [String: Any] = [
+            "command": "echo {repo}",
+            "items": [
+                ["variables": ["repo": "one"]],
+                ["variables": [:]],
+            ],
+        ]
+        let expected = handleRequest(json: request) { _ in }
+        let expectedBytes = try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys])
+
+        let directory = "/tmp/tc-batch-protocol-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let launchesLock = NSLock()
+        var launches = 0
+        var linesByItem: [String: [String]] = [:]
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                launchesLock.lock()
+                launches += 1
+                launchesLock.unlock()
+                return .none
+            },
+            timelineFactory: { _, label in
+                let itemLabel = label ?? "legacy"
+                launchesLock.lock()
+                linesByItem[itemLabel] = []
+                launchesLock.unlock()
+                return DeliveryTimeline(
+                    emit: { message in
+                        launchesLock.lock()
+                        linesByItem[itemLabel, default: []].append(message)
+                        launchesLock.unlock()
+                    },
+                    label: label
+                )
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let deadline = Date().addingTimeInterval(10)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let actual = try XCTUnwrap(relay.answer)
+        let actualBytes = try JSONSerialization.data(withJSONObject: actual, options: [.sortedKeys])
+        XCTAssertEqual(
+            actualBytes, expectedBytes,
+            "the validation-rejection response must stay byte-identical to Core's handleRequest output"
+        )
+
+        launchesLock.lock()
+        let observedLaunches = launches
+        let firstItemLines = linesByItem["item 1/2"] ?? []
+        let secondItemLines = linesByItem["item 2/2"] ?? []
+        launchesLock.unlock()
+        XCTAssertEqual(observedLaunches, 0, "a batch with a content failure launches nothing")
+        XCTAssertEqual(firstItemLines.count, 1, "the valid item records why the batch never launched it")
+        XCTAssertTrue(
+            firstItemLines.first?.hasPrefix(
+                "[item 1/2] not launched — batch rejected during validation"
+            ) == true,
+            "the valid item's stage carries its label and the shared rejection notice"
+        )
+        XCTAssertEqual(secondItemLines.count, 1, "the failing item records its own rejection")
+        XCTAssertTrue(
+            secondItemLines.allSatisfy { $0.hasPrefix("[item 2/2] ") },
+            "the failing item's timeline stage must carry its own label"
+        )
+        XCTAssertTrue(
+            secondItemLines.first?.contains("repo") == true,
+            "the failing item's stage names the missing variable, mirroring its response error"
+        )
+    }
+
     /// The second item keeps the request-arrival stopwatch, so the first item's launch time remains in its total.
     func testServeSecondItemTimelineTotalIncludesFirstLaunchTime() throws {
         let request: [String: Any] = [

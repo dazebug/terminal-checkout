@@ -238,15 +238,23 @@ public struct BatchItemPosition {
 
 /// Handles a request: resolve → run → a success/failure response JSON. The batch-position overload is
 /// what HostServer uses so each item can be labeled without request re-parsing.
+///
+/// `notLaunched` fires once per item when the batch is rejected during content validation — the
+/// failing items with their own reason, the valid ones with the shared rejection notice. It exists
+/// so the per-item observability contract (one timeline per item) holds on the one path where
+/// `run` is never reached; a deadline-cut item does not need it because its cut happens inside `run`.
 public func handleRequest(
     json: [String: Any], baseDirectory: String = "",
-    run: (ResolvedRequest, BatchItemPosition?) throws -> Void, message: (Error) -> String = errorMessage
+    run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
+    notLaunched: ((BatchItemPosition, String) -> Void)? = nil,
+    message: (Error) -> String = errorMessage
 ) -> [String: Any] {
     if json["items"] != nil {
         return handleBatchRequest(
             json: json,
             baseDirectory: baseDirectory,
             run: run,
+            notLaunched: notLaunched,
             message: message
         )
     }
@@ -273,6 +281,7 @@ private func handleBatchRequest(
     json: [String: Any],
     baseDirectory: String,
     run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
+    notLaunched: ((BatchItemPosition, String) -> Void)?,
     message: (Error) -> String
 ) -> [String: Any] {
     do {
@@ -297,11 +306,14 @@ private func handleBatchRequest(
         }
 
         if let firstValidationError = validationErrors.compactMap({ $0 }).first {
-            let results: [[String: Any]] = validationErrors.map { error in
-                if let error {
-                    return ["success": false, "error": error]
-                }
-                return ["success": false, "error": batchValidationNotLaunched]
+            var results: [[String: Any]] = []
+            results.reserveCapacity(validationErrors.count)
+            for index in validationErrors.indices {
+                let reason = validationErrors[index] ?? batchValidationNotLaunched
+                notLaunched?(
+                    BatchItemPosition(index: index + 1, total: validationErrors.count), reason
+                )
+                results.append(["success": false, "error": reason])
             }
             return [
                 "success": false,
