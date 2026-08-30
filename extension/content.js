@@ -94,6 +94,23 @@ async function runButtonCommand(action, index, config) {
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
+// Send a list selection as a comparison snapshot. The worker reads the current document again and
+// builds every item from that read; this side never turns the snapshot's repo or number into a
+// command source. A normal app-level failure is returned as structured data so the later result UI
+// can show its overall and per-item verdicts without confusing it with transport failure.
+async function runListBatchCommand(index, config) {
+  const target = pageTargetOfUrl(location.href);
+  const expectedKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
+  const selected = readSelectedListRows(document, expectedKind);
+  const response = await chrome.runtime.sendMessage(
+    buildListBatchMessage(index, buttonFingerprint(config), target, selected),
+  );
+  const outcome = interpretListBatchResponse(response);
+  if (!outcome.transportSuccess) throw new Error(outcome.error);
+  if (outcome.appSuccess === null) throw new Error(outcome.error);
+  return outcome;
+}
+
 // Button configs per page type (BUTTON_KINDS in defaults.js is the single source of truth for the
 // storage keys).
 //
@@ -127,6 +144,7 @@ async function loadButtonConfigs(kind) {
 // semantic rows first, the stable Primer Box-row token second, and no hashed class name.
 const LIST_ROW_SELECTOR = '[role="row"], [role="listitem"], li, div[class~="Box-row"]';
 const OWNED_LIST_CHECKBOX_CLASS = 'terminal-list-checkbox';
+const LIST_ROW_ANCHOR_PATTERN = /^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/;
 const nativeListCheckboxVisibility = new WeakMap();
 let listSelectionState = null;
 
@@ -159,17 +177,34 @@ function ownedCheckboxIn(row) {
   return row.querySelector(`.${OWNED_LIST_CHECKBOX_CLASS}`);
 }
 
+function listRowBelongsToTarget(href, expectedTarget) {
+  if (!expectedTarget || typeof expectedTarget.owner !== 'string' || typeof expectedTarget.repo !== 'string') {
+    return false;
+  }
+  let parsed;
+  try {
+    parsed = new URL(href, GITHUB_ORIGIN);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== GITHUB_ORIGIN) return false;
+  const match = parsed.pathname.match(LIST_ROW_ANCHOR_PATTERN);
+  return !!match && match[1] === expectedTarget.owner && match[2] === expectedTarget.repo;
+}
+
 // DOM reading is deliberately separate from parseListRowAnchor and the selection contracts in
 // defaults.js. The pure functions stay testable without pretending a jsdom fixture proves which
 // GitHub surface is live today.
-function readListRows(root = document, expectedKind) {
+function readListRows(root = document, expectedKind, expectedTarget = pageTargetOfUrl(location.href)) {
   const anchors = [];
   if (root.matches?.('a[href]')) anchors.push(root);
   if (root.querySelectorAll) anchors.push(...root.querySelectorAll('a[href]'));
 
   const rowsByKey = new Map();
   for (const anchor of anchors) {
-    const parsed = parseListRowAnchor(anchor.getAttribute('href') ?? anchor.href, anchor.textContent);
+    const href = anchor.getAttribute('href') ?? anchor.href;
+    if (!listRowBelongsToTarget(href, expectedTarget)) continue;
+    const parsed = parseListRowAnchor(href, anchor.textContent, expectedTarget);
     if (!parsed || (expectedKind && parsed.kind !== expectedKind)) continue;
 
     const element = listRowElementFor(anchor);
@@ -218,7 +253,8 @@ function rowsWithListChecks(rows, mode) {
 }
 
 function readListSelection(root = document, expectedKind) {
-  const rows = readListRows(root, expectedKind);
+  const target = pageTargetOfUrl(location.href);
+  const rows = readListRows(root, expectedKind, target);
   const mode = listCheckboxMode(rows);
   const selected = selectedListRows(rowsWithListChecks(rows, mode));
   return { rows, mode, selected, status: listSelectionStatus(selected) };
@@ -338,7 +374,8 @@ function resetListSelectionState() {
 
 function tryInsertListSelection(kind) {
   const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
-  const rows = readListRows(document, expectedKind);
+  const target = pageTargetOfUrl(location.href);
+  const rows = readListRows(document, expectedKind, target);
   if (rows.length === 0) {
     resetListSelectionState();
     return false;
@@ -647,7 +684,7 @@ const observer = new MutationObserver((mutations) => {
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
             node.querySelector?.('.AppHeader-context-full') ||
-            (listKind && readListRows(node, listKind).length > 0)) {
+            (listKind && readListRows(node, listKind, target).length > 0)) {
           tryInsertButton();
           return;
         }

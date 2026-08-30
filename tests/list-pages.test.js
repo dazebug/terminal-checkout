@@ -16,6 +16,12 @@ const {
   carryListRowChecks,
   selectedListRows,
   listSelectionStatus,
+  validateListBatchSelection,
+  buildListBatchItems,
+  buildListBatchRequest,
+  sameListSelectionKeys,
+  buildListBatchMessage,
+  interpretListBatchResponse,
 } = vm.runInThisContext(`({
   parseListRowAnchor,
   listCheckboxMode,
@@ -23,6 +29,12 @@ const {
   carryListRowChecks,
   selectedListRows,
   listSelectionStatus,
+  validateListBatchSelection,
+  buildListBatchItems,
+  buildListBatchRequest,
+  sameListSelectionKeys,
+  buildListBatchMessage,
+  interpretListBatchResponse,
 })`);
 
 test('parseListRowAnchor: normal and fork paths produce a stable row key and title', () => {
@@ -89,4 +101,152 @@ test('selectedListRows and listSelectionStatus expose zero and cap failures with
     listSelectionStatus(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
     { count: 9, valid: false, error: 'too-many' },
   );
+});
+
+test('validateListBatchSelection rejects malformed, empty, and over-cap snapshots', () => {
+  assert.deepEqual(validateListBatchSelection('not an array'), { valid: false, error: 'not-array' });
+  assert.deepEqual(validateListBatchSelection([]), { valid: false, error: 'empty' });
+  assert.deepEqual(
+    validateListBatchSelection(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
+    { valid: false, error: 'too-many' },
+  );
+  assert.deepEqual(
+    validateListBatchSelection([{ key: 7, title: 'seven' }]),
+    { valid: false, error: 'invalid-row' },
+  );
+  assert.deepEqual(
+    validateListBatchSelection([{ key: 'owner/repo/pr/7', title: 'Fix it' }]),
+    { valid: true, error: null },
+  );
+});
+
+test('buildListBatchItems maps re-read rows in document order using target repo and list kind', () => {
+  assert.deepEqual(
+    buildListBatchItems(
+      { kind: 'pr-list', owner: 'owner', repo: 'repo' },
+      [
+        { key: 'owner/repo/pr/19', title: 'second in the document' },
+        { key: 'owner/repo/pr/7', title: 'first in the document' },
+      ],
+    ),
+    [
+      { variables: { repo: 'repo', pr: '19' } },
+      { variables: { repo: 'repo', pr: '7' } },
+    ],
+  );
+  assert.deepEqual(
+    buildListBatchItems(
+      { kind: 'issue-list', owner: 'owner', repo: 'repo' },
+      [{ key: 'owner/repo/issue/3', title: 'triage' }],
+    ),
+    [{ variables: { repo: 'repo', issue: '3' } }],
+  );
+});
+
+test('buildListBatchRequest uses the batch command key and conditionally carries claude inputs', () => {
+  const request = buildListBatchRequest(
+    { command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] },
+    [{ variables: { repo: 'repo', issue: '3' } }],
+  );
+  assert.deepEqual(request, {
+    command: '{cd} && claude',
+    claude_inputs: ['!gh issue view {issue} --comments'],
+    items: [{ variables: { repo: 'repo', issue: '3' } }],
+  });
+  assert.equal(Object.hasOwn(request, 'command_template'), false);
+  assert.deepEqual(
+    buildListBatchRequest({ command: 'echo {pr}' }, [{ variables: { repo: 'repo', pr: '7' } }]),
+    { command: 'echo {pr}', items: [{ variables: { repo: 'repo', pr: '7' } }] },
+  );
+});
+
+test('sameListSelectionKeys rejects a changed key set while ignoring document order', () => {
+  assert.equal(
+    sameListSelectionKeys(
+      [{ key: 'owner/repo/pr/7', title: '7' }, { key: 'owner/repo/pr/8', title: '8' }],
+      [{ key: 'owner/repo/pr/8', title: '8 now' }, { key: 'owner/repo/pr/7', title: '7 now' }],
+    ),
+    true,
+  );
+  assert.equal(
+    sameListSelectionKeys(
+      [{ key: 'owner/repo/pr/7', title: '7' }],
+      [{ key: 'owner/repo/pr/9', title: '9' }],
+    ),
+    false,
+  );
+});
+
+test('buildListBatchMessage carries snapshot comparison data and the clicked button identity', () => {
+  const target = { kind: 'issue-list', owner: 'owner', repo: 'repo', number: null };
+  const selected = [{ key: 'owner/repo/issue/3', title: 'triage' }];
+  assert.deepEqual(
+    buildListBatchMessage(1, 'fingerprint', target, selected),
+    {
+      action: 'execute_list_batch',
+      buttonIndex: 1,
+      shown: 'fingerprint',
+      target,
+      selected,
+    },
+  );
+});
+
+test('interpretListBatchResponse preserves transport and app failure layers with per-item results', () => {
+  const outcome = interpretListBatchResponse({
+    success: true,
+    batch: {
+      success: false,
+      error: 'one item failed validation',
+      items: [
+        { success: false, error: 'Unknown variable: {pr}' },
+        { success: false, error: 'not launched — batch rejected during validation' },
+      ],
+    },
+  });
+  assert.deepEqual(outcome, {
+    transportSuccess: true,
+    appSuccess: false,
+    error: 'one item failed validation',
+    items: [
+      { success: false, error: 'Unknown variable: {pr}' },
+      { success: false, error: 'not launched — batch rejected during validation' },
+    ],
+  });
+  assert.equal(interpretListBatchResponse({ success: false, error: 'page changed' }).transportSuccess, false);
+});
+
+test('parseListRowAnchor: a different repository is excluded before row collection', () => {
+  const expected = { owner: 'owner', repo: 'repo' };
+  assert.equal(parseListRowAnchor('/other/repo/pull/99', 'Other repository PR', expected), null);
+  assert.ok(parseListRowAnchor('/owner/repo/pull/99', 'This repository PR', expected));
+});
+
+test('buildListBatchItems: a different repository cannot be remapped into the target repo', () => {
+  assert.equal(
+    buildListBatchItems(
+      { kind: 'pr-list', owner: 'owner', repo: 'repo' },
+      [{ key: 'other/repo/pr/99', title: 'Other repository PR' }],
+    ),
+    null,
+  );
+});
+
+test('list row readers keep their structural literals and repository filter in sync', () => {
+  const content = readExtension('content.js');
+  const background = readExtension('background.js');
+  const literals = {
+    rowSelector: '[role="row"], [role="listitem"], li, div[class~="Box-row"]',
+    ownedClass: 'terminal-list-checkbox',
+    anchorPattern: String.raw`/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/`,
+  };
+
+  for (const [name, literal] of Object.entries(literals)) {
+    assert.equal(content.split(literal).length - 1, 1, `content ${name} literal drifted`);
+    assert.equal(background.split(literal).length - 1, 1, `background ${name} literal drifted`);
+  }
+  assert.match(content, /expectedTarget\.owner/);
+  assert.match(content, /expectedTarget\.repo/);
+  assert.match(background, /expected\.owner/);
+  assert.match(background, /expected\.repo/);
 });

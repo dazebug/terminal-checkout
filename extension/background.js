@@ -172,6 +172,8 @@ async function loadButtons(kind) {
 // same trigger, since displaying it would mean sending an id from this worker, which has no render
 // locale, rather than a sentence.
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
+const LIST_SELECTION_CHANGED_ERROR =
+  'The selected list rows changed while this was running — reload and try again.';
 
 // Internal coherence: the values a single read produced describe one page. This is what the final
 // gate below cannot answer — that the number and the branch belong together — so the two are not
@@ -213,6 +215,91 @@ async function assertRequestIsCoherent(tab, { clicked, source }) {
   if (!requestIsCoherent({ clicked, source, current })) throw new Error(PAGE_CHANGED_ERROR);
 }
 
+// The worker's second read must be self-contained: chrome.scripting serializes only this function
+// into the tab, not defaults.js or any helper from this worker. It mirrors the content selector and
+// the all-or-none control rule, then returns only the current selected keys/titles and href.
+function readListSelectionFromPage(expected) {
+  const rowSelector = '[role="row"], [role="listitem"], li, div[class~="Box-row"]';
+  const ownedClass = 'terminal-list-checkbox';
+  const origin = 'https://github.com';
+
+  function parseAnchor(href, text) {
+    if (typeof href !== 'string') return null;
+    let parsed;
+    try {
+      parsed = new URL(href, origin);
+    } catch {
+      return null;
+    }
+    if (parsed.origin !== origin) return null;
+    const match = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/);
+    if (!match) return null;
+    const [, owner, repo, pathKind, number] = match;
+    const kind = pathKind === 'pull' ? 'pr' : 'issue';
+    if (!expected || expected.kind !== kind || owner !== expected.owner || repo !== expected.repo) return null;
+    return {
+      key: `${owner}/${repo}/${kind}/${number}`,
+      kind,
+      number,
+      title: typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '',
+    };
+  }
+
+  function checkboxText(control) {
+    return [
+      control.getAttribute('aria-label'),
+      control.getAttribute('name'),
+      control.getAttribute('id'),
+      control.getAttribute('data-testid'),
+      control.getAttribute('title'),
+    ].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function isSelectAll(control) {
+    if (control.matches('[data-check-all], [data-select-all]')) return true;
+    return /\b(?:select|check)\s+all\b|\ball\s+(?:issues|pull requests|items)\b/.test(checkboxText(control));
+  }
+
+  function nativeCheckboxes(row) {
+    return [...row.querySelectorAll('input[type="checkbox"], [role="checkbox"]')]
+      .filter(control => !control.classList.contains(ownedClass))
+      .filter(control => !isSelectAll(control));
+  }
+
+  function readChecked(control) {
+    if (!control) return false;
+    if ('checked' in control) return control.checked === true;
+    return control.getAttribute('aria-checked') === 'true';
+  }
+
+  const rowsByKey = new Map();
+  for (const anchor of document.querySelectorAll('a[href]')) {
+    const parsed = parseAnchor(anchor.getAttribute('href') ?? anchor.href, anchor.textContent);
+    if (!parsed) continue;
+    const element = anchor.closest(rowSelector);
+    if (!element) continue;
+    const native = nativeCheckboxes(element);
+    const candidate = { ...parsed, element, native, owned: element.querySelector(`.${ownedClass}`) };
+    const current = rowsByKey.get(parsed.key);
+    if (!current || (native.length > 0 && current.native.length === 0) ||
+        parsed.title.length > current.title.length) {
+      rowsByKey.set(parsed.key, candidate);
+    }
+  }
+
+  const rows = [...rowsByKey.values()];
+  // In owned mode the native controls remain in the DOM but are hidden, so their presence alone is
+  // not enough to select them. The owned controls are the mode marker content.js installs for every
+  // row during a partial-coverage transition.
+  const nativeMode = rows.length > 0 && rows.every(row => row.native.length > 0 && !row.owned);
+  const selected = [];
+  for (const row of rows) {
+    const control = nativeMode ? row.native[0] : row.owned;
+    if (readChecked(control)) selected.push({ key: row.key, title: row.title });
+  }
+  return { href: location.href, selected };
+}
+
 // The button a click meant, or a refusal.
 //
 // This is a *second* read: the page did its own when it drew the button, and the settings can have
@@ -244,6 +331,30 @@ async function sendToNativeHost(message) {
   }
   console.log('Native host response:', response);
   const verdict = nativeOutcome(response);
+  if (verdict.failed) throw new Error(verdict.error);
+  return verdict.response;
+}
+
+// Unlike the single-command path, an app-level `{success:false, items:[...]}` is a normal batch
+// response. Only a missing or malformed native envelope is a transport failure at this boundary.
+function batchNativeOutcome(response) {
+  if (!response || typeof response !== 'object' || Array.isArray(response) ||
+      typeof response.success !== 'boolean') {
+    return { failed: true, error: 'native host returned no result' };
+  }
+  return { failed: false, response };
+}
+
+async function sendBatchToNativeHost(message) {
+  let response;
+  try {
+    response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message);
+  } catch (error) {
+    console.log('Native host error:', error);
+    throw error;
+  }
+  console.log('Native host response:', response);
+  const verdict = batchNativeOutcome(response);
   if (verdict.failed) throw new Error(verdict.error);
   return verdict.response;
 }
@@ -351,6 +462,60 @@ async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
   await runButton(button, { repo: target.repo, owner: target.owner, main }, { tab, clicked, source: target });
 }
 
+const LIST_BATCH_SELECTION_ERRORS = {
+  'not-array': 'List selection is not an array.',
+  empty: 'List selection is empty.',
+  'too-many': `List selection exceeds the ${MAX_BATCH_ITEMS}-item limit.`,
+  'invalid-row': 'List selection contains an invalid row.',
+};
+const LIST_BUTTON_VARIABLE_ERROR = 'List button uses a variable unavailable on this page.';
+
+function listBatchSelectionError(verdict) {
+  return LIST_BATCH_SELECTION_ERRORS[verdict.error] || 'List selection is invalid.';
+}
+
+async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
+  const target = parseGitHubUrl(tab?.url);
+  if (target?.kind !== 'pr-list' && target?.kind !== 'issue-list') {
+    throw new Error('Not a GitHub list page');
+  }
+
+  const snapshotVerdict = validateListBatchSelection(selected);
+  if (!snapshotVerdict.valid) throw new Error(listBatchSelectionError(snapshotVerdict));
+
+  const button = await clickedButton(target.kind, buttonIndex, shown);
+  if (!buttonUsesAllowedVariables(target.kind, button)) {
+    throw new Error(LIST_BUTTON_VARIABLE_ERROR);
+  }
+
+  const expectedKind = target.kind === 'pr-list' ? 'pr' : 'issue';
+  let current;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: readListSelectionFromPage,
+      args: [{ kind: expectedKind, owner: target.owner, repo: target.repo }],
+    });
+    current = results[0]?.result;
+  } catch {
+    throw new Error(PAGE_CHANGED_ERROR);
+  }
+
+  assertSamePage(clicked, current?.href);
+  const currentVerdict = validateListBatchSelection(current?.selected);
+  if (!currentVerdict.valid || !sameListSelectionKeys(selected, current.selected)) {
+    throw new Error(LIST_SELECTION_CHANGED_ERROR);
+  }
+
+  const items = buildListBatchItems(target, current.selected);
+  if (!items) throw new Error(LIST_SELECTION_CHANGED_ERROR);
+  const message = buildListBatchRequest(button, items);
+
+  // The final page check is deliberately the last await before the native hand-off.
+  await assertRequestIsCoherent(tab, { clicked, source: target });
+  return sendBatchToNativeHost(message);
+}
+
 // Check whether this page really rendered as a repository. Only pages GitHub drew as a repository
 // have the repository name link in the header (a lock icon if it is private); 404s and non-
 // repository paths don't (measured). The path pattern and the reserved word list alone can't tell
@@ -419,6 +584,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // an own property: an inherited member ("constructor", "toString") would otherwise pass the
   // truthiness check and fail as "not a function" one line later.
   if (typeof message?.action !== 'string') return;
+
+  if (message.action === LIST_BATCH_ACTION) {
+    if (!Number.isInteger(message.buttonIndex)) {
+      sendResponse({ success: false, error: 'Invalid list batch button index.' });
+      return;
+    }
+    if (typeof message.shown !== 'string') {
+      sendResponse({ success: false, error: 'Invalid list batch button fingerprint.' });
+      return;
+    }
+    if (!isPageTarget(message.target)) {
+      sendResponse({ success: false, error: 'Invalid list batch page target.' });
+      return;
+    }
+    const snapshotVerdict = validateListBatchSelection(message.selected);
+    if (!snapshotVerdict.valid) {
+      sendResponse({ success: false, error: listBatchSelectionError(snapshotVerdict) });
+      return;
+    }
+
+    executeListBatch(sender.tab, message.buttonIndex, message.shown, message.target, message.selected)
+      .then(batch => sendResponse({ success: true, batch }))
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
   const kind = Object.hasOwn(ACTION_KIND, message.action) ? ACTION_KIND[message.action] : null;
   if (!kind) return;
   // The index picks a button out of an array; anything that is not one is not a request we can serve

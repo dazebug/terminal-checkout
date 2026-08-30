@@ -282,6 +282,7 @@ const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
 const MAX_BATCH_ITEMS = 8;
+const LIST_BATCH_ACTION = 'execute_list_batch';
 
 // The button's display text. `face` is the current key; `emoji` is kept for values saved by older versions.
 function buttonFace(config) {
@@ -366,8 +367,9 @@ function pageTargetOfUrl(url) {
 
 // A list row's identity comes from GitHub's canonical detail link, never from its position in the
 // document. The same shape works for a repository's own links and links to a fork: the owner and
-// repository in the href identify the checkout target that `gh` will resolve.
-function parseListRowAnchor(href, text) {
+// repository in the href identify the checkout target that `gh` will resolve. When a page target is
+// supplied, the row must belong to that exact repository before it can enter the selection set.
+function parseListRowAnchor(href, text, expected) {
   if (typeof href !== 'string') return null;
 
   let parsed;
@@ -382,6 +384,11 @@ function parseListRowAnchor(href, text) {
   if (!match) return null;
 
   const [, owner, repo, pathKind, number] = match;
+  if (expected !== undefined &&
+      (typeof expected?.owner !== 'string' || typeof expected?.repo !== 'string' ||
+       owner !== expected.owner || repo !== expected.repo)) {
+    return null;
+  }
   const kind = pathKind === 'pull' ? 'pr' : 'issue';
   const rowTitle = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
   return {
@@ -436,6 +443,121 @@ function listSelectionStatus(selected, limit = MAX_BATCH_ITEMS) {
   if (count === 0) return { count, valid: false, error: 'empty' };
   if (count > limit) return { count, valid: false, error: 'too-many' };
   return { count, valid: true, error: null };
+}
+
+// A list click carries a snapshot only so the worker can tell whether the document changed while
+// the message was in flight. It is never a source for the request, so the boundary checks its shape
+// before the worker performs the live DOM read.
+function validateListBatchSelection(selection) {
+  if (!Array.isArray(selection)) return { valid: false, error: 'not-array' };
+  if (selection.length === 0) return { valid: false, error: 'empty' };
+  if (selection.length > MAX_BATCH_ITEMS) return { valid: false, error: 'too-many' };
+
+  const seen = new Set();
+  for (const row of selection) {
+    if (!row || typeof row !== 'object' || Array.isArray(row) ||
+        typeof row.key !== 'string' || !row.key || typeof row.title !== 'string' ||
+        seen.has(row.key)) {
+      return { valid: false, error: 'invalid-row' };
+    }
+    seen.add(row.key);
+  }
+  return { valid: true, error: null };
+}
+
+// The worker re-reads keys from the current document. Parsing the key is separate from parsing the
+// anchor so the item builder can use the document's order without trusting the snapshot's values.
+function parseListRowKey(key) {
+  if (typeof key !== 'string') return null;
+  const match = key.match(/^([^/]+)\/([^/]+)\/(pr|issue)\/(\d+)$/);
+  if (!match) return null;
+  const [, owner, repo, kind, number] = match;
+  return { owner, repo, kind, number };
+}
+
+function buildListBatchItems(target, selected) {
+  const kind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
+  if (!kind || typeof target.repo !== 'string' || !validateListBatchSelection(selected).valid) return null;
+
+  const items = [];
+  for (const row of selected) {
+    const parsed = parseListRowKey(row.key);
+    if (!parsed || parsed.kind !== kind || parsed.owner !== target.owner || parsed.repo !== target.repo) {
+      return null;
+    }
+    items.push({ variables: { repo: target.repo, [kind]: parsed.number } });
+  }
+  return items;
+}
+
+// The batch protocol's command lives at the top level. A single-command request uses
+// `command_template`; putting that key into a batch would make the app reject the otherwise-valid
+// items envelope before it could report per-item results.
+function buildListBatchRequest(button, items) {
+  const { command, claudeInputs } = executionPayload(button);
+  const request = { command, items };
+  if (claudeInputs.length) request.claude_inputs = claudeInputs;
+  return request;
+}
+
+// Titles are display data and can change without changing the identity of a selected row. The
+// worker therefore compares exact key sets, not array order or the snapshot's title strings.
+function sameListSelectionKeys(expected, actual) {
+  if (!Array.isArray(expected) || !Array.isArray(actual)) return false;
+  const expectedKeys = expected.map(row => row?.key);
+  const actualKeys = actual.map(row => row?.key);
+  if (expectedKeys.some(key => typeof key !== 'string') || actualKeys.some(key => typeof key !== 'string')) {
+    return false;
+  }
+  const expectedSet = new Set(expectedKeys);
+  const actualSet = new Set(actualKeys);
+  return expectedSet.size === expectedKeys.length &&
+    actualSet.size === actualKeys.length &&
+    expectedSet.size === actualSet.size &&
+    [...expectedSet].every(key => actualSet.has(key));
+}
+
+function buildListBatchMessage(buttonIndex, shown, target, selected) {
+  return {
+    action: LIST_BATCH_ACTION,
+    buttonIndex,
+    shown,
+    target,
+    selected,
+  };
+}
+
+// `success` exists at two boundaries: the worker's outer response says whether transport and
+// validation reached the app, while `batch.success` is the app's overall command verdict. An app
+// validation failure is normal data and must retain its ordered item failures for the result UI.
+function interpretListBatchResponse(response) {
+  if (!response || typeof response !== 'object' || Array.isArray(response) || response.success !== true) {
+    return {
+      transportSuccess: false,
+      appSuccess: null,
+      error: (response && typeof response.error === 'string' && response.error)
+        || 'native host returned no result',
+      items: [],
+    };
+  }
+
+  const batch = response.batch;
+  if (!batch || typeof batch !== 'object' || Array.isArray(batch) ||
+      typeof batch.success !== 'boolean' || !Array.isArray(batch.items)) {
+    return {
+      transportSuccess: true,
+      appSuccess: null,
+      error: 'native host returned no result',
+      items: [],
+    };
+  }
+
+  return {
+    transportSuccess: true,
+    appSuccess: batch.success,
+    error: typeof batch.error === 'string' ? batch.error : null,
+    items: batch.items,
+  };
 }
 
 // The last question asked before a command runs. Three answers, from three different moments, and
