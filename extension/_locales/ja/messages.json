@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "バッチ項目に失敗しました: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "バッチ項目は成功しました"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "不明なエラー"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "1行以上選択してください。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "$ARG1$行選択されています。$ARG2$行以下を選択してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "ja"
   },
@@ -335,6 +363,9 @@
   "ext_migration_v1_prefixDescribe": {
     "message": "このコマンドは移動のあとも続きます。ベースフォルダを設定していると、z が失敗したときの着地点はその下のリポジトリのフォルダか、新しく clone した場所になります — 受け入れる前に、残りのコマンドがそこで実行されても安全か確認してください。"
   },
+  "ext_migration_v2_describe": {
+    "message": "この世代では PR と Issue のリストページ用に別のボタンを追加し、既存のコマンドは書き換えません。"
+  },
   "ext_override_empty": {
     "message": "個別設定はまだありません。"
   },
@@ -346,6 +377,9 @@
   },
   "ext_preset_issue_startWork": {
     "message": "issue の作業を開始"
+  },
+  "ext_preset_issueList_triageClaude": {
+    "message": "issue をトリアージ"
   },
   "ext_preset_pr_checkout": {
     "message": "ブランチをチェックアウト"
@@ -361,6 +395,9 @@
   },
   "ext_preset_pr_worktreeClaude": {
     "message": "ワークツリー + Claude"
+  },
+  "ext_preset_prList_checkoutClaude": {
+    "message": "PR をチェックアウト + Claude"
   },
   "ext_preset_repo_open": {
     "message": "ターミナルで開く"
@@ -408,6 +445,23 @@
   "ext_section_issue_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> <code>{main}</code> — issue には PR のブランチがないため、<code>{branch}</code> 系と <code>{base}</code> は使えません。"
   },
+  "ext_section_issueList_claudeHelp": {
+    "message": "デフォルトのリストボタンは claude を起動し、<code>!gh issue view {issue} --comments</code> を claude のシェルモードに入力します。"
+  },
+  "ext_section_issueList_help": {
+    "message": "issue リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 issue を別のターミナルセッションで実行するコマンドを設定します。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_issueList_title": {
+    "message": "issueListButtons <span class=\"section-where\">— issue リストページ</span>"
+  },
+  "ext_section_issueList_variables": {
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{issue}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。"
+  },
   "ext_section_main_help": {
     "message": "<code>{main}</code> が決まる順序: リポジトリごとの個別設定 → ページから検出 → 下の既定値。検出は PR ページでは base ブランチを、リポジトリと issue のページではリポジトリの既定ブランチを読みます — 下の設定は検出に失敗したときの備えです。PR が実際にマージされるブランチを常に使うには <code>{base}</code> を使ってください。個別設定と既定値の両方を飛ばします。"
   },
@@ -444,6 +498,20 @@
   },
   "ext_section_pr_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリがリポジトリのベースフォルダ設定から埋めるので、どのページでも動きます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> <code>{branch}</code> <span class=\"faint\">(head — マージされるブランチ)</span> <code>{base}</code> <span class=\"faint\">(base — マージ先のブランチ)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">(ブランチの / を _ に置き換えたもの)</span>"
+  },
+  "ext_section_prList_help": {
+    "message": "PR リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 PR を別のターミナルセッションで実行するコマンドを設定します。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_prList_title": {
+    "message": "prListButtons <span class=\"section-where\">— PR リストページ</span>"
+  },
+  "ext_section_prList_variables": {
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{pr}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。ブランチをローカルで解決するには <code>gh pr checkout {pr}</code> を使います。"
   },
   "ext_section_repo_help": {
     "message": "リポジトリページ (コード、issue 一覧、Actions など) のヘッダーで、リポジトリ名の横に置かれるボタンです — 最大 $ARG1$ 個。PR・issue のボタンと違って GitHub の緑のアクションボタンのように見えるので、<b>$ARG3$</b> には絵文字より <code>$ARG2$</code> のような名前が向いています。PR でも issue でもない GitHub ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。",

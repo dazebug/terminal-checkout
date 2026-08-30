@@ -94,6 +94,23 @@ async function runButtonCommand(action, index, config) {
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
+// Send a list selection as a comparison snapshot. The worker reads the current document again and
+// builds every item from that read; this side never turns the snapshot's repo or number into a
+// command source. A normal app-level failure is returned as structured data so the later result UI
+// can show its overall and per-item verdicts without confusing it with transport failure.
+async function runListBatchCommand(index, config, selected = null) {
+  const target = pageTargetOfUrl(location.href);
+  const expectedKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
+  const snapshot = selected ?? readSelectedListRows(document, expectedKind);
+  const response = await chrome.runtime.sendMessage(
+    buildListBatchMessage(index, buttonFingerprint(config), target, snapshot),
+  );
+  const outcome = interpretListBatchResponse(response);
+  if (!outcome.transportSuccess) throw new Error(outcome.error);
+  if (outcome.appSuccess === null) throw new Error(outcome.error);
+  return outcome;
+}
+
 // Button configs per page type (BUTTON_KINDS in defaults.js is the single source of truth for the
 // storage keys).
 //
@@ -121,6 +138,447 @@ async function loadButtonConfigs(kind) {
     console.warn('Terminal Checkout: could not read your buttons, will retry —', error);
     return null;
   }
+}
+
+// GitHub list rows have changed their module class names over time. These are structural anchors:
+// semantic rows first, the stable Primer Box-row token second, and no hashed class name.
+const LIST_ROW_SELECTOR = '[role="row"], [role="listitem"], li, div[class~="Box-row"]';
+const OWNED_LIST_CHECKBOX_CLASS = 'terminal-list-checkbox';
+const LIST_ROW_ANCHOR_PATTERN = /^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/;
+const LIST_BUTTON_CLASS = 'terminal-list-btn';
+const LIST_RESULT_BADGE_CLASS = 'terminal-list-result-badge';
+const LIST_BUTTON_STYLE = `
+  background: transparent;
+  border: 1px solid rgba(87, 171, 90, 0.45);
+  cursor: pointer;
+  padding: 3px 8px;
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 2em;
+  color: #57ab5a;
+  font: 600 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+`;
+const nativeListCheckboxVisibility = new WeakMap();
+let listSelectionState = null;
+let listDocumentGeneration = 0;
+
+function listRowElementFor(anchor) {
+  return anchor.closest(LIST_ROW_SELECTOR);
+}
+
+function checkboxAttributeText(control) {
+  return [
+    control.getAttribute('aria-label'),
+    control.getAttribute('name'),
+    control.getAttribute('id'),
+    control.getAttribute('data-testid'),
+    control.getAttribute('title'),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function isSelectAllCheckbox(control) {
+  if (control.matches('[data-check-all], [data-select-all]')) return true;
+  return /\b(?:select|check)\s+all\b|\ball\s+(?:issues|pull requests|items)\b/.test(checkboxAttributeText(control));
+}
+
+function nativeCheckboxesIn(row) {
+  return [...row.querySelectorAll('input[type="checkbox"], [role="checkbox"]')]
+    .filter(control => !control.classList.contains(OWNED_LIST_CHECKBOX_CLASS))
+    .filter(control => !isSelectAllCheckbox(control));
+}
+
+function ownedCheckboxIn(row) {
+  return row.querySelector(`.${OWNED_LIST_CHECKBOX_CLASS}`);
+}
+
+function listRowBelongsToTarget(href, expectedTarget) {
+  if (!expectedTarget || typeof expectedTarget.owner !== 'string' || typeof expectedTarget.repo !== 'string') {
+    return false;
+  }
+  let parsed;
+  try {
+    parsed = new URL(href, GITHUB_ORIGIN);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== GITHUB_ORIGIN) return false;
+  const match = parsed.pathname.match(LIST_ROW_ANCHOR_PATTERN);
+  return !!match && match[1] === expectedTarget.owner && match[2] === expectedTarget.repo;
+}
+
+// DOM reading is deliberately separate from parseListRowAnchor and the selection contracts in
+// defaults.js. The pure functions stay testable without pretending a jsdom fixture proves which
+// GitHub surface is live today.
+function readListRows(root = document, expectedKind, expectedTarget = pageTargetOfUrl(location.href)) {
+  const anchors = [];
+  if (root.matches?.('a[href]')) anchors.push(root);
+  if (root.querySelectorAll) anchors.push(...root.querySelectorAll('a[href]'));
+
+  const rowsByKey = new Map();
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute('href') ?? anchor.href;
+    if (!listRowBelongsToTarget(href, expectedTarget)) continue;
+    const parsed = parseListRowAnchor(href, anchor.textContent, expectedTarget);
+    if (!parsed || (expectedKind && parsed.kind !== expectedKind)) continue;
+
+    const element = listRowElementFor(anchor);
+    if (!element) continue;
+    const nativeCheckboxes = nativeCheckboxesIn(element);
+    const candidate = {
+      ...parsed,
+      element,
+      anchor,
+      nativeCheckboxes,
+      native: nativeCheckboxes.length > 0,
+      ownedCheckbox: ownedCheckboxIn(element),
+    };
+    const current = rowsByKey.get(parsed.key);
+    // A row can expose the same canonical link more than once. Prefer the occurrence that gives us
+    // native coverage, then the one with the more useful title, while retaining one row per key.
+    if (!current || (candidate.native && !current.native) || candidate.title.length > current.title.length) {
+      rowsByKey.set(parsed.key, candidate);
+    }
+  }
+  return [...rowsByKey.values()];
+}
+
+function readCheckboxChecked(control) {
+  if (!control) return false;
+  if ('checked' in control) return control.checked === true;
+  return control.getAttribute('aria-checked') === 'true';
+}
+
+function setCheckboxChecked(control, checked) {
+  if (!control) return;
+  if ('checked' in control) {
+    control.checked = checked;
+  } else {
+    control.setAttribute('aria-checked', String(checked));
+  }
+}
+
+function listCheckboxForRow(row, mode) {
+  if (mode === 'native') return row.nativeCheckboxes?.[0] || null;
+  return row.ownedCheckbox || ownedCheckboxIn(row.element);
+}
+
+function rowsWithListChecks(rows, mode) {
+  return rows.map(row => ({ ...row, checked: readCheckboxChecked(listCheckboxForRow(row, mode)) }));
+}
+
+function readListSelection(root = document, expectedKind) {
+  const target = pageTargetOfUrl(location.href);
+  const rows = readListRows(root, expectedKind, target);
+  const mode = listCheckboxMode(rows);
+  const selected = selectedListRows(rowsWithListChecks(rows, mode));
+  return { rows, mode, selected, status: listSelectionStatus(selected) };
+}
+
+function readSelectedListRows(root = document, expectedKind) {
+  return readListSelection(root, expectedKind).selected;
+}
+
+function rememberNativeListCheckbox(control) {
+  if (!nativeListCheckboxVisibility.has(control)) {
+    nativeListCheckboxVisibility.set(control, {
+      hidden: control.hidden,
+      ariaHidden: control.getAttribute('aria-hidden'),
+    });
+  }
+  return nativeListCheckboxVisibility.get(control);
+}
+
+function setNativeListCheckboxVisible(control, visible) {
+  if (!control) return;
+  const original = rememberNativeListCheckbox(control);
+  if (visible) {
+    control.hidden = original.hidden;
+    if (original.ariaHidden === null) control.removeAttribute('aria-hidden');
+    else control.setAttribute('aria-hidden', original.ariaHidden);
+  } else {
+    control.hidden = true;
+    control.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function restoreNativeListCheckboxes(rows) {
+  for (const row of rows || []) {
+    for (const control of row.nativeCheckboxes || []) setNativeListCheckboxVisible(control, true);
+  }
+}
+
+function removeOwnedListCheckboxes(root = document) {
+  const checkboxes = [];
+  if (root.matches?.(`.${OWNED_LIST_CHECKBOX_CLASS}`)) checkboxes.push(root);
+  if (root.querySelectorAll) checkboxes.push(...root.querySelectorAll(`.${OWNED_LIST_CHECKBOX_CLASS}`));
+  for (const checkbox of checkboxes) checkbox.remove();
+}
+
+function sameListRows(previousRows, currentRows) {
+  if (!Array.isArray(previousRows) || previousRows.length !== currentRows.length) return false;
+  const previousByKey = new Map(previousRows.map(row => [row.key, row.element]));
+  return currentRows.every(row => previousByKey.get(row.key) === row.element);
+}
+
+function createOwnedListCheckbox(row, checked) {
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = OWNED_LIST_CHECKBOX_CLASS;
+  checkbox.checked = checked;
+  checkbox.dataset.listRowKey = row.key;
+  checkbox.title = row.title || row.number;
+  checkbox.setAttribute('aria-label', row.title || row.number);
+  checkbox.style.cssText = 'margin: 0 8px 0 0; vertical-align: middle;';
+  checkbox.addEventListener('click', event => event.stopPropagation());
+
+  const before = row.anchor === row.element.firstElementChild ? row.anchor : row.element.firstElementChild;
+  row.element.insertBefore(checkbox, before || null);
+  return checkbox;
+}
+
+function syncListSelectionControls(kind, rows, mode) {
+  const previous = listSelectionState;
+  const sameRows = previous?.kind === kind && sameListRows(previous.rows, rows);
+  const canCarry = previous?.kind === kind && sameRows;
+  const selectedKeys = canCarry
+    ? attachedCheckedListRowKeys(previous.rows.map(row => ({
+      ...row,
+      selectionControl: listCheckboxForRow(row, previous.mode),
+    })))
+    : [];
+
+  // A stable DOM and stable mode need no work on the one-second poll; in particular, don't replace
+  // a focused native checkbox while the user is selecting rows.
+  if (sameRows && canCarry && previous.mode === mode) {
+    listSelectionState = { kind, mode, rows };
+    return;
+  }
+
+  restoreNativeListCheckboxes(previous?.rows);
+  restoreNativeListCheckboxes(rows);
+  removeOwnedListCheckboxes();
+
+  if (mode === 'owned') {
+    for (const row of rows) {
+      for (const control of row.nativeCheckboxes) setNativeListCheckboxVisible(control, false);
+    }
+    const carriedRows = carryListRowChecks(rows, selectedKeys);
+    for (const row of carriedRows) {
+      const current = rows.find(candidate => candidate.key === row.key);
+      current.ownedCheckbox = createOwnedListCheckbox(current, row.checked);
+    }
+  } else if (mode === 'native' && canCarry && previous.mode !== 'native') {
+    for (const row of carryListRowChecks(rows, selectedKeys)) {
+      setCheckboxChecked(listCheckboxForRow(row, mode), row.checked);
+    }
+  }
+
+  listSelectionState = { kind, mode, rows };
+}
+
+function removeListBatchResultBadges(identity) {
+  for (const badge of document.querySelectorAll(`.${LIST_RESULT_BADGE_CLASS}`)) {
+    if (identity === undefined || badge.dataset.listResultIdentity === identity) badge.remove();
+  }
+}
+
+function clearListBatchResult(identity) {
+  removeListBatchResultBadges(identity);
+}
+
+function invalidateListBatchResults() {
+  clearListBatchResult();
+  listDocumentGeneration += 1;
+}
+
+function resetListSelectionState() {
+  restoreNativeListCheckboxes(listSelectionState?.rows);
+  removeOwnedListCheckboxes();
+  invalidateListBatchResults();
+  listSelectionState = null;
+}
+
+function tryInsertListSelection(kind) {
+  const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
+  const target = pageTargetOfUrl(location.href);
+  const rows = readListRows(document, expectedKind, target);
+  if (rows.length === 0) {
+    resetListSelectionState();
+    document.querySelectorAll(`.${LIST_BUTTON_CLASS}`).forEach(button => button.remove());
+    return false;
+  }
+
+  if (listSelectionState &&
+      (listSelectionState.kind !== kind || !sameListRows(listSelectionState.rows, rows))) {
+    invalidateListBatchResults();
+  }
+  syncListSelectionControls(kind, rows, listCheckboxMode(rows));
+  return true;
+}
+
+// The list header is not a stable class name: GitHub rebuilds those module classes. Find a control
+// row by its layout and its position before the first canonical list row instead. This also keeps a
+// button from landing in a row when the page happens to contain nested forms or navigation lists.
+function listToolbarLooksLike(element) {
+  if (!element || !element.querySelector) return false;
+  const display = getComputedStyle(element).display;
+  if (!['block', 'flex', 'grid', 'inline-block', 'inline-flex'].includes(display)) return false;
+  return !!element.querySelector('button, input, select, [role="button"], [role="combobox"]');
+}
+
+function documentElementBefore(left, right) {
+  return !!left && !!right && left !== right &&
+    !!(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+function listToolbarAnchor(rows) {
+  const firstRow = rows[0]?.element;
+  if (!firstRow) return null;
+
+  let child = firstRow;
+  for (let depth = 0; depth < 8 && child.parentElement; depth += 1) {
+    const parent = child.parentElement;
+    const siblings = [...parent.children];
+    const childIndex = siblings.indexOf(child);
+    const previous = siblings.slice(0, childIndex).reverse().find(listToolbarLooksLike);
+    if (previous) return previous;
+
+    const toolbar = parent.matches?.('[role="toolbar"]') ? parent : parent.querySelector?.('[role="toolbar"]');
+    if (toolbar && documentElementBefore(toolbar, firstRow) && listToolbarLooksLike(toolbar)) return toolbar;
+    child = parent;
+  }
+
+  let preceding = null;
+  for (const candidate of document.querySelectorAll('[role="toolbar"], form, nav')) {
+    if (documentElementBefore(candidate, firstRow) && listToolbarLooksLike(candidate)) preceding = candidate;
+  }
+  return preceding;
+}
+
+function listBatchBadgeLabel(result) {
+  return result.success
+    ? tr('ext.list.batch.result.success')
+    : tr('ext.list.batch.result.failure', result.error || tr('ext.list.batch.result.unknown'));
+}
+
+function createListBatchResultBadge(view, result) {
+  const badge = document.createElement('span');
+  badge.className = LIST_RESULT_BADGE_CLASS;
+  badge.dataset.listResultIdentity = view.buttonIdentity;
+  badge.dataset.listRowKey = result.key;
+  badge.textContent = result.success ? '✓' : '✕';
+  badge.title = listBatchBadgeLabel(result);
+  badge.setAttribute('aria-label', listBatchBadgeLabel(result));
+  badge.style.cssText = result.success
+    ? 'display: inline-block; margin-left: 6px; color: #1a7f37; font-weight: 600;'
+    : 'display: inline-block; margin-left: 6px; color: #cf222e; font-weight: 600;';
+  return badge;
+}
+
+function renderListBatchResultView(view, kind, generation) {
+  if (generation !== listDocumentGeneration) return;
+  const target = pageTargetOfUrl(location.href);
+  if (target?.kind !== kind) return;
+
+  clearListBatchResult(view.buttonIdentity);
+  if (view.badges.length === 0) return;
+
+  const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
+  const rows = readListRows(document, expectedKind, target);
+  const rowsByKey = new Map(rows.map(row => [row.key, row]));
+  for (const result of view.badges) {
+    const row = rowsByKey.get(result.key);
+    if (!row) continue;
+    row.anchor.insertAdjacentElement('afterend', createListBatchResultBadge(view, result));
+  }
+}
+
+function showListBatchSelectionError(button, notice) {
+  button.textContent = '❌';
+  if (notice?.messageKey === 'ext.list.batch.selection.empty') {
+    button.title = tr('ext.list.batch.selection.empty');
+  } else if (notice?.messageKey === 'ext.list.batch.selection.tooMany') {
+    button.title = tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
+  }
+}
+
+function scheduleListBatchButtonReset(button, buttonConfig, face, delay) {
+  setTimeout(() => {
+    button.textContent = face;
+    button.title = buttonConfig.label;
+    button.disabled = false;
+  }, delay);
+}
+
+function createListBatchButton(buttonConfig, index, kind) {
+  const face = buttonFace(buttonConfig);
+  const identity = listBatchButtonIdentity(kind, index);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = LIST_BUTTON_CLASS;
+  button.textContent = face;
+  button.title = buttonConfig.label;
+  button.dataset.btnIndex = index;
+  button.dataset.listKind = kind;
+  button.style.cssText = LIST_BUTTON_STYLE;
+
+  button.addEventListener('mouseenter', () => {
+    button.style.backgroundColor = 'rgba(87, 171, 90, 0.1)';
+  });
+
+  button.addEventListener('mouseleave', () => {
+    button.style.backgroundColor = 'transparent';
+  });
+
+  onUserClick(button, async () => {
+    button.textContent = '⏳';
+    button.disabled = true;
+    clearListBatchResult(identity);
+    const generation = listDocumentGeneration;
+    try {
+      const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
+      const selected = readSelectedListRows(document, expectedKind);
+      const notice = listBatchSelectionNotice(listSelectionStatus(selected));
+      if (notice) {
+        showListBatchSelectionError(button, notice);
+        return;
+      }
+
+      const outcome = await runListBatchCommand(index, buttonConfig, selected);
+      const view = listBatchResultView(identity, selected, outcome);
+      renderListBatchResultView(view, kind, generation);
+      button.textContent = view.phase === 'done' ? '✅' : '❌';
+    } catch (error) {
+      console.error('list batch error:', error);
+      button.textContent = '❌';
+    } finally {
+      scheduleListBatchButtonReset(button, buttonConfig, face, 2000);
+    }
+  });
+
+  return button;
+}
+
+async function tryInsertListButtons(kind) {
+  if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
+
+  const target = pageTargetOfUrl(location.href);
+  const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
+  const rows = readListRows(document, expectedKind, target);
+  const toolbar = listToolbarAnchor(rows);
+  if (!toolbar) return false;
+
+  const buttons = await loadButtonConfigs(kind);
+  if (!buttons) return false;
+
+  if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
+
+  buttons
+    .map((config, index) => ({ config, index }))
+    .filter(({ config }) => buttonUsesAllowedVariables(kind, config))
+    .forEach(({ config, index }) => toolbar.appendChild(createListBatchButton(config, index, kind)));
+  return true;
 }
 
 // Create the custom command button next to the PR branch or the issue badge (emoji icon or text pill)
@@ -362,6 +820,9 @@ async function tryInsertButton() {
     result = await tryInsertPRButtons() || result;
   } else if (target.kind === 'issue') {
     result = await tryInsertIssueButtons() || result;
+  } else if (target.kind === 'pr-list' || target.kind === 'issue-list') {
+    result = tryInsertListSelection(target.kind) || result;
+    result = await tryInsertListButtons(target.kind) || result;
   }
 
   return result;
@@ -376,16 +837,17 @@ let lastTarget = pageTargetOfUrl(location.href);
 // could survive onto PR #2, where their position and the header around them mean something else.
 // Removing them makes the next insert redraw for the page that is actually showing.
 function removeInsertedButtons() {
-  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn')
+  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .terminal-list-btn')
     .forEach(button => button.remove());
+  resetListSelectionState();
 }
 
 function onUrlChange() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
   const target = pageTargetOfUrl(location.href);
-  // Only when the *target* changed. Moving between a repository's tabs (/issues → /pulls) leaves the
-  // buttons meaning exactly what they meant, and redrawing there would flicker for nothing.
+  // Only when the *target* changed. Reclassification makes moving between the two lists change the
+  // target and redraw the buttons; query-only pagination or filtering within one list keeps it stable.
   if (!sameTarget(target, lastTarget)) removeInsertedButtons();
   lastTarget = target;
   // On a URL change, wait a moment before trying to insert the buttons
@@ -407,8 +869,10 @@ history.replaceState = function(...args) {
 
 window.addEventListener('popstate', onUrlChange);
 
-// MutationObserver: detect when the header area is added
+// MutationObserver: detect when the header area or a list row is added
 const observer = new MutationObserver((mutations) => {
+  const target = pageTargetOfUrl(location.href);
+  const listKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
@@ -416,7 +880,8 @@ const observer = new MutationObserver((mutations) => {
         if (node.classList?.contains('gh-header-actions') ||
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
-            node.querySelector?.('.AppHeader-context-full')) {
+            node.querySelector?.('.AppHeader-context-full') ||
+            (listKind && readListRows(node, listKind, target).length > 0)) {
           tryInsertButton();
           return;
         }

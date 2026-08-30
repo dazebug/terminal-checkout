@@ -64,6 +64,20 @@ const PR_PRESETS = [
   }),
 ];
 
+// PR list pages: one terminal session per selected row. The app can resolve the branch from the PR
+// number through `gh`, so the list has no need to invent a `{branch}` or `{base}` value.
+// Every row must get its own worktree — a fan-out that checks rows out in the shared `{cd}` tree
+// has the later rows switching the branch under the earlier sessions. `--detach` on both commands
+// keeps the fan-out conflict-free: no local branch is created, so rows cannot collide with each
+// other or with a worktree that already holds the PR's branch, and the FETCH_HEAD that
+// `gh pr checkout` resolves is a per-worktree ref, so parallel rows cannot cross.
+const PR_LIST_PRESETS = [
+  definePreset({
+    id: 'pr-list.checkoutClaude', nameKey: 'ext.preset.prList.checkoutClaude', face: '🤖',
+    command: '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude',
+  }),
+];
+
 // Issue pages: buttons on the status badge row. There is no head branch, so the {branch} family and {base} are unavailable
 const ISSUE_PRESETS = [
   definePreset({
@@ -85,6 +99,15 @@ const ISSUE_PRESETS = [
     id: 'issue.open', nameKey: 'ext.preset.issue.open', face: '📂',
     command: '{cd}',
     claudeInputs: [],
+  }),
+];
+
+// Issue list pages: the issue number is enough for gh to put the issue discussion in front of claude.
+const ISSUE_LIST_PRESETS = [
+  definePreset({
+    id: 'issue-list.triageClaude', nameKey: 'ext.preset.issueList.triageClaude', face: '📋',
+    command: '{cd} && claude',
+    claudeInputs: ['!gh issue view {issue} --comments'],
   }),
 ];
 
@@ -144,7 +167,11 @@ function defaultFromPreset(presets, id) {
 
 const DEFAULT_BUTTONS = [defaultFromPreset(PR_PRESETS, 'pr.checkout')];
 
+const DEFAULT_PR_LIST_BUTTONS = [defaultFromPreset(PR_LIST_PRESETS, 'pr-list.checkoutClaude')];
+
 const DEFAULT_ISSUE_BUTTONS = [defaultFromPreset(ISSUE_PRESETS, 'issue.read')];
+
+const DEFAULT_ISSUE_LIST_BUTTONS = [defaultFromPreset(ISSUE_LIST_PRESETS, 'issue-list.triageClaude')];
 
 const DEFAULT_REPO_BUTTONS = [defaultFromPreset(REPO_PRESETS, 'repo.open')];
 
@@ -167,15 +194,42 @@ const BUTTON_KINDS = {
     storageKey: 'buttons', presets: PR_PRESETS, defaults: DEFAULT_BUTTONS,
     variables: ['repo', 'owner', 'number', 'branch', 'base', 'main', 'branch_underbar'],
   },
+  'pr-list': {
+    storageKey: 'prListButtons', presets: PR_LIST_PRESETS, defaults: DEFAULT_PR_LIST_BUTTONS,
+    variables: ['repo', 'owner', 'pr'],
+  },
   issue: {
     storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
     variables: ['repo', 'owner', 'number', 'main'],
+  },
+  'issue-list': {
+    storageKey: 'issueListButtons', presets: ISSUE_LIST_PRESETS, defaults: DEFAULT_ISSUE_LIST_BUTTONS,
+    variables: ['repo', 'owner', 'issue'],
   },
   repo: {
     storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
     variables: ['repo', 'owner', 'main'],
   },
 };
+
+// A button is visible only when every placeholder in its command and every scheduled claude input
+// can be supplied for its page kind. Keeping this predicate here makes the list of variables in
+// BUTTON_KINDS the one authority shared by the content script and service worker; the app's own
+// renderer remains the final fail-closed check when a request leaves the extension.
+function buttonUsesAllowedVariables(kind, button) {
+  if (typeof kind !== 'string' || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
+  if (!button || typeof button !== 'object' || typeof button.command !== 'string') return false;
+  if (button.claudeInputs !== undefined && !Array.isArray(button.claudeInputs)) return false;
+
+  const allowed = new Set([...BUTTON_KINDS[kind].variables, ...APP_VARIABLES]);
+  for (const template of [button.command, ...(button.claudeInputs || [])]) {
+    if (typeof template !== 'string') return false;
+    for (const [, name] of template.matchAll(/\{(\w+)\}/g)) {
+      if (!allowed.has(name)) return false;
+    }
+  }
+  return true;
+}
 
 // --- Settings schema version ---
 // Saved commands are snapshots of the presets at save time, so improving a preset never reaches
@@ -185,7 +239,7 @@ const BUTTON_KINDS = {
 // not, and must never move it (see migrations.js).
 // This constant is the single source of truth for the current generation, and a test pins the
 // registry in `extension/migrations.js` to carry one entry per step up to it.
-const SETTINGS_VERSION = 1;
+const SETTINGS_VERSION = 2;
 
 // The version rides alongside the settings in storage.sync, and therefore in the export/import
 // JSON, so reviewing once clears the notice on every machine on the account.
@@ -219,6 +273,10 @@ const REPO_TABS = 'tree|blob|issues|actions|settings|releases|tags|wiki|security
 function pageTypeOf(pathname) {
   const [, owner, repo] = pathname.split('/');
   if (!owner || !repo || RESERVED_OWNERS.has(owner)) return null;
+  // These are exact repository list pages. Keep the slash optional, but do not let a nested path
+  // such as `/pulls/extra` borrow the list kind.
+  if (/^\/[^/]+\/[^/]+\/pulls\/?$/.test(pathname)) return 'pr-list';
+  if (/^\/[^/]+\/[^/]+\/issues\/?$/.test(pathname)) return 'issue-list';
   if (/\/issues\/\d+/.test(pathname)) return 'issue';
   if (/\/pull\/\d+/.test(pathname)) return 'pr';
   if (/^\/[^/]+\/[^/]+\/?$/.test(pathname)) return 'repo';
@@ -228,6 +286,9 @@ function pageTypeOf(pathname) {
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
+const MAX_BATCH_ITEMS = 8;
+const LIST_BATCH_ACTION = 'execute_list_batch';
+const LIST_BATCH_RESULT_KEY_PROTOCOL = 1;
 
 // The button's display text. `face` is the current key; `emoji` is kept for values saved by older versions.
 function buttonFace(config) {
@@ -308,6 +369,275 @@ function pageTargetOfUrl(url) {
   }
   if (parsed.origin !== GITHUB_ORIGIN) return null;
   return pageTargetOf(parsed.pathname);
+}
+
+// A list row's identity comes from GitHub's canonical detail link, never from its position in the
+// document. The same shape works for a repository's own links and links to a fork: the owner and
+// repository in the href identify the checkout target that `gh` will resolve. When a page target is
+// supplied, the row must belong to that exact repository before it can enter the selection set.
+function parseListRowAnchor(href, text, expected) {
+  if (typeof href !== 'string') return null;
+
+  let parsed;
+  try {
+    parsed = new URL(href, GITHUB_ORIGIN);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== GITHUB_ORIGIN) return null;
+
+  const match = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)\/?$/);
+  if (!match) return null;
+
+  const [, owner, repo, pathKind, number] = match;
+  if (expected !== undefined &&
+      (typeof expected?.owner !== 'string' || typeof expected?.repo !== 'string' ||
+       owner !== expected.owner || repo !== expected.repo)) {
+    return null;
+  }
+  const kind = pathKind === 'pull' ? 'pr' : 'issue';
+  const rowTitle = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+  return {
+    key: `${owner}/${repo}/${kind}/${number}`,
+    owner,
+    repo,
+    kind,
+    number,
+    title: rowTitle,
+  };
+}
+
+// A native checkbox is usable only when every eligible row has one. Mixing GitHub's controls with
+// ours would make one visible selection have two different sources of truth, so an empty list is
+// no mode and any incomplete coverage selects the all-owned mode.
+function listCheckboxMode(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows.every(row => row?.native === true) ? 'native' : 'owned';
+}
+
+function checkedListRowKeys(rows) {
+  const keys = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+    seen.add(row.key);
+    keys.push(row.key);
+  }
+  return keys;
+}
+
+// Copying checked state by key is the only state transfer permitted when the control source changes.
+// It also makes a redraw independent of whatever order GitHub happened to render the rows in.
+function carryListRowChecks(rows, selectedKeys) {
+  const selected = new Set(selectedKeys || []);
+  return (rows || []).map(row => ({ ...row, checked: selected.has(row.key) }));
+}
+
+// Control selection is caller-decided: this helper only checks whether the caller-provided control is
+// still attached to the row and actually checked.
+function attachedCheckedListRowKeys(rows) {
+  const keys = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (typeof row.key !== 'string' || seen.has(row.key)) continue;
+
+    const control = row.selectionControl;
+    if (!control || typeof control !== 'object') continue;
+    if (!row.element?.contains?.(control)) continue;
+    if (!isCheckboxChecked(control)) continue;
+
+    seen.add(row.key);
+    keys.push(row.key);
+  }
+  return keys;
+}
+
+function isCheckboxChecked(control) {
+  if (!control) return false;
+  if ('checked' in control) return control.checked === true;
+  return control.getAttribute?.('aria-checked') === 'true';
+}
+
+function selectedListRows(rows) {
+  const selected = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+    seen.add(row.key);
+    selected.push({ key: row.key, title: typeof row.title === 'string' ? row.title : '' });
+  }
+  return selected;
+}
+
+function listSelectionStatus(selected, limit = MAX_BATCH_ITEMS) {
+  const count = Array.isArray(selected) ? selected.length : 0;
+  if (count === 0) return { count, valid: false, error: 'empty' };
+  if (count > limit) return { count, valid: false, error: 'too-many' };
+  return { count, valid: true, error: null };
+}
+
+// A list click carries a snapshot only so the worker can tell whether the document changed while
+// the message was in flight. It is never a source for the request, so the boundary checks its shape
+// before the worker performs the live DOM read.
+function validateListBatchSelection(selection) {
+  if (!Array.isArray(selection)) return { valid: false, error: 'not-array' };
+  if (selection.length === 0) return { valid: false, error: 'empty' };
+  if (selection.length > MAX_BATCH_ITEMS) return { valid: false, error: 'too-many' };
+
+  const seen = new Set();
+  for (const row of selection) {
+    if (!row || typeof row !== 'object' || Array.isArray(row) ||
+        typeof row.key !== 'string' || !row.key || typeof row.title !== 'string' ||
+        seen.has(row.key)) {
+      return { valid: false, error: 'invalid-row' };
+    }
+    seen.add(row.key);
+  }
+  return { valid: true, error: null };
+}
+
+// The worker re-reads keys from the current document. Parsing the key is separate from parsing the
+// anchor so the item builder can use the document's order without trusting the snapshot's values.
+function parseListRowKey(key) {
+  if (typeof key !== 'string') return null;
+  const match = key.match(/^([^/]+)\/([^/]+)\/(pr|issue)\/(\d+)$/);
+  if (!match) return null;
+  const [, owner, repo, kind, number] = match;
+  return { owner, repo, kind, number };
+}
+
+function buildListBatchItems(target, selected) {
+  const kind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
+  if (!kind || typeof target.repo !== 'string' || !validateListBatchSelection(selected).valid) return null;
+
+  const items = [];
+  for (const row of selected) {
+    const parsed = parseListRowKey(row.key);
+    if (!parsed || parsed.kind !== kind || parsed.owner !== target.owner || parsed.repo !== target.repo) {
+      return null;
+    }
+    items.push({ variables: { repo: target.repo, owner: target.owner, [kind]: parsed.number } });
+  }
+  return items;
+}
+
+// The batch protocol's command lives at the top level. A single-command request uses
+// `command_template`; putting that key into a batch would make the app reject the otherwise-valid
+// items envelope before it could report per-item results.
+function buildListBatchRequest(button, items) {
+  const { command, claudeInputs } = executionPayload(button);
+  const request = { command, items };
+  if (claudeInputs.length) request.claude_inputs = claudeInputs;
+  return request;
+}
+
+// Titles are display data and can change without changing the identity of a selected row. The
+// worker therefore compares exact key sets, not array order or the snapshot's title strings.
+function sameListSelectionKeys(expected, actual) {
+  if (!Array.isArray(expected) || !Array.isArray(actual)) return false;
+  const expectedKeys = expected.map(row => row?.key);
+  const actualKeys = actual.map(row => row?.key);
+  if (expectedKeys.some(key => typeof key !== 'string') || actualKeys.some(key => typeof key !== 'string')) {
+    return false;
+  }
+  const expectedSet = new Set(expectedKeys);
+  const actualSet = new Set(actualKeys);
+  return expectedSet.size === expectedKeys.length &&
+    actualSet.size === actualKeys.length &&
+    expectedSet.size === actualSet.size &&
+    [...expectedSet].every(key => actualSet.has(key));
+}
+
+function buildListBatchMessage(buttonIndex, shown, target, selected) {
+  return {
+    action: LIST_BATCH_ACTION,
+    buttonIndex,
+    shown,
+    resultKeyProtocol: LIST_BATCH_RESULT_KEY_PROTOCOL,
+    target,
+    selected,
+  };
+}
+
+function validateListBatchResultKeyProtocol(message) {
+  return message?.resultKeyProtocol === LIST_BATCH_RESULT_KEY_PROTOCOL;
+}
+
+// `success` exists at two boundaries: the worker's outer response says whether transport and
+// validation reached the app, while `batch.success` is the app's overall command verdict. An app
+// validation failure is normal data and must retain its ordered item failures for the result UI.
+function interpretListBatchResponse(response) {
+  if (!response || typeof response !== 'object' || Array.isArray(response) || response.success !== true) {
+    return {
+      transportSuccess: false,
+      appSuccess: null,
+      error: (response && typeof response.error === 'string' && response.error)
+        || 'native host returned no result',
+      items: [],
+    };
+  }
+
+  const batch = response.batch;
+  if (!batch || typeof batch !== 'object' || Array.isArray(batch) ||
+      typeof batch.success !== 'boolean' || !Array.isArray(batch.items)) {
+    return {
+      transportSuccess: true,
+      appSuccess: null,
+      error: 'native host returned no result',
+      items: [],
+    };
+  }
+
+  return {
+    transportSuccess: true,
+    appSuccess: batch.success,
+    error: typeof batch.error === 'string' ? batch.error : null,
+    items: batch.items,
+    itemKeys: Array.isArray(response.itemKeys) ? response.itemKeys : [],
+  };
+}
+
+// Local selection failures are shown through the button's existing error marker and a temporary
+// tooltip. Keeping the result as a message id here lets the content script resolve it in the
+// catalogue that is actually painting this page.
+function listBatchSelectionNotice(status) {
+  if (status?.error === 'empty') {
+    return { messageKey: 'ext.list.batch.selection.empty', args: [] };
+  }
+  if (status?.error === 'too-many') {
+    return { messageKey: 'ext.list.batch.selection.tooMany', args: [status.count, MAX_BATCH_ITEMS] };
+  }
+  return null;
+}
+
+// A result belongs to the button that produced it, not merely to the row it happens to decorate.
+// The identity stays in the pure view so a second list button cannot replace the first one's badges.
+function listBatchButtonIdentity(kind, index) {
+  return `${kind}:${index}`;
+}
+
+// App item results are ordered like the selected snapshot. If that shape is absent or malformed,
+// the safe display is the overall phase only; inventing a row verdict from a shorter response would
+// make an incomplete native response look authoritative.
+function listBatchResultView(buttonIdentity, selected, outcome) {
+  const rows = Array.isArray(selected) ? selected : [];
+  const items = Array.isArray(outcome?.items) ? outcome.items : [];
+  const itemKeys = Array.isArray(outcome?.itemKeys) ? outcome.itemKeys : rows.map(row => row.key);
+  const complete = rows.length > 0 && items.length === itemKeys.length &&
+    rows.every(row => row && typeof row.key === 'string') &&
+    itemKeys.every(key => typeof key === 'string') &&
+    items.every(item => item && typeof item === 'object' && !Array.isArray(item) &&
+      typeof item.success === 'boolean' &&
+      (item.error === undefined || typeof item.error === 'string'));
+  return {
+    buttonIdentity,
+    phase: outcome?.appSuccess === true ? 'done' : 'error',
+    badges: complete ? items.map((item, index) => ({
+      key: itemKeys[index],
+      success: item.success,
+      error: typeof item.error === 'string' ? item.error : null,
+    })) : [],
+  };
 }
 
 // The last question asked before a command runs. Three answers, from three different moments, and

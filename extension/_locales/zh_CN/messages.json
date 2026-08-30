@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "批处理项目失败：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "批处理项目成功"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "未知错误"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "请至少选择一行。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "已选择 $ARG1$ 行，请选择不超过 $ARG2$ 行。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "zh-Hans"
   },
@@ -335,6 +363,9 @@
   "ext_migration_v1_prefixDescribe": {
     "message": "你的命令在跳转之后还有内容。设置了基准文件夹时，失败的 z 现在会落到它下面的仓库文件夹，或者一个新克隆的位置 — 接受之前请确认这条命令的其余部分在那里运行是安全的。"
   },
+  "ext_migration_v2_describe": {
+    "message": "此版本会为 PR 和 Issue 列表页添加独立按钮，不会重写现有命令。"
+  },
   "ext_override_empty": {
     "message": "还没有覆盖项。"
   },
@@ -346,6 +377,9 @@
   },
   "ext_preset_issue_startWork": {
     "message": "开始处理 issue"
+  },
+  "ext_preset_issueList_triageClaude": {
+    "message": "分诊 Issue"
   },
   "ext_preset_pr_checkout": {
     "message": "检出分支"
@@ -361,6 +395,9 @@
   },
   "ext_preset_pr_worktreeClaude": {
     "message": "工作树 + Claude"
+  },
+  "ext_preset_prList_checkoutClaude": {
+    "message": "检出 PR + Claude"
   },
   "ext_preset_repo_open": {
     "message": "在终端中打开"
@@ -408,6 +445,23 @@
   "ext_section_issue_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> <code>{main}</code> — issue 没有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
   },
+  "ext_section_issueList_claudeHelp": {
+    "message": "默认列表按钮会打开 claude，并在 claude 的 shell 模式中输入 <code>!gh issue view {issue} --comments</code>。"
+  },
+  "ext_section_issueList_help": {
+    "message": "Issue 列表页按钮（最多 $ARG1$ 个）。设置每个选中 Issue 要在独立终端会话中运行的命令。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_issueList_title": {
+    "message": "issueListButtons <span class=\"section-where\">— Issue 列表页</span>"
+  },
+  "ext_section_issueList_variables": {
+    "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{issue}</code> <span class=\"faint\">（issue 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>。"
+  },
   "ext_section_main_help": {
     "message": "<code>{main}</code> 的解析顺序：按仓库的覆盖项 → 从页面检测 → 下面的默认值。检测在 PR 页面读取 base 分支，在仓库和 issue 页面读取仓库的默认分支 — 下面的设置是检测失败时的后备。若想始终使用 PR 实际会合并进去的分支，请用 <code>{base}</code>，它会跳过覆盖项和默认值。"
   },
@@ -444,6 +498,20 @@
   },
   "ext_section_pr_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 应用会从它的仓库基准文件夹设置填充，因此在每个页面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合并的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合并进去的那个分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 换成 _）</span>"
+  },
+  "ext_section_prList_help": {
+    "message": "PR 列表页按钮（最多 $ARG1$ 个）。设置每个选中 PR 要在独立终端会话中运行的命令。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_prList_title": {
+    "message": "prListButtons <span class=\"section-where\">— PR 列表页</span>"
+  },
+  "ext_section_prList_variables": {
+    "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{pr}</code> <span class=\"faint\">（PR 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {pr}</code> 在本地解析分支。"
   },
   "ext_section_repo_help": {
     "message": "在仓库页面（代码、issue 列表、Actions 等）的标题栏中位于仓库名旁边的按钮 — 最多 $ARG1$ 个。与 PR 和 issue 按钮不同，它们看起来像 GitHub 的绿色操作按钮，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 这样的名称比表情符号更合适。在既不是 PR 也不是 issue 的 GitHub 页面上点击扩展程序图标，会运行这里的第一个按钮。",

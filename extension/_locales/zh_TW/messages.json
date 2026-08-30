@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "批次項目失敗：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "批次項目成功"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "未知錯誤"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "請至少選取一列。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "已選取 $ARG1$ 列，請選取不超過 $ARG2$ 列。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "zh-Hant"
   },
@@ -335,6 +363,9 @@
   "ext_migration_v1_prefixDescribe": {
     "message": "你的指令在跳轉之後還有內容。設定了基準資料夾時，失敗的 z 現在會落到它下面的儲存庫資料夾，或者一個新複製的位置 — 接受之前請確認這條指令的其餘部分在那裡執行是安全的。"
   },
+  "ext_migration_v2_describe": {
+    "message": "此版本會為 PR 與 issue 清單頁面新增獨立按鈕，不會重寫現有命令。"
+  },
   "ext_override_empty": {
     "message": "還沒有覆寫項。"
   },
@@ -346,6 +377,9 @@
   },
   "ext_preset_issue_startWork": {
     "message": "開始處理 issue"
+  },
+  "ext_preset_issueList_triageClaude": {
+    "message": "分流 issue"
   },
   "ext_preset_pr_checkout": {
     "message": "簽出分支"
@@ -361,6 +395,9 @@
   },
   "ext_preset_pr_worktreeClaude": {
     "message": "工作樹 + Claude"
+  },
+  "ext_preset_prList_checkoutClaude": {
+    "message": "簽出 PR + Claude"
   },
   "ext_preset_repo_open": {
     "message": "在終端機中開啟"
@@ -408,6 +445,23 @@
   "ext_section_issue_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 編號，僅數字）</span> <code>{main}</code> — issue 沒有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
   },
+  "ext_section_issueList_claudeHelp": {
+    "message": "預設清單按鈕會開啟 claude，並在 claude 的 shell 模式中輸入 <code>!gh issue view {issue} --comments</code>。"
+  },
+  "ext_section_issueList_help": {
+    "message": "issue 清單頁面的按鈕（最多 $ARG1$ 個）。設定每個選取 issue 要在獨立終端機工作階段執行的命令。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_issueList_title": {
+    "message": "issueListButtons <span class=\"section-where\">— issue 清單頁面</span>"
+  },
+  "ext_section_issueList_variables": {
+    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{issue}</code> <span class=\"faint\">（issue 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>。"
+  },
   "ext_section_main_help": {
     "message": "<code>{main}</code> 的解析順序：按儲存庫的覆寫項 → 從頁面偵測 → 下面的預設值。偵測在 PR 頁面讀取 base 分支，在儲存庫和 issue 頁面讀取儲存庫的預設分支 — 下面的設定是偵測失敗時的後備。若想始終使用 PR 實際會合併進去的分支，請用 <code>{base}</code>，它會略過覆寫項和預設值。"
   },
@@ -444,6 +498,20 @@
   },
   "ext_section_pr_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 應用程式會從它的儲存庫基準資料夾設定填入，因此在每個頁面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 編號，僅數字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合併的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合併進去的那個分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 換成 _）</span>"
+  },
+  "ext_section_prList_help": {
+    "message": "PR 清單頁面的按鈕（最多 $ARG1$ 個）。設定每個選取 PR 要在獨立終端機工作階段執行的命令。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_section_prList_title": {
+    "message": "prListButtons <span class=\"section-where\">— PR 清單頁面</span>"
+  },
+  "ext_section_prList_variables": {
+    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{pr}</code> <span class=\"faint\">（PR 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {pr}</code> 在本機解析分支。"
   },
   "ext_section_repo_help": {
     "message": "在儲存庫頁面（程式碼、issue 清單、Actions 等）的標題列中位於儲存庫名稱旁邊的按鈕 — 最多 $ARG1$ 個。與 PR 和 issue 按鈕不同，它們看起來像 GitHub 的綠色操作按鈕，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 這樣的名稱比表情符號更合適。在既不是 PR 也不是 issue 的 GitHub 頁面上點擊擴充功能圖示，會執行這裡的第一個按鈕。",

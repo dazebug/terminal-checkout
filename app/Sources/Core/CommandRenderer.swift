@@ -30,7 +30,7 @@ public enum CommandError: Error, CustomStringConvertible {
 }
 
 private let allowedVariables: Set<String> = [
-    "repo", "branch", "base", "main", "branch_underbar", "number", "owner",
+    "repo", "branch", "base", "main", "branch_underbar", "number", "owner", "pr", "issue",
 ]
 
 // The whitelist of allowed characters (command injection defence).
