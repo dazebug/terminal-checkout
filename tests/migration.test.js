@@ -1343,3 +1343,18 @@ test('a claude-inputs rewrite applies only while the inputs still match the plan
   const { applied } = applyMigrationPlan(edited, plan, ['is#0']);
   assert.equal(applied, 0);
 });
+
+test('the plan holds its own copy of the inputs, so an in-place edit is still detected', () => {
+  // The options handlers edit claudeInputs in place (claudeInputs[row] = …, push, splice) on the
+  // very objects the planner was given. A plan that retained the live array would see its own
+  // fromInputs mutate along with the edit, pass the apply-time guard, and overwrite the user's new
+  // text with the stale rename.
+  const storedLists = {
+    issueListButtons: [{ uid: 'is#0', face: 'x', label: '', command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] }],
+  };
+  const plan = planMigration(storedLists, 2);
+  storedLists.issueListButtons[0].claudeInputs[0] = '!echo typed-over';
+  const { settings, applied } = applyMigrationPlan(storedLists, plan, ['is#0']);
+  assert.equal(applied, 0);
+  assert.deepEqual(settings.issueListButtons[0].claudeInputs, ['!echo typed-over']);
+});

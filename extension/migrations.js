@@ -253,7 +253,10 @@ function planMigration(stored, fromVersion) {
 
       // Raw, not filtered: the apply-time guard compares these bytes against the live button, and a
       // cleaned copy would never match a button that still holds the entry we cleaned away.
-      const inputs = Array.isArray(button?.claudeInputs) ? button.claudeInputs : [];
+      // A copy, not the live array: the options handlers edit claudeInputs in place on the very
+      // objects handed to the planner, and a retained reference would mutate fromInputs along with
+      // the user's edit — the guard would then bless overwriting their new text.
+      const inputs = Array.isArray(button?.claudeInputs) ? button.claudeInputs.slice() : [];
       let current = command;
       let currentInputs = inputs;
       let source = null;
