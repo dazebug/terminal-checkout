@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "이번 세대는 PR 및 이슈 목록 페이지용 버튼을 별도 추가하며, 기존 명령은 다시 쓰지 않습니다."
   },
+  "ext_migration_v3_describe": {
+    "message": "목록 페이지의 {pr}/{issue}가 상세 페이지와 같은 {number}로 이름이 바뀌었습니다. 옛 이름을 담은 채 저장된 목록 버튼은 표시되지 않게 됩니다."
+  },
   "ext_override_empty": {
     "message": "아직 재정의가 없습니다."
   },

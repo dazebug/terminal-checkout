@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "この世代では PR と Issue のリストページ用に別のボタンを追加し、既存のコマンドは書き換えません。"
   },
+  "ext_migration_v3_describe": {
+    "message": "リストページの {pr}/{issue} は、詳細ページと同じ {number} に改名されました。旧名のまま保存されたリストボタンは表示されなくなります。"
+  },
   "ext_override_empty": {
     "message": "個別設定はまだありません。"
   },

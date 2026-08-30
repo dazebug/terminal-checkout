@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "此版本会为 PR 和 Issue 列表页添加独立按钮，不会重写现有命令。"
   },
+  "ext_migration_v3_describe": {
+    "message": "列表页的 {pr}/{issue} 已改名为详情页所用的 {number}；仍保存旧名称的列表按钮将不再显示。"
+  },
   "ext_override_empty": {
     "message": "还没有覆盖项。"
   },

@@ -101,6 +101,32 @@ const MIGRATIONS = [
     rewrites: new Map(),
     get describe() { return tr('ext.migration.v2.describe'); },
   },
+  {
+    from: 2,
+    to: 3,
+    // The v2 list generation named its variables {pr}/{issue}; they were renamed to the {number}
+    // the detail pages already use — the same value under a new name, so the rendered command is
+    // byte-identical and the rewrite is unconditional. Without it, a saved list button holding the
+    // old names silently stops rendering (the visibility predicate fails closed).
+    //
+    // Scoped to the two list kinds: elsewhere those names were never provided, so a command holding
+    // them there is the owner's own experiment and renaming it would guess at an intent the page
+    // never defined.
+    appliesTo: kind => kind === 'pr-list' || kind === 'issue-list',
+    verbatimEffect: 'unconditional',
+    prefixEffect: 'unconditional',
+    rewrites: new Map(),
+    get describe() { return tr('ext.migration.v3.describe'); },
+    get prefixDescribe() { return tr('ext.migration.v3.describe'); },
+    promote: command => {
+      const renamed = command.split('{pr}').join('{number}').split('{issue}').join('{number}');
+      return renamed === command ? null : renamed;
+    },
+    promoteInput: input => {
+      const renamed = input.split('{pr}').join('{number}').split('{issue}').join('{number}');
+      return renamed === input ? null : renamed;
+    },
+  },
 ];
 
 // A version is a non-negative **integer** or it is not a version. Anything else — a fraction, a
@@ -225,21 +251,34 @@ function planMigration(stored, fromVersion) {
       const command = typeof button?.command === 'string' ? button.command : '';
       if (!command) return;
 
+      // Raw, not filtered: the apply-time guard compares these bytes against the live button, and a
+      // cleaned copy would never match a button that still holds the entry we cleaned away.
+      const inputs = Array.isArray(button?.claudeInputs) ? button.claudeInputs : [];
       let current = command;
+      let currentInputs = inputs;
       let source = null;
       let describe = '';
       let behaviorChange = false;
       for (const step of steps) {
+        // A step may scope itself to the kinds whose generation it describes; outside that scope
+        // the same bytes belong to someone else's experiment and are not this step's to rewrite.
+        if (step.appliesTo && !step.appliesTo(kind)) continue;
         const verbatim = step.rewrites?.get(current);
         const promoted = verbatim === undefined ? step.promote?.(current) : verbatim;
-        if (promoted === undefined || promoted === null || promoted === current) continue;
-        const viaPrefix = verbatim === undefined;
+        const commandMoved = !(promoted === undefined || promoted === null || promoted === current);
+        const nextInputs = step.promoteInput
+          ? currentInputs.map(v => (typeof v === 'string' ? (step.promoteInput(v) ?? v) : v))
+          : currentInputs;
+        const inputsMoved = nextInputs.some((v, i) => v !== currentInputs[i]);
+        if (!commandMoved && !inputsMoved) continue;
+        const viaPrefix = !commandMoved || verbatim === undefined;
         // The first step that matched says how this entered the chain
         source = source || (viaPrefix ? 'prefix' : 'verbatim');
         behaviorChange = behaviorChange
           || (viaPrefix ? step.prefixEffect : step.verbatimEffect) === 'behavior-change';
         describe = [describe, viaPrefix ? step.prefixDescribe : step.describe].filter(Boolean).join(' ');
-        current = promoted;
+        if (commandMoved) current = promoted;
+        if (inputsMoved) currentInputs = nextInputs;
       }
 
       // A candidate is named by the button's uid, never by where it sits. The plan is built from the
@@ -248,13 +287,15 @@ function planMigration(stored, fromVersion) {
       // uid we cannot name it, so we do not offer it.
       if (typeof button.uid !== 'string' && typeof button.uid !== 'number') return;
       const where = { id: button.uid, storageKey, kind, index, label: button.label || '' };
-      if (current !== command) {
+      const inputsChanged = currentInputs !== inputs;
+      if (current !== command || inputsChanged) {
         actionable.push({
           ...where,
           from: command,
           to: current,
           source,
           describe,
+          ...(inputsChanged ? { fromInputs: inputs, toInputs: currentInputs } : {}),
           // Worst case across the steps that applied: one behavior change anywhere makes the whole
           // hop a behavior change for this button
           effect: behaviorChange ? 'behavior-change' : 'unconditional',
@@ -291,9 +332,21 @@ function applyMigrationPlan(stored, plan, selectedIds) {
     // Even the right button may no longer hold the command that was planned — someone can type over
     // it while the preview is open. Rewrite only what was actually reviewed.
     if (list[index].command !== item.from) continue;
+    // The same guard for claude inputs, element by element: a plan that promised to rename an input
+    // must find that exact input still there, or the rewrite would replace text the user typed
+    // after the preview was built.
+    if (item.fromInputs) {
+      const live = Array.isArray(list[index].claudeInputs) ? list[index].claudeInputs : [];
+      if (live.length !== item.fromInputs.length
+        || live.some((v, i) => v !== item.fromInputs[i])) continue;
+    }
     // Copy each touched array once; later hits on the same key edit the copy
     const buttons = list === stored[item.storageKey] ? list.slice() : list;
-    buttons[index] = { ...buttons[index], command: item.to };
+    buttons[index] = {
+      ...buttons[index],
+      command: item.to,
+      ...(item.toInputs ? { claudeInputs: item.toInputs } : {}),
+    };
     next[item.storageKey] = buttons;
     applied += 1;
   }

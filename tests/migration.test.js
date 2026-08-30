@@ -109,13 +109,16 @@ test('every registry entry declares what kind of change it is, and can describe 
     assert.ok(entry.prefixDescribe.length > 0);
     assert.equal(typeof entry.describe, 'string');
     assert.ok(entry.describe.length > 0, `${entry.from}->${entry.to}: describe is empty`);
-    assert.equal(typeof entry.customNote, 'string');
-    assert.ok(entry.customNote.length > 0, `${entry.from}->${entry.to}: customNote is empty`);
+    // customNote pairs with isStale: it is the sentence shown on a command the step recognizes but
+    // will not rewrite. A step that never lists such commands has no note to show.
+    if (entry.isStale) {
+      assert.equal(typeof entry.customNote, 'string');
+      assert.ok(entry.customNote.length > 0, `${entry.from}->${entry.to}: customNote is empty`);
+    }
   }
 });
 
 test('the 1->2 registry step is review-only and leaves existing commands alone', () => {
-  assert.equal(SETTINGS_VERSION, 2);
   const step = MIGRATIONS.find(entry => entry.from === 1 && entry.to === 2);
   assert.equal(step.reviewOnly, true);
   assert.equal(step.rewrites.size, 0);
@@ -125,7 +128,7 @@ test('the 1->2 registry step is review-only and leaves existing commands alone',
 test('a v1 profile without list keys stays v1 until the user explicitly reviews it', () => {
   assert.equal(storedSchemaVersion({ version: 1, buttons: [] }), 1);
   assert.equal(versionToSave({ loadedVersion: 1, reviewed: false }), 1);
-  assert.equal(versionToSave({ loadedVersion: 1, reviewed: true }), 2);
+  assert.equal(versionToSave({ loadedVersion: 1, reviewed: true }), SETTINGS_VERSION);
 });
 
 // --- Planning a migration ---
@@ -1292,4 +1295,51 @@ test('the save-conflict refusal is not the stale banner reworded', () => {
   } finally {
     installMessageBackend(previous);
   }
+});
+
+// --- The 2->3 step: the list variables were renamed to {number} ---
+// The v2 list generation shipped {pr}/{issue}; #75 renamed them to the {number} the detail pages
+// already use. A saved list button still holding the old names would silently stop rendering
+// (the visibility predicate fails closed), which is exactly the loss this registry exists to stop.
+
+test('the 2->3 step renames saved list variables to {number} in commands and claude inputs', () => {
+  assert.equal(SETTINGS_VERSION, 3);
+  const storedLists = {
+    prListButtons: [{ uid: 'pr#0', face: 'x', label: 'PR', command: '{cd} && gh pr checkout {pr} && claude', claudeInputs: [] }],
+    issueListButtons: [{ uid: 'is#0', face: 'x', label: 'Triage', command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] }],
+  };
+  const plan = planMigration(storedLists, 2);
+  assert.equal(plan.actionable.length, 2);
+  const pr = plan.actionable.find(item => item.id === 'pr#0');
+  assert.equal(pr.to, '{cd} && gh pr checkout {number} && claude');
+  assert.equal(pr.effect, 'unconditional');
+  const issue = plan.actionable.find(item => item.id === 'is#0');
+  assert.equal(issue.from, issue.to);
+  assert.deepEqual(issue.fromInputs, ['!gh issue view {issue} --comments']);
+  assert.deepEqual(issue.toInputs, ['!gh issue view {number} --comments']);
+  assert.equal(issue.effect, 'unconditional');
+
+  const { settings, applied } = applyMigrationPlan(storedLists, plan, ['pr#0', 'is#0']);
+  assert.equal(applied, 2);
+  assert.equal(settings.prListButtons[0].command, '{cd} && gh pr checkout {number} && claude');
+  assert.deepEqual(settings.issueListButtons[0].claudeInputs, ['!gh issue view {number} --comments']);
+});
+
+test('the 2->3 rename stays inside the list kinds', () => {
+  // Elsewhere {pr}/{issue} were never provided, so a command holding them was already the owner's
+  // own experiment — renaming it would guess at an intent the page never defined.
+  const plan = planMigration({ buttons: [{ uid: 'b#0', face: 'x', label: '', command: 'echo {pr}', claudeInputs: [] }] }, 2);
+  assert.equal(plan.actionable.length, 0);
+});
+
+test('a claude-inputs rewrite applies only while the inputs still match the plan', () => {
+  const storedLists = {
+    issueListButtons: [{ uid: 'is#0', face: 'x', label: '', command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] }],
+  };
+  const plan = planMigration(storedLists, 2);
+  const edited = {
+    issueListButtons: [{ ...storedLists.issueListButtons[0], claudeInputs: ['!echo typed-over'] }],
+  };
+  const { applied } = applyMigrationPlan(edited, plan, ['is#0']);
+  assert.equal(applied, 0);
 });

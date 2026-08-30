@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "此版本會為 PR 與 issue 清單頁面新增獨立按鈕，不會重寫現有命令。"
   },
+  "ext_migration_v3_describe": {
+    "message": "清單頁面的 {pr}/{issue} 已改名為詳情頁所用的 {number}；仍保存舊名稱的清單按鈕將不再顯示。"
+  },
   "ext_override_empty": {
     "message": "還沒有覆寫項。"
   },

@@ -239,7 +239,7 @@ function buttonUsesAllowedVariables(kind, button) {
 // not, and must never move it (see migrations.js).
 // This constant is the single source of truth for the current generation, and a test pins the
 // registry in `extension/migrations.js` to carry one entry per step up to it.
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 
 // The version rides alongside the settings in storage.sync, and therefore in the export/import
 // JSON, so reviewing once clears the notice on every machine on the account.

@@ -921,13 +921,29 @@ function migrationItemRow(item, { checkbox }) {
   const detail = document.createElement('div');
   if (checkbox) {
     detail.className = 'mig-diff';
-    const from = document.createElement('div');
-    from.className = 'mig-from';
-    from.textContent = `- ${item.from}`;
-    const to = document.createElement('div');
-    to.className = 'mig-to';
-    to.textContent = `+ ${item.to}`;
-    detail.append(from, to);
+    // A candidate can move its command, its claude inputs, or both; only what moved is drawn, so
+    // an inputs-only rename does not show an identical command as a bogus diff.
+    if (item.from !== item.to) {
+      const from = document.createElement('div');
+      from.className = 'mig-from';
+      from.textContent = `- ${item.from}`;
+      const to = document.createElement('div');
+      to.className = 'mig-to';
+      to.textContent = `+ ${item.to}`;
+      detail.append(from, to);
+    }
+    if (item.fromInputs) {
+      item.fromInputs.forEach((input, i) => {
+        if (input === item.toInputs[i]) return;
+        const from = document.createElement('div');
+        from.className = 'mig-from';
+        from.textContent = `- ${input}`;
+        const to = document.createElement('div');
+        to.className = 'mig-to';
+        to.textContent = `+ ${item.toInputs[i]}`;
+        detail.append(from, to);
+      });
+    }
   } else {
     detail.className = 'mig-note';
     detail.textContent = item.note;

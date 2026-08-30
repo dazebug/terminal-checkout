@@ -366,6 +366,9 @@
   "ext_migration_v2_describe": {
     "message": "This generation adds separate buttons for PR and issue list pages; existing commands are not rewritten."
   },
+  "ext_migration_v3_describe": {
+    "message": "The list pages renamed {pr}/{issue} to the {number} the detail pages already use; a saved list button still holding the old names would stop rendering."
+  },
   "ext_override_empty": {
     "message": "No overrides yet."
   },

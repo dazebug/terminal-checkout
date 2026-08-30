@@ -659,13 +659,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **110 argument-supplying sites are expected.** The count is
+  // **112 argument-supplying sites are expected.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 110, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 112, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
