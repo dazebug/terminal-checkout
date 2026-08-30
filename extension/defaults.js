@@ -74,7 +74,7 @@ const PR_PRESETS = [
 const PR_LIST_PRESETS = [
   definePreset({
     id: 'pr-list.checkoutClaude', nameKey: 'ext.preset.prList.checkoutClaude', face: '🤖',
-    command: '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude',
+    command: '{cd} && ([ -d ../{repo}-pr-{number} ] || git worktree add -f --detach ../{repo}-pr-{number}) && cd ../{repo}-pr-{number} && gh pr checkout {number} --detach && claude',
   }),
 ];
 
@@ -107,7 +107,7 @@ const ISSUE_LIST_PRESETS = [
   definePreset({
     id: 'issue-list.triageClaude', nameKey: 'ext.preset.issueList.triageClaude', face: '📋',
     command: '{cd} && claude',
-    claudeInputs: ['!gh issue view {issue} --comments'],
+    claudeInputs: ['!gh issue view {number} --comments'],
   }),
 ];
 
@@ -196,7 +196,7 @@ const BUTTON_KINDS = {
   },
   'pr-list': {
     storageKey: 'prListButtons', presets: PR_LIST_PRESETS, defaults: DEFAULT_PR_LIST_BUTTONS,
-    variables: ['repo', 'owner', 'pr'],
+    variables: ['repo', 'owner', 'number'],
   },
   issue: {
     storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
@@ -204,7 +204,7 @@ const BUTTON_KINDS = {
   },
   'issue-list': {
     storageKey: 'issueListButtons', presets: ISSUE_LIST_PRESETS, defaults: DEFAULT_ISSUE_LIST_BUTTONS,
-    variables: ['repo', 'owner', 'issue'],
+    variables: ['repo', 'owner', 'number'],
   },
   repo: {
     storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
@@ -516,7 +516,7 @@ function buildListBatchItems(target, selected) {
     if (!parsed || parsed.kind !== kind || parsed.owner !== target.owner || parsed.repo !== target.repo) {
       return null;
     }
-    items.push({ variables: { repo: target.repo, owner: target.owner, [kind]: parsed.number } });
+    items.push({ variables: { repo: target.repo, owner: target.owner, number: parsed.number } });
   }
   return items;
 }

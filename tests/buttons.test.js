@@ -282,28 +282,28 @@ test('app-provided variables are not in any page\'s variable list', () => {
 });
 
 test('list kinds have separate storage, list-safe variables, and one preset each', () => {
-  assert.deepEqual(BUTTON_KINDS['pr-list'].variables, ['repo', 'owner', 'pr']);
-  assert.deepEqual(BUTTON_KINDS['issue-list'].variables, ['repo', 'owner', 'issue']);
+  assert.deepEqual(BUTTON_KINDS['pr-list'].variables, ['repo', 'owner', 'number']);
+  assert.deepEqual(BUTTON_KINDS['issue-list'].variables, ['repo', 'owner', 'number']);
   assert.equal(BUTTON_KINDS['pr-list'].storageKey, 'prListButtons');
   assert.equal(BUTTON_KINDS['issue-list'].storageKey, 'issueListButtons');
   assert.equal(BUTTON_KINDS['pr-list'].defaults.length, 1);
   assert.equal(BUTTON_KINDS['issue-list'].defaults.length, 1);
   assert.equal(BUTTON_KINDS['pr-list'].defaults[0].command,
-    '{cd} && ([ -d ../{repo}-pr-{pr} ] || git worktree add -f --detach ../{repo}-pr-{pr}) && cd ../{repo}-pr-{pr} && gh pr checkout {pr} --detach && claude');
+    '{cd} && ([ -d ../{repo}-pr-{number} ] || git worktree add -f --detach ../{repo}-pr-{number}) && cd ../{repo}-pr-{number} && gh pr checkout {number} --detach && claude');
   // A shipped list preset that uses a variable outside its kind's set would never render a button
   assert.equal(buttonUsesAllowedVariables('pr-list', BUTTON_KINDS['pr-list'].defaults[0]), true);
   assert.equal(buttonUsesAllowedVariables('issue-list', BUTTON_KINDS['issue-list'].defaults[0]), true);
   assert.deepEqual(BUTTON_KINDS['issue-list'].defaults[0].claudeInputs,
-    ['!gh issue view {issue} --comments']);
+    ['!gh issue view {number} --comments']);
 });
 
 test('buttonUsesAllowedVariables is one pure, kind-scoped visibility predicate', () => {
-  const pr = { command: '{cd} && gh pr checkout {pr} && claude', claudeInputs: [] };
-  const issue = { command: '{cd} && claude', claudeInputs: ['!gh issue view {issue} --comments'] };
+  const pr = { command: '{cd} && gh pr checkout {number} && claude', claudeInputs: [] };
+  const issue = { command: '{cd} && claude', claudeInputs: ['!gh issue view {number} --comments'] };
   assert.equal(buttonUsesAllowedVariables('pr-list', pr), true);
   assert.equal(buttonUsesAllowedVariables('issue-list', issue), true);
-  assert.equal(buttonUsesAllowedVariables('pr-list', { command: '{cd} && {issue}', claudeInputs: [] }), false);
-  assert.equal(buttonUsesAllowedVariables('issue-list', { command: '{cd} && {pr}', claudeInputs: [] }), false);
+  assert.equal(buttonUsesAllowedVariables('pr-list', { command: '{cd} && {pr}', claudeInputs: [] }), false);
+  assert.equal(buttonUsesAllowedVariables('issue-list', { command: '{cd} && {issue}', claudeInputs: [] }), false);
   assert.equal(buttonUsesAllowedVariables('pr-list', { command: '{cd}', claudeInputs: ['!echo {branch}'] }), false);
   assert.equal(buttonUsesAllowedVariables('not-a-kind', pr), false);
 });

@@ -140,8 +140,8 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       ],
     ),
     [
-      { variables: { repo: 'repo', owner: 'owner', pr: '19' } },
-      { variables: { repo: 'repo', owner: 'owner', pr: '7' } },
+      { variables: { repo: 'repo', owner: 'owner', number: '19' } },
+      { variables: { repo: 'repo', owner: 'owner', number: '7' } },
     ],
   );
   assert.deepEqual(
@@ -149,7 +149,7 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       { kind: 'issue-list', owner: 'owner', repo: 'repo' },
       [{ key: 'owner/repo/issue/3', title: 'triage' }],
     ),
-    [{ variables: { repo: 'repo', owner: 'owner', issue: '3' } }],
+    [{ variables: { repo: 'repo', owner: 'owner', number: '3' } }],
   );
 });
 
@@ -159,7 +159,7 @@ test('buildListBatchItems includes owner so {cd} clone fallback stays correct', 
       { kind: 'pr-list', owner: 'octo', repo: 'repo' },
       [{ key: 'octo/repo/pr/7', title: 'needs owner' }],
     ),
-    [{ variables: { repo: 'repo', owner: 'octo', pr: '7' } }],
+    [{ variables: { repo: 'repo', owner: 'octo', number: '7' } }],
   );
 });
 
