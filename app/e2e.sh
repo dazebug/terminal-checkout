@@ -67,7 +67,7 @@ if response.get("success") is not False:
     fail(f"expected success=false, got {response!r}")
 
 expected_errors = {
-    "cap": "items must contain at most 8 item(s)",
+    "cap": "items must contain at most 25 item(s)",
     "empty": "items must not be empty",
     "ambiguous": "ambiguous batch request: items cannot be combined with command_template",
 }
@@ -143,8 +143,8 @@ run_case "app-provided variable cannot come from the extension" \
   'Unknown variable: {cd}'
 
 # These batch validation failures all reject before the run closure, so they do not open a terminal.
-run_batch_case "batch cap exceeds eight items" \
-  '{"command":"echo cap","items":[{"variables":{"repo":"r1"}},{"variables":{"repo":"r2"}},{"variables":{"repo":"r3"}},{"variables":{"repo":"r4"}},{"variables":{"repo":"r5"}},{"variables":{"repo":"r6"}},{"variables":{"repo":"r7"}},{"variables":{"repo":"r8"}},{"variables":{"repo":"r9"}}]}' \
+run_batch_case "batch cap exceeds twenty-five items" \
+  '{"command":"echo cap","items":[{"variables":{"repo":"r1"}},{"variables":{"repo":"r2"}},{"variables":{"repo":"r3"}},{"variables":{"repo":"r4"}},{"variables":{"repo":"r5"}},{"variables":{"repo":"r6"}},{"variables":{"repo":"r7"}},{"variables":{"repo":"r8"}},{"variables":{"repo":"r9"}},{"variables":{"repo":"r10"}},{"variables":{"repo":"r11"}},{"variables":{"repo":"r12"}},{"variables":{"repo":"r13"}},{"variables":{"repo":"r14"}},{"variables":{"repo":"r15"}},{"variables":{"repo":"r16"}},{"variables":{"repo":"r17"}},{"variables":{"repo":"r18"}},{"variables":{"repo":"r19"}},{"variables":{"repo":"r20"}},{"variables":{"repo":"r21"}},{"variables":{"repo":"r22"}},{"variables":{"repo":"r23"}},{"variables":{"repo":"r24"}},{"variables":{"repo":"r25"}},{"variables":{"repo":"r26"}}]}' \
   cap
 
 run_batch_case "batch items cannot be empty" \
