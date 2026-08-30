@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Core
 
-// MARK: - Legacy response-byte corpus (D11)
+// MARK: - Legacy response-byte corpus
 
 final class LegacyRequestByteCorpusTests: XCTestCase {
     private struct Fixture {
@@ -61,7 +61,7 @@ final class LegacyRequestByteCorpusTests: XCTestCase {
     }
 }
 
-// MARK: - Batch request contract (D3, D4, D5, D7)
+// MARK: - Batch request contract
 
 final class BatchRequestTests: XCTestCase {
     private func itemResults(_ response: [String: Any], file: StaticString = #filePath, line: UInt = #line) throws -> [[String: Any]] {

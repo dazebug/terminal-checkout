@@ -38,7 +38,7 @@ let claudeSubmitKey = "\r"
 /// Only `!` was measured. The `/` and `#` prefixes are one character too and should be erased by the same sequence, but that is inference, not measurement.
 let claudeClearInputKey = "\u{15}\u{7F}"
 
-/// D8: batch fan-out and future parallel callers must stay bounded at the same app-wide level.
+/// Batch fan-out and future parallel callers must stay bounded at the same app-wide level.
 let claudeDeliveryConcurrencyLimit = 4
 private let claudeDeliveryConcurrencySemaphore = DispatchSemaphore(value: claudeDeliveryConcurrencyLimit)
 
