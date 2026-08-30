@@ -108,8 +108,8 @@ test('selectedListRows and listSelectionStatus expose zero and cap failures with
   assert.deepEqual(listSelectionStatus([]), { count: 0, valid: false, error: 'empty' });
   assert.deepEqual(listSelectionStatus(selected), { count: 2, valid: true, error: null });
   assert.deepEqual(
-    listSelectionStatus(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
-    { count: 9, valid: false, error: 'too-many' },
+    listSelectionStatus(Array.from({ length: 26 }, (_, i) => ({ key: String(i), title: '' }))),
+    { count: 26, valid: false, error: 'too-many' },
   );
 });
 
@@ -117,7 +117,7 @@ test('validateListBatchSelection rejects malformed, empty, and over-cap snapshot
   assert.deepEqual(validateListBatchSelection('not an array'), { valid: false, error: 'not-array' });
   assert.deepEqual(validateListBatchSelection([]), { valid: false, error: 'empty' });
   assert.deepEqual(
-    validateListBatchSelection(Array.from({ length: 9 }, (_, i) => ({ key: String(i), title: '' }))),
+    validateListBatchSelection(Array.from({ length: 26 }, (_, i) => ({ key: String(i), title: '' }))),
     { valid: false, error: 'too-many' },
   );
   assert.deepEqual(
@@ -316,8 +316,8 @@ test('listBatchSelectionNotice turns empty and cap verdicts into localized butto
     { messageKey: 'ext.list.batch.selection.empty', args: [] },
   );
   assert.deepEqual(
-    listBatchSelectionNotice({ count: 9, valid: false, error: 'too-many' }),
-    { messageKey: 'ext.list.batch.selection.tooMany', args: [9, 8] },
+    listBatchSelectionNotice({ count: 26, valid: false, error: 'too-many' }),
+    { messageKey: 'ext.list.batch.selection.tooMany', args: [26, 25] },
   );
   assert.equal(listBatchSelectionNotice({ count: 2, valid: true, error: null }), null);
 });

@@ -9,7 +9,7 @@ public struct ResolvedRequest {
 
 /// The maximum number of item requests one batch may carry. The extension will mirror this value
 /// when it learns the batch shape; Core owns the side-effect boundary and therefore enforces it.
-public let batchItemLimit = 8
+public let batchItemLimit = 25
 
 /// The relay waits 180 seconds for a response; reserve 30 seconds for framing and JSON
 /// serialization so sequential batch launches stop within the remaining response budget.

@@ -286,7 +286,7 @@ function pageTypeOf(pathname) {
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
-const MAX_BATCH_ITEMS = 8;
+const MAX_BATCH_ITEMS = 25;
 const LIST_BATCH_ACTION = 'execute_list_batch';
 const LIST_BATCH_RESULT_KEY_PROTOCOL = 1;
 

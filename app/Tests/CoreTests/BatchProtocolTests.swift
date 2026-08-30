@@ -198,7 +198,7 @@ final class BatchRequestTests: XCTestCase {
     }
 
     func testBatchItemLimitIsEightAndExcessIsRejectedBeforeRunning() {
-        XCTAssertEqual(batchItemLimit, 8)
+        XCTAssertEqual(batchItemLimit, 25)
         let items = (0...batchItemLimit).map { ["variables": ["repo": "repo\($0)"]] }
         var runCount = 0
         let response = handleRequest(
