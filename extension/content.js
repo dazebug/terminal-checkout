@@ -162,7 +162,6 @@ const LIST_BUTTON_STYLE = `
 const nativeListCheckboxVisibility = new WeakMap();
 let listSelectionState = null;
 let listDocumentGeneration = 0;
-const listBatchResultStates = new Map();
 
 function listRowElementFor(anchor) {
   return anchor.closest(LIST_ROW_SELECTOR);
@@ -390,8 +389,6 @@ function removeListBatchResultBadges(identity) {
 
 function clearListBatchResult(identity) {
   removeListBatchResultBadges(identity);
-  if (identity === undefined) listBatchResultStates.clear();
-  else listBatchResultStates.delete(identity);
 }
 
 function invalidateListBatchResults() {
@@ -489,7 +486,6 @@ function renderListBatchResultView(view, kind, generation) {
   if (target?.kind !== kind) return;
 
   clearListBatchResult(view.buttonIdentity);
-  listBatchResultStates.set(view.buttonIdentity, view);
   if (view.badges.length === 0) return;
 
   const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
