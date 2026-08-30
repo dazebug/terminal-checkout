@@ -962,9 +962,10 @@ function renderMigration() {
   // several generations behind, and the user is consenting to all of them at once.
   let intro = migrationDescription(plan.fromVersion);
   if (summary.reviewOnly) {
-    intro = summary.informationalCount
+    const notice = summary.informationalCount
       ? t('ext.migration.intro.nothingSafe')
       : t('ext.migration.intro.nothingToDo', t('ext.migration.gotIt'));
+    intro = `${summary.descriptions}${notice ? ` ${notice}` : ''}`.trim();
   }
   document.getElementById('migration-describe').textContent = intro;
 

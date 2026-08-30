@@ -232,7 +232,7 @@ The value lives in the app rather than the extension because it is machine-speci
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
 | `{cd}` | move into the repository — filled in by the app, not the page ([above](#getting-into-the-repository)) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{repo}` | repository name | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | — | ✓ | — | ✓ |
+| `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{main}` | main branch (per-repo override → page detection → global default) | ✓ | — | ✓ | — | ✓ |
 | `{number}` | PR/issue number (digits only) | ✓ | — | ✓ | — | — |
 | `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — | — | — |
@@ -241,7 +241,7 @@ The value lives in the app rather than the extension because it is machine-speci
 | `{pr}` | PR number from the selected list row (digits only) | — | ✓ | — | — | — |
 | `{issue}` | issue number from the selected list row (digits only) | — | — | — | ✓ | — |
 
-Variables work identically in commands and claude inputs. A PR list supplies only `{repo}` and `{pr}`, and an issue list supplies only `{repo}` and `{issue}`; list pages have no `{branch}`, `{base}`, `{main}`, `{owner}`, or `{number}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
+Variables work identically in commands and claude inputs. A PR list supplies `{repo}`, `{owner}`, and `{pr}`, and an issue list supplies `{repo}`, `{owner}`, and `{issue}`; list pages have no `{branch}`, `{base}`, `{main}`, or `{number}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
 
 **`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
 

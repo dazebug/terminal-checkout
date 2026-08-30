@@ -14,6 +14,7 @@ const {
   listCheckboxMode,
   checkedListRowKeys,
   carryListRowChecks,
+  attachedCheckedListRowKeys,
   selectedListRows,
   listSelectionStatus,
   validateListBatchSelection,
@@ -30,6 +31,7 @@ const {
   listCheckboxMode,
   checkedListRowKeys,
   carryListRowChecks,
+  attachedCheckedListRowKeys,
   selectedListRows,
   listSelectionStatus,
   validateListBatchSelection,
@@ -136,8 +138,8 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       ],
     ),
     [
-      { variables: { repo: 'repo', pr: '19' } },
-      { variables: { repo: 'repo', pr: '7' } },
+      { variables: { repo: 'repo', owner: 'owner', pr: '19' } },
+      { variables: { repo: 'repo', owner: 'owner', pr: '7' } },
     ],
   );
   assert.deepEqual(
@@ -145,7 +147,17 @@ test('buildListBatchItems maps re-read rows in document order using target repo 
       { kind: 'issue-list', owner: 'owner', repo: 'repo' },
       [{ key: 'owner/repo/issue/3', title: 'triage' }],
     ),
-    [{ variables: { repo: 'repo', issue: '3' } }],
+    [{ variables: { repo: 'repo', owner: 'owner', issue: '3' } }],
+  );
+});
+
+test('buildListBatchItems includes owner so {cd} clone fallback stays correct', () => {
+  assert.deepEqual(
+    buildListBatchItems(
+      { kind: 'pr-list', owner: 'octo', repo: 'repo' },
+      [{ key: 'octo/repo/pr/7', title: 'needs owner' }],
+    ),
+    [{ variables: { repo: 'repo', owner: 'octo', pr: '7' } }],
   );
 });
 
@@ -183,6 +195,30 @@ test('sameListSelectionKeys rejects a changed key set while ignoring document or
   );
 });
 
+test('attachedCheckedListRowKeys keeps only keys whose controls are still attached', () => {
+  const staleElement = {
+    contains: node => node?.id === 'native-keep',
+  };
+  const liveElement = {
+    contains: node => node?.id === 'native-keep',
+  };
+  const rows = [
+    {
+      key: 'owner/repo/pr/7',
+      checked: true,
+      nativeCheckboxes: [{ id: 'native-keep' }],
+      element: liveElement,
+    },
+    {
+      key: 'owner/repo/pr/8',
+      checked: true,
+      nativeCheckboxes: [{ id: 'native-drop' }],
+      element: staleElement,
+    },
+  ];
+  assert.deepEqual(attachedCheckedListRowKeys(rows, 'native'), ['owner/repo/pr/7']);
+});
+
 test('buildListBatchMessage carries snapshot comparison data and the clicked button identity', () => {
   const target = { kind: 'issue-list', owner: 'owner', repo: 'repo', number: null };
   const selected = [{ key: 'owner/repo/issue/3', title: 'triage' }];
@@ -214,6 +250,7 @@ test('interpretListBatchResponse preserves transport and app failure layers with
     transportSuccess: true,
     appSuccess: false,
     error: 'one item failed validation',
+    itemKeys: [],
     items: [
       { success: false, error: 'Unknown variable: {pr}' },
       { success: false, error: 'not launched — batch rejected during validation' },
@@ -276,6 +313,7 @@ test('listBatchResultView maps ordered item results without crossing button iden
   ];
   const first = listBatchResultView('pr-list:0', selected, {
     appSuccess: false,
+    itemKeys: ['owner/repo/pr/8', 'owner/repo/pr/7'],
     items: [
       { success: true },
       { success: false, error: 'not launched — response deadline exceeded' },
@@ -285,8 +323,8 @@ test('listBatchResultView maps ordered item results without crossing button iden
     buttonIdentity: 'pr-list:0',
     phase: 'error',
     badges: [
-      { key: 'owner/repo/pr/7', success: true, error: null },
-      { key: 'owner/repo/pr/8', success: false, error: 'not launched — response deadline exceeded' },
+      { key: 'owner/repo/pr/8', success: true, error: null },
+      { key: 'owner/repo/pr/7', success: false, error: 'not launched — response deadline exceeded' },
     ],
   });
   assert.notEqual(listBatchButtonIdentity('pr-list', 0), listBatchButtonIdentity('pr-list', 1));

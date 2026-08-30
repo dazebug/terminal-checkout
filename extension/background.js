@@ -502,6 +502,7 @@ async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
   }
 
   assertSamePage(clicked, current?.href);
+  const itemKeys = (current?.selected || []).map(row => row?.key).filter(key => typeof key === 'string');
   const currentVerdict = validateListBatchSelection(current?.selected);
   if (!currentVerdict.valid || !sameListSelectionKeys(selected, current.selected)) {
     throw new Error(LIST_SELECTION_CHANGED_ERROR);
@@ -513,7 +514,8 @@ async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
 
   // The final page check is deliberately the last await before the native hand-off.
   await assertRequestIsCoherent(tab, { clicked, source: target });
-  return sendBatchToNativeHost(message);
+  const batch = await sendBatchToNativeHost(message);
+  return { batch, itemKeys };
 }
 
 // Check whether this page really rendered as a repository. Only pages GitHub drew as a repository
@@ -605,7 +607,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     executeListBatch(sender.tab, message.buttonIndex, message.shown, message.target, message.selected)
-      .then(batch => sendResponse({ success: true, batch }))
+      .then(({ batch, itemKeys }) => sendResponse({ success: true, batch, itemKeys }))
       .catch((error) => {
         sendResponse({ success: false, error: error.message });
       });

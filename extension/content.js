@@ -321,13 +321,6 @@ function sameListRows(previousRows, currentRows) {
   return currentRows.every(row => previousByKey.get(row.key) === row.element);
 }
 
-function listControlsAttached(rows, mode) {
-  return rows.every(row => {
-    const controls = mode === 'native' ? row.nativeCheckboxes : [row.ownedCheckbox || ownedCheckboxIn(row.element)];
-    return controls.length > 0 && controls.every(control => control && row.element.contains(control));
-  });
-}
-
 function createOwnedListCheckbox(row, checked) {
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
@@ -347,10 +340,8 @@ function createOwnedListCheckbox(row, checked) {
 function syncListSelectionControls(kind, rows, mode) {
   const previous = listSelectionState;
   const sameRows = previous?.kind === kind && sameListRows(previous.rows, rows);
-  const canCarry = sameRows && listControlsAttached(previous.rows, previous.mode);
-  const selectedKeys = canCarry
-    ? checkedListRowKeys(rowsWithListChecks(previous.rows, previous.mode))
-    : [];
+  const canCarry = previous?.kind === kind && sameRows;
+  const selectedKeys = canCarry ? attachedCheckedListRowKeys(previous.rows, previous.mode) : [];
 
   // A stable DOM and stable mode need no work on the one-second poll; in particular, don't replace
   // a focused native checkbox while the user is selecting rows.

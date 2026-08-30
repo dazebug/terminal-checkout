@@ -275,6 +275,15 @@ test('summary: no candidates at all is a review-only notice', () => {
   const summary = migrationSummary(plan, []);
   assert.equal(summary.reviewOnly, true);
   assert.equal(summary.informationalCount, 1);
+  assert.match(summary.descriptions, /existing commands are not rewritten/i);
+});
+
+test('summary: review-only notices include the step descriptions that were skipped', () => {
+  const plan = planMigration({ buttons: [] }, 1);
+  const summary = migrationSummary(plan, []);
+  assert.equal(summary.reviewOnly, true);
+  assert.equal(plan.targetVersion, SETTINGS_VERSION);
+  assert.match(summary.descriptions, /existing commands are not rewritten/i);
 });
 
 // --- Import ---

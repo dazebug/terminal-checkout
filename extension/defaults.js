@@ -191,7 +191,7 @@ const BUTTON_KINDS = {
   },
   'pr-list': {
     storageKey: 'prListButtons', presets: PR_LIST_PRESETS, defaults: DEFAULT_PR_LIST_BUTTONS,
-    variables: ['repo', 'pr'],
+    variables: ['repo', 'owner', 'pr'],
   },
   issue: {
     storageKey: 'issueButtons', presets: ISSUE_PRESETS, defaults: DEFAULT_ISSUE_BUTTONS,
@@ -199,7 +199,7 @@ const BUTTON_KINDS = {
   },
   'issue-list': {
     storageKey: 'issueListButtons', presets: ISSUE_LIST_PRESETS, defaults: DEFAULT_ISSUE_LIST_BUTTONS,
-    variables: ['repo', 'issue'],
+    variables: ['repo', 'owner', 'issue'],
   },
   repo: {
     storageKey: 'repoButtons', presets: REPO_PRESETS, defaults: DEFAULT_REPO_BUTTONS,
@@ -427,6 +427,24 @@ function carryListRowChecks(rows, selectedKeys) {
   return (rows || []).map(row => ({ ...row, checked: selected.has(row.key) }));
 }
 
+function attachedCheckedListRowKeys(rows, mode) {
+  const keys = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (row?.checked !== true || typeof row.key !== 'string' || seen.has(row.key)) continue;
+
+    const controls = mode === 'native'
+      ? (row.nativeCheckboxes || [])
+      : [row.ownedCheckbox];
+    const control = controls.find(Boolean);
+    if (!control || typeof control !== 'object' || !row.element?.contains || !row.element.contains(control)) continue;
+
+    seen.add(row.key);
+    keys.push(row.key);
+  }
+  return keys;
+}
+
 function selectedListRows(rows) {
   const selected = [];
   const seen = new Set();
@@ -485,7 +503,7 @@ function buildListBatchItems(target, selected) {
     if (!parsed || parsed.kind !== kind || parsed.owner !== target.owner || parsed.repo !== target.repo) {
       return null;
     }
-    items.push({ variables: { repo: target.repo, [kind]: parsed.number } });
+    items.push({ variables: { repo: target.repo, owner: target.owner, [kind]: parsed.number } });
   }
   return items;
 }
@@ -557,6 +575,7 @@ function interpretListBatchResponse(response) {
     appSuccess: batch.success,
     error: typeof batch.error === 'string' ? batch.error : null,
     items: batch.items,
+    itemKeys: Array.isArray(response.itemKeys) ? response.itemKeys : [],
   };
 }
 
@@ -585,8 +604,10 @@ function listBatchButtonIdentity(kind, index) {
 function listBatchResultView(buttonIdentity, selected, outcome) {
   const rows = Array.isArray(selected) ? selected : [];
   const items = Array.isArray(outcome?.items) ? outcome.items : [];
-  const complete = rows.length > 0 && items.length === rows.length &&
+  const itemKeys = Array.isArray(outcome?.itemKeys) ? outcome.itemKeys : rows.map(row => row.key);
+  const complete = rows.length > 0 && items.length === itemKeys.length &&
     rows.every(row => row && typeof row.key === 'string') &&
+    itemKeys.every(key => typeof key === 'string') &&
     items.every(item => item && typeof item === 'object' && !Array.isArray(item) &&
       typeof item.success === 'boolean' &&
       (item.error === undefined || typeof item.error === 'string'));
@@ -594,7 +615,7 @@ function listBatchResultView(buttonIdentity, selected, outcome) {
     buttonIdentity,
     phase: outcome?.appSuccess === true ? 'done' : 'error',
     badges: complete ? items.map((item, index) => ({
-      key: rows[index].key,
+      key: itemKeys[index],
       success: item.success,
       error: typeof item.error === 'string' ? item.error : null,
     })) : [],

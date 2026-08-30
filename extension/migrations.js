@@ -319,6 +319,7 @@ function migrationSummary(plan, selectedIds) {
     selectedCount,
     nothingToApply: selectedCount === 0,
     reviewOnly: plan.actionable.length === 0,
+    descriptions: migrationDescription(plan.fromVersion),
   };
 }
 

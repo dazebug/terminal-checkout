@@ -282,8 +282,8 @@ test('app-provided variables are not in any page\'s variable list', () => {
 });
 
 test('list kinds have separate storage, list-safe variables, and one preset each', () => {
-  assert.deepEqual(BUTTON_KINDS['pr-list'].variables, ['repo', 'pr']);
-  assert.deepEqual(BUTTON_KINDS['issue-list'].variables, ['repo', 'issue']);
+  assert.deepEqual(BUTTON_KINDS['pr-list'].variables, ['repo', 'owner', 'pr']);
+  assert.deepEqual(BUTTON_KINDS['issue-list'].variables, ['repo', 'owner', 'issue']);
   assert.equal(BUTTON_KINDS['pr-list'].storageKey, 'prListButtons');
   assert.equal(BUTTON_KINDS['issue-list'].storageKey, 'issueListButtons');
   assert.equal(BUTTON_KINDS['pr-list'].defaults.length, 1);
