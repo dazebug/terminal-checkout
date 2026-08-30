@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "批次項目失敗：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "批次項目成功"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "未知錯誤"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "請至少選取一列。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "已選取 $ARG1$ 列，請選取不超過 $ARG2$ 列。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "zh-Hant"
   },

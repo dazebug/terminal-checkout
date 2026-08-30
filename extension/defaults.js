@@ -560,6 +560,47 @@ function interpretListBatchResponse(response) {
   };
 }
 
+// Local selection failures are shown through the button's existing error marker and a temporary
+// tooltip. Keeping the result as a message id here lets the content script resolve it in the
+// catalogue that is actually painting this page.
+function listBatchSelectionNotice(status) {
+  if (status?.error === 'empty') {
+    return { messageKey: 'ext.list.batch.selection.empty', args: [] };
+  }
+  if (status?.error === 'too-many') {
+    return { messageKey: 'ext.list.batch.selection.tooMany', args: [status.count, MAX_BATCH_ITEMS] };
+  }
+  return null;
+}
+
+// A result belongs to the button that produced it, not merely to the row it happens to decorate.
+// The identity stays in the pure view so a second list button cannot replace the first one's badges.
+function listBatchButtonIdentity(kind, index) {
+  return `${kind}:${index}`;
+}
+
+// App item results are ordered like the selected snapshot. If that shape is absent or malformed,
+// the safe display is the overall phase only; inventing a row verdict from a shorter response would
+// make an incomplete native response look authoritative.
+function listBatchResultView(buttonIdentity, selected, outcome) {
+  const rows = Array.isArray(selected) ? selected : [];
+  const items = Array.isArray(outcome?.items) ? outcome.items : [];
+  const complete = rows.length > 0 && items.length === rows.length &&
+    rows.every(row => row && typeof row.key === 'string') &&
+    items.every(item => item && typeof item === 'object' && !Array.isArray(item) &&
+      typeof item.success === 'boolean' &&
+      (item.error === undefined || typeof item.error === 'string'));
+  return {
+    buttonIdentity,
+    phase: outcome?.appSuccess === true ? 'done' : 'error',
+    badges: complete ? items.map((item, index) => ({
+      key: rows[index].key,
+      success: item.success,
+      error: typeof item.error === 'string' ? item.error : null,
+    })) : [],
+  };
+}
+
 // The last question asked before a command runs. Three answers, from three different moments, and
 // all three have to name the same page:
 //

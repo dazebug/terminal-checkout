@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "Batch item failed: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "Batch item succeeded"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "Unknown error"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "Select at least one row."
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "$ARG1$ selected; select no more than $ARG2$ rows.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "en"
   },

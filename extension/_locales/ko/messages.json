@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "배치 항목 실패: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "배치 항목 성공"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "알 수 없는 오류"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "행을 하나 이상 선택하세요."
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "$ARG1$개를 선택했습니다. $ARG2$개 이하로 선택하세요.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "ko"
   },

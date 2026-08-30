@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "バッチ項目に失敗しました: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "バッチ項目は成功しました"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "不明なエラー"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "1行以上選択してください。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "$ARG1$行選択されています。$ARG2$行以下を選択してください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "ja"
   },

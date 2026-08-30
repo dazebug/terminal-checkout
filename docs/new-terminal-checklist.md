@@ -91,6 +91,14 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] On Warp, send a batch with typed `claude_inputs` → exactly one warning states the batch size and first typed item (`first at item i`), and says `each tab watched`; that visibility requirement applies to typed-delivery tabs, not argv-only items, and no duplicate warning appears
 - [ ] Start at least five long typed deliveries in one or overlapping batches → no more than four occupy the delivery gate at once, the fifth waits for a permit, and it completes after an earlier delivery releases its permit
 - [ ] With a two-item cmux batch, switch away from the active tab during delivery → both surface-addressed deliveries complete in their background tabs and no item is dropped
+- [ ] On a `/owner/repo/pulls` or `/owner/repo/issues` list, list batch buttons attach above the rows in the filter/toolbar area, remain separate from the existing repository header button, and hide an unsafe stored button while leaving a list-safe button visible
+- [ ] Select zero rows and then more than eight rows → clicking a list button sends no batch request, shows the phase marker plus localized title diagnosis, and leaves the ninth checked until the user changes it
+- [ ] Exercise complete native coverage, partial native coverage, and zero native coverage → only complete coverage keeps GitHub's controls; partial/zero coverage switches every eligible row to owned controls, carries checks by row key, and reset restores native controls without leaving owned controls
+- [ ] Select multiple rows and click two different list buttons → each request contains the live ordered selection, each row gets the matching success/failure badge including the deadline error text, and one button's badges never replace the other button's badges
+- [ ] Paginate, filter, or trigger a Turbo DOM replacement within the same list target → the old document's selection and result badges are discarded, stale in-flight results do not reappear, and the controls/buttons are reinserted for the new rows
+- [ ] Add a canonical detail link for another repository somewhere in the list-page DOM → it is not collected as an eligible row, never receives an owned checkbox, and cannot produce a batch item for the current repository
+- [ ] With owned mode persisting on a real GitHub page beyond a partial-coverage transition, confirm that hiding native checkboxes does not conceal a GitHub triage control users still need
+- [ ] Confirm on a real GitHub list page that the broad `li` in `LIST_ROW_SELECTOR` does not mistake a sidebar or navigation detail link for a list row
 
 **claude input — argv route (a list holding exactly one plain-text input, and nothing else: no permission, no helper, no screen reading)**
 

@@ -239,6 +239,34 @@
       }
     }
   },
+  "ext_list_batch_result_failure": {
+    "message": "批处理项目失败：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_list_batch_result_success": {
+    "message": "批处理项目成功"
+  },
+  "ext_list_batch_result_unknown": {
+    "message": "未知错误"
+  },
+  "ext_list_batch_selection_empty": {
+    "message": "请至少选择一行。"
+  },
+  "ext_list_batch_selection_tooMany": {
+    "message": "已选择 $ARG1$ 行，请选择不超过 $ARG2$ 行。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
   "ext_meta_catalogueTag": {
     "message": "zh-Hans"
   },

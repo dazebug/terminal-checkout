@@ -666,7 +666,7 @@ test('every call supplies arguments through its message, and the gate says so wh
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 105, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 110, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1561,6 +1561,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   const DECLARED_EXPRESSIONS = {
     'buttonConfig.label': "the user's own button label, read back from their settings and shown as "
       + 'its tooltip — it is theirs, and translating it would rename the button they named',
+    'listBatchBadgeLabel(result': 'the localized result label shared by a row badge title and aria label',
     'row.title': "GitHub's own row title, shown on the extension-owned list checkbox — it is page "
       + 'content rather than extension prose',
   };
@@ -1583,10 +1584,16 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // set would stop noticing that one of two identical sites went away. Changing this list is a
   // reviewed edit: it says which attribute came or went, and what filled it.
   assert.deepEqual(found.map(([file, site]) => siteIdentity(file, site)).sort(), [
+    'content.js aria-label = listBatchBadgeLabel(result',
     'content.js aria-label = row.title',
     'content.js title = buttonConfig.label',
     'content.js title = buttonConfig.label',
+    'content.js title = buttonConfig.label',
+    'content.js title = buttonConfig.label',
+    'content.js title = listBatchBadgeLabel(result',
     'content.js title = row.title',
+    "content.js title = tr('ext.list.batch.selection.empty'",
+    "content.js title = tr('ext.list.batch.selection.tooMany'",
     'options.html placeholder = main',
     "options.js aria-label = ${t('ext.card.reorder.aria')}",
     "options.js aria-label = ${t('ext.claudeInput.reorder.aria', j + 1)}",
@@ -1610,11 +1617,11 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 17, `${repeated.length} sites share a (file, attribute) pair`);
-  assert.equal(new Set(repeated).size, 4, 'the number of repeated (file, attribute) pairs moved');
+  assert.equal(repeated.length, 24, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(new Set(repeated).size, 5, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
-  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
+  assert.equal(sameValueToo.length, 8, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {

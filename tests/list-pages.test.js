@@ -22,6 +22,9 @@ const {
   sameListSelectionKeys,
   buildListBatchMessage,
   interpretListBatchResponse,
+  listBatchSelectionNotice,
+  listBatchButtonIdentity,
+  listBatchResultView,
 } = vm.runInThisContext(`({
   parseListRowAnchor,
   listCheckboxMode,
@@ -35,6 +38,9 @@ const {
   sameListSelectionKeys,
   buildListBatchMessage,
   interpretListBatchResponse,
+  listBatchSelectionNotice,
+  listBatchButtonIdentity,
+  listBatchResultView,
 })`);
 
 test('parseListRowAnchor: normal and fork paths produce a stable row key and title', () => {
@@ -249,4 +255,44 @@ test('list row readers keep their structural literals and repository filter in s
   assert.match(content, /expectedTarget\.repo/);
   assert.match(background, /expected\.owner/);
   assert.match(background, /expected\.repo/);
+});
+
+test('listBatchSelectionNotice turns empty and cap verdicts into localized button diagnostics', () => {
+  assert.deepEqual(
+    listBatchSelectionNotice({ count: 0, valid: false, error: 'empty' }),
+    { messageKey: 'ext.list.batch.selection.empty', args: [] },
+  );
+  assert.deepEqual(
+    listBatchSelectionNotice({ count: 9, valid: false, error: 'too-many' }),
+    { messageKey: 'ext.list.batch.selection.tooMany', args: [9, 8] },
+  );
+  assert.equal(listBatchSelectionNotice({ count: 2, valid: true, error: null }), null);
+});
+
+test('listBatchResultView maps ordered item results without crossing button identities', () => {
+  const selected = [
+    { key: 'owner/repo/pr/7', title: 'first' },
+    { key: 'owner/repo/pr/8', title: 'second' },
+  ];
+  const first = listBatchResultView('pr-list:0', selected, {
+    appSuccess: false,
+    items: [
+      { success: true },
+      { success: false, error: 'not launched — response deadline exceeded' },
+    ],
+  });
+  assert.deepEqual(first, {
+    buttonIdentity: 'pr-list:0',
+    phase: 'error',
+    badges: [
+      { key: 'owner/repo/pr/7', success: true, error: null },
+      { key: 'owner/repo/pr/8', success: false, error: 'not launched — response deadline exceeded' },
+    ],
+  });
+  assert.notEqual(listBatchButtonIdentity('pr-list', 0), listBatchButtonIdentity('pr-list', 1));
+  assert.notEqual(listBatchButtonIdentity('pr-list', 0), listBatchButtonIdentity('issue-list', 0));
+  assert.deepEqual(
+    listBatchResultView('pr-list:0', selected, { appSuccess: null, items: [] }),
+    { buttonIdentity: 'pr-list:0', phase: 'error', badges: [] },
+  );
 });
