@@ -96,17 +96,16 @@ Everything the app asks of cmux goes through `cmux rpc <method> <json>`, and for
 **Source:** Issue #68 measurement item 3 and PR #60
 **Revisit when:** cmux changes either connection-phase error string, or gains an exit code that distinguishes them
 
-When an RPC fails, the app decides whether it may launch cmux and retry by asking one question: did this failure happen before the request reached the server? Three measured transport forms answer yes to that, with `Error:` prefixes for all:
+When an RPC fails, the app decides whether it may launch cmux and retry by asking one question: did this failure happen before the request reached the server? The app classifies two transport forms as pre-server today, both with required `Error:` prefixes:
 
 `Error: Socket not found at <path>`
-`Error: Path exists at <path> but is not a Unix socket`
 `Error: Failed to connect to socket at <path> (Connection refused, errno 61)`
 
-The middle form is not currently classified in code, so it is a measured gap but remains fail-closed today because a retry there is still considered potentially unsafe by the current floor.
+A third transport form is measured from the server as `Error: Path exists at <path> but is not a Unix socket`, but it is not classified today, so that path still stays fail-closed in the contract.
 
-Measured server-side validation failures carried typed prefixes (`invalid_params:`, `not_found:`, `unavailable:`, `method_not_found:`) with body text that is locale-dependent, and they left `workspace.list` / `pane.list` / `surface.list` unchanged in the guarded checks (11→11 workspaces, 1→1 panes, 1→1 surfaces), so the proxy does not change the placement contract on those paths.
+Measured server-side validation failures carried typed prefixes (`invalid_params:`, `not_found:`, `unavailable:`, `method_not_found:`) with body text that is locale-dependent, and they left `workspace.list` / `pane.list` / `surface.list` unchanged in the guarded checks (11→11 workspaces, 1→1 panes, 1→1 surfaces), so a typed body cannot be matched safely and this entry cannot change the placement contract on those paths: for example `Error: invalid_params: Invalid layout: 올바른 포맷이 아니기 때문에 해당 데이터를 읽을 수 없습니다.`.
 
-**Reason:** `workspace.create` is not idempotent. A retry after a request that did reach the server creates a second workspace, so the retry has to be gated on proof that nothing happened — not on a guess about what the message means. Classifying by transport fact rather than by substring is also what makes the gate fail closed: a message shape we have never measured falls into "may have had an effect," which is the safe side.
+**Reason:** `workspace.create` is not idempotent. A retry after a request that did reach the server creates a second workspace, so the retry has to be gated on proof that nothing happened — not on a guess about what the message means. Anything else, including a message with no prefix, is treated as a failure that may have had a server-side effect, and is rethrown. Classifying by transport fact rather than by substring is also what makes the gate fail closed: a message shape we have never measured falls into "may have had an effect," which is the safe side.
 
 **Rejected alternative — substring matching.** A partial match cannot tell a connection refusal from a post-create failure that quotes the same words, and it silently starts matching different things when the wording drifts. An earlier version of this classifier also anchored on the error text *without* its `Error: ` prefix — the test passed while the real CLI output did not match, so the auto-launch path was dead. Requiring the prefix that the CLI always emits is what makes the anchor testable against something real.
 
@@ -122,7 +121,7 @@ Measured server-side validation failures carried typed prefixes (`invalid_params
 
 `workspace.create` is sent by the app with `focus:true` and no `window_id`; an unaddressed create follows the server's active-window pointer.
 
-**Reason:** the server routes an unaddressed create to the most recently active window, so the new workspace appears where the user was looking. This is the same class of risk WezTerm handles with `--window-id`; with no comparable flag, WezTerm can fallback to the oldest window when targeting is absent, so cmux's conditional fallback ladder was measured unnecessary and dropped. The new fact is that `window_id` is supported and validated: an unknown window id returns `Error: unavailable: TabManager not available` with no list delta.
+**Reason:** the server routes an unaddressed create to the most recently active window, so the new workspace appears where the user was looking. This is the same class of risk WezTerm has without `--window-id`; without that flag, `wezterm cli spawn` falls back to the mux's oldest window, while cmux does not. The conditional-fallback ladder WezTerm needed was planned for cmux, measured unnecessary here, and dropped. The new fact is that `window_id` is supported and validated: an unknown window id returns `Error: unavailable: TabManager not available` with no list delta.
 
 **Rejected alternative — `focus:false`.** A workspace created unfocused can have no pty at all, yielding `tty: null` and a send `queued:true` while the surface is still runtime-active. The queued bytes are not lost — the surface flushes after warm-up, measured in this round with focus:false and focused surfaces, and `tty` appeared after the flush within measured bounds (3.7 s for a focus:false surface). With no tty there is nothing to check raw mode against, so the code path is still `focus:true` for startup and reflection checks still must precede CR.
 
@@ -136,7 +135,7 @@ Measured server-side validation failures carried typed prefixes (`invalid_params
 **Source:** Issue #68 measurement items 2 and 6 and PR #60
 **Revisit when:** cmux exposes the tty on the workspace-creation response or changes `debug.terminals` semantics
 
-The tty name for a new surface is read by polling `debug.terminals` for the surface id as a basename that cmux's shell integration pushes up. This contract now requires that `tty` is treated as evidence that a command was submitted, not that the surface is ready: in measured cases, focused and unfocused new surfaces reported `tty: null` while runtime was already active and only acquired a tty after `surface.send_text` with CR. The null state was still present at 16.6 s in one focused case; when it cleared, the command had already been running. Tty names also recycled across unrelated surfaces after close, so the name is not a stable identity.
+The tty name for a new surface is read by polling `debug.terminals` for the surface id as a basename that cmux's shell integration pushes up. Measured cases split into two shapes: an idle surface can stay `tty: null` through age 16.6 s and close with no command sent, and a command-sent surface can clear null to a tty at about 0.5 s when `queued:false` or 3.7 s when `queued:true` and focus was false, which is the contract-relevant signal for command reachability. Tty names also recycled across unrelated surfaces after close, so the name is not a stable identity.
 
 **Rejected alternative — have the pane tell us (`tty >| file`).** It works, and it puts a line the user did not write into their shell history and leaves a file to clean up.
 
@@ -148,12 +147,12 @@ The tty name for a new surface is read by polling `debug.terminals` for the surf
 
 **Consequence, accepted:** keep the existing `queued`/readback flow; add a `tty` assertion only after a command has been sent and treat null as a delayed state, not a terminal fault. The null-to-non-null transition is the contract signal for command reachability, regardless of whether the surface was created focused or not.
 
-## Split order and readable ceiling were measured from layout and pane splits
+## Split order halves the active pane; balanced splits or `equalize_splits` keep N=4 readable
 
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; issue #68 item 5 and item 7
-**Source:** Issue #68 measurements `item5.jsonl`, `item5b.jsonl`, `item7.jsonl`, `item7b.jsonl`
+**Source:** Issue #68 item 5 and item 7
 **Revisit when:** layout geometry, minimum shell column rules, or cmux split defaults move on this machine
 
 At 2320 × 1382 px and 15 × 30 px cells, repeated `surface.split direction:right` off the newest surface halves the newest pane and does not rebalance: N=1→`2320` / 154 columns, N=2→`1160,1160` / `154,154`, N=3→`1160,580,580` / `154,76,76`, N=4→`1160,580,290,290` / `154,76,38,38`. `workspace.equalize_splits {"workspace_id":W}` changed all four widths to `580` px.
@@ -162,7 +161,7 @@ Balanced split order is different: right, down off S0, then down off the returne
 
 The binding constraint is columns per pane, not pane count: a 39-character command was readable in all panes at N=4 in both measured shapes because the balanced layout preserves width. `layout` creates with `workspace.create` remain the strongest fan-out route because they build the whole fan-out in one call and avoid extra sends.
 
-Layout-aware creation was also measured with item 7: `workspace.create` accepts `layout` as an RPC argument and one call can produce all surfaces for the fan-out, with each command executed in its own leaf surface. `layout` accepts `window_id`, `focus`, `title`, `description`, and `cwd`; it ignores `name` (`title` stayed `Terminal`) and ignores `command` (`command` was not used by the server). The response still returns only one `surface_id`, so callers must enumerate through `pane.list` / `surface.list` and map by pane index to keep each command-to-surface assignment. The initial `workspace.create` response is complete for contracting, but each layout-created surface reports `initial_command: null`, so that field cannot be used as a matching key.
+Layout-aware creation was also measured with item 7: `workspace.create` accepts `layout` as a method argument and one call can produce all surfaces for the fan-out, with each command executed in its own leaf surface. `workspace.create` accepts `window_id`, `focus`, `title`, `description`, and `cwd`; it ignores `name` (`title` stayed `Terminal`) and ignores `command` (`command` was not used by the server). The response still returns only one `surface_id`, so callers must enumerate through `pane.list` / `surface.list` and map by pane index to keep each command-to-surface assignment. Each layout-created surface reports `initial_command: null`, so that field cannot be used as a matching key.
 Because `title` is supported at creation, fixed-name flows can set it in the `workspace.create` call and no longer need a create→rename round trip in the successful path.
 
 **Rejected alternative — `N ≤ 3`.** The earlier proposal failed on this server and window size because N=4 was measured to remain readable with a suitable split order and geometry.
@@ -196,6 +195,6 @@ Because `title` is supported at creation, fixed-name flows can set it in the `wo
 | `workspace.equalize_splits` | `workspace.equalize_splits` with `workspace_id` | returns `{equalized:true, workspace_id, workspace_ref}`; pane pixel geometry becomes equalized | same floor; validation/no-found failures are terminal | only meaningful for split-heavy layouts; `pane.list` columns may be stale briefly | use as a readability correction step after split-based fan-out |
 | `workspace.close` | `workspace.close` with `workspace_id` | removes the workspace from subsequent `workspace.list` results | same floor; `not_found` and validation are terminal | deterministic cleanup target | use as standard per-measurement cleanup boundary |
 | `window.close` | `window.close` with `window_id` | closes window only when its final workspace is gone; otherwise it remains in `window.list` with `visible:false` | same floor; validation/no_found terminal | visible windows may need workspace-level cleanup first to remove from topology | avoid for placement; use for targeted test/window cleanup |
-| `surface.send_text` | `surface.send_text` with `surface_id` and `text` | response includes `queued` plus IDs; queued indicates warm-up state, not loss | same floor; transport failures only retry | with no tty yet, `queued:true` is expected and flushes on warm-up | use as the command delivery step for split/surface-created surfaces |
+| `surface.send_text` | `surface.send_text` with `surface_id` and `text` | response includes `queued` plus IDs; queued indicates warm-up state, not loss | not measured for this issue | with no tty yet, `queued:true` is expected and flushes on warm-up | do not infer safe retries; the existing no-retype contract governs command delivery |
 | `surface.read_text` | `surface.read_text` with `surface_id` (or default/focused) | response includes `text`; cold reads can return queued text before tty exists and should not be treated as a render confirmation | no retry behavior in placement contract; read result becomes an observation point | empty-queue reads can still return `text` and cannot be used as proof of rendering | use queued content only as readback, not as TUI-provenance proof |
-| `debug.terminals` | `debug.terminals` with no params | returns `surface_id` entries with `tty`, and the value is a basename in `<surface>/ttysNNN` form | no retry gate for placement; no transport failure branch here | `tty` can be null through warm-up and appears only after command submission; values can be recycled across surfaces | use for readiness polling and mapping surface IDs to terminal names |
+| `debug.terminals` | `debug.terminals` with no params | returns `surface_id` entries with `tty`, and the value is a bare `ttysNNN` basename | no retry gate for placement; no transport failure branch here | `tty` can be null through warm-up and appears only after command submission; values can be recycled across surfaces | use for readiness polling and mapping surface IDs to terminal names |
