@@ -151,8 +151,8 @@ The tty name for a new surface is read by polling `debug.terminals` for the surf
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; issue #68 item 5 and item 7
-**Source:** Issue #68 item 5, item 7, and item 8
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; issue #68 items 5, 7, 8, and 9
+**Source:** Issue #68 items 5, 7, 8, and 9
 **Revisit when:** layout geometry, minimum shell column rules, or cmux split defaults move on this machine
 
 At 2320 × 1382 pt and 7.5 × 15 pt cells (15 × 30 px on this 2× display), repeated `surface.split direction:right` off the newest surface halves the newest pane and does not rebalance: N=1→`2320 pt` / 308 columns, N=2→`1160,1160 pt` / `154,154`, N=3→`1160,580,580 pt` / `154,76,76`, N=4→`1160,580,290,290 pt` / `154,76,38,38`. `workspace.equalize_splits {"workspace_id":W}` changed all four widths to `580` pt.
@@ -169,13 +169,24 @@ The `surface.create` route is also end-to-end compatible with a `workspace.creat
 
 The measured `layout` node shape is a branch `{"direction":"horizontal"|"vertical","children":[<node>,<node>]}` with an optional `split` field, or a leaf `{"pane":{"surfaces":[{"type":"terminal","command":"…"}]}}`; omitting `split` produced an even division, two 1160 pt panes in a 2320 pt window, and `split:0.34` and `split:0.5` both worked. A bare leaf is a valid whole layout and produced one pane whose command ran. A flat four-child node was rejected with `Error: invalid_params: Invalid layout: …`; one-child and three-child branches, `split` at 0 or 1, and out-of-range values were not tried, so the broader claim that every valid layout is a binary tree with exactly two children per branch is an inference, not an exhaustive arity or range measurement. Nesting composes: a three-pane tree with `split:0.34` and a right child split of `0.5` produced 788.8 / 765.6 / 765.6 pt panes, and the measured 2×2 produced four equal 1160 × 691 pt panes.
 
-Issue #68 item 8 extended balanced layout creation in the same 2320 × 1382 pt window: a six-leaf balanced binary tree produced six panes at 1160/580/580/1160/580/580 pt and 154/76/76/154/76/76 columns, six distinct ttys, and each of the six commands appeared in its own surface and nowhere else; an eight-leaf balanced binary tree with three alternating horizontal/vertical levels produced eight panes all 580 × 691 pt, 76 columns × 43 rows, eight distinct ttys, and all eight commands were isolated to their own surface. At this window size and cell metrics, the measured balanced range gives 308 columns at N=1, 154 at N=2 and N=4, and 76 at N=8; the measured constraint is columns per pane, and anything above N=8 remains unmeasured.
+Issue #68 item 8 extended balanced layout creation in the same 2320 × 1382 pt window: a six-leaf balanced binary tree produced six panes at 1160/580/580/1160/580/580 pt and 154/76/76/154/76/76 columns, six distinct ttys, and each of the six commands appeared in its own surface and nowhere else; an eight-leaf balanced binary tree with three alternating horizontal/vertical levels produced eight panes all 580 × 691 pt, 76 columns × 43 rows, eight distinct ttys, and all eight commands were isolated to their own surface. Issue #68 item 9 created the balanced panes and checked per-surface isolation for every N=1 through N=8 in the same window and cell metrics: at every size, the number of distinct ttys equalled the pane count, every surface's read contained exactly one nonce, and no surface contained a sibling's nonce. The measured geometry is:
+
+| N | pane sizes (pt) | columns × rows |
+|:--|:--|:--|
+| 1 | 2320 × 1382 | 308 × 90 |
+| 2 | 1160 × 1382 ×2 | 154 × 90 |
+| 3 | 1160 × 1382, 1160 × 691 ×2 | 154 × 90, 154 × 43 |
+| 4 | 1160 × 691 ×4 | 154 × 43 |
+| 5 | 1160 × 691 ×3, 580 × 691 ×2 | 154 × 43, 76 × 43 |
+| 6 | 1160 × 691 ×2, 580 × 691 ×4 | 154 × 43, 76 × 43 |
+| 7 | 1160 × 691 ×1, 580 × 691 ×6 | 154 × 43, 76 × 43 |
+| 8 | 580 × 691 ×8 | 76 × 43 |
 
 **Reason:** split order determines whether the newest pane is repeatedly halved; balanced construction or equalization controls the measured N=4 geometry, while visual readability beyond the read-buffer observation remains an inference.
 
 **Rejected alternative — `N ≤ 3`.** The earlier proposal was based on the unverified assumption that four panes lay out unreadably: the measurements show balanced 2×2 geometry with 154 columns per pane, while the linear shape has 38-column panes, but visual readability at 38 columns was not judged. Item 8 further measured six and eight leaves without a small pane ceiling; anything above eight remains unmeasured.
 
-**Consequence, accepted:** the placement contract now uses column width as the gating metric for split fan-out and prefers layout-aware construction over split chains when a balanced shape is required. At this window size and cell metrics, balanced layout creation has been measured from N=1 through N=8 with the arithmetic 308, 154, 154, and 76 columns at N=1, N=2, N=4, and N=8; layouts above N=8 remain unmeasured. Equalization is a geometry normalization for a linear chain, not a readability fix: it removes the 38-column panes but yields four 580 pt / 76-column panes and does not recover the balanced 1160 pt / 154-column width.
+**Consequence, accepted:** the placement contract now uses column width as the gating metric for split fan-out and prefers layout-aware construction over split chains when a balanced shape is required. At this window size and cell metrics, issue #68 item 9 completed the measured N=1 through N=8 range: the narrowest pane holds 154 columns through N=4 and 76 from N=5 onward, while layouts above N=8 remain unmeasured. Equalization is a geometry normalization for a linear chain, not a readability fix: it removes the 38-column panes but yields four 580 pt / 76-column panes and does not recover the balanced 1160 pt / 154-column width.
 
 ## cmux needs no pane proof, so delivery continues in a background tab
 
