@@ -78,9 +78,11 @@ Stable and NIGHTLY each write the same live socket path to two pointer files. Th
 **Source:** PR #60; `app/Sources/Core/CmuxControl.swift`
 **Revisit when:** the pinned cmux version moves — the raw v2 method names are not a stable public API
 
-Everything the app asks of cmux goes through `cmux rpc <method> <json>`: `workspace.create`, `surface.send_text`, `surface.read_text`, `debug.terminals`.
+Everything the app asks of cmux goes through `cmux rpc <method> <json>`, and for this feature the same four methods are unchanged: `workspace.create`, `surface.send_text`, `surface.read_text`, `debug.terminals`.
 
 **Reason:** rpc is the only path that does not rewrite the payload. The parameters travel in argv because the CLI has no stdin JSON route, so non-ASCII is escaped as `\uXXXX` — Foundation re-encodes `Process.arguments` to NFD on Darwin, and a Korean or Japanese message would otherwise arrive at the terminal in a form the user never typed.
+
+**Rejection note — matrix coverage is broader than app call set.** The placement matrix below records probe coverage for cmux 0.64.22 (102) [ddd4a01bc], including capabilities measured for batch creation and layout, but it does not imply the app is issuing every method listed.
 
 **Rejected alternative — `cmux send` / `--command`.** Both pass through `unescapeSendText`, which turns a literal `\n` into CR and does not handle `\\` at all. A user's text containing either is silently altered, and a newline submits the line early.
 
@@ -106,42 +108,63 @@ When an RPC fails, the app decides whether it may launch cmux and retry by askin
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed
-**Source:** PR #60; measured twice with two windows open
-**Revisit when:** cmux changes how an unaddressed `workspace.create` picks its window
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; PR #60 (historical); `/Users/choongjaelee/.claude/scratch/tc-cmux-rpc/RESULTS.md`
+**Source:** PR #60; `/Users/choongjaelee/.claude/scratch/tc-cmux-rpc/RESULTS.md`
+**Revisit when:** cmux changes how an unaddressed or addressed `workspace.create` pick their window target
 
-`workspace.create` is sent with `focus:true` and no window id.
+`workspace.create` is sent by the app with `focus:true` and no `window_id`; an unaddressed create follows the server's active-window pointer.
 
-**Reason:** the server routes an unaddressed create to the most recently active window, so the new workspace appears where the user was looking. This is the problem WezTerm has — without `--window-id`, `wezterm cli spawn` falls back to the mux's oldest window — and cmux simply does not have it. The conditional-fallback ladder that WezTerm needs was planned, measured to be unnecessary, and dropped.
+**Reason:** the server accepts `window_id` and validates unknown values instead of silently redirecting, so measured `window-addressed` creation proves `workspace.create` supports explicit placement for this version. In this round, `/invalid id/` returned `Error: unavailable: TabManager not available` and left `workspace.list` unchanged.
 
-**Rejected alternative — `focus:false`.** A workspace created unfocused can have no pty at all: `debug.terminals` reports `tty: null` and a send comes back `queued: true`. The queued bytes are not lost — the surface flushes them once it warms up, observed both in cmux and in the app's own log — but with no tty there is nothing to check raw mode against, so the gate that decides whether claude is really at a raw-mode prompt cannot be answered and the input is given up.
+**Rejected alternative — `focus:false` only.** A workspace created unfocused can still receive a tty after queue flush and no such surface stayed permanently pty-less in this round, so using `focus:false` as a readiness guarantee is invalid.
+
+**Consequence, accepted:** this feature uses the unaddressed create path for now, but the placement contract records `window_id` as supported and safe when available, and the round-trip contract still treats `focus:false` as delayed-visibility rather than “never ready”.
 
 ## The tty comes from `debug.terminals`, not from the pane
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed
-**Source:** PR #60; `ps -E` behaviour measured on this machine
-**Revisit when:** cmux exposes the tty on the workspace-creation response
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; `/Users/choongjaelee/.claude/scratch/tc-cmux-rpc/RESULTS.md`
+**Source:** `/Users/choongjaelee/.claude/scratch/tc-cmux-rpc/RESULTS.md`; PR #60 (historical)
+**Revisit when:** cmux exposes the tty on the workspace-creation response or changes `debug.terminals` semantics
 
-The tty name for a new surface is read by polling `debug.terminals` for the surface id, as a basename that cmux's shell integration pushes up. If it never appears, the command has already started; only the claude input is given up, with a log line.
+The tty name for a new surface is read by polling `debug.terminals` for the surface id as a basename that cmux's shell integration pushes up. This contract now requires that `tty` is treated as evidence of a submitted command, not of readiness: in measured cases, focused and unfocused new surfaces reported `tty: null` while the surface was already runtime-ready and then acquired a tty after `surface.send_text` with CR. Tty names also recycled across unrelated surfaces after close, so the name is not a stable identity.
 
-**Rejected alternative — have the pane tell us (`tty >| file`).** It works, and it puts a line the user did not write into their shell history and leaves a file to clean up.
+**Rejected alternative — infer readiness from `tty` alone.** A `tty` appearing only after command submission is not a readiness signal for a new surface, so treating `tty` as “ready” would undercount warm-up cases and mis-handle `focus:false` delays.
 
 **Rejected alternative — read the child's environment with `ps -E`.** Measured: the environment of a system binary is not visible this way, so the token cmux exports into the pane cannot be read back out.
 
 **Rejected alternative — read the tty off the screen.** The screen is a rendering of a session, not a fact about it.
 
+**Consequence, accepted:** keep the existing `queued`/readback flow; add a `tty` assertion only after a command has been sent and treat null as a delayed state, not a terminal fault.
+
 ## cmux needs no pane proof, so delivery continues in a background tab
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed
-**Source:** PR #60; contrasted with the Warp path in `claude-input-delivery.md`
-**Revisit when:** `surface.read_text` stops accepting an explicit surface id
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; PR #60 (historical)
+**Source:** `/Users/choongjaelee/.claude/scratch/tc-cmux-rpc/RESULTS.md`; `PR #60`; contrasted with the Warp path in `claude-input-delivery.md`
+**Revisit when:** `surface.read_text` no longer accepts an explicit surface id or no longer accepts `surface_id`
 
 `surface.read_text` is addressed by surface UUID, so a screen read is provably a read of *our* surface. cmux therefore skips the nonce-based pane proof that Warp requires, and claude input keeps being delivered while the user is looking at another tab.
 
-**Reason:** the pane proof exists only because Warp exposes one reused `AXTextArea` and no way to address a pane; where the terminal can answer "what is on surface X," the proof has nothing left to establish.
+**Reason:** the pane proof exists only because Warp exposes one reused `AXTextArea` and no way to address a pane; where the terminal can answer “what is on surface X,” the proof has nothing left to establish.
 
-**Consequence, accepted:** the surface id must be passed explicitly on every read — omitting it falls back to the focused surface, which is exactly the ambiguity the proof was built to remove. A cold surface answers `internal_error`; that is mapped to "could not read," never to "nothing is there," so the reflection check fails closed. Sends and reads are asymmetric here: a send to a not-yet-warm surface queues, while a read of it errors.
+**Consequence, accepted:** the surface id must still be passed explicitly on every read — omitting it falls back to the focused surface, which is exactly the ambiguity the proof was built to remove. An earlier observation in this repository was that a cold read could error; the latest measured behavior is `exit 0` with the queued payload while no tty exists, so queued text is now treated as readback content that has not proven rendering. Sends and reads are asymmetric here: a send to a not-yet-warm surface queues, while a read can still return the queue payload.
+
+## Placement contract matrix for cmux 0.64.22 (102) [ddd4a01bc]
+
+| capability | method and parameters | identifier or tty guarantee | retry class | condition | v1 placement use |
+|:--|:--|:--|:--|:--|:--|
+| window-addressed create | `workspace.create` with `window_id` (plus `focus`) | returns `workspace_id` and `window_id`; unknown `window_id` rejects with `Error: unavailable: TabManager not available` and no list delta | fail-closed floor plus method-level validation; no retry on validation errors | address only by probing membership in the target `window_id` | use when the caller can resolve and require deterministic window placement |
+| layout-built fan-out create | `workspace.create` with `layout` plus optional `window_id`, `title`, `description`, `cwd`, `focus` | returns first `surface_id` only; enumerate `pane.list`/`surface.list` for all surfaces; `surface.list.initial_command` is null | same floor; validation errors with typed prefix are no-retry | layout must be a binary tree with exactly two children per branch and `direction` fields | preferred for `N` fan-out paths because one RPC creates all panes and commands without extra sends |
+| `surface.split` | `surface.split` with `direction` and optional `workspace_id`/`surface_id` | returns new `pane_id`, `surface_id` with updated panes list; `direction` required, unknown ids return `not_found` | same floor; `invalid_params` / `not_found` and `Error: ...` forms are no-retry | explicit handles are required to avoid current-focus fallback; unaddressed calls split the current surface |
+| `surface.create` | `surface.create` with optional `type` / `workspace_id` / `pane_id` | returns `surface_id` and `index_in_pane`; unknown `pane_id` returns `not_found` | same floor; missing params are valid defaults | creates a tab in an existing pane, does not create a new pane | use when caller needs another surface in one pane |
+| `surface.new_terminal` | `surface.new_terminal` with `pane_id` and optional `type` | method is `method_not_found`; command is absent from `capabilities.json` and returns no identifiers | no retry; unsupported method | no supported probe target; command stays unsupported | do not route placement paths here |
+| `workspace.rename` | `workspace.rename` with `workspace_id` and `title` | returns the requested `workspace_id`; list shows `title` and `has_custom_title: true` | same floor; `not_found` or `invalid_params` are terminal for that call | unknown `workspace_id` fails; `title` required | use to persist fixed-name identity after list-miss create |
+| `workspace.equalize_splits` | `workspace.equalize_splits` with `workspace_id` | returns `{equalized:true, workspace_id, workspace_ref}`; pane pixel geometry becomes equalized | same floor; validation/no-found failures are terminal | only meaningful for split-heavy layouts; `pane.list` columns may be stale briefly |
+| `workspace.close` | `workspace.close` with `workspace_id` | removes the workspace from subsequent `workspace.list` results | same floor; `not_found` and validation are terminal | deterministic cleanup target |
+| `window.close` | `window.close` with `window_id` | closes window only when its final workspace is gone; otherwise it remains in `window.list` with `visible:false` | same floor; validation/no_found terminal | visible windows may need workspace-level cleanup first to remove from topology | avoid for placement; use for targeted test/window cleanup |
+| `surface.send_text` | `surface.send_text` with `surface_id` and `text` | response includes `queued` plus IDs; queued indicates warm-up state, not loss | same floor; transport failures only retry | with no tty yet, `queued:true` is expected and flushes on warm-up |
+| `surface.read_text` | `surface.read_text` with `surface_id` (or default/focused) | response includes `text`; cold reads can return queued text before tty exists and should not be treated as a render confirmation | no retry behavior in placement contract; read result becomes an observation point | empty-queue reads can still return `text` and cannot be used as proof of rendering | use queued content only as readback, not as TUI-provenance proof |
+| `debug.terminals` | `debug.terminals` with no params | returns surface entries by `surface_id`; `tty` can be null after create and appears only after command submission | read-only; no retry gating in placement contract |
