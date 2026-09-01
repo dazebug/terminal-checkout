@@ -1532,7 +1532,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
 
         let identityText: String
-        switch parsed.identityMode {
+        switch parsed.effectiveIdentityMode {
         case .alwaysNew:
             identityText = localized("app.cmux.placement.identity.alwaysNew")
         case .fixedName(let name):

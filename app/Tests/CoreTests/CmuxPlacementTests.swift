@@ -216,8 +216,6 @@ final class CmuxPlacementTests: XCTestCase {
             return XCTFail("expected a tab placement route")
         }
         XCTAssertEqual(freshTabs.createIfMissing?.operationID, cmuxPlacementTestBatchID.uuidString)
-        XCTAssertEqual(freshTabs.surfaceCreateCountWhenWorkspaceCreated, 2)
-        XCTAssertEqual(freshTabs.surfaceCreateCountWhenWorkspaceFound, 0)
         XCTAssertNil(freshTabs.foundPaneIndex)
         XCTAssertEqual(freshTabs.itemRoutes, Array(repeating: .guardedSurfaceSend, count: 3))
 
@@ -232,8 +230,6 @@ final class CmuxPlacementTests: XCTestCase {
         }
         XCTAssertEqual(fixedTabs.createIfMissing?.title, "work")
         XCTAssertEqual(fixedTabs.foundPaneIndex, 0)
-        XCTAssertEqual(fixedTabs.surfaceCreateCountWhenWorkspaceCreated, 2)
-        XCTAssertEqual(fixedTabs.surfaceCreateCountWhenWorkspaceFound, 3)
     }
 
     func testWorkspacePerItemIgnoresIdentityModeAndCreatesCurrentWindowWorkspaces() {

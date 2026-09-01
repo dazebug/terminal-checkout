@@ -213,6 +213,24 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         )
     }
 
+    func testPlacementInterpretationLabelReportsWorkspacePerItemAsAlwaysNew() throws {
+        Settings.cmuxPlacementIdentityMode = "fixed-name"
+        Settings.cmuxPlacementFixedName = "work"
+        Settings.cmuxPlacementArrangement = CmuxPlacementArrangement.workspacePerItem.rawValue
+        let controller = try makeController(terminal: .cmux)
+
+        // The planner cannot give N workspaces one identity, so it creates them untitled.
+        // The label has to say that, or a stored name reads as an address that is never used.
+        XCTAssertEqual(
+            controller.cmuxPlacementInterpretationLabelForTesting.stringValue,
+            localized(
+                "app.cmux.placement.interpretation",
+                localized("app.cmux.placement.identity.alwaysNew"),
+                localized("app.cmux.placement.arrangement.workspace")
+            )
+        )
+    }
+
     func testPlacementControlsReachASettledLayout() throws {
         let controller = try makeController(terminal: .cmux)
         let window = try XCTUnwrap(controller.window)

@@ -49,6 +49,15 @@ public struct CmuxPlacementPreset: Equatable {
         self.arrangement = arrangement
     }
 
+    /// The identity the placement will actually use, which is what a reader has to be told.
+    /// One workspace per item cannot share a single identity — the batch creates N of them —
+    /// so that arrangement is always-new whatever the stored mode says. Planner and UI both
+    /// read this rather than `identityMode`, because a stored name rendered as an effective
+    /// address is a promise the placement does not keep.
+    public var effectiveIdentityMode: CmuxPlacementIdentityMode {
+        arrangement == .workspacePerItem ? .alwaysNew : identityMode
+    }
+
     /// Unknown raw values use the fresh-install defaults. An empty fixed name is not a usable
     /// address, so it is interpreted as always-new while preserving a valid arrangement value.
     public static func parse(
@@ -224,23 +233,17 @@ public struct CmuxTabPlacementPlan: Equatable {
     public let createIfMissing: CmuxWorkspaceCreatePlan?
     /// Fixed-name selects pane.index 0 in the found workspace; always-new has no found pane.
     public let foundPaneIndex: Int?
-    public let surfaceCreateCountWhenWorkspaceCreated: Int
-    public let surfaceCreateCountWhenWorkspaceFound: Int
     public let itemRoutes: [CmuxPlacementCommandRoute]
 
     public init(
         target: CmuxPlacementIdentityMode,
         createIfMissing: CmuxWorkspaceCreatePlan?,
         foundPaneIndex: Int?,
-        surfaceCreateCountWhenWorkspaceCreated: Int,
-        surfaceCreateCountWhenWorkspaceFound: Int,
         itemRoutes: [CmuxPlacementCommandRoute]
     ) {
         self.target = target
         self.createIfMissing = createIfMissing
         self.foundPaneIndex = foundPaneIndex
-        self.surfaceCreateCountWhenWorkspaceCreated = surfaceCreateCountWhenWorkspaceCreated
-        self.surfaceCreateCountWhenWorkspaceFound = surfaceCreateCountWhenWorkspaceFound
         self.itemRoutes = itemRoutes
     }
 }
@@ -396,7 +399,7 @@ public func cmuxPlacementPlan(
                 effectiveArrangement: .tabPerItem,
                 didFallbackToTabs: true,
                 route: .tab(makeTabPlacementPlan(
-                    target: preset.identityMode,
+                    target: preset.effectiveIdentityMode,
                     commandByteCounts: commandByteCounts,
                     operationID: operationID
                 ))
@@ -404,7 +407,7 @@ public func cmuxPlacementPlan(
         }
 
         let panePlan: CmuxPanePlacementPlan
-        switch preset.identityMode {
+        switch preset.effectiveIdentityMode {
         case .alwaysNew:
             panePlan = CmuxPanePlacementPlan(
                 target: .alwaysNew,
@@ -445,7 +448,7 @@ public func cmuxPlacementPlan(
             effectiveArrangement: .tabPerItem,
             didFallbackToTabs: false,
             route: .tab(makeTabPlacementPlan(
-                target: preset.identityMode,
+                target: preset.effectiveIdentityMode,
                 commandByteCounts: commandByteCounts,
                 operationID: operationID
             ))
@@ -561,8 +564,6 @@ private func makeTabPlacementPlan(
             title: title
         ),
         foundPaneIndex: foundPaneIndex,
-        surfaceCreateCountWhenWorkspaceCreated: max(commandByteCounts.count - 1, 0),
-        surfaceCreateCountWhenWorkspaceFound: foundPaneIndex == nil ? 0 : commandByteCounts.count,
         itemRoutes: Array(repeating: .guardedSurfaceSend, count: commandByteCounts.count)
     )
 }
