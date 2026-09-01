@@ -77,6 +77,16 @@
 "app.section.accessibility.title" = "Warp の claude 入力 (アクセシビリティ)";
 "app.section.cmux.help" = "外部アプリが cmux に接続するには、socket control mode を \"automation\" にする必要があります。これを有効にすると、この macOS ユーザーが所有するすべてのプロセスが cmux を操作できるようになります。cmux の設定 → Automation で有効にするか、このボタンで設定をコピーして cmux.json を開いて編集できます。cmux はファイルの変更をすぐに反映するため、再起動は不要です。";
 "app.section.cmux.title" = "cmux ソケット制御";
+"app.section.cmux.placement.help" = "cmux のバッチをどう配置するか選びます。この設定はこの Mac にのみ保存され、workspace 名が空の場合は新しい workspace として解釈されます。";
+"app.section.cmux.placement.title" = "配置";
+"app.cmux.placement.identity.alwaysNew" = "新しい workspace";
+"app.cmux.placement.identity.fixedName" = "名前で検索";
+"app.cmux.placement.identity.fixedNameValue" = "workspace「%@」";
+"app.cmux.placement.arrangement.pane" = "項目ごとに pane";
+"app.cmux.placement.arrangement.tab" = "項目ごとにタブ";
+"app.cmux.placement.arrangement.workspace" = "項目ごとに workspace";
+"app.cmux.placement.name.placeholder" = "workspace 名";
+"app.cmux.placement.interpretation" = "適用される配置: %@ · %@";
 "app.section.itermPermission.help" = "このアプリだけに iTerm2 の制御 (Apple Events) を許可します。Chrome には権限は一切必要ありません。";
 "app.section.itermPermission.title" = "iTerm2 の制御権限";
 "app.status.accessibility.denied" = "許可されていません — claude 入力が予約されたボタンは拒否されます";

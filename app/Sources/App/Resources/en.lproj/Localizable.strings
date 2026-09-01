@@ -85,6 +85,16 @@
 "app.section.accessibility.title" = "Warp claude input (Accessibility)";
 "app.section.cmux.help" = "External apps can connect to cmux only when its socket control mode is \"automation\". Enabling it lets every process owned by this macOS user control cmux. You can enable it in cmux Settings → Automation, or use this button to copy the setting and open cmux.json. cmux applies file changes immediately; no restart is needed.";
 "app.section.cmux.title" = "cmux socket control";
+"app.section.cmux.placement.help" = "Choose how a cmux batch is arranged. These settings stay on this Mac; an empty workspace name is read as New workspace.";
+"app.section.cmux.placement.title" = "Placement";
+"app.cmux.placement.identity.alwaysNew" = "New workspace";
+"app.cmux.placement.identity.fixedName" = "Find by name";
+"app.cmux.placement.identity.fixedNameValue" = "Workspace \"%@\"";
+"app.cmux.placement.arrangement.pane" = "Pane per item";
+"app.cmux.placement.arrangement.tab" = "Tab per item";
+"app.cmux.placement.arrangement.workspace" = "Workspace per item";
+"app.cmux.placement.name.placeholder" = "Workspace name";
+"app.cmux.placement.interpretation" = "Effective placement: %@ · %@";
 "app.section.itermPermission.help" = "Grants iTerm2 control (Apple Events) to this app alone. Chrome needs no permission at all.";
 "app.section.itermPermission.title" = "iTerm2 control permission";
 "app.status.accessibility.denied" = "Not granted — buttons with scheduled claude input are refused";

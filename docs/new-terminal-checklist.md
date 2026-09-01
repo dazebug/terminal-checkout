@@ -90,7 +90,15 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Hold a batch behind a busy launch queue → the app log has one timeline per item labeled `item i/N`, and each total uses the request-arrival anchor so item 2 includes the time spent launching item 1
 - [ ] On Warp, send a batch with typed `claude_inputs` → exactly one warning states the batch size and first typed item (`first at item i`), and says `each tab watched`; that visibility requirement applies to typed-delivery tabs, not argv-only items, and no duplicate warning appears
 - [ ] Start at least five long typed deliveries in one or overlapping batches → no more than four occupy the delivery gate at once, the fifth waits for a permit, and it completes after an earlier delivery releases its permit
-- [ ] With a two-item cmux batch, switch away from the active tab during delivery → both surface-addressed deliveries complete in their background tabs and no item is dropped
+- [ ] With a two-item cmux batch carrying typed `claude_inputs`, switch away from the active tab during delivery → both surface-addressed deliveries complete in their background tabs and no item is dropped
+- [ ] With cmux selected and all three placement keys unset, send N=1, 2, and 8 items → the effective preset is workspace × always-new × pane-per-item, N≤8 opens as a balanced layout, and source item order matches depth-first `pane.index`/screen order
+- [ ] With cmux selected, send N=9 and N=25 items → pane-per-item is demoted to tab-per-item, every item gets a tab, and each item timeline records the pane-to-tabs fallback with its N
+- [ ] With fixed-name selected and a matching custom-titled workspace already open, send N=3, 5, and 8 items → the target is the first surface of `pane.index` 0, its panes are balanced, and panes outside that target subtree keep their measured geometry
+- [ ] With fixed-name selected and no matching custom-titled workspace, send a batch → a new workspace is created with the requested title rather than attaching to an unnamed or similarly named workspace
+- [ ] With fixed-name selected, tab-per-item selected, and a matching workspace already open, send N=3 → every tab lands in that workspace's `pane.index` 0 and each item's command appears in its own surface. This is the one executor path with no live oracle behind it, so it is verified here or not at all
+- [ ] With workspace-per-item selected, send N=3 with three commands that differ visibly → each workspace runs its own item's command. A shared-prefix command set cannot see the defect this checks for
+- [ ] Use UTF-8 commands at exactly 1023 bytes and at 1024 bytes or more → the 1023-byte layout leaf runs inline, while the larger command takes guarded `surface.send_text`; it is never silently truncated, and an expired raw-mode wait leaves a visible not-launched reason
+- [ ] Force a grouped batch past the response deadline during guarded sends → the already-created panes remain, each cut item is not launched, and its result/timeline records the not-launched reason
 - [ ] On a `/owner/repo/pulls` or `/owner/repo/issues` list, list batch buttons attach at the chosen spot per list generation — inline next to the visible page-title h1 on the new issue-list UI, and as a dedicated row right above the filter/search block on the legacy PR-list UI — remain separate from the existing repository header button, and hide an unsafe stored button (e.g. one using `{branch}`) while leaving a `{number}`-based button visible
 - [ ] On `/owner/repo/pulls` or `/owner/repo/issues`, clicking the extension icon runs the first repository button from that page's repository set, not a list-batch run (list batch actions require a list button click)
 - [ ] After extension update, existing list tabs opened before reload may temporarily show ❌ repo buttons until the tab reloads; treat that as expected fail-closed state from mixed generations until the user refreshes the tab. List-batch buttons must also fail closed in this state instead of mapping stale result keys.
@@ -144,10 +152,12 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 **cmux channels needing a socket access mode (stable and NIGHTLY)**
 
 - [ ] The setup window draws all four live states for both cmux channels: `notInstalled`, `notRunning`, `denied`, and `reachable`.
-- [ ] On both stable and NIGHTLY, a command longer than 1024 bytes is submitted whole rather than truncated or left unsubmitted.
+- [ ] On both stable and NIGHTLY, a 1023-byte UTF-8 layout-leaf command runs inline, while a 1024-byte-or-longer command uses guarded `surface.send_text` rather than layout inline submission.
 - [ ] With cmux NIGHTLY selected, its workspace is created in the window the user was looking at.
 - [ ] With cmux NIGHTLY selected, claude input reaches the NIGHTLY pane.
 - [ ] With stable and NIGHTLY servers both running, selecting either channel creates the workspace only on that channel's server.
+- [ ] Repeat the placement default, N>8 fallback, fixed-name found/not-found, byte-boundary, background-input, setup-window, and deadline-cut checks with both stable and NIGHTLY selected → no workspace or surface crosses the selected channel.
+- [ ] In the setup window, the placement section is visible only for cmux stable/NIGHTLY; choose fixed-name with an empty name and confirm the adjacent interpretation says “new workspace” (in the selected locale).
 - [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
 - [ ] The cmux config action opens the existing file or its folder, fills the clipboard with the automation fragment, and never creates or writes a file.
 - [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery, and the storage/send path does not remove those control bytes before the app checks them.
@@ -155,7 +165,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Switching to another tab during delivery does not stop it; cmux surface delivery continues to completion (R1-e measured: yes).
 - [ ] A `!` input enters claude's shell mode, and the clear sequence uses two separate `surface.send_text` calls, `0x15` then `0x7F`, to remove the shell-mode prefix as well as the text.
 - [ ] The clear key (Ctrl+U, Backspace) was measured **inside a running claude TUI**, not in a raw shell — claude enables the kitty keyboard protocol, and a terminal's key-event path can encode control keys differently under it (cmux's key-event path did; measured 2.1.246).
-- [ ] When cmux's version is raised, confirm all four RPC methods still exist, `debug.terminals` reports a tty basename, `workspace.create` returns `surface_id`, and `cmux ping` prints PONG.
+- [ ] When cmux's version is raised, confirm all nine app-issued RPC methods still exist, `debug.terminals` reports a tty basename, `workspace.create` returns `surface_id`, and `cmux ping` prints PONG.
 - [ ] With shell integration disabled in a cmux pane, `debug.terminals` leaves tty null: the command runs, claude input is abandoned, and the reason is logged.
 - [ ] When adding a cmux channel such as dev or staging, update `CmuxChannel`'s bundle and pointer data, the `Terminal` mapping, App selection and status, tests, install preflight, README, and context before adding its device checks.
 

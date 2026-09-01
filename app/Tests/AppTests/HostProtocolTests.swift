@@ -68,10 +68,16 @@ final class HostProtocolTests: XCTestCase {
     }
 
     private var previousTerminal: String?
+    private var previousPlacementIdentity: Any?
+    private var previousPlacementFixedName: Any?
+    private var previousPlacementArrangement: Any?
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         previousTerminal = UserDefaults.standard.string(forKey: "terminal")
+        previousPlacementIdentity = UserDefaults.standard.object(forKey: CmuxPlacementStorageKey.identityMode)
+        previousPlacementFixedName = UserDefaults.standard.object(forKey: CmuxPlacementStorageKey.fixedName)
+        previousPlacementArrangement = UserDefaults.standard.object(forKey: CmuxPlacementStorageKey.arrangement)
     }
 
     override func tearDownWithError() throws {
@@ -81,11 +87,22 @@ final class HostProtocolTests: XCTestCase {
         } else {
             UserDefaults.standard.removeObject(forKey: "terminal")
         }
+        restore(previousPlacementIdentity, forKey: CmuxPlacementStorageKey.identityMode)
+        restore(previousPlacementFixedName, forKey: CmuxPlacementStorageKey.fixedName)
+        restore(previousPlacementArrangement, forKey: CmuxPlacementStorageKey.arrangement)
+    }
+
+    private func restore(_ value: Any?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     /// The socket response is Core's response exactly. The source assertions pin the request-path
-    /// shape — direct `handleRequest`, no decoded-payload inspection, and no request-shape branch —
-    /// while the live socket assertion below compares the complete response, so a wrapper that adds
+    /// shape — direct `handleRequest`, no decoded-payload inspection, and only the cmux-plus-items
+    /// dispatch condition — while the live socket assertion below compares the complete response, so a wrapper that adds
     /// a field fails even when it preserves the call spelling.
     /// The installation record is a separate invariant: it is stamped for every framed message
     /// before parsing, so malformed input counts too (CLAUDE.md:45).
@@ -98,9 +115,17 @@ final class HostProtocolTests: XCTestCase {
             requestPath.contains("handleRequest(json: json, baseDirectory: Settings.baseDirectory"),
             "the socket path no longer returns handleRequest's response directly"
         )
-        XCTAssertFalse(requestPath.contains("json["), "the socket path inspects a request field")
+        XCTAssertTrue(
+            requestPath.contains("json[\"items\"]"),
+            "cmux grouped dispatch must be selected from the items[] request shape"
+        )
+        XCTAssertFalse(
+            requestPath.contains("json[\"command_template\"]")
+                || requestPath.contains("json[\"variables\"]")
+                || requestPath.contains("json[\"claude_inputs\"]"),
+            "the socket path must not inspect per-item request fields"
+        )
         XCTAssertFalse(requestPath.contains("query"), "the socket path special-cases a request shape")
-        XCTAssertFalse(requestPath.contains("switch"), "the socket path branches on a request shape")
 
         let record = try XCTUnwrap(source.range(of: "Settings.recordRequestEvidence()")).lowerBound
         let parse = try XCTUnwrap(source.range(of: "let json = ((try? JSONSerialization.jsonObject")).lowerBound
@@ -1166,6 +1191,361 @@ final class HostProtocolTests: XCTestCase {
         let invocations = runInvocations
         runLock.unlock()
         XCTAssertEqual(invocations, 0, "cap rejection must not launch anything")
+    }
+
+    func testCmuxBatchPreparesAndAdmitsEveryInputBeforeGroupedExecution() throws {
+        let emptyVariables: [String: Any] = [:]
+        let request: [String: Any] = [
+            "command": "echo grouped",
+            "claude_inputs": ["!echo first", "!echo second"],
+            "items": [
+                ["variables": emptyVariables],
+                ["variables": emptyVariables],
+            ],
+        ]
+        let directory = "/tmp/tc-cmux-grouped-admission-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let lock = NSLock()
+        var perItemCalls = 0
+        var groupedCalls = 0
+        var preparedCommands: [String] = []
+        var preparedInputCounts: [Int] = []
+        var observedChannel: CmuxChannel?
+        var wasAdmitted = false
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in
+                lock.lock()
+                perItemCalls += 1
+                lock.unlock()
+                return .none
+            },
+            runCmuxBatch: { request in
+                lock.lock()
+                groupedCalls += 1
+                preparedCommands = request.prepared.map(\.command)
+                preparedInputCounts = request.prepared.map { $0.claudeInputs.count }
+                observedChannel = request.channel
+                wasAdmitted = ClaudeDelivery.isInFlight
+                lock.unlock()
+                let failure = TerminalError.cmuxRPCFailed("group failed")
+                let results: [Result<TerminalSessionHandle, Error>] = [
+                    .failure(failure), .failure(failure),
+                ]
+                return CmuxGroupedExecution(
+                    results: results,
+                    path: .layoutCreate,
+                    didFallbackToTabs: request.plan.didFallbackToTabs
+                )
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.cmux.rawValue, forKey: "terminal")
+        UserDefaults.standard.set("always-new", forKey: CmuxPlacementStorageKey.identityMode)
+        UserDefaults.standard.set("", forKey: CmuxPlacementStorageKey.fixedName)
+        UserDefaults.standard.set("pane", forKey: CmuxPlacementStorageKey.arrangement)
+
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let response = try answer(for: relay)
+        XCTAssertEqual(response["success"] as? Bool, false)
+
+        lock.lock()
+        let observed = (
+            perItemCalls, groupedCalls, preparedCommands, preparedInputCounts,
+            observedChannel, wasAdmitted
+        )
+        lock.unlock()
+        XCTAssertEqual(observed.0, 0, "cmux batches must not use the per-item runner")
+        XCTAssertEqual(observed.1, 1)
+        XCTAssertEqual(observed.2, ["echo grouped", "echo grouped"])
+        // Consecutive ! inputs are merged into one submitted line before grouped execution.
+        XCTAssertEqual(observed.3, [1, 1])
+        XCTAssertEqual(observed.4, Optional(CmuxChannel.stable))
+        XCTAssertTrue(observed.5, "all typed items must be admitted before grouped execution")
+        XCTAssertFalse(ClaudeDelivery.isInFlight, "failed grouped items must return admissions")
+    }
+
+    func testCmuxGroupedPlacementIsRecordedPerItemAndInCheckoutLog() throws {
+        let emptyVariables: [String: Any] = [:]
+        let request: [String: Any] = [
+            "command": "echo fallback",
+            "items": (1...9).map { _ in ["variables": emptyVariables] },
+        ]
+        let directory = "/tmp/tc-cmux-grouped-timeline-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let timelineLock = NSLock()
+        var linesByItem: [String: [String]] = [:]
+        let logsLock = NSLock()
+        var logs: [String] = []
+        var receivedPlan: CmuxPlacementPlan?
+        var groupedCalls = 0
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _ in XCTFail("cmux grouped batches must not use runInTerminal"); return .none },
+            runCmuxBatch: { request in
+                receivedPlan = request.plan
+                groupedCalls += 1
+                var results: [Result<TerminalSessionHandle, Error>] = []
+                for index in 0..<request.plan.itemCount {
+                    results.append(.success(.cmux(
+                        surfaceID: "surface-\(index)",
+                        workspaceID: "workspace-1",
+                        cliPath: "/cmux",
+                        socketPath: "/tmp/cmux.sock"
+                    )))
+                }
+                return CmuxGroupedExecution(
+                    results: results,
+                    path: .tabCreate,
+                    didFallbackToTabs: true
+                )
+            },
+            timelineFactory: { _, label in
+                let itemLabel = label ?? "legacy"
+                return DeliveryTimeline(
+                    emit: { line in
+                        timelineLock.lock()
+                        linesByItem[itemLabel, default: []].append(line)
+                        timelineLock.unlock()
+                    },
+                    label: label
+                )
+            },
+            log: { line in
+                logsLock.lock()
+                logs.append(line)
+                logsLock.unlock()
+            },
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.cmux.rawValue, forKey: "terminal")
+        UserDefaults.standard.set("always-new", forKey: CmuxPlacementStorageKey.identityMode)
+        UserDefaults.standard.set("", forKey: CmuxPlacementStorageKey.fixedName)
+        UserDefaults.standard.set("pane", forKey: CmuxPlacementStorageKey.arrangement)
+
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let response = try answer(for: relay)
+        XCTAssertEqual(response["success"] as? Bool, true)
+        XCTAssertEqual((response["items"] as? [[String: Any]])?.count, 9)
+
+        XCTAssertEqual(groupedCalls, 1)
+        XCTAssertEqual(
+            receivedPlan?.requestedArrangement,
+            Optional(CmuxPlacementArrangement.panePerItem)
+        )
+        XCTAssertEqual(
+            receivedPlan?.effectiveArrangement,
+            Optional(CmuxPlacementArrangement.tabPerItem)
+        )
+        XCTAssertEqual(receivedPlan?.didFallbackToTabs, true)
+        let placement = "cmux grouped placement: tabCreate (pane fallback to tabs, N=9)"
+        timelineLock.lock()
+        let itemOneLines = linesByItem["item 1/9"] ?? []
+        let itemNineLines = linesByItem["item 9/9"] ?? []
+        timelineLock.unlock()
+        XCTAssertTrue(itemOneLines.contains { $0.contains(placement) })
+        XCTAssertTrue(itemNineLines.contains { $0.contains(placement) })
+        XCTAssertTrue(itemOneLines.contains { $0.contains("cmux tab created") })
+        XCTAssertTrue(itemNineLines.contains { $0.contains("cmux tab created") })
+        logsLock.lock()
+        let observedLogs = logs
+        logsLock.unlock()
+        XCTAssertTrue(
+            observedLogs.contains { $0.contains(placement) },
+            "the selected placement must also reach checkoutLog"
+        )
+    }
+
+    func testCmuxGroupedAdmissionRefusalStartsNoSideEffect() throws {
+        XCTAssertTrue(ClaudeDelivery.admitRestart())
+        defer { ClaudeDelivery.withdrawRestartAdmission() }
+
+        let emptyVariables: [String: Any] = [:]
+        let request: [String: Any] = [
+            "command": "echo refused",
+            "claude_inputs": ["!echo input"],
+            "items": [
+                ["variables": emptyVariables],
+                ["variables": emptyVariables],
+            ],
+        ]
+        let directory = "/tmp/tc-cmux-grouped-refusal-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let lock = NSLock()
+        var groupedCalls = 0
+        let server = HostServer(
+            socketPath: path,
+            runCmuxBatch: { _ in
+                lock.lock()
+                groupedCalls += 1
+                lock.unlock()
+                return CmuxGroupedExecution(
+                    results: [], path: .layoutCreate, didFallbackToTabs: false
+                )
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.cmux.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let response = try answer(for: relay)
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "2 of 2 items failed")
+        let results = try XCTUnwrap(response["items"] as? [[String: Any]])
+        XCTAssertEqual(results.map { $0["success"] as? Bool }, [false, false])
+        XCTAssertEqual(groupedCalls, 0, "admission refusal must happen before grouped execution")
+        XCTAssertFalse(ClaudeDelivery.isInFlight)
+    }
+
+    func testNonCmuxBatchKeepsPerItemRunnerAndDoesNotUseGroupedHook() throws {
+        let emptyVariables: [String: Any] = [:]
+        let request: [String: Any] = [
+            "command": "echo legacy-batch",
+            "items": [
+                ["variables": emptyVariables],
+                ["variables": emptyVariables],
+            ],
+        ]
+        let directory = "/tmp/tc-non-cmux-batch-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let lock = NSLock()
+        var perItemCalls = 0
+        var groupedCalls = 0
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, terminal, _ in
+                lock.lock()
+                perItemCalls += 1
+                XCTAssertEqual(terminal, .iterm)
+                lock.unlock()
+                return .none
+            },
+            runCmuxBatch: { _ in
+                lock.lock()
+                groupedCalls += 1
+                lock.unlock()
+                return CmuxGroupedExecution(
+                    results: [], path: .layoutCreate, didFallbackToTabs: false
+                )
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let response = try answer(for: relay)
+        XCTAssertEqual(response["success"] as? Bool, true)
+        lock.lock()
+        let observed = (perItemCalls, groupedCalls)
+        lock.unlock()
+        XCTAssertEqual(observed.0, 2)
+        XCTAssertEqual(observed.1, 0)
+    }
+
+    func testLegacySingleRequestDoesNotUseGroupedHook() throws {
+        let request: [String: Any] = ["command_template": "echo legacy-single"]
+        let directory = "/tmp/tc-cmux-legacy-single-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+
+        let lock = NSLock()
+        var perItemCalls = 0
+        var groupedCalls = 0
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, terminal, _ in
+                lock.lock()
+                perItemCalls += 1
+                XCTAssertEqual(terminal, .cmux)
+                lock.unlock()
+                return .none
+            },
+            runCmuxBatch: { _ in
+                lock.lock()
+                groupedCalls += 1
+                lock.unlock()
+                return CmuxGroupedExecution(
+                    results: [], path: .layoutCreate, didFallbackToTabs: false
+                )
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+
+        UserDefaults.standard.set(Terminal.cmux.rawValue, forKey: "terminal")
+        let relay = RelayAtTheDoor()
+        relay.connectAndAsk(request, at: path, givingUp: 10)
+        let response = try answer(for: relay)
+        XCTAssertEqual(response["success"] as? Bool, true)
+        lock.lock()
+        let observed = (perItemCalls, groupedCalls)
+        lock.unlock()
+        XCTAssertEqual(observed.0, 1)
+        XCTAssertEqual(observed.1, 0)
+    }
+
+    private func answer(
+        for relay: RelayAtTheDoor, timeout: TimeInterval = 10,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while relay.answer == nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return try XCTUnwrap(relay.answer, "the server did not answer", file: file, line: line)
     }
 
 }

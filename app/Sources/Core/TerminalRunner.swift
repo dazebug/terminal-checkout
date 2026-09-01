@@ -520,13 +520,26 @@ func cmuxAwaitShellReading(
     }
 }
 
-/// Opens a workspace in cmux and starts the command on its returned surface. cmux chooses the
-/// user's last active window; the command itself owns cwd through its assembled `{cd}` clause.
-@discardableResult
-public func runInCmux(
-    _ command: String, channel: CmuxChannel = .stable
-) throws -> TerminalSessionHandle {
-    guard let cliPath = findCmuxCLI(channel: channel) else { throw TerminalError.cmuxNotFound }
+final class CmuxRuntimeContext {
+    let cliPath: String
+    let channel: CmuxChannel
+    var socketPath: String?
+    var launchAttempted: Bool
+
+    init(
+        cliPath: String, channel: CmuxChannel, socketPath: String?, launchAttempted: Bool
+    ) {
+        self.cliPath = cliPath
+        self.channel = channel
+        self.socketPath = socketPath
+        self.launchAttempted = launchAttempted
+    }
+}
+
+func makeCmuxRuntimeContext(channel: CmuxChannel) throws -> CmuxRuntimeContext {
+    guard let cliPath = findCmuxCLI(channel: channel) else {
+        throw TerminalError.cmuxNotFound
+    }
     var socketPath: String?
     var launchAttempted = false
     switch currentCmuxSocketPin(channel: channel) {
@@ -539,36 +552,86 @@ public func runInCmux(
         try launchCmuxAndWait(cliPath: cliPath, channel: channel)
         socketPath = try cmuxPinnedSocketPathOrThrow(channel: channel)
     }
+    return CmuxRuntimeContext(
+        cliPath: cliPath,
+        channel: channel,
+        socketPath: socketPath,
+        launchAttempted: launchAttempted
+    )
+}
 
-    // The execution path deliberately does not ping first: workspace.create is the authoritative
-    // diagnosis for the request, and a normal run stays at D7's two RPCs. A first denial is final;
-    // only another first failure gets one launch and one workspace retry, never a second workspace
-    // creation after a successful first response.
-    let workspace: [String: Any]
+typealias CmuxRPCWithSocket = (
+    _ method: String, _ params: [String: Any], _ socketPath: String?
+) throws -> [String: Any]
+
+func cmuxCreateWorkspaceWithRecovery(
+    context: CmuxRuntimeContext,
+    params: [String: Any],
+    rpc: @escaping CmuxRPCWithSocket,
+    launch: @escaping () throws -> Void,
+    refreshedSocketPath: @escaping () -> String?
+) throws -> [String: Any] {
     do {
-        workspace = try cmuxRPC(
-            cli: cliPath, method: cmuxWorkspaceCreateMethod,
-            params: cmuxWorkspaceCreateParameters(),
-            socketPath: socketPath
-        )
+        return try rpc(cmuxWorkspaceCreateMethod, params, context.socketPath)
     } catch let firstFailure as TerminalError {
-        switch cmuxRecoveryAction(afterFirstFailure: firstFailure, launchAttempted: launchAttempted) {
+        switch cmuxRecoveryAction(
+            afterFirstFailure: firstFailure, launchAttempted: context.launchAttempted
+        ) {
         case .rethrow:
             throw firstFailure
         case .launchAndRetry:
-            try launchCmuxAndWait(cliPath: cliPath, channel: channel)
-            // The restarted server wrote a fresh socket pointer; the pre-launch resolution may
-            // still name the socket it left behind.
-            socketPath = cmuxChannelSocketPath(channel: channel)
-            workspace = try cmuxRPC(
-                cli: cliPath, method: cmuxWorkspaceCreateMethod,
-                params: cmuxWorkspaceCreateParameters(),
-                socketPath: socketPath
-            )
+            context.launchAttempted = true
+            try launch()
+            context.socketPath = refreshedSocketPath()
+            return try rpc(cmuxWorkspaceCreateMethod, params, context.socketPath)
         }
     } catch {
         throw error
     }
+}
+
+func cmuxCreateWorkspaceWithRecovery(
+    context: CmuxRuntimeContext,
+    params: [String: Any],
+    rpc: @escaping CmuxRPCWithSocket
+) throws -> [String: Any] {
+    try cmuxCreateWorkspaceWithRecovery(
+        context: context,
+        params: params,
+        rpc: rpc,
+        launch: {
+            try launchCmuxAndWait(cliPath: context.cliPath, channel: context.channel)
+        },
+        refreshedSocketPath: {
+            cmuxChannelSocketPath(channel: context.channel)
+        }
+    )
+}
+
+/// Opens a workspace in cmux and starts the command on its returned surface. cmux chooses the
+/// user's last active window; the command itself owns cwd through its assembled `{cd}` clause.
+@discardableResult
+public func runInCmux(
+    _ command: String, channel: CmuxChannel = .stable
+) throws -> TerminalSessionHandle {
+    let context = try makeCmuxRuntimeContext(channel: channel)
+
+    // The execution path deliberately does not ping first: workspace.create is the authoritative
+    // diagnosis for the request, and a normal run stays at two RPCs. A first denial is final;
+    // only another first failure gets one launch and one workspace retry, never a second workspace
+    // creation after a successful first response.
+    let workspace = try cmuxCreateWorkspaceWithRecovery(
+        context: context,
+        params: cmuxWorkspaceCreateParameters(),
+        rpc: { method, params, socketPath in
+            try cmuxRPC(
+                cli: context.cliPath,
+                method: method,
+                params: params,
+                socketPath: socketPath
+            )
+        }
+    )
     guard let identifiers = cmuxWorkspaceIdentifiers(from: workspace) else {
         throw TerminalError.cmuxRPCFailed(
             "\(cmuxWorkspaceCreateMethod): response missing workspace_id or surface_id"
@@ -577,7 +640,7 @@ public func runInCmux(
 
     let payload = command + claudeSubmitKey
     switch cmuxAwaitShellReading(
-        cliPath: cliPath, socketPath: socketPath,
+        cliPath: context.cliPath, socketPath: context.socketPath,
         surfaceID: identifiers.surfaceID, payloadByteCount: payload.utf8.count
     ) {
     case .send:
@@ -606,11 +669,11 @@ public func runInCmux(
     }
 
     let sendResponse = try cmuxRPC(
-        cli: cliPath, method: cmuxSurfaceSendTextMethod,
+        cli: context.cliPath, method: cmuxSurfaceSendTextMethod,
         params: cmuxSurfaceSendTextParameters(
             surfaceID: identifiers.surfaceID, text: payload
         ),
-        socketPath: socketPath
+        socketPath: context.socketPath
     )
     if sendResponse["queued"] as? Bool == true {
         checkoutLog("cmux \(cmuxSurfaceSendTextMethod) queued=true")
@@ -618,8 +681,8 @@ public func runInCmux(
     return .cmux(
         surfaceID: identifiers.surfaceID,
         workspaceID: identifiers.workspaceID,
-        cliPath: cliPath,
-        socketPath: socketPath
+        cliPath: context.cliPath,
+        socketPath: context.socketPath
     )
 }
 

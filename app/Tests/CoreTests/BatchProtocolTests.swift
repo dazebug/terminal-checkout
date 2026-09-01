@@ -64,6 +64,10 @@ final class LegacyRequestByteCorpusTests: XCTestCase {
 // MARK: - Batch request contract
 
 final class BatchRequestTests: XCTestCase {
+    private struct GroupedFailure: Error, CustomStringConvertible {
+        let description: String
+    }
+
     private func itemResults(_ response: [String: Any], file: StaticString = #filePath, line: UInt = #line) throws -> [[String: Any]] {
         let raw = try XCTUnwrap(response["items"] as? [Any], file: file, line: line)
         return try raw.enumerated().map { index, value in
@@ -304,5 +308,103 @@ final class BatchRequestTests: XCTestCase {
         XCTAssertEqual(results[1]["error"] as? String, "launch failed")
         XCTAssertEqual(results[2].count, 1)
         XCTAssertEqual(results[2]["success"] as? Bool, true)
+    }
+
+    func testBatchGroupedHookRunsOnceAndPreservesOrderedItemResponse() throws {
+        let request = batchRequest(items: [
+            ["variables": ["repo": "first"]],
+            ["variables": ["repo": "second"]],
+        ])
+        var perItemCalls = 0
+        var groupedCalls = 0
+        var groupedCommands: [String] = []
+
+        let response = handleRequest(
+            json: request,
+            run: { _, _ in perItemCalls += 1 },
+            runBatch: { resolvedItems in
+                groupedCalls += 1
+                groupedCommands = resolvedItems.map(\.command)
+                return [.success(()), .failure(GroupedFailure(description: "second failed"))]
+            }
+        )
+
+        XCTAssertEqual(perItemCalls, 0)
+        XCTAssertEqual(groupedCalls, 1)
+        XCTAssertEqual(groupedCommands, ["z first", "z second"])
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "1 of 2 items failed")
+        let results = try itemResults(response)
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(results[0]["success"] as? Bool, true)
+        XCTAssertEqual(results[1]["success"] as? Bool, false)
+        XCTAssertEqual(results[1]["error"] as? String, "second failed")
+    }
+
+    func testBatchGroupedHookThrowBecomesOrderedPerItemFailures() throws {
+        let request = batchRequest(items: [
+            ["variables": ["repo": "first"]],
+            ["variables": ["repo": "second"]],
+        ])
+
+        let response = handleRequest(
+            json: request,
+            run: { _, _ in XCTFail("per-item execution should not be selected") },
+            runBatch: { _ in
+                throw GroupedFailure(description: "group failed")
+            }
+        )
+
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "2 of 2 items failed")
+        let results = try itemResults(response)
+        XCTAssertEqual(results.map { $0["success"] as? Bool }, [false, false])
+        XCTAssertEqual(results.map { $0["error"] as? String }, ["group failed", "group failed"])
+    }
+
+    func testBatchGroupedHookResultCountMismatchFailsEveryItem() throws {
+        let request = batchRequest(items: [
+            ["variables": ["repo": "first"]],
+            ["variables": ["repo": "second"]],
+        ])
+
+        let response = handleRequest(
+            json: request,
+            run: { _, _ in XCTFail("per-item execution should not be selected") },
+            runBatch: { _ in [.success(())] }
+        )
+
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "2 of 2 items failed")
+        let results = try itemResults(response)
+        XCTAssertEqual(
+            results.map { $0["error"] as? String },
+            [
+                "grouped batch execution returned 1 result(s) for 2 item(s)",
+                "grouped batch execution returned 1 result(s) for 2 item(s)",
+            ]
+        )
+    }
+
+    func testBatchGroupedHookIsNotCalledAfterBatchValidationFailure() {
+        let request = batchRequest(items: [
+            ["variables": ["repo": "valid"]],
+            ["variables": ["repo": 42]],
+        ])
+        var groupedCalls = 0
+        var perItemCalls = 0
+
+        let response = handleRequest(
+            json: request,
+            run: { _, _ in perItemCalls += 1 },
+            runBatch: { _ in
+                groupedCalls += 1
+                return [.success(()), .success(())]
+            }
+        )
+
+        XCTAssertEqual(groupedCalls, 0)
+        XCTAssertEqual(perItemCalls, 0)
+        XCTAssertEqual(response["success"] as? Bool, false)
     }
 }
