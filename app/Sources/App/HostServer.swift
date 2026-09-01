@@ -10,6 +10,15 @@ private struct BoundSocket {
     var identity: (dev: dev_t, ino: ino_t)?
 }
 
+/// The values HostServer hands to the grouped executor. Keeping the deadline closure with the
+/// prepared batch lets the production factory use the same request budget as the test seam.
+struct CmuxBatchExecutionRequest {
+    let prepared: [PreparedRequest]
+    let plan: CmuxPlacementPlan
+    let channel: CmuxChannel
+    let deadlineExceeded: () -> Bool
+}
+
 /// The unix socket server that takes the relay's requests and runs them in the terminal.
 final class HostServer {
     /// A diagnostic surface and not a message to the user: the only reader is `AppDelegate`, which
@@ -38,6 +47,7 @@ final class HostServer {
     private let runInTerminalFactory: (
         String, Terminal, ClaudeDelivery.Admission?
     ) throws -> TerminalSessionHandle
+    private let runCmuxBatchFactory: (CmuxBatchExecutionRequest) -> CmuxGroupedExecution
     private let timelineFactory: (Date, String?) -> DeliveryTimeline
     private let log: (String) -> Void
     private let now: () -> Date
@@ -54,6 +64,14 @@ final class HostServer {
         runInTerminal: @escaping (
             _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?
         ) throws -> TerminalSessionHandle = Core.runInTerminal,
+        runCmuxBatch: @escaping (CmuxBatchExecutionRequest) -> CmuxGroupedExecution = { request in
+            Core.runCmuxBatch(
+                commands: request.prepared.map(\.command),
+                plan: request.plan,
+                channel: request.channel,
+                deadlineExceeded: request.deadlineExceeded
+            )
+        },
         timelineFactory: @escaping (Date, String?) -> DeliveryTimeline = { arrival, label in
             DeliveryTimeline(startedAt: arrival, label: label)
         },
@@ -64,6 +82,7 @@ final class HostServer {
     ) {
         self.socketPath = socketPath
         self.runInTerminalFactory = runInTerminal
+        self.runCmuxBatchFactory = runCmuxBatch
         self.timelineFactory = timelineFactory
         self.log = log
         self.now = now
@@ -195,6 +214,19 @@ final class HostServer {
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
+                let runBatch: BatchRun?
+                if let channel = terminal.cmuxChannel, json["items"] != nil {
+                    runBatch = { resolvedItems in
+                        self.runCmuxBatch(
+                            resolvedItems,
+                            channel: channel,
+                            requestArrival: requestArrival,
+                            requestArrivalMonotonic: requestArrivalMonotonic
+                        )
+                    }
+                } else {
+                    runBatch = nil
+                }
                 return handleRequest(json: json, baseDirectory: Settings.baseDirectory, run: {
                     resolved, position in
                     let timelineLabel = position.map { "item \($0.index)/\($0.total)" }
@@ -271,6 +303,7 @@ final class HostServer {
                         )
                         timeline.step(reason)
                     },
+                    runBatch: runBatch,
                     message: localizedErrorMessage
                 )
             }
@@ -278,5 +311,109 @@ final class HostServer {
                 ?? Data(#"{"success":false,"error":"internal error"}"#.utf8)
             if !writeFramedMessage(payload, toFD: fd) { break }
         }
+    }
+
+    private func runCmuxBatch(
+        _ resolvedItems: [ResolvedRequest],
+        channel: CmuxChannel,
+        requestArrival: Date,
+        requestArrivalMonotonic: TimeInterval
+    ) -> [Result<Void, Error>] {
+        let timelines = resolvedItems.indices.map { index in
+            timelineFactory(requestArrival, "item \(index + 1)/\(resolvedItems.count)")
+        }
+        let preparedItems = resolvedItems.map {
+            prepareRequest($0, claudeIsExecutable: Settings.claudeIsExecutable)
+        }
+
+        for index in resolvedItems.indices {
+            let prepared = preparedItems[index]
+            let resolved = resolvedItems[index]
+            let route = prepared.claudeInputs.isEmpty
+                ? (resolved.claudeInputs.isEmpty ? "no claude input" : "merged into argv")
+                : "typing \(prepared.claudeInputs.count)"
+            timelines[index].step(
+                "request received — \(resolved.claudeInputs.count) claude input(s), \(route)"
+            )
+        }
+
+        let preset = CmuxPlacementPreset.parse(
+            rawIdentityMode: Settings.cmuxPlacementIdentityMode,
+            rawFixedName: Settings.cmuxPlacementFixedName,
+            rawArrangement: Settings.cmuxPlacementArrangement
+        )
+        let plan = cmuxPlacementPlan(
+            preset: preset,
+            commandByteCounts: preparedItems.map { $0.command.utf8.count },
+            batchOperationID: UUID(),
+            itemOperationIDs: resolvedItems.map { _ in UUID() }
+        )
+
+        var admissions = Array<ClaudeDelivery.Admission?>(
+            repeating: nil, count: preparedItems.count
+        )
+        for index in preparedItems.indices where !preparedItems[index].claudeInputs.isEmpty {
+            guard let admission = ClaudeDelivery.admit() else {
+                let error = TerminalError.goingAway
+                for admission in admissions { admission?.end() }
+                for timeline in timelines { timeline.step(localizedErrorMessage(error)) }
+                return Array(repeating: .failure(error), count: resolvedItems.count)
+            }
+            admissions[index] = admission
+        }
+
+        let monotonicClock = monotonicNow
+        let execution = runCmuxBatchFactory(CmuxBatchExecutionRequest(
+            prepared: preparedItems,
+            plan: plan,
+            channel: channel,
+            deadlineExceeded: {
+                monotonicClock() - requestArrivalMonotonic >= batchLaunchResponseBudget
+            }
+        ))
+        var placementMessage = "cmux grouped placement: \(String(describing: execution.path))"
+        if execution.didFallbackToTabs {
+            placementMessage += " (pane fallback to tabs, N=\(resolvedItems.count))"
+        }
+        for timeline in timelines { timeline.step(placementMessage) }
+        log(placementMessage)
+
+        guard execution.results.count == preparedItems.count else {
+            let reason = "grouped batch execution returned \(execution.results.count) result(s) for \(resolvedItems.count) item(s)"
+            for timeline in timelines { timeline.step(reason) }
+            for admission in admissions { admission?.end() }
+            return execution.results.map { result in
+                switch result {
+                case .success:
+                    return .success(())
+                case .failure(let error):
+                    return .failure(error)
+                }
+            }
+        }
+
+        var results: [Result<Void, Error>] = []
+        results.reserveCapacity(execution.results.count)
+        for index in execution.results.indices {
+            switch execution.results[index] {
+            case .success(let handle):
+                timelines[index].step("cmux tab created")
+                if let admission = admissions[index] {
+                    let inputs = preparedItems[index].claudeInputs
+                    let timeline = timelines[index]
+                    DispatchQueue.global(qos: .utility).async {
+                        deliverClaudeInputs(
+                            inputs, to: handle, timeline: timeline, admission: admission
+                        )
+                    }
+                }
+                results.append(.success(()))
+            case .failure(let error):
+                timelines[index].step(localizedErrorMessage(error))
+                admissions[index]?.end()
+                results.append(.failure(error))
+            }
+        }
+        return results
     }
 }

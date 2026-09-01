@@ -41,19 +41,22 @@ public struct CmuxPlacementExecutionDependencies {
     public let rpc: CmuxPlacementRPC
     public let createWorkspace: ([String: Any]) throws -> [String: Any]
     public let shellGate: CmuxPlacementShellGate
+    public let deadlineExceeded: () -> Bool
 
     public init(
         cliPath: String,
         currentSocketPath: @escaping () -> String?,
         rpc: @escaping CmuxPlacementRPC,
         createWorkspace: @escaping ([String: Any]) throws -> [String: Any],
-        shellGate: @escaping CmuxPlacementShellGate
+        shellGate: @escaping CmuxPlacementShellGate,
+        deadlineExceeded: @escaping () -> Bool = { false }
     ) {
         self.cliPath = cliPath
         self.currentSocketPath = currentSocketPath
         self.rpc = rpc
         self.createWorkspace = createWorkspace
         self.shellGate = shellGate
+        self.deadlineExceeded = deadlineExceeded
     }
 }
 
@@ -373,14 +376,24 @@ private func itemResults(
         return groupedFailure(count: commands.count, error: error)
     }
 
-    return commands.indices.map { index in
+    var results: [Result<TerminalSessionHandle, Error>] = []
+    results.reserveCapacity(commands.count)
+    for index in commands.indices {
+        if dependencies.deadlineExceeded() {
+            results.append(
+                .failure(CommandError.badRequest(batchResponseDeadlineExceededMessage))
+            )
+            continue
+        }
         if let error = itemErrors.isEmpty ? nil : itemErrors[index] {
-            return .failure(error)
+            results.append(.failure(error))
+            continue
         }
         guard let surfaceID = surfaceIDs[index], !surfaceID.isEmpty else {
-            return .failure(
+            results.append(.failure(
                 CmuxPlacementResponseError.invalidShape("surface for item \(index)")
-            )
+            ))
+            continue
         }
         do {
             if itemRoutes[index] == .guardedSurfaceSend {
@@ -388,18 +401,19 @@ private func itemResults(
                     commands[index], to: surfaceID, using: dependencies
                 )
             }
-            return .success(
+            results.append(.success(
                 TerminalSessionHandle.cmux(
                     surfaceID: surfaceID,
                     workspaceID: workspaceID,
                     cliPath: dependencies.cliPath,
                     socketPath: dependencies.currentSocketPath()
                 )
-            )
+            ))
         } catch {
-            return .failure(error)
+            results.append(.failure(error))
         }
     }
+    return results
 }
 
 private func layoutCommandsAreSafe(
@@ -827,9 +841,25 @@ public func executeCmuxPlacementPlan(
 public func runCmuxBatch(
     _ requests: [ResolvedRequest],
     plan: CmuxPlacementPlan,
-    channel: CmuxChannel = .stable
+    channel: CmuxChannel = .stable,
+    deadlineExceeded: @escaping () -> Bool = { false }
 ) -> CmuxGroupedExecution {
-    let commands = requests.map(\.command)
+    runCmuxBatch(
+        commands: requests.map(\.command),
+        plan: plan,
+        channel: channel,
+        deadlineExceeded: deadlineExceeded
+    )
+}
+
+/// The prepared-command variant is used by App so a grouped run executes the command after Core's
+/// claude-input preparation step, including the single-input argv route.
+public func runCmuxBatch(
+    commands: [String],
+    plan: CmuxPlacementPlan,
+    channel: CmuxChannel = .stable,
+    deadlineExceeded: @escaping () -> Bool = { false }
+) -> CmuxGroupedExecution {
     guard commands.count == plan.itemCount, !commands.isEmpty else {
         return failedExecution(
             plan: plan,
@@ -864,7 +894,8 @@ public func runCmuxBatch(
                     surfaceID: surfaceID,
                     payloadByteCount: byteCount
                 )
-            }
+            },
+            deadlineExceeded: deadlineExceeded
         )
         return executeCmuxPlacementPlan(plan, commands: commands, using: dependencies)
     } catch {

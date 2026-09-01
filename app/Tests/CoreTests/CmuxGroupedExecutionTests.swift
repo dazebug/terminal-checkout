@@ -461,6 +461,68 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         XCTAssertEqual(execution.path, .workspacePerItem)
     }
 
+    func testDeadlineStopsGuardedItemsBeforeSending() throws {
+        let commands = [
+            String(repeating: "x", count: 1024),
+            String(repeating: "y", count: 1024),
+        ]
+        let plan = cmuxPlacementPlan(
+            preset: .defaultPreset,
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var fakeMonotonicNow: TimeInterval = 0
+        var sendCount = 0
+        let dependencies = makeDependencies(
+            rpc: { method, params in
+                switch method {
+                case cmuxPaneListMethod:
+                    return [
+                        "panes": [
+                            ["id": "pane-0", "index": 0],
+                            ["id": "pane-1", "index": 1],
+                        ]
+                    ]
+                case cmuxSurfaceListMethod:
+                    let paneID = params["pane_id"] as? String
+                    return [
+                        "surfaces": [[
+                            "id": paneID == "pane-0" ? "surface-0" : "surface-1",
+                            "index_in_pane": 0,
+                        ]]
+                    ]
+                case cmuxSurfaceSendTextMethod:
+                    sendCount += 1
+                    fakeMonotonicNow = batchLaunchResponseBudget
+                    return ["queued": false]
+                default:
+                    return [:]
+                }
+            },
+            createWorkspace: { _ in
+                ["workspace_id": "workspace-1", "surface_id": "surface-0"]
+            },
+            deadlineExceeded: { fakeMonotonicNow >= batchLaunchResponseBudget }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        XCTAssertEqual(sendCount, 1, "the deadline must stop the second guarded send")
+        XCTAssertEqual(execution.results.count, 2)
+        guard case .success = execution.results[0] else {
+            return XCTFail("the item before the deadline should still succeed")
+        }
+        guard case .failure(let error) = execution.results[1] else {
+            return XCTFail("the item at the deadline must fail closed")
+        }
+        XCTAssertEqual(String(describing: error), batchResponseDeadlineExceededMessage)
+    }
+
     func testCreateRecoveryReusesTheSameOperationParametersAfterMeasuredReachabilityFailure() throws {
         let context = CmuxRuntimeContext(
             cliPath: "/cmux",
@@ -502,14 +564,16 @@ final class CmuxGroupedExecutionTests: XCTestCase {
 
     private func makeDependencies(
         rpc: @escaping CmuxPlacementRPC,
-        createWorkspace: @escaping ([String: Any]) throws -> [String: Any]
+        createWorkspace: @escaping ([String: Any]) throws -> [String: Any],
+        deadlineExceeded: @escaping () -> Bool = { false }
     ) -> CmuxPlacementExecutionDependencies {
         CmuxPlacementExecutionDependencies(
             cliPath: "/cmux",
             currentSocketPath: { "/tmp/cmux.sock" },
             rpc: rpc,
             createWorkspace: createWorkspace,
-            shellGate: { _, _ in .sendDespiteCanonical }
+            shellGate: { _, _ in .sendDespiteCanonical },
+            deadlineExceeded: deadlineExceeded
         )
     }
 

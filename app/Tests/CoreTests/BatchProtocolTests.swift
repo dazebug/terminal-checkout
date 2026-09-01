@@ -362,6 +362,30 @@ final class BatchRequestTests: XCTestCase {
         XCTAssertEqual(results.map { $0["error"] as? String }, ["group failed", "group failed"])
     }
 
+    func testBatchGroupedHookResultCountMismatchFailsEveryItem() throws {
+        let request = batchRequest(items: [
+            ["variables": ["repo": "first"]],
+            ["variables": ["repo": "second"]],
+        ])
+
+        let response = handleRequest(
+            json: request,
+            run: { _, _ in XCTFail("per-item execution should not be selected") },
+            runBatch: { _ in [.success(())] }
+        )
+
+        XCTAssertEqual(response["success"] as? Bool, false)
+        XCTAssertEqual(response["error"] as? String, "2 of 2 items failed")
+        let results = try itemResults(response)
+        XCTAssertEqual(
+            results.map { $0["error"] as? String },
+            [
+                "grouped batch execution returned 1 result(s) for 2 item(s)",
+                "grouped batch execution returned 1 result(s) for 2 item(s)",
+            ]
+        )
+    }
+
     func testBatchGroupedHookIsNotCalledAfterBatchValidationFailure() {
         let request = batchRequest(items: [
             ["variables": ["repo": "valid"]],
