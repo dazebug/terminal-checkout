@@ -1,6 +1,11 @@
 import Foundation
 
 public let cmuxWorkspaceCreateMethod = "workspace.create"
+public let cmuxWorkspaceListMethod = "workspace.list"
+public let cmuxPaneListMethod = "pane.list"
+public let cmuxSurfaceListMethod = "surface.list"
+public let cmuxSurfaceSplitMethod = "surface.split"
+public let cmuxSurfaceCreateMethod = "surface.create"
 public let cmuxSurfaceSendTextMethod = "surface.send_text"
 public let cmuxSurfaceReadTextMethod = "surface.read_text"
 public let cmuxDebugTerminalsMethod = "debug.terminals"
@@ -261,11 +266,13 @@ func cmuxReadinessOutcome(from error: TerminalError?) -> CmuxReadiness {
 }
 
 /// A workspace denial is a configuration diagnosis, not a launch failure: opening cmux cannot
-/// change a running instance's socket mode. Retrying is safe only when the request is proven not
-/// to have reached the server; `workspace.create` is not idempotent, so timeouts, malformed
-/// responses, and post-create failures are rethrown because the server may already have created a
-/// workspace. What counts as that proof is `classifyCmuxCLIFailure` below, which fails closed on
-/// anything it has not measured.
+/// change a running instance's socket mode. An unkeyed workspace.create is not idempotent, so
+/// timeouts, malformed responses, and post-create failures are rethrown because the server may
+/// already have created a workspace. Grouped creates carry one stable operation_id and may reuse
+/// the exact same keyed request after a measured reachability failure: a live repeat is at-most-once,
+/// while the typed already_completed result is terminal and never authorizes regeneration. What
+/// counts as transport proof is classifyCmuxCLIFailure below, which fails closed on anything it
+/// has not measured.
 func cmuxRecoveryAction(
     afterFirstFailure: TerminalError, launchAttempted: Bool
 ) -> CmuxRecovery {
@@ -354,6 +361,44 @@ public func cmuxRPCResponse(_ data: Data) throws -> [String: Any] {
 /// default is the user's last active window, while the command's `{cd}` clause owns the cwd.
 public func cmuxWorkspaceCreateParameters() -> [String: Any] {
     ["focus": true]
+}
+
+/// The grouped create shape builds on the legacy focus-only parameters so the single-request
+/// path keeps its exact wire contract.
+public func cmuxWorkspaceCreateParameters(
+    for plan: CmuxWorkspaceCreatePlan, commands: [String]
+) -> [String: Any] {
+    var parameters = cmuxWorkspaceCreateParameters()
+    parameters["layout"] = cmuxLayoutJSON(for: plan.layout.tree, commands: commands)
+    parameters["operation_id"] = plan.operationID
+    if let title = plan.title { parameters["title"] = title }
+    return parameters
+}
+
+public func cmuxWorkspaceListParameters() -> [String: Any] {
+    [:]
+}
+
+public func cmuxPaneListParameters(workspaceID: String) -> [String: Any] {
+    ["workspace_id": workspaceID]
+}
+
+public func cmuxSurfaceListParameters(
+    workspaceID: String, paneID: String
+) -> [String: Any] {
+    ["workspace_id": workspaceID, "pane_id": paneID]
+}
+
+public func cmuxSurfaceSplitParameters(
+    surfaceID: String, direction: CmuxSurfaceSplitDirection
+) -> [String: Any] {
+    ["surface_id": surfaceID, "direction": direction.rawValue]
+}
+
+public func cmuxSurfaceCreateParameters(
+    workspaceID: String, paneID: String
+) -> [String: Any] {
+    ["workspace_id": workspaceID, "pane_id": paneID]
 }
 
 /// The identifiers returned by `workspace.create` are both required to address the new surface.

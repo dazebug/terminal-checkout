@@ -1,3 +1,5 @@
+import Foundation
+
 /// The keys owned by the app for the machine-local cmux placement preset.
 ///
 /// These are deliberately separate values so the setup window can store the selected
@@ -263,7 +265,7 @@ public enum CmuxPlacementPlanRoute: Equatable {
 }
 
 public struct CmuxPlacementPlan: Equatable {
-    public let operationID: String
+    public let batchOperationID: UUID
     public let itemCount: Int
     public let requestedArrangement: CmuxPlacementArrangement
     public let effectiveArrangement: CmuxPlacementArrangement
@@ -271,14 +273,14 @@ public struct CmuxPlacementPlan: Equatable {
     public let route: CmuxPlacementPlanRoute
 
     public init(
-        operationID: String,
+        batchOperationID: UUID,
         itemCount: Int,
         requestedArrangement: CmuxPlacementArrangement,
         effectiveArrangement: CmuxPlacementArrangement,
         didFallbackToTabs: Bool,
         route: CmuxPlacementPlanRoute
     ) {
-        self.operationID = operationID
+        self.batchOperationID = batchOperationID
         self.itemCount = itemCount
         self.requestedArrangement = requestedArrangement
         self.effectiveArrangement = effectiveArrangement
@@ -355,22 +357,25 @@ public func cmuxFoundWorkspacePanePlan(itemCount: Int) -> CmuxFoundWorkspacePane
     )
 }
 
-/// Produces the pure placement plan consumed by the later cmux execution layer. The operation ID
-/// is supplied by the request layer so repeated requests do not accidentally share a key.
+/// Produces the pure placement plan consumed by the later cmux execution layer. The caller mints
+/// the UUID keys; repeated execution of the same plan reuses those keys for a safe retry.
 public func cmuxPlacementPlan(
     preset: CmuxPlacementPreset,
     commandByteCounts: [Int],
-    operationID: String
+    batchOperationID: UUID,
+    itemOperationIDs: [UUID]
 ) -> CmuxPlacementPlan {
     precondition(!commandByteCounts.isEmpty)
     precondition(commandByteCounts.count <= batchItemLimit)
+    precondition(itemOperationIDs.count == commandByteCounts.count)
 
     let itemCount = commandByteCounts.count
+    let operationID = batchOperationID.uuidString
     switch preset.arrangement {
     case .panePerItem:
         if itemCount > cmuxPanePlacementItemLimit {
             return CmuxPlacementPlan(
-                operationID: operationID,
+                batchOperationID: batchOperationID,
                 itemCount: itemCount,
                 requestedArrangement: .panePerItem,
                 effectiveArrangement: .tabPerItem,
@@ -407,7 +412,7 @@ public func cmuxPlacementPlan(
             )
         }
         return CmuxPlacementPlan(
-            operationID: operationID,
+            batchOperationID: batchOperationID,
             itemCount: itemCount,
             requestedArrangement: .panePerItem,
             effectiveArrangement: .panePerItem,
@@ -417,7 +422,7 @@ public func cmuxPlacementPlan(
 
     case .tabPerItem:
         return CmuxPlacementPlan(
-            operationID: operationID,
+            batchOperationID: batchOperationID,
             itemCount: itemCount,
             requestedArrangement: .tabPerItem,
             effectiveArrangement: .tabPerItem,
@@ -431,14 +436,14 @@ public func cmuxPlacementPlan(
 
     case .workspacePerItem:
         return CmuxPlacementPlan(
-            operationID: operationID,
+            batchOperationID: batchOperationID,
             itemCount: itemCount,
             requestedArrangement: .workspacePerItem,
             effectiveArrangement: .workspacePerItem,
             didFallbackToTabs: false,
             route: .workspacePerItem(makeWorkspacePerItemPlan(
                 commandByteCounts: commandByteCounts,
-                operationID: operationID
+                itemOperationIDs: itemOperationIDs
             ))
         )
     }
@@ -543,12 +548,12 @@ private func makeTabPlacementPlan(
 
 private func makeWorkspacePerItemPlan(
     commandByteCounts: [Int],
-    operationID: String
+    itemOperationIDs: [UUID]
 ) -> CmuxWorkspacePerItemPlan {
     let creates = commandByteCounts.indices.map { index in
         makeWorkspaceCreatePlan(
             commandByteCounts: [commandByteCounts[index]],
-            operationID: "\(operationID)/item-\(index)",
+            operationID: itemOperationIDs[index].uuidString,
             title: nil
         )
     }

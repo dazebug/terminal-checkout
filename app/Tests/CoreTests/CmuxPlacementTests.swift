@@ -2,6 +2,15 @@ import Foundation
 import XCTest
 @testable import Core
 
+private let cmuxPlacementTestBatchID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+private let cmuxPlacementTestOtherBatchID = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+
+private func cmuxPlacementTestItemIDs(count: Int) -> [UUID] {
+    (0..<count).map { index in
+        UUID(uuidString: String(format: "00000000-0000-4000-8000-%012d", index + 1))!
+    }
+}
+
 final class CmuxPlacementTests: XCTestCase {
     func testUnknownPresetValuesUseFreshDefaults() {
         let preset = CmuxPlacementPreset.parse(
@@ -66,7 +75,8 @@ final class CmuxPlacementTests: XCTestCase {
         let plan = cmuxPlacementPlan(
             preset: preset,
             commandByteCounts: [1023, 1024, 1025],
-            operationID: "batch"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 3)
         )
 
         guard case .pane(let pane) = plan.route else {
@@ -87,7 +97,8 @@ final class CmuxPlacementTests: XCTestCase {
         let plan = cmuxPlacementPlan(
             preset: CmuxPlacementPreset.defaultPreset,
             commandByteCounts: commands.map { $0.utf8.count },
-            operationID: "utf8"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 3)
         )
 
         guard case .pane(let pane) = plan.route else {
@@ -103,7 +114,8 @@ final class CmuxPlacementTests: XCTestCase {
                 let plan = cmuxPlacementPlan(
                     preset: CmuxPlacementPreset(identityMode: identity, arrangement: .panePerItem),
                     commandByteCounts: Array(repeating: 10, count: count),
-                    operationID: "fallback"
+                    batchOperationID: cmuxPlacementTestBatchID,
+                    itemOperationIDs: cmuxPlacementTestItemIDs(count: count)
                 )
 
                 XCTAssertTrue(plan.didFallbackToTabs)
@@ -174,14 +186,15 @@ final class CmuxPlacementTests: XCTestCase {
         let plan = cmuxPlacementPlan(
             preset: CmuxPlacementPreset(identityMode: .fixedName("work"), arrangement: .panePerItem),
             commandByteCounts: Array(repeating: 10, count: 5),
-            operationID: "fixed-pane"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 5)
         )
 
         guard case .pane(let pane) = plan.route else {
             return XCTFail("expected a pane placement route")
         }
         XCTAssertEqual(pane.target, .fixedName("work"))
-        XCTAssertEqual(pane.createIfMissing?.operationID, "fixed-pane")
+        XCTAssertEqual(pane.createIfMissing?.operationID, cmuxPlacementTestBatchID.uuidString)
         XCTAssertEqual(pane.createIfMissing?.title, "work")
         XCTAssertEqual(pane.found?.rootPaneIndex, 0)
         XCTAssertEqual(pane.found?.rootSurfaceIndex, 0)
@@ -196,12 +209,13 @@ final class CmuxPlacementTests: XCTestCase {
         let fresh = cmuxPlacementPlan(
             preset: CmuxPlacementPreset(identityMode: .alwaysNew, arrangement: .tabPerItem),
             commandByteCounts: Array(repeating: 10, count: 3),
-            operationID: "tabs"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 3)
         )
         guard case .tab(let freshTabs) = fresh.route else {
             return XCTFail("expected a tab placement route")
         }
-        XCTAssertEqual(freshTabs.createIfMissing?.operationID, "tabs")
+        XCTAssertEqual(freshTabs.createIfMissing?.operationID, cmuxPlacementTestBatchID.uuidString)
         XCTAssertEqual(freshTabs.surfaceCreateCountWhenWorkspaceCreated, 2)
         XCTAssertEqual(freshTabs.surfaceCreateCountWhenWorkspaceFound, 0)
         XCTAssertNil(freshTabs.foundPaneIndex)
@@ -210,7 +224,8 @@ final class CmuxPlacementTests: XCTestCase {
         let fixed = cmuxPlacementPlan(
             preset: CmuxPlacementPreset(identityMode: .fixedName("work"), arrangement: .tabPerItem),
             commandByteCounts: Array(repeating: 10, count: 3),
-            operationID: "fixed-tabs"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 3)
         )
         guard case .tab(let fixedTabs) = fixed.route else {
             return XCTFail("expected a tab placement route")
@@ -222,16 +237,18 @@ final class CmuxPlacementTests: XCTestCase {
     }
 
     func testWorkspacePerItemIgnoresIdentityModeAndCreatesCurrentWindowWorkspaces() {
+        let itemIDs = cmuxPlacementTestItemIDs(count: 2)
         let plan = cmuxPlacementPlan(
             preset: CmuxPlacementPreset(identityMode: .fixedName("ignored"), arrangement: .workspacePerItem),
             commandByteCounts: [10, 1024],
-            operationID: "workspaces"
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: itemIDs
         )
 
         guard case .workspacePerItem(let workspaces) = plan.route else {
             return XCTFail("expected a workspace-per-item route")
         }
-        XCTAssertEqual(workspaces.creates.map(\.operationID), ["workspaces/item-0", "workspaces/item-1"])
+        XCTAssertEqual(workspaces.creates.map(\.operationID), itemIDs.map(\.uuidString))
         let noStrings = Array<String?>(repeating: nil, count: 2)
         XCTAssertEqual(workspaces.creates.map(\.title), noStrings)
         XCTAssertEqual(workspaces.creates[0].layout.itemRoutes, [.inlineLeaf])
@@ -241,13 +258,29 @@ final class CmuxPlacementTests: XCTestCase {
 
     func testPlacementPlansKeepCallerOperationIDStable() {
         let preset = CmuxPlacementPreset.defaultPreset
-        let first = cmuxPlacementPlan(preset: preset, commandByteCounts: [10, 20], operationID: "stable")
-        let second = cmuxPlacementPlan(preset: preset, commandByteCounts: [10, 20], operationID: "stable")
-        let different = cmuxPlacementPlan(preset: preset, commandByteCounts: [10, 20], operationID: "other")
+        let itemIDs = cmuxPlacementTestItemIDs(count: 2)
+        let first = cmuxPlacementPlan(
+            preset: preset,
+            commandByteCounts: [10, 20],
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: itemIDs
+        )
+        let second = cmuxPlacementPlan(
+            preset: preset,
+            commandByteCounts: [10, 20],
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: itemIDs
+        )
+        let different = cmuxPlacementPlan(
+            preset: preset,
+            commandByteCounts: [10, 20],
+            batchOperationID: cmuxPlacementTestOtherBatchID,
+            itemOperationIDs: itemIDs
+        )
 
         XCTAssertEqual(first, second)
         XCTAssertNotEqual(first, different)
-        XCTAssertEqual(first.operationID, "stable")
+        XCTAssertEqual(first.batchOperationID, cmuxPlacementTestBatchID)
     }
 
     private func branchDirections(in node: CmuxLayoutNode) -> [CmuxLayoutDirection] {
