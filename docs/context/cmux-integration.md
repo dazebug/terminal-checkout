@@ -113,8 +113,8 @@ Measured server-side validation failures carried typed prefixes (`invalid_params
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc], issue #68 item 1, issue #68 item 10
-**Source:** Issue #68 measurement items 1 and 10 and PR #60
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc], issue #68 item 1
+**Source:** Issue #68 measurement item 1 and PR #60
 **Revisit when:** cmux changes how an unaddressed or addressed `workspace.create` pick their window target
 
 `workspace.create` is sent by the app with `focus:true` and no `window_id`; an unaddressed create follows the server's active-window pointer.
@@ -149,15 +149,13 @@ The tty name for a new surface is read by polling `debug.terminals` for the surf
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; issue #68 items 5, 7, 8, and 9
-**Source:** Issue #68 items 5, 7, 8, and 9
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc]; issue #68 items 5, 7, 8, 9, and 10
+**Source:** Issue #68 items 5, 7, 8, 9, and 10
 **Revisit when:** layout geometry, minimum shell column rules, or cmux split defaults move on this machine
 
-At 2320 × 1382 pt and 7.5 × 15 pt cells (15 × 30 px on this 2× display), repeated `surface.split direction:right` off the newest surface halves the newest pane and does not rebalance: N=1→`2320 pt` / 308 columns, N=2→`1160,1160 pt` / `154,154`, N=3→`1160,580,580 pt` / `154,76,76`, N=4→`1160,580,290,290 pt` / `154,76,38,38`. `workspace.equalize_splits {"workspace_id":W}` changed all four widths to `580` pt.
+At 2320 × 1382 pt and 7.5 × 15 pt cells (15 × 30 px on this 2× display), repeated `surface.split direction:right` off the newest surface halves the newest pane and does not rebalance: N=1→`2320 pt` / 308 columns, N=2→`1160,1160 pt` / `154,154`, N=3→`1160,580,580 pt` / `154,76,76`, N=4→`1160,580,290,290 pt` / `154,76,38,38`. `workspace.equalize_splits {"workspace_id":W}` changed all four widths to `580` pt, and `pane.list` columns can lag `pixel_frame`, so `pixel_frame` geometry is authoritative.
 
-Balanced split order is different: right, down off S0, then down off the returned right surface produces four equal 1160 × 691 pt panes, 154 × 43 cells each, while right-down-right produced 1160×691 / 580×691 / 580×691 / 1160×1382 pt. A newly created pane reported `columns: null` and `rows: null` until it rendered; the `L.N1` snapshot likewise reported `columns: null` before the pane rendered, while rendered full-width panes reported 308 columns. One equalization run observed columns inconsistent with the new frames shortly after the operation (76/115/57/57), while a rerun showed 76/76/76/76 at +0.2 s; `pane.list` columns can lag the pixel frames, so `pixel_frame` geometry is authoritative.
-
-The linear workspace was the only shape with send/read calls: the issue #68 item 5 measurement labels `L.read.0`–`L.read.3` record a 40-character command line whose 29-character marker appeared contiguously in each `surface.read_text` result. The balanced workspace measurement in issue #68 item 5 records creation, splits, and geometry but no send/read calls. This establishes read-buffer survival, not visual readability: the same linear transcript returned lines wider than the pane's own column count, so visual readability at 38 columns was not judged; the balanced shape's readability is an inference from its 154 columns. The placement recommendation therefore treats columns per pane, not pane count, as the binding constraint. `layout` creates with `workspace.create` remain the strongest fan-out route because they build the whole fan-out in one call and avoid extra sends.
+Balanced split order is different: right, down off S0, then down off the returned right surface produces four equal 1160 × 691 pt panes, 154 × 43 cells each, while right-down-right produced 1160×691 / 580×691 / 580×691 / 1160×1382 pt. A newly created pane reported `columns: null` and `rows: null` until it rendered; the `L.N1` snapshot likewise reported `columns: null` before the pane rendered, while rendered full-width panes reported 308 columns. At N=4, a 40-character command line's 29-character marker survived the read buffer in every pane, which establishes read-buffer survival and not visual readability because reads returned lines wider than each pane's own column count; visual readability at 38 columns was not judged, and the balanced shape's readability is an inference from its 154 columns. The placement recommendation therefore treats columns per pane, not pane count, as the binding constraint. `layout` creates with `workspace.create` remain the strongest fan-out route because they build the whole fan-out in one call and avoid extra sends.
 
 Layout-aware creation was also measured with item 7: `workspace.create` accepts `layout` as a method argument and one call can produce all surfaces for the fan-out, with each command executed in its own leaf surface. `workspace.create` accepts `window_id`, `focus`, `title`, `description`, and `cwd`; it ignores `name` (`title` stayed `Terminal`) and does not execute `command`: issue #68 item 10 measured focused and unfocused create-with-command cases where the surface materialised and became readable at 2.1, 5.1, and 10.2 seconds, and after activation at 4.2, 8.3, and 14.4 seconds, yet never observed the command nonce, never showed a tty (remaining `tty: null`), and kept `surface.list.initial_command` as `null`; the same text delivered through `surface.send_text` did run, producing `ttys028` and appearing in `surface.read_text`. The response still returns only one `surface_id`, so callers must enumerate through `pane.list` / `surface.list` and map by pane index to keep each command-to-surface assignment. Each layout-created surface reports `initial_command: null`, so that field cannot be used as a matching key.
 
@@ -167,7 +165,7 @@ The `surface.create` route is also end-to-end compatible with a `workspace.creat
 
 The measured `layout` node shape is a branch `{"direction":"horizontal"|"vertical","children":[<node>,<node>]}` with an optional `split` field, or a leaf `{"pane":{"surfaces":[{"type":"terminal","command":"…"}]}}`; omitting `split` produced an even division, two 1160 pt panes in a 2320 pt window, and `split:0.34` and `split:0.5` both worked. A bare leaf is a valid whole layout and produced one pane whose command ran. A flat four-child node was rejected with `Error: invalid_params: Invalid layout: …`; one-child and three-child branches, `split` at 0 or 1, and out-of-range values were not tried, so the broader claim that every valid layout is a binary tree with exactly two children per branch is an inference, not an exhaustive arity or range measurement. Nesting composes: a three-pane tree with `split:0.34` and a right child split of `0.5` produced 788.8 / 765.6 / 765.6 pt panes, and the measured 2×2 produced four equal 1160 × 691 pt panes.
 
-Issue #68 item 8 extended balanced layout creation in the same 2320 × 1382 pt window: a six-leaf balanced binary tree produced six panes at 1160/580/580/1160/580/580 pt and 154/76/76/154/76/76 columns, six distinct ttys, and each of the six commands appeared in its own surface and nowhere else; an eight-leaf balanced binary tree with three alternating horizontal/vertical levels produced eight panes all 580 × 691 pt, 76 columns × 43 rows, eight distinct ttys, and all eight commands were isolated to their own surface. Issue #68 items 7 through 9 collectively created the balanced panes and checked per-surface isolation for every N=1 through N=8 in the same window and cell metrics: at every size, the number of distinct ttys equalled the pane count, every surface's read contained exactly one nonce, and no surface contained a sibling's nonce. The measured geometry is:
+Issue #68 items 7 through 9 collectively created the balanced panes and checked per-surface isolation for every N=1 through N=8 in the same window and cell metrics: at every size, the number of distinct ttys equalled the pane count, every surface's read contained exactly one nonce, and no surface contained a sibling's nonce. The measured geometry is:
 
 | N | pane sizes (pt) | columns × rows |
 |:--|:--|:--|
@@ -180,7 +178,9 @@ Issue #68 item 8 extended balanced layout creation in the same 2320 × 1382 pt w
 | 7 | 1160 × 691 ×1, 580 × 691 ×6 | 154 × 43, 76 × 43 |
 | 8 | 580 × 691 ×8 | 76 × 43 |
 
-**Reason:** split order determines whether the newest pane is repeatedly halved; balanced construction or equalization controls the measured N=4 geometry, while visual readability beyond the read-buffer observation remains an inference.
+**Rejected alternative — build the fan-out from `surface.split` calls.** split-based fan-out repeatedly halves the current active pane so N=4 ends at 38 columns; unaddressed calls fall back to the current workspace and surface, which is the same misplacement hazard as other focus defaults; it adds N round trips plus a send per pane; and `workspace.equalize_splits` partially repairs that shape to four 76-column panes while a balanced layout keeps 154 columns. `layout` fan-out with `workspace.create` avoids that chain and keeps placement under explicit tree shape.
+
+**Reason:** a one-shot `workspace.create` with `layout` builds every pane and runs every command with no extra calls, gives each leaf its own surface/tty and isolated output, and lets geometry come from the layout tree rather than from the order of operations.
 
 **Rejected alternative — `N ≤ 3`.** The earlier proposal was based on the unverified assumption that four panes lay out unreadably: the measurements show balanced 2×2 geometry with 154 columns per pane, while the linear shape has 38-column panes, but visual readability at 38 columns was not judged. Item 8 further measured six and eight leaves without a small pane ceiling; anything above eight remains unmeasured.
 
@@ -203,6 +203,8 @@ Issue #68 item 8 extended balanced layout creation in the same 2320 × 1382 pt w
 Measured in cmux 0.64.22 (102) [ddd4a01bc], `window.create` also creates a default workspace, so closing only the workspaces deliberately created by a caller leaves that default one behind and the window remains in `window.list` with `visible:false`; closing that last workspace removed the window within 0.5 s, explaining the previously unexplained leftover state.
 
 ## Placement contract matrix for cmux 0.64.22 (102) [ddd4a01bc]
+
+This matrix is a pre-build survey of the cmux 0.64.22 (102) [ddd4a01bc] RPC surface, so issue #69 can choose a batch fan-out placement route from measured behavior without a live session; the app itself still issues only `workspace.create`, `surface.send_text`, `surface.read_text`, and `debug.terminals`, and each row’s "v1 placement use" is a recommendation, not a statement of shipped behavior.
 
 | capability | method and parameters | identifier or tty guarantee | retry class | condition | v1 placement use |
 |:--|:--|:--|:--|:--|:--|
