@@ -178,9 +178,9 @@ Issue #68 items 7 through 9 collectively created the balanced panes and checked 
 | 7 | 1160 × 691 ×1, 580 × 691 ×6 | 154 × 43, 76 × 43 |
 | 8 | 580 × 691 ×8 | 76 × 43 |
 
-**Rejected alternative — build the fan-out from `surface.split` calls.** split-based fan-out repeatedly halves the current active pane so N=4 ends at 38 columns; unaddressed calls fall back to the current workspace and surface, which is the same misplacement hazard as other focus defaults; it adds N round trips plus a send per pane; and `workspace.equalize_splits` partially repairs that shape to four 76-column panes while a balanced layout keeps 154 columns. `layout` fan-out with `workspace.create` avoids that chain and keeps placement under explicit tree shape.
-
 **Reason:** a one-shot `workspace.create` with `layout` builds every pane and runs every command with no extra calls, gives each leaf its own surface/tty and isolated output, and lets geometry come from the layout tree rather than from the order of operations.
+
+**Rejected alternative — build the fan-out from `surface.split` calls.** split-based fan-out repeatedly halves the current active pane so N=4 ends at 38 columns; unaddressed calls fall back to the current workspace and surface, which is the same misplacement hazard as other focus defaults; it adds N round trips plus a send per pane; and `workspace.equalize_splits` partially repairs that shape to four 76-column panes while a balanced layout keeps 154 columns. `layout` fan-out with `workspace.create` avoids that chain and keeps placement under explicit tree shape.
 
 **Rejected alternative — `N ≤ 3`.** The earlier proposal was based on the unverified assumption that four panes lay out unreadably: the measurements show balanced 2×2 geometry with 154 columns per pane, while the linear shape has 38-column panes, but visual readability at 38 columns was not judged. Item 8 further measured six and eight leaves without a small pane ceiling; anything above eight remains unmeasured.
 
@@ -204,7 +204,7 @@ Measured in cmux 0.64.22 (102) [ddd4a01bc], `window.create` also creates a defau
 
 ## Placement contract matrix for cmux 0.64.22 (102) [ddd4a01bc]
 
-This matrix is a pre-build survey of the cmux 0.64.22 (102) [ddd4a01bc] RPC surface, so issue #69 can choose a batch fan-out placement route from measured behavior without a live session; the app itself still issues only `workspace.create`, `surface.send_text`, `surface.read_text`, and `debug.terminals`, and each row’s "v1 placement use" is a recommendation, not a statement of shipped behavior.
+This matrix is a pre-build survey of the cmux 0.64.22 (102) [ddd4a01bc] RPC surface, so issue #69 can choose a batch fan-out placement route from measured behavior without a live session; the app itself still issues only `workspace.create`, `surface.send_text`, `surface.read_text`, and `debug.terminals`, and each row's "v1 placement use" is a recommendation, not a statement of shipped behavior.
 
 | capability | method and parameters | identifier or tty guarantee | retry class | condition | v1 placement use |
 |:--|:--|:--|:--|:--|:--|
