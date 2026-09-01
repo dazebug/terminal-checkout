@@ -82,11 +82,9 @@ Everything the app asks of cmux goes through `cmux rpc <method> <json>`, and for
 
 **Reason:** rpc is the only path that does not rewrite the payload. The parameters travel in argv because the CLI has no stdin JSON route, so non-ASCII is escaped as `\uXXXX` — Foundation re-encodes `Process.arguments` to NFD on Darwin, and a Korean or Japanese message would otherwise arrive at the terminal in a form the user never typed.
 
-**Consequence, accepted:** the placement matrix below records probe coverage for cmux 0.64.22 (102) [ddd4a01bc], including capabilities measured for batch creation and layout, but it does not imply the app is issuing every method listed.
-
 **Rejected alternative — `cmux send` / `--command`.** Both pass through `unescapeSendText`, which turns a literal `\n` into CR and does not handle `\\` at all. A user's text containing either is silently altered, and a newline submits the line early.
 
-**Consequence, accepted:** the method names are internal to a cmux version. They are declared once as constants, every failure log names the method that failed, and `docs/new-terminal-checklist.md` carries "re-verify the four methods" as an item for whenever the pinned version moves.
+**Consequence, accepted:** the placement matrix below records probe coverage for cmux 0.64.22 (102) [ddd4a01bc], including capabilities measured for batch creation and layout, but it does not imply the app issues every method listed. The method names are internal to a cmux version and are declared as constants, every failure log names the method that failed, and `docs/new-terminal-checklist.md` carries "re-verify the four methods" as an item when the pinned version moves; the app still issues only those same four methods.
 
 ## A launch retry is decided by the transport failure, never by matching a message
 
@@ -115,8 +113,8 @@ Measured server-side validation failures carried typed prefixes (`invalid_params
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc], issue #68 item 1
-**Source:** Issue #68 measurement package and PR #60
+**Evidence:** confirmed in cmux 0.64.22 (102) [ddd4a01bc], issue #68 item 1, issue #68 item 10
+**Source:** Issue #68 measurement items 1 and 10 and PR #60
 **Revisit when:** cmux changes how an unaddressed or addressed `workspace.create` pick their window target
 
 `workspace.create` is sent by the app with `focus:true` and no `window_id`; an unaddressed create follows the server's active-window pointer.
@@ -161,7 +159,7 @@ Balanced split order is different: right, down off S0, then down off the returne
 
 The linear workspace was the only shape with send/read calls: the issue #68 item 5 measurement labels `L.read.0`–`L.read.3` record a 40-character command line whose 29-character marker appeared contiguously in each `surface.read_text` result. The balanced workspace measurement in issue #68 item 5 records creation, splits, and geometry but no send/read calls. This establishes read-buffer survival, not visual readability: the same linear transcript returned lines wider than the pane's own column count, so visual readability at 38 columns was not judged; the balanced shape's readability is an inference from its 154 columns. The placement recommendation therefore treats columns per pane, not pane count, as the binding constraint. `layout` creates with `workspace.create` remain the strongest fan-out route because they build the whole fan-out in one call and avoid extra sends.
 
-Layout-aware creation was also measured with item 7: `workspace.create` accepts `layout` as a method argument and one call can produce all surfaces for the fan-out, with each command executed in its own leaf surface. `workspace.create` accepts `window_id`, `focus`, `title`, `description`, and `cwd`; it ignores `name` (`title` stayed `Terminal`) and ignores `command` (`command` was not used by the server). The response still returns only one `surface_id`, so callers must enumerate through `pane.list` / `surface.list` and map by pane index to keep each command-to-surface assignment. Each layout-created surface reports `initial_command: null`, so that field cannot be used as a matching key.
+Layout-aware creation was also measured with item 7: `workspace.create` accepts `layout` as a method argument and one call can produce all surfaces for the fan-out, with each command executed in its own leaf surface. `workspace.create` accepts `window_id`, `focus`, `title`, `description`, and `cwd`; it ignores `name` (`title` stayed `Terminal`) and does not execute `command`: issue #68 item 10 measured focused and unfocused create-with-command cases where the surface materialised and became readable at 2.1, 5.1, and 10.2 seconds, and after activation at 4.2, 8.3, and 14.4 seconds, yet never observed the command nonce, never showed a tty (remaining `tty: null`), and kept `surface.list.initial_command` as `null`; the same text delivered through `surface.send_text` did run, producing `ttys028` and appearing in `surface.read_text`. The response still returns only one `surface_id`, so callers must enumerate through `pane.list` / `surface.list` and map by pane index to keep each command-to-surface assignment. Each layout-created surface reports `initial_command: null`, so that field cannot be used as a matching key.
 
 Because `title` is supported at creation, fixed-name flows can set it in the `workspace.create` call and no longer need a create→rename round trip in the successful path.
 
