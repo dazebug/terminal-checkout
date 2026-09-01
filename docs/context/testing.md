@@ -130,3 +130,20 @@ The options page has no DOM unit-test harness, and this change did not add one. 
 The harness's checks need toggles just as the committed suite's checks do. The cross-card check passed when its guard was removed, and a toggle intended to disable the keyboard branch matched an identical `if` a hundred lines earlier and reddened the drag checks instead. Both looked like evidence while proving the wrong thing. An out-of-tree harness receives less scrutiny than the suite, so a check never shown to fail is worth less than no check.
 
 **Rejected alternative — promote the harness or trust green-only checks.** A fake browser or an extracted arithmetic seam would manufacture a unit boundary the production code does not have, while an un-toggled scratchpad check can mistake a missed filter for a working guard. Keep the harness disposable, and require each check to redden only when its named protection is toggled.
+
+## A fixture's input values choose the branch, so a route can be green and never run
+
+**Type:** decision
+**Type:** incident
+**Status:** active
+**Evidence:** confirmed (measured)
+**Source:** issue #69; `app/Tests/CoreTests/CmuxGroupedExecutionTests.swift`; the cold review of the finished branch and the driver's live E2E on 2026-09-01
+**Revisit when:** the grouped placement routes gain an in-suite oracle that runs a real cmux server, or a new route is added without a live case
+
+Grouped cmux placement shipped 630 green tests, and one of its three arrangements ran the wrong command in every workspace but the first. The unit fixture for workspace-per-item used `["short", 1024-byte]`: the second value is over the inline leaf limit, so it routed to the guarded send and the inline path — the one carrying the defect — never ran for any item but the first, where the bug is invisible. The same shape had already appeared twice in this work, with response fixtures that encoded a shape the server does not return, keeping a wrong parser green. The blocker was caught by reading, and then reproduced against a real server: two workspaces, both running item one's command, both reported as successes.
+
+**Reason:** a fixture value is not test data, it is a branch selector. Choosing values that are convenient to write selects whichever path they happen to reach, and the assertion then describes that path rather than the contract — so the count of passing tests says nothing about which routes were entered. What made this recoverable was that every placement route has a live oracle: each arrangement is exercised against a real cmux server with distinct per-item markers, which is the only check that can see "this workspace ran someone else's command."
+
+**Rejected alternative — add the missing case and move on.** That is what the previous two instances of this shape got. The values are chosen per test, so the next fixture picks its own branch; the durable half is the live case per route plus a sweep table that lists every plan-to-executor pair and its index space, both of which name what must be entered rather than trusting the values to enter it.
+
+**Consequence, accepted:** those live cases are not in the suite. They need a running cmux server and a built bundle, so they stay driver-run scripts recorded on the manual checklist — a route added without one is unverified, and the suite cannot say so.
