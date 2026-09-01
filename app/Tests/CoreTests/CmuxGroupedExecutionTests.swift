@@ -68,6 +68,25 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         XCTAssertNil(try cmuxMatchingWorkspaceID(from: response, named: "missing"))
     }
 
+    func testSurfaceListUsesWorkspaceScopeAndPreservesOwningPane() throws {
+        let parameters = cmuxSurfaceListParameters(workspaceID: "workspace")
+        XCTAssertEqual(parameters["workspace_id"] as? String, "workspace")
+        XCTAssertNil(parameters["pane_id"])
+
+        let entries = try cmuxSurfaceListEntries(from: [
+            "surfaces": [[
+                "id": "surface-1",
+                "index_in_pane": 0,
+                "pane_id": "pane-1",
+            ]]
+        ])
+        XCTAssertEqual(entries, [
+            CmuxSurfaceListEntry(
+                surfaceID: "surface-1", indexInPane: 0, paneID: "pane-1"
+            )
+        ])
+    }
+
     func testAlreadyCompletedCreateFailureIsTerminalAndNeverAuthorizesLaunchRetry() {
         let error = classifyCmuxCLIFailure(
             "Error: already_completed: workspace.create operation already completed"
@@ -103,12 +122,20 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                         ]
                     ]
                 case cmuxSurfaceListMethod:
-                    let paneID = params["pane_id"] as? String
+                    XCTAssertNil(params["pane_id"])
                     return [
-                        "surfaces": [[
-                            "id": paneID == "pane-0" ? "surface-0" : "surface-1",
-                            "index_in_pane": 0,
-                        ]]
+                        "surfaces": [
+                            [
+                                "id": "surface-1",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-1",
+                            ],
+                            [
+                                "id": "surface-0",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-0",
+                            ],
+                        ]
                     ]
                 case cmuxSurfaceSendTextMethod:
                     return ["queued": false]
@@ -133,7 +160,6 @@ final class CmuxGroupedExecutionTests: XCTestCase {
             [
                 cmuxWorkspaceCreateMethod,
                 cmuxPaneListMethod,
-                cmuxSurfaceListMethod,
                 cmuxSurfaceListMethod,
                 cmuxSurfaceSendTextMethod,
             ]
@@ -181,9 +207,28 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                         ]]
                     ]
                 case cmuxPaneListMethod:
-                    return ["panes": [["id": "pane-0", "index": 0]]]
+                    return [
+                        "panes": [
+                            ["id": "pane-0", "index": 0],
+                            ["id": "pane-1", "index": 1],
+                        ]
+                    ]
                 case cmuxSurfaceListMethod:
-                    return ["surfaces": [["id": "root-surface", "index_in_pane": 0]]]
+                    XCTAssertNil(params["pane_id"])
+                    return [
+                        "surfaces": [
+                            [
+                                "id": "other-surface",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-1",
+                            ],
+                            [
+                                "id": "root-surface",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-0",
+                            ],
+                        ]
+                    ]
                 case cmuxSurfaceSplitMethod:
                     splitTargets.append(params["surface_id"] as? String ?? "")
                     splitDirections.append(params["direction"] as? String ?? "")
@@ -240,7 +285,7 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         )
         var methods: [String] = []
         let dependencies = makeDependencies(
-            rpc: { method, _ in
+            rpc: { method, params in
                 methods.append(method)
                 switch method {
                 case cmuxWorkspaceListMethod:
@@ -253,9 +298,28 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                         ]]
                     ]
                 case cmuxPaneListMethod:
-                    return ["panes": [["id": "pane-0", "index": 0]]]
+                    return [
+                        "panes": [
+                            ["id": "pane-0", "index": 0],
+                            ["id": "pane-1", "index": 1],
+                        ]
+                    ]
                 case cmuxSurfaceListMethod:
-                    return ["surfaces": [["id": "root-surface", "index_in_pane": 0]]]
+                    XCTAssertNil(params["pane_id"])
+                    return [
+                        "surfaces": [
+                            [
+                                "id": "other-surface",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-1",
+                            ],
+                            [
+                                "id": "root-surface",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-0",
+                            ],
+                        ]
+                    ]
                 case cmuxSurfaceSplitMethod:
                     throw FixtureFailure(description: "split failed")
                 default:
@@ -485,12 +549,20 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                         ]
                     ]
                 case cmuxSurfaceListMethod:
-                    let paneID = params["pane_id"] as? String
+                    XCTAssertNil(params["pane_id"])
                     return [
-                        "surfaces": [[
-                            "id": paneID == "pane-0" ? "surface-0" : "surface-1",
-                            "index_in_pane": 0,
-                        ]]
+                        "surfaces": [
+                            [
+                                "id": "surface-1",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-1",
+                            ],
+                            [
+                                "id": "surface-0",
+                                "index_in_pane": 0,
+                                "pane_id": "pane-0",
+                            ],
+                        ]
                     ]
                 case cmuxSurfaceSendTextMethod:
                     sendCount += 1

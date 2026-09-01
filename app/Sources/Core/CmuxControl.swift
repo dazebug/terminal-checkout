@@ -383,10 +383,8 @@ public func cmuxPaneListParameters(workspaceID: String) -> [String: Any] {
     ["workspace_id": workspaceID]
 }
 
-public func cmuxSurfaceListParameters(
-    workspaceID: String, paneID: String
-) -> [String: Any] {
-    ["workspace_id": workspaceID, "pane_id": paneID]
+public func cmuxSurfaceListParameters(workspaceID: String) -> [String: Any] {
+    ["workspace_id": workspaceID]
 }
 
 public func cmuxSurfaceSplitParameters(

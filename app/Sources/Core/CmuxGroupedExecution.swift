@@ -85,10 +85,12 @@ public struct CmuxPaneListEntry: Equatable {
 public struct CmuxSurfaceListEntry: Equatable {
     public let surfaceID: String
     public let indexInPane: Int
+    public let paneID: String
 
-    public init(surfaceID: String, indexInPane: Int) {
+    public init(surfaceID: String, indexInPane: Int, paneID: String) {
         self.surfaceID = surfaceID
         self.indexInPane = indexInPane
+        self.paneID = paneID
     }
 }
 
@@ -182,7 +184,12 @@ public func cmuxSurfaceListEntries(
         guard let index = surface["index_in_pane"] as? Int else {
             throw CmuxPlacementResponseError.missingField("index_in_pane")
         }
-        return CmuxSurfaceListEntry(surfaceID: surfaceID, indexInPane: index)
+        guard let paneID = surface["pane_id"] as? String, !paneID.isEmpty else {
+            throw CmuxPlacementResponseError.missingField("pane_id")
+        }
+        return CmuxSurfaceListEntry(
+            surfaceID: surfaceID, indexInPane: index, paneID: paneID
+        )
     }
 }
 
@@ -247,22 +254,19 @@ private func enumeratedSurfaceIDs(
         lhs.index == rhs.index ? lhs.paneID < rhs.paneID : lhs.index < rhs.index
     }
 
+    let surfaceResponse = try dependencies.rpc(
+        cmuxSurfaceListMethod,
+        cmuxSurfaceListParameters(workspaceID: workspaceID)
+    )
+    let surfaceEntries = try cmuxSurfaceListEntries(from: surfaceResponse)
+    let surfacesByPane = try validatedSurfaceEntriesByPane(surfaceEntries)
+    guard Set(surfacesByPane.keys) == Set(panes.map(\.paneID)) else {
+        throw CmuxPlacementResponseError.invalidShape("surface pane membership")
+    }
+
     var surfaces: [(paneIndex: Int, surfaceIndex: Int, surfaceID: String)] = []
     for pane in panes {
-        let response = try dependencies.rpc(
-            cmuxSurfaceListMethod,
-            cmuxSurfaceListParameters(workspaceID: workspaceID, paneID: pane.paneID)
-        )
-        let unsortedEntries = try cmuxSurfaceListEntries(from: response)
-        guard unsortedEntries.map(\.indexInPane).sorted() == Array(0..<unsortedEntries.count),
-              Set(unsortedEntries.map(\.indexInPane)).count == unsortedEntries.count else {
-            throw CmuxPlacementResponseError.invalidShape("surface.index_in_pane sequence")
-        }
-        let entries = unsortedEntries.sorted { lhs, rhs in
-            lhs.indexInPane == rhs.indexInPane
-                ? lhs.surfaceID < rhs.surfaceID
-                : lhs.indexInPane < rhs.indexInPane
-        }
+        let entries = surfacesByPane[pane.paneID] ?? []
         surfaces.append(contentsOf: entries.map {
             (paneIndex: pane.index, surfaceIndex: $0.indexInPane, surfaceID: $0.surfaceID)
         })
@@ -280,6 +284,27 @@ private func enumeratedSurfaceIDs(
     return leafItemOrder.map { surfaces[$0].surfaceID }
 }
 
+private func validatedSurfaceEntriesByPane(
+    _ entries: [CmuxSurfaceListEntry]
+) throws -> [String: [CmuxSurfaceListEntry]] {
+    let grouped = Dictionary(grouping: entries, by: \.paneID)
+    var validated: [String: [CmuxSurfaceListEntry]] = [:]
+    validated.reserveCapacity(grouped.count)
+
+    for (paneID, unsortedEntries) in grouped {
+        guard unsortedEntries.map(\.indexInPane).sorted() == Array(0..<unsortedEntries.count),
+              Set(unsortedEntries.map(\.indexInPane)).count == unsortedEntries.count else {
+            throw CmuxPlacementResponseError.invalidShape("surface.index_in_pane sequence")
+        }
+        validated[paneID] = unsortedEntries.sorted { lhs, rhs in
+            lhs.indexInPane == rhs.indexInPane
+                ? lhs.surfaceID < rhs.surfaceID
+                : lhs.indexInPane < rhs.indexInPane
+        }
+    }
+    return validated
+}
+
 private func firstPaneID(
     from response: [String: Any], expectedIndex: Int
 ) throws -> String {
@@ -292,23 +317,19 @@ private func firstPaneID(
 }
 
 private func firstSurfaceID(
-    workspaceID: String,
+    from entries: [CmuxSurfaceListEntry],
     paneID: String,
-    expectedIndex: Int,
-    using dependencies: CmuxPlacementExecutionDependencies
+    expectedIndex: Int
 ) throws -> String {
-    let response = try dependencies.rpc(
-        cmuxSurfaceListMethod,
-        cmuxSurfaceListParameters(workspaceID: workspaceID, paneID: paneID)
-    )
-    let surfaces = try cmuxSurfaceListEntries(from: response)
-    let matches = surfaces.filter { $0.indexInPane == expectedIndex }
-    guard matches.count == 1, let surface = matches.first else {
+    let surfacesByPane = try validatedSurfaceEntriesByPane(entries)
+    guard let surfaces = surfacesByPane[paneID],
+          surfaces.indices.contains(expectedIndex),
+          surfaces[expectedIndex].indexInPane == expectedIndex else {
         throw CmuxPlacementResponseError.invalidShape(
             "surface.index_in_pane \(expectedIndex)"
         )
     }
-    return surface.surfaceID
+    return surfaces[expectedIndex].surfaceID
 }
 
 private func sourceSurfaceID(
@@ -490,11 +511,15 @@ private func executeFoundSplit(
             cmuxPaneListParameters(workspaceID: workspaceID)
         )
         let paneID = try firstPaneID(from: paneResponse, expectedIndex: foundPlan.rootPaneIndex)
+        let surfaceResponse = try dependencies.rpc(
+            cmuxSurfaceListMethod,
+            cmuxSurfaceListParameters(workspaceID: workspaceID)
+        )
+        let surfaceEntries = try cmuxSurfaceListEntries(from: surfaceResponse)
         let rootSurfaceID = try firstSurfaceID(
-            workspaceID: workspaceID,
+            from: surfaceEntries,
             paneID: paneID,
-            expectedIndex: foundPlan.rootSurfaceIndex,
-            using: dependencies
+            expectedIndex: foundPlan.rootSurfaceIndex
         )
 
         var responseSurfaceIDs = Array(repeating: "", count: foundPlan.splitOperations.count)
