@@ -78,6 +78,16 @@
 "app.section.accessibility.title" = "Warp 的 claude 輸入（輔助使用）";
 "app.section.cmux.help" = "外部應用程式連線至 cmux 需要將 socket control mode 設為 \"automation\"。啟用後，此 macOS 使用者擁有的所有處理程序都能控制 cmux。你可以在 cmux 設定 → Automation 中啟用，也可以用此按鈕複製設定並開啟 cmux.json。cmux 會立即套用檔案變更，不需要重新啟動。";
 "app.section.cmux.title" = "cmux 通訊端控制";
+"app.section.cmux.placement.help" = "選擇如何排列 cmux 批次請求。這些設定只儲存在此 Mac；workspace 名稱為空時會按新建 workspace 解讀。";
+"app.section.cmux.placement.title" = "配置";
+"app.cmux.placement.identity.alwaysNew" = "新增 workspace";
+"app.cmux.placement.identity.fixedName" = "按名稱尋找";
+"app.cmux.placement.identity.fixedNameValue" = "workspace「%@」";
+"app.cmux.placement.arrangement.pane" = "每個項目一個 pane";
+"app.cmux.placement.arrangement.tab" = "每個項目一個分頁";
+"app.cmux.placement.arrangement.workspace" = "每個項目一個 workspace";
+"app.cmux.placement.name.placeholder" = "workspace 名稱";
+"app.cmux.placement.interpretation" = "目前配置：%@ · %@";
 "app.section.itermPermission.help" = "僅授予本應用程式控制 iTerm2 的權限（Apple Events）。Chrome 完全不需要任何權限。";
 "app.section.itermPermission.title" = "iTerm2 控制權限";
 "app.status.accessibility.denied" = "未授權 — 預約了 claude 輸入的按鈕會被拒絕";

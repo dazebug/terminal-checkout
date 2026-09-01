@@ -77,6 +77,16 @@
 "app.section.accessibility.title" = "Warp claude 입력 (손쉬운 사용)";
 "app.section.cmux.help" = "외부 앱이 cmux에 연결하려면 socket control mode가 \"automation\"이어야 합니다. 이 설정을 켜면 이 macOS 사용자가 소유한 모든 프로세스가 cmux를 조종할 수 있습니다. cmux 설정 → Automation에서 켜거나 이 버튼으로 설정을 복사하고 cmux.json을 열어 수정할 수 있습니다. cmux는 파일 변경을 즉시 반영하므로 다시 시작할 필요가 없습니다.";
 "app.section.cmux.title" = "cmux 소켓 제어";
+"app.section.cmux.placement.help" = "cmux 배치 요청을 어떻게 구성할지 고릅니다. 이 설정은 이 Mac에만 저장되며, workspace 이름이 비어 있으면 새 workspace로 해석됩니다.";
+"app.section.cmux.placement.title" = "배치";
+"app.cmux.placement.identity.alwaysNew" = "새 workspace";
+"app.cmux.placement.identity.fixedName" = "이름으로 찾기";
+"app.cmux.placement.identity.fixedNameValue" = "workspace \"%@\"";
+"app.cmux.placement.arrangement.pane" = "항목마다 pane";
+"app.cmux.placement.arrangement.tab" = "항목마다 탭";
+"app.cmux.placement.arrangement.workspace" = "항목마다 workspace";
+"app.cmux.placement.name.placeholder" = "workspace 이름";
+"app.cmux.placement.interpretation" = "적용되는 배치: %@ · %@";
 "app.section.itermPermission.help" = "iTerm2 제어(Apple Events) 권한을 이 앱에만 부여합니다. Chrome에는 아무 권한도 필요 없습니다.";
 "app.section.itermPermission.title" = "iTerm2 제어 권한";
 "app.status.accessibility.denied" = "허용 안 됨 — claude 입력이 예약된 버튼은 거절됩니다";

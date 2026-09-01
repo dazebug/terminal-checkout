@@ -459,7 +459,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
         let cmuxSection = controller.refillableSectionsForTesting[1]
         XCTAssertFalse(cmuxSection.isHidden)
-        XCTAssertEqual(cmuxSection.arrangedSubviews.count, 6)
+        XCTAssertEqual(cmuxSection.arrangedSubviews.count, 7)
 
         let nodes = controller.pipelineNodes(
             manifest: .ok("registered"), extensionState: .ok("ready"), socketAlive: true,

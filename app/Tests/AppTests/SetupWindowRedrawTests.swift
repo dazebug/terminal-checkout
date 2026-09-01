@@ -154,7 +154,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
         let field = try XCTUnwrap(
-            window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+            window.contentView?.firstDescendant(role: "control.baseDirectoryEdited")
                 as? NSTextField
         )
         window.makeKeyAndOrderFront(nil)
@@ -165,7 +165,7 @@ final class SetupWindowRedrawTests: XCTestCase {
 
         post(.terminalCheckoutLanguageChanged, in: window)
 
-        let after = window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+        let after = window.contentView?.firstDescendant(role: "control.baseDirectoryEdited")
         XCTAssertTrue(field === after, "the field was recreated, so anything it held is gone")
         XCTAssertNotNil(field.window, "the field was dropped instead of re-parented")
         XCTAssertTrue(
@@ -187,7 +187,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
         let field = try XCTUnwrap(
-            window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+            window.contentView?.firstDescendant(role: "control.baseDirectoryEdited")
                 as? NSTextField
         )
         window.makeKeyAndOrderFront(nil)
@@ -219,7 +219,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
         let field = try XCTUnwrap(
-            window.contentView?.firstDescendant(where: { ($0 as? NSTextField)?.isEditable == true })
+            window.contentView?.firstDescendant(role: "control.baseDirectoryEdited")
                 as? NSTextField
         )
         window.makeKeyAndOrderFront(nil)

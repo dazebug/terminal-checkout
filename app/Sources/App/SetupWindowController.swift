@@ -275,11 +275,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         [permissionSection, cmuxSection, accessibilitySection]
     }
 
+    var cmuxPlacementIdentityRadiosForTesting: [NSButton] { cmuxPlacementIdentityRadios }
+    var cmuxPlacementArrangementRadiosForTesting: [NSButton] { cmuxPlacementArrangementRadios }
+    var cmuxPlacementNameFieldForTesting: NSTextField { cmuxPlacementNameField }
+    var cmuxPlacementInterpretationLabelForTesting: NSTextField {
+        cmuxPlacementInterpretationLabel
+    }
+
     var statusLabelsForTesting: [NSTextField] {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
             permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, cmuxFeedbackLabel,
-            testResultLabel,
+            cmuxPlacementInterpretationLabel, testResultLabel,
         ]
     }
     /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
@@ -304,6 +311,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// On screen only while cmux is selected; the section exposes the live socket mode and the
     /// non-destructive configuration help action.
     private let cmuxSection = NSStackView()
+    private var cmuxPlacementIdentityRadios: [NSButton] = []
+    private var cmuxPlacementArrangementRadios: [NSButton] = []
+    private let cmuxPlacementNameField = NSTextField(string: "")
+    private let cmuxPlacementInterpretationLabel = makeStatusLabel(font: Theme.mono(11.5))
+    /// The last stored name this window drew. A different field value is an unsaved edit and must
+    /// survive refreshes just like the base-directory field's draft.
+    private var drawnCmuxPlacementName: String?
+    /// Reparenting an NSTextField can end its edit and synchronously send the end-edit action. That
+    /// action is a user save only outside a language rebuild; the draft itself stays in the stored
+    /// field while `capturePlace`/`restore` carry the edit back to the rebuilt window.
+    private var isRebuildingForLanguageChange = false
+    private enum CmuxPlacementRadioTag {
+        static let alwaysNew = 1
+        static let fixedName = 2
+        static let panePerItem = 1
+        static let tabPerItem = 2
+        static let workspacePerItem = 3
+    }
     private let pipeline = PipelineStripView()
     private let cursor = BlinkCursorView()
 
@@ -486,9 +511,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// activation and on every socket request, and replacing the view tree that often would fight
     /// the user for focus and for their place in the window.
     ///
-    /// State survives because the views that hold it are stored properties: the base-directory
-    /// field, the status labels and the pipeline strip are re-parented into the new stack rather
-    /// than recreated, so what the user has typed is still there afterwards.
+    /// State survives because the views that hold it are stored properties: the base-directory and
+    /// placement-name fields, the status labels and the pipeline strip are re-parented into the new
+    /// stack rather than recreated, so what the user has typed is still there afterwards.
     ///
     /// **What does not survive on its own is where the user was.** The scroll origin lives in the
     /// scroll view being replaced, and the first responder is dropped the moment its view leaves
@@ -498,6 +523,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     func rebuildForLanguageChange() {
         guard let window = window else { return }
         let place = capturePlace(in: window)
+        isRebuildingForLanguageChange = true
+        defer { isRebuildingForLanguageChange = false }
         window.contentView = buildContent()
         window.contentView?.layoutSubtreeIfNeeded()
         refresh()
@@ -978,6 +1005,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxSection.addArrangedSubview(helpLabel(localized("app.section.cmux.help")))
         cmuxSection.addArrangedSubview(cmuxStatusLabel)
         cmuxSection.addArrangedSubview(cmuxFeedbackLabel)
+        cmuxSection.addArrangedSubview(buildCmuxPlacementSection())
 
         cmuxConfigButton.title = localized("app.button.openCmuxConfig")
         cmuxConfigButton.target = self
@@ -993,6 +1021,82 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         cmuxRefreshButton.bezelStyle = .rounded
 
         cmuxSection.addArrangedSubview(buttonRow([cmuxConfigButton, cmuxRefreshButton]))
+    }
+
+    private func buildCmuxPlacementSection() -> NSView {
+        cmuxPlacementIdentityRadios = [
+            placementRadio(
+                localized("app.cmux.placement.identity.alwaysNew"),
+                tag: CmuxPlacementRadioTag.alwaysNew,
+                action: #selector(cmuxPlacementIdentityChanged(_:)),
+                qualifier: "always-new"
+            ),
+            placementRadio(
+                localized("app.cmux.placement.identity.fixedName"),
+                tag: CmuxPlacementRadioTag.fixedName,
+                action: #selector(cmuxPlacementIdentityChanged(_:)),
+                qualifier: "fixed-name"
+            ),
+        ]
+        let identityColumn = NSStackView(views: cmuxPlacementIdentityRadios)
+        identityColumn.orientation = .vertical
+        identityColumn.alignment = .leading
+        identityColumn.spacing = 7
+
+        cmuxPlacementNameField.placeholderString = localized("app.cmux.placement.name.placeholder")
+        cmuxPlacementNameField.font = Theme.mono(11.5)
+        cmuxPlacementNameField.target = self
+        cmuxPlacementNameField.action = #selector(cmuxPlacementNameEdited)
+        cmuxPlacementNameField.identifier = role(#selector(cmuxPlacementNameEdited))
+        cmuxPlacementNameField.cell?.sendsActionOnEndEditing = true
+        cmuxPlacementNameField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
+
+        cmuxPlacementArrangementRadios = [
+            placementRadio(
+                localized("app.cmux.placement.arrangement.pane"),
+                tag: CmuxPlacementRadioTag.panePerItem,
+                action: #selector(cmuxPlacementArrangementChanged(_:)),
+                qualifier: CmuxPlacementArrangement.panePerItem.rawValue
+            ),
+            placementRadio(
+                localized("app.cmux.placement.arrangement.tab"),
+                tag: CmuxPlacementRadioTag.tabPerItem,
+                action: #selector(cmuxPlacementArrangementChanged(_:)),
+                qualifier: CmuxPlacementArrangement.tabPerItem.rawValue
+            ),
+            placementRadio(
+                localized("app.cmux.placement.arrangement.workspace"),
+                tag: CmuxPlacementRadioTag.workspacePerItem,
+                action: #selector(cmuxPlacementArrangementChanged(_:)),
+                qualifier: CmuxPlacementArrangement.workspacePerItem.rawValue
+            ),
+        ]
+        let arrangementColumn = NSStackView(views: cmuxPlacementArrangementRadios)
+        arrangementColumn.orientation = .vertical
+        arrangementColumn.alignment = .leading
+        arrangementColumn.spacing = 7
+
+        let section = NSStackView(views: [
+            sectionTitle(localized("app.section.cmux.placement.title")),
+            helpLabel(localized("app.section.cmux.placement.help")),
+            identityColumn,
+            cmuxPlacementNameField,
+            arrangementColumn,
+            cmuxPlacementInterpretationLabel,
+        ])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 7
+        return section
+    }
+
+    private func placementRadio(
+        _ title: String, tag: Int, action: Selector, qualifier: String
+    ) -> NSButton {
+        let button = NSButton(radioButtonWithTitle: title, target: self, action: action)
+        button.tag = tag
+        button.identifier = role(action, qualifier)
+        return button
     }
 
     private func sectionTitle(_ text: String) -> NSTextField {
@@ -1237,6 +1341,42 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
+    @objc private func cmuxPlacementIdentityChanged(_ sender: NSButton) {
+        switch sender.tag {
+        case CmuxPlacementRadioTag.alwaysNew:
+            Settings.cmuxPlacementIdentityMode = "always-new"
+        case CmuxPlacementRadioTag.fixedName:
+            Settings.cmuxPlacementIdentityMode = "fixed-name"
+        default:
+            return
+        }
+        refresh()
+    }
+
+    @objc private func cmuxPlacementArrangementChanged(_ sender: NSButton) {
+        let rawValue: String
+        switch sender.tag {
+        case CmuxPlacementRadioTag.panePerItem:
+            rawValue = CmuxPlacementArrangement.panePerItem.rawValue
+        case CmuxPlacementRadioTag.tabPerItem:
+            rawValue = CmuxPlacementArrangement.tabPerItem.rawValue
+        case CmuxPlacementRadioTag.workspacePerItem:
+            rawValue = CmuxPlacementArrangement.workspacePerItem.rawValue
+        default:
+            return
+        }
+        Settings.cmuxPlacementArrangement = rawValue
+        refresh()
+    }
+
+    @objc private func cmuxPlacementNameEdited() {
+        guard !isRebuildingForLanguageChange else { return }
+        let typed = cmuxPlacementNameField.stringValue
+        Settings.cmuxPlacementFixedName = typed
+        drawnCmuxPlacementName = typed
+        refresh()
+    }
+
     private func updateTerminalControls() {
         switch Settings.terminal {
         case .iterm: itermRadio.state = .on
@@ -1338,6 +1478,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         if let permission, case .ok = permission { granted = true }
         permissionSection.isHidden = Settings.terminal != .iterm || granted
         cmuxSection.isHidden = Settings.terminal.cmuxChannel == nil
+        updateCmuxPlacementControls()
         accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
 
         pipeline.update(pipelineNodes(
@@ -1347,6 +1488,68 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ))
         // No resize call here on purpose: the content view resizes the window from inside its
         // own layout pass, which is the only moment the measurement is valid.
+    }
+
+    private func updateCmuxPlacementControls() {
+        guard !cmuxPlacementIdentityRadios.isEmpty,
+              !cmuxPlacementArrangementRadios.isEmpty else { return }
+
+        let rawIdentityMode = Settings.cmuxPlacementIdentityMode
+        let rawFixedName = Settings.cmuxPlacementFixedName
+        let rawArrangement = Settings.cmuxPlacementArrangement
+        let parsed = CmuxPlacementPreset.parse(
+            rawIdentityMode: rawIdentityMode,
+            rawFixedName: rawFixedName,
+            rawArrangement: rawArrangement
+        )
+
+        // The radio state preserves the user's raw identity choice so an empty fixed name can be
+        // filled in here; the label below shows the effective Core interpretation separately.
+        let fixedNameSelected = rawIdentityMode == "fixed-name"
+        cmuxPlacementIdentityRadios[0].state = fixedNameSelected ? .off : .on
+        cmuxPlacementIdentityRadios[1].state = fixedNameSelected ? .on : .off
+        cmuxPlacementNameField.isEnabled = fixedNameSelected
+
+        let arrangementIndex: Int
+        switch parsed.arrangement {
+        case .panePerItem:
+            arrangementIndex = 0
+        case .tabPerItem:
+            arrangementIndex = 1
+        case .workspacePerItem:
+            arrangementIndex = 2
+        }
+        for (index, button) in cmuxPlacementArrangementRadios.enumerated() {
+            button.state = index == arrangementIndex ? .on : .off
+        }
+
+        let storedName = rawFixedName
+        let ours = drawnCmuxPlacementName == nil
+            || cmuxPlacementNameField.stringValue == drawnCmuxPlacementName
+        if window?.firstResponder !== cmuxPlacementNameField.currentEditor(), ours {
+            cmuxPlacementNameField.stringValue = storedName
+            drawnCmuxPlacementName = storedName
+        }
+
+        let identityText: String
+        switch parsed.identityMode {
+        case .alwaysNew:
+            identityText = localized("app.cmux.placement.identity.alwaysNew")
+        case .fixedName(let name):
+            identityText = localized("app.cmux.placement.identity.fixedNameValue", name)
+        }
+        let arrangementText: String
+        switch parsed.arrangement {
+        case .panePerItem:
+            arrangementText = localized("app.cmux.placement.arrangement.pane")
+        case .tabPerItem:
+            arrangementText = localized("app.cmux.placement.arrangement.tab")
+        case .workspacePerItem:
+            arrangementText = localized("app.cmux.placement.arrangement.workspace")
+        }
+        cmuxPlacementInterpretationLabel.stringValue = localized(
+            "app.cmux.placement.interpretation", identityText, arrangementText
+        )
     }
 
     private func updateCmuxStatus(channel: CmuxChannel) -> CmuxSocketStatus {

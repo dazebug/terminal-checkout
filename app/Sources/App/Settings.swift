@@ -54,6 +54,30 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "baseDirectory") }
     }
 
+    /// Raw cmux placement values are app-owned machine-local strings. Their meaning, including
+    /// defaults and invalid-value handling, belongs to Core's one `CmuxPlacementPreset.parse` seam;
+    /// this layer only preserves what UserDefaults contains and gives non-string values a textual
+    /// form instead of silently treating them as absent.
+    static var cmuxPlacementIdentityMode: String {
+        get { rawString(forKey: CmuxPlacementStorageKey.identityMode) }
+        set { UserDefaults.standard.set(newValue, forKey: CmuxPlacementStorageKey.identityMode) }
+    }
+
+    static var cmuxPlacementFixedName: String {
+        get { rawString(forKey: CmuxPlacementStorageKey.fixedName) }
+        set { UserDefaults.standard.set(newValue, forKey: CmuxPlacementStorageKey.fixedName) }
+    }
+
+    static var cmuxPlacementArrangement: String {
+        get { rawString(forKey: CmuxPlacementStorageKey.arrangement) }
+        set { UserDefaults.standard.set(newValue, forKey: CmuxPlacementStorageKey.arrangement) }
+    }
+
+    private static func rawString(forKey key: String) -> String {
+        guard let stored = UserDefaults.standard.object(forKey: key) else { return "" }
+        return stored as? String ?? String(describing: stored)
+    }
+
     /// The language the user picked, or `auto`. A preference is app-local state: our own strings
     /// redraw after the notification, while AppKit chrome follows on the restart action because
     /// AppKit reads its language before the process creates `NSApplication`. In automatic mode the
