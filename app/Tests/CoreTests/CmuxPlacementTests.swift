@@ -251,8 +251,16 @@ final class CmuxPlacementTests: XCTestCase {
         XCTAssertEqual(workspaces.creates.map(\.operationID), itemIDs.map(\.uuidString))
         let noStrings = Array<String?>(repeating: nil, count: 2)
         XCTAssertEqual(workspaces.creates.map(\.title), noStrings)
-        XCTAssertEqual(workspaces.creates[0].layout.itemRoutes, [.inlineLeaf])
-        XCTAssertEqual(workspaces.creates[1].layout.itemRoutes, [.guardedSurfaceSend])
+        XCTAssertEqual(workspaces.creates[0].layout.leafItemOrder, [0])
+        XCTAssertEqual(workspaces.creates[1].layout.leafItemOrder, [1])
+        XCTAssertEqual(
+            workspaces.creates[0].layout.itemRoutes,
+            [.inlineLeaf, .guardedSurfaceSend]
+        )
+        XCTAssertEqual(
+            workspaces.creates[1].layout.itemRoutes,
+            [.inlineLeaf, .guardedSurfaceSend]
+        )
         XCTAssertEqual(workspaces.itemRoutes, [.inlineLeaf, .guardedSurfaceSend])
     }
 

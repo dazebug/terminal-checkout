@@ -295,8 +295,23 @@ public func cmuxBalancedLayoutPlan(commandByteCounts: [Int]) -> CmuxLayoutPlan {
     precondition(!commandByteCounts.isEmpty)
     precondition(commandByteCounts.count <= cmuxPanePlacementItemLimit)
 
+    return makeBalancedLayoutPlan(
+        commandByteCounts: commandByteCounts,
+        itemIndices: Array(commandByteCounts.indices)
+    )
+}
+
+private func makeBalancedLayoutPlan(
+    commandByteCounts: [Int],
+    itemIndices: [Int]
+) -> CmuxLayoutPlan {
+    precondition(!itemIndices.isEmpty)
+    precondition(itemIndices.count <= cmuxPanePlacementItemLimit)
+    precondition(Set(itemIndices).count == itemIndices.count)
+    precondition(itemIndices.allSatisfy { commandByteCounts.indices.contains($0) })
+
     let itemRoutes = commandByteCounts.map(commandRoute(forByteCount:))
-    let indices = Array(commandByteCounts.indices)[...]
+    let indices = itemIndices[...]
     let tree = makeBalancedLayoutNode(indices: indices, depth: 0, itemRoutes: itemRoutes)
     return CmuxLayoutPlan(
         tree: tree,
@@ -395,6 +410,7 @@ public func cmuxPlacementPlan(
                 target: .alwaysNew,
                 createIfMissing: makeWorkspaceCreatePlan(
                     commandByteCounts: commandByteCounts,
+                    itemIndices: Array(commandByteCounts.indices),
                     operationID: operationID,
                     title: nil
                 ),
@@ -405,6 +421,7 @@ public func cmuxPlacementPlan(
                 target: .fixedName(name),
                 createIfMissing: makeWorkspaceCreatePlan(
                     commandByteCounts: commandByteCounts,
+                    itemIndices: Array(commandByteCounts.indices),
                     operationID: operationID,
                     title: name
                 ),
@@ -489,13 +506,17 @@ private func makeBalancedLayoutNode(
 
 private func makeWorkspaceCreatePlan(
     commandByteCounts: [Int],
+    itemIndices: [Int],
     operationID: String,
     title: String?
 ) -> CmuxWorkspaceCreatePlan {
     CmuxWorkspaceCreatePlan(
         operationID: operationID,
         title: title,
-        layout: cmuxBalancedLayoutPlan(commandByteCounts: commandByteCounts)
+        layout: makeBalancedLayoutPlan(
+            commandByteCounts: commandByteCounts,
+            itemIndices: itemIndices
+        )
     )
 }
 
@@ -551,8 +572,11 @@ private func makeWorkspacePerItemPlan(
     itemOperationIDs: [UUID]
 ) -> CmuxWorkspacePerItemPlan {
     let creates = commandByteCounts.indices.map { index in
+        // Keep the batch command index space even though this layout has one leaf. Passing a
+        // one-element count array would relabel every leaf as item zero at execution time.
         makeWorkspaceCreatePlan(
-            commandByteCounts: [commandByteCounts[index]],
+            commandByteCounts: commandByteCounts,
+            itemIndices: [index],
             operationID: itemOperationIDs[index].uuidString,
             title: nil
         )

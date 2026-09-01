@@ -4,7 +4,7 @@
 - 대상: terminal-checkout · `app` grouped execution 및 setup window
 - 시작 커밋: `e5b1b9b` (`docs: measure the cmux RPC placement contract for batch fan-out (#77)`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/cmux-placement-preset-review` (`worktree-cmux-placement-preset-review`) · 메인 체크아웃: `/Users/choongjaelee/Codes/terminal-checkout` (`main`, 무변경) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-cmux-placement-preset-work` (`cmux-placement-preset-work`)
-- 현재: R1 반영 완료 · 항목 1 agreed · 항목 2 agreed · 항목 3 agreed · 항목 4 cleared · 항목 4′ agreed · 항목 5 agreed
+- 현재: cold review R2 반영 완료 · 항목 1·2·3·4′·5 agreed · 항목 3′ verified · cold 재판정 대기
 - 최근 검증자 판정: "③ 잔여 최고 심각도 수색 — 실패 item admission 반납·deadline 상호작용·legacy 경로·merged-argv 바이트 경계·four-methods 잔재 전부 확인, 차단 없음. ④ 이 구현에 합의한다 (cold review 전제)." (드라이버, 최종) · 원문 없음
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
@@ -110,6 +110,7 @@ cmux 외 터미널의 현재 N-tab loop와 Claude per-session 전달은 유지�
 | 3 | placement plan에 따라 cmux grouped executor와 RPC call sequence를 구현한다; N≤8 layout, found fixed-name pane의 target 지정 균형 `surface.split`, N>8 및 found+pane N>8 tab fallback, workspace identity/current-window placement, 1023-byte inline 및 guarded oversize send, enumeration/order, operation ID를 stable/NIGHTLY 양쪽에 적용한다. | Core 실행·cmux RPC | (a) `runInCmux`가 item마다 unaddressed workspace 하나만 만듦 (b) layout/leaf enumeration/order 복원이 없음 (c) `operation_id` 없는 retry 계약임 (d) found fixed-name 경로의 균형 split 시퀀스·응답 수집 매핑이 없음 | `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, 신규 `app/Sources/Core/CmuxGroupedExecution.swift`, 신규 `app/Tests/CoreTests/CmuxGroupedExecutionTests.swift` | agreed | 추가 테스트 11개: `testLayoutJSONUsesMeasuredBinaryShapeAndOmitsSubmitFromLeafCommands`, `testLayoutJSONLeavesCommandOutForGuardedSurfaceSend`, `testWorkspaceListMatchingRequiresCustomTitleAndChoosesLowestIndex`, `testAlreadyCompletedCreateFailureIsTerminalAndNeverAuthorizesLaunchRetry`, `testLayoutExecutionEnumeratesByPaneIndexAndGuardsOnlyOversizeItems`, `testFoundPaneExecutionUsesExplicitSplitTargetsAndMeasuredItemOrder`, `testFoundPaneFailureUsesConservativeAllItemFailureWithoutRollback`, `testCreatedTabsAddressEverySurfaceCreateToTheEnumeratedPane`, `testFoundTabsUseTheFirstPaneAndCreateOneSurfacePerItem`, `testWorkspacePerItemCreatesIndependentCurrentWindowWorkspaces`, `testCreateRecoveryReusesTheSameOperationParametersAfterMeasuredReachabilityFailure`; `node --test` → exit 0, 252/252; `cd app && swift test`·`swift build`·cmux hands-on은 샌드박스 제약으로 미실행; found split 실패는 응답 귀속 미측정으로 전 item failure 보수 처리; F3∼F5: `workspace.list`·`pane.list`·`surface.list` 항목 키를 실측 `id`로 파싱(`workspace_id`/`pane_id`/`surface_id` 아님); F6: `cmuxCreateWorkspaceWithRecovery`는 launch 후 nil socket pointer도 재시도함; F8: `workspace.create`의 `operation_id`는 UUID 형식만 허용되므로 plan은 `batchOperationID`·`itemOperationIDs`를 UUID로 받고 wire에는 `uuidString`을 사용함; 근거: 드라이버 실측 2026-09-01; 재실행: `cd app && swift test` → Executed 613 tests, 0 failures (드라이버, 직전 602) · 드라이버 실서버 실측 2026-09-01: layout+title+operation_id 조합 수용, keyed 반복 = 같은 workspace_id(at-most-once), operation_id는 UUID 강제(비UUID는 invalid_params), list 계열 항목 키는 `id` · F3∼F8 수정 반영 | — |
 | 4 | HostServer가 cmux일 때만 preset-aware grouped executor를 호출하고, 기존 전체 validation·ordered per-item response·timeline·비동기 Claude delivery를 유지한다; layout create/found split/tab/N>8 폴백 경로 선택은 per-item timeline과 `checkoutLog`에 기록하고 응답 계약은 바꾸지 않으며, cmux 외에는 현재 serial N-tab loop를 그대로 둔다. | HostServer 통합·응답 | (a) `HostServer`가 모든 batch item을 같은 per-item launch closure로 순차 실행함 (b) grouped handles와 local preset을 전달하지 않음 | `app/Sources/App/HostServer.swift`, `app/Sources/Core/CmuxGroupedExecution.swift`, `app/Tests/AppTests/HostProtocolTests.swift`, `app/Tests/CoreTests/CmuxGroupedExecutionTests.swift`, `app/Tests/CoreTests/BatchProtocolTests.swift` | 1, 2, 3 | cleared | 재실행: `cd app && swift test` → Executed 629 tests, 0 failures (드라이버, 직전 622) · `node --test` → 252/252 exit 0 (드라이버) · F11 인자 순서·F12 병합 규칙 기대값 교정 반영 | — |
 | 4′ | 항목 4의 layout surface 열거와 found root 조회를 실측 workspace-wide `surface.list` 계약에 맞추고, item↔surface 매핑을 pane 소유 정보로 재구성한다. | HostServer 통합·응답 개정 | (a) `surface.list`의 무시되는 `pane_id`를 pane마다 보내 workspace 전체 응답을 반복 수집함 (b) 항목별 owning `pane_id`를 읽지 않아 `index_in_pane`가 다른 pane 그룹에서 중복되고 응답이 전 item 실패함 | `app/Sources/Core/CmuxGroupedExecution.swift`, `app/Sources/Core/CmuxControl.swift`, `app/Tests/CoreTests/CmuxGroupedExecutionTests.swift`, `docs/context/cmux-integration.md` | 3, 4 | agreed | 재실행: `cd app && swift test` → 630 tests 0 failures (드라이버, 직전 629) · 실기기 E2E A/B/C PASS (드라이버 2026-09-01, 수정 전 A는 3/3 실패 — red 실관찰) · surface.list pane_id 무시 실측 반영 | — |
+| 3′ | 항목 3의 workspace-per-item create가 batch item index 공간을 잃는 문제와, response deadline이 이미 실행된 inline leaf를 not-launched로 재분류하는 문제를 고친다. | Core 실행 개정 | (a) create마다 단일 원소 byte-count 배열로 계획을 만들어 leaf itemIndex가 항상 0이고 실행기는 전체 commands를 넘겨 모든 workspace가 item 1의 명령을 실행함 (b) deadline 판정이 per-item 결과 루프 맨 앞에 있어 workspace.create가 이미 제출한 inline 명령을 not-launched로 되돌리고 해당 item의 claude admission을 반납함 | `app/Sources/Core/CmuxPlacement.swift`, `app/Sources/Core/CmuxGroupedExecution.swift`, `app/Tests/CoreTests/CmuxPlacementTests.swift`, `app/Tests/CoreTests/CmuxGroupedExecutionTests.swift`, `docs/context/cmux-integration.md` | 3, 4, 4′ | verified | 재실행: cd app && swift test → Executed 634 tests, 0 failures (드라이버, 직전 630) · node --test → 252/252 exit 0 · 토글 red 실관찰(드라이버 2026-09-01, 수정 전 소스 + 이번 테스트 사본 트리): Executed 29 tests, with 7 failures — workspace-per-item layout이 ["echo tc-e2e-d1"] 두 번, deadline이 성공한 layout create를 not-launched로 뒤집음, workspace-per-item create 3회, leafItemOrder [0]≠[1] · 실기기 E2E D(신규, workspace-per-item N=2): 수정 전 두 workspace 모두 tc-e2e-d1(red 실관찰) → 수정 후 마커 두 개 PASS · A/B/C 재실행 PASS · testWorkspacePerItemRoutesAnOversizedLaterCommandToGuardedSend는 수정 전에도 통과 — 바이트 경계 계약 고정(ii)으로 유지 | — |
 | 5 | placement와 grouped execution의 비측정 경계·fallback·retry/partial failure·manual corpus를 영구 문서와 새-terminal checklist에 기록하고, extension no-change 및 source-audit 범위를 닫는다. | 문서·수동 검증 | 이번 경로의 pane N>8, fixed workspace identity, grouped command bytes, result/order 수동 oracle이 checklist에 없음 | `docs/new-terminal-checklist.md`, `docs/context/cmux-integration.md`, 필요 시 `CLAUDE.md`의 새 비자명 제약만 최소 갱신, `docs/context/testing.md` 확인 | 3, 4 | agreed | 드라이버 문서 검수 통과 — 9-method 갱신·placement 결정 항목·매트릭스 3행·수동 oracle·CLAUDE.md 최소 갱신 확인 | — |
 
 - 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶이고, 파일 집합이 겹치지 않는 부류만 따로 승격할 수 있다. 승격 칸에는 커밋 해시를 적는다
@@ -134,15 +135,16 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | D2 | 드라이버 | Q3: preset 저장·해석·적용 시점이 여러 소비자에 흩어질 위험 | 저장은 개별 `UserDefaults` 키(raw string, `cmuxPlacement` 접두), 해석은 Core의 **단일 파싱 지점**이 unknown 값을 기본값으로 폴백(`Terminal` 선례). UI는 terminal 라디오와 같은 즉시 저장 — explicit apply 없음. | `Terminal.swift:10-14`의 단일 파싱 지점 규칙 · `Settings.swift:20-55`의 baseDirectory/terminal 저장 패턴 | 없음 — Q3 처분 완료 |
 | D3 | 드라이버 | Q4: placement 경로가 response 밖에서 사라질 위험 | placement 경로 선택(layout create / found split / tab 폴백 / N>8 폴백)은 per-item timeline의 step과 `checkoutLog`로 명시 기록하고 응답 계약은 바꾸지 않는다. | `HostServer.swift:200-217`의 timeline 계약 | 없음 — Q4 처분 완료 |
 | D4 | 드라이버 | 테스트 심사 — `e5b1b9b..1b22205` 테스트 diff의 7개 파일, 추가 43건·수정 5건을 클래스 단위로 대조함 | 추가 43건은 변경을 되돌릴 때의 red 근거와 실측 순서·바이트 경계·단일 파싱 지점·응답 shape·admission·deadline 중 하나 이상 또는 승계 결함 특성화를 가진다. 수정 5건은 기능으로 바뀐 HostServer dispatch·cmux section layout·editable field fixture를 기존 계약에 맞게 보존한다. `CmuxPlacementTests` 12/0, `BatchRequestTests` 4/0, `CmuxGroupedExecutionTests` 13/0, `CmuxPlacementSettingsTests` 2/0, `CmuxPlacementSetupWindowTests` 7/0, `HostProtocolTests` 6/0(추가 5·수정 1), `SetupWindowLayoutTests` 1/0(수정), `SetupWindowRedrawTests` 3/0(수정)으로 유지한다. 삭제 0건 — 삭제 이유 없음. | `git diff --stat e5b1b9b..HEAD -- 'app/Tests/**/*.swift'` → 7 files, 1734 insertions, 9 deletions · `git diff --unified=0 e5b1b9b..HEAD -- 'app/Tests/**/*.swift'`의 추가 test 선언 → 43 · 드라이버 누적 게이트 602/613/622/629/630 green과 F1/F9/F10/F13 red 실관찰을 대조함 | `CmuxPlacementExecutionDependencies` 대역 7곳과 `runCmuxBatch` 대역 5곳은 서로 다른 RPC 경로와 통합 조건을 고정한다. 동일 계약의 단위·조합 검사는 계층이 달라 중복 탈락으로 보지 않는다. 잔여 없음 — 탈락 테스트 없음 |
+| D5 | 드라이버 | cold review R2 지적 3 — keyed `workspace.create`의 응답 유실/timeout 재시도가 놓친 복구 기회로 남음 | 이번 부류에서는 코드와 retry 분류를 변경하지 않는다. 현재 fail-closed라 중복 workspace나 잘못된 명령을 만들지 않는 안전 경계이며, 새 transport 형태를 retry 분류기에 추가하는 것은 `#76`과 같은 부류로 사용자 처분을 기다린다. | cold review R2 · `docs/context/cmux-integration.md:124`의 `Path exists at` 및 missed retry opportunity 기록 | 사용자 처분 대기 |
 
 ## 전수 소탕 표
 
-같은 부류가 숨어 있을 수 있는 지점 전체. 미검사 항목을 비워 두지 않는 것이 이 표의 목적이다. 세 열뿐이다 — 셋째 열은 코드로 알 수 없는 이유 한 절이거나 `파일:행`이다. 판정이 안전이고 그런 이유가 없는 대상은 한 행에 나열해 합친다.
+같은 부류가 숨어 있을 수 있는 지점 전체. 미검사 항목을 비워 두지 않는 것이 이 표의 목적이다. 기본 표는 세 열이며 셋째 열은 코드로 알 수 없는 이유 한 절이거나 `파일:행`이다. 부류별 정밀 대조표는 해당 배정이 요구한 계약 열을 그대로 둔다. 판정이 안전이고 그런 이유가 없는 대상은 한 행에 나열해 합친다.
 
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 `파일:행` |
 |:--|:--|:--|
 | `app/Sources/Core/Request.swift` · `BatchProtocolTests.swift` | 처리됨(항목 1·4; legacy fallback 유지) | `Request.swift:250-366` — 전체 validation 뒤 optional grouped hook이 검증된 순서의 `[ResolvedRequest]`를 한 번 받고, 없으면 기존 per-item `run`을 사용함; `testBatchGroupedHookResultCountMismatchFailsEveryItem`가 결과 수 불일치에서 모든 item을 closed로 만드는 기존 response branch를 고정함 |
-| `app/Sources/Core/CmuxPlacement.swift` · `CmuxPlacementTests.swift` | 처리됨(항목 1) | `CmuxPlacement.swift:1-563` — workspace-only preset parser와 measured layout/found-split/tab-fallback/workspace-per-item plan value가 실행부 없이 고정됨 |
+| `app/Sources/Core/CmuxPlacement.swift` · `CmuxPlacementTests.swift` | 처리됨(항목 1, cold review A) | `CmuxPlacement.swift:1-584` — workspace-only preset parser와 measured layout/found-split/tab-fallback/workspace-per-item plan value가 실행부 없이 고정되고, workspace-per-item create도 전체 command index 공간을 보존함 |
 | `app/Sources/Core/CmuxControl.swift` · grouped execution parameter builders | 처리됨(항목 3) | `CmuxControl.swift:3-11,268-275,362-402` — 새 RPC 이름과 명시 target parameter를 한 곳에서 만들고, legacy `cmuxWorkspaceCreateParameters()`는 `focus:true` shape를 유지함; keyed `operation_id` retry 주석은 #68 item 11·13 계약을 반영함 |
 | `app/Sources/Core/CmuxGroupedExecution.swift` · `workspace.list` | 처리됨(항목 3) | target 없음(D1의 현재-window 계약); response `workspaces[]`와 각 항목 `id`·`index`·`custom_title`·`has_custom_title`; 근거: 드라이버 실측 2026-09-01 (배정문 인용) |
 | `app/Sources/Core/CmuxGroupedExecution.swift` · `workspace.create` | 처리됨(항목 3) | target 없음(U2의 current-window 계약); params `focus`·`layout`(`direction`·`children`·leaf `pane`/`surfaces`/`type`/optional `command`)·`operation_id`·optional `title`; response에서 `workspace_id`·focused-leaf `surface_id`를 읽음; 근거: issue #68 item 7·12·13 및 드라이버 실측 2026-09-01 (배정문 인용) |
@@ -150,7 +152,7 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | `app/Sources/Core/CmuxGroupedExecution.swift` · `surface.list` | 처리됨(항목 3·4′) | target은 `workspace_id`만 명시하고 무시되는 `pane_id`는 보내지 않음; response `surfaces[]` 각 항목의 `id`·`index_in_pane`·owning `pane_id`를 읽어 pane별 grouping/order를 만듦; 근거: 드라이버 실측 2026-09-01 (배정문 인용) |
 | `app/Sources/Core/CmuxGroupedExecution.swift` · `surface.split` | 처리됨(항목 3) | target `surface_id`와 `direction`을 매 호출 명시(U4); response 최상위 `surface_id`를 읽음; `workspace_id`·무주소 fallback은 사용하지 않으며 split retry 없음; 근거: issue #68 item 2·5 및 드라이버 실측 2026-09-01 (배정문 인용) |
 | `app/Sources/Core/CmuxGroupedExecution.swift` · `surface.create` | 처리됨(항목 3) | target `workspace_id`·`pane_id`를 매 호출 명시; response 최상위 `surface_id`를 읽고 `pane_id`·`workspace_id`는 소비하지 않음; create retry 없음; 근거: issue #68 item 2·8 및 드라이버 실측 2026-09-01 (배정문 인용) |
-| `app/Sources/Core/CmuxGroupedExecution.swift` · `surface.send_text` | 처리됨(항목 3·4) | target `surface_id`와 `text`를 매 호출 명시; response의 optional `queued`를 읽음; 기존 send gate 뒤에만 보내고 retry 없음; `deadlineExceeded`를 item 전 확인해 budget 이후 item은 `CommandError.badRequest`로 닫음; 근거: issue #68 item 6 |
+| `app/Sources/Core/CmuxGroupedExecution.swift` · `surface.send_text` | 처리됨(항목 3·4, cold review B) | target `surface_id`와 `text`를 매 호출 명시; response의 optional `queued`를 읽음; 기존 send gate 뒤에만 보내고 retry 없음; deadline은 guarded send 직전과 gate 이후 RPC 직전에 확인하며 inline leaf 결과에는 적용하지 않음; 근거: issue #68 item 6 · cold review B |
 | `app/Sources/Core/TerminalRunner.swift` · `debug.terminals` gate / `cmuxRPC` door | 처리됨(항목 3) | grouped `shellGate`가 기존 `cmuxAwaitShellReading`을 재사용하며 `debug.terminals`에 빈 params를 보내고 response `terminals[]`의 `surface_id`·`tty`를 읽음; `TerminalRunner.swift:393-414,489-520,567-613`의 pinned `cmuxRPC` context와 issue #68 item 6 근거를 유지하며 tty는 readiness 신호가 아님 |
 | `app/Sources/Core/TerminalRunner.swift` · legacy `runInCmux` | 안전·시그니처 불변(항목 3) | `TerminalRunner.swift:616-692` — placement 판단은 새 plan executor에만 있고 legacy 단일 create/send 흐름의 public signature는 유지됨 |
 | `app/Sources/Core/ClaudeInjector.swift` · `BatchDeliveryTests.swift` | 안전·재사용(항목 3) | `ClaudeInjector.swift:4-25,976-1045` — surface UUID handle과 기존 delivery pipeline을 유지해야 하며 새 입력 알고리즘은 범위 밖 |
@@ -163,6 +165,27 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | `docs/context/cmux-integration.md` · `docs/context/testing.md` | 처리됨(항목 5) | cmux 문서에 9개 app-issued RPC와 layout/found-split/UUID/deadline 결정을 추가하고, placement matrix 서문을 현재 동작으로 갱신함; source-audit와 driver-only gate 범위는 유지하며 N∈{2,6,7}, N=25, 다중 window `workspace.list`는 원장 잔여와 일치하게 미측정으로 표시함 |
 | `CLAUDE.md` cmux bullets | 처리됨(항목 5) | 기존 cmux socket/retry bullet에 UUID `operation_id`, list 항목 `id`와 top-level create `surface_id`의 구별, layout leaf 1023 UTF-8-byte ceiling만 연결하고 상세 결정은 `docs/context/cmux-integration.md`에 둠 |
 | `README.md` Development · `app/Package.swift` · `install.sh` · `app/e2e.sh` | 안전·비목표 | Development commands는 이미 정본이고 이번 변경은 새 terminal/channel이 아니며 e2e는 실제 terminal을 열지 않는다는 기존 경계가 있음 |
+
+항목 A — 계획과 실행기의 item index 공간:
+
+| 계획 지점(파일:행) | 실행 지점(파일:행) | leaf/route의 인덱스 공간 | 넘기는 배열 | 일치 여부 |
+|:--|:--|:--|:--|:--|
+| `CmuxPlacement.swift:304-321,411-425`의 `makeBalancedLayoutPlan`·`makeWorkspaceCreatePlan` | `CmuxGroupedExecution.swift:460-491,596-638`의 layout create | 전체 source item `0..<N`; `leafItemOrder`는 depth-first | 전체 `commands[N]`, `layout.itemRoutes[N]`, 열거 surface `N`개 | 일치 |
+| `CmuxPlacement.swift:540-567`의 `makeTabPlacementPlan`·`makeEmptySurfaceCreatePlan` (`itemIndex: 0`) | `CmuxGroupedExecution.swift:646-760`의 tab create/found | 첫 빈 leaf만 item 0인 의도적 local setup; 이후 item route는 전체 source `0..<N` | create에는 전체 `commands[N]`을 넘기지만 빈 leaf가 command를 읽지 않음; `surfaceIDs[N]`·`itemRoutes[N]`·`itemErrors[N]` | 일치 — 빈 leaf는 명령을 해석하지 않음 |
+| `CmuxPlacement.swift:328-356`의 `cmuxFoundWorkspacePanePlan` | `CmuxGroupedExecution.swift:502-567`의 found split | split 응답 reference와 item surface order가 source item `0..<N` | 전체 `commands[N]`, `found.itemRoutes[N]`, 응답 수집 후 해석한 surface `N`개 | 일치 |
+| `CmuxPlacement.swift:570-584`의 `makeWorkspacePerItemPlan`·`makeBalancedLayoutPlan` | `CmuxGroupedExecution.swift:771-823`의 workspace-per-item create | 각 leaf는 전체 source index `[index]`; plan route도 전체 source 공간 | layout에는 전체 `commands[N]`; item 결과 변환 뒤에만 `[surfaceID]`·`[commands[index]]`·`[itemRoutes[index]]`의 1-item 배열 | 일치 |
+| `CmuxGroupedExecution.swift:385-439`의 `itemResults` 및 호출부 `485-490,551-557,753-760,813-819` | 각 route 실행 결과 수집 | grouped 호출은 source item 순서, workspace-per-item 호출만 명시적 1-item local 순서 | `surfaceIDs`/`commands`/`itemRoutes`는 같은 길이·순서; `itemErrors`는 tab에서만 `N`개, 그 외 empty | 일치 |
+
+항목 B — grouped 실행 부작용과 response deadline:
+
+| 호출(파일:행) | seam이 앞에 있나 | 이 시점에 해당 item의 명령이 이미 실행됐나 | 판정 |
+|:--|:--|:--|:--|
+| layout `workspace.create` (`CmuxGroupedExecution.swift:472-474`) | grouped launch 전에는 per-item seam을 두지 않음 | 성공 응답 시 inline leaf 명령은 이미 실행됨 | 허용 — 이 create는 원자적 grouped launch point이며 이후 inline item을 not-launched로 재분류하지 않음 |
+| tab `workspace.create` (`CmuxGroupedExecution.swift:672-674,716-718`) | 없음 | 빈 leaf이므로 명령은 아직 실행되지 않음 | 허용 — surface setup만 하고 실제 모든 item command는 뒤의 guarded send seam에서 시작함 |
+| found `surface.split` (`CmuxGroupedExecution.swift:532-536`) | 없음 | 명령은 아직 실행되지 않음 | 허용 — placement topology만 만들며 command launch는 아님; split 뒤 guarded send가 유일한 command seam임 |
+| tab `surface.create` (`CmuxGroupedExecution.swift:744-747`) | 없음 | 명령은 아직 실행되지 않음 | 허용 — surface setup만 만들고 해당 item의 guarded send 직전에서 deadline을 재확인함 |
+| guarded send gate + `surface.send_text` (`CmuxGroupedExecution.swift:351-386,414-425`) | 있음 — gate 진입 전과 gate가 끝난 RPC 직전에 확인 | 확인 시점에는 아직 send되지 않음 | 처리됨 — deadline이면 전송하지 않고 not-launched; raw-mode wait가 예산을 넘겨도 RPC 직전 재확인 |
+| workspace-per-item `workspace.create` (`CmuxGroupedExecution.swift:788-807`) | 있음 — 각 create 직전 확인 | 해당 item의 inline command는 아직 실행되지 않음 | 처리됨 — 만료 뒤 create를 발행하지 않고 그 item을 not-launched로 닫음 |
 
 ## 라운드 로그
 
@@ -214,8 +237,17 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 - 실측: 드라이버 최종 리뷰 판정이 차단 없음과 합의(cold review 전제)를 확인함.
 - 판정: "③ 잔여 최고 심각도 수색 — 실패 item admission 반납·deadline 상호작용·legacy 경로·merged-argv 바이트 경계·four-methods 잔재 전부 확인, 차단 없음. ④ 이 구현에 합의한다 (cold review 전제)." (드라이버, 최종)
 
+### R2
+
+#### 리뷰 1 — cold · f2afc79 · 리뷰 완료 · 왕복 1 · 원문 /tmp/dal-cmux-place.ROwSYq/cold1.json
+
+- 차단: cold review(맥락 없는 검증자, e5b1b9b..f2afc79 전체 diff) 판정 no — 차단 3건: ① workspace-per-item이 모든 create에 commands[0]을 넣음 ② deadline이 이미 실행된 inline leaf를 not-launched로 재분류하고 workspace-per-item은 예산 만료 후에도 계속 create함 ③ keyed create가 응답 유실을 같은 operation ID로 재시도하지 않음. 원문: /tmp/dal-cmux-place.ROwSYq/cold1.json
+- 수정: ①②를 항목 3′으로 고치고 red 테스트 4개를 추가함; ③은 코드 변경 없이 D5·열린 질문으로 적립함.
+- 실측: 드라이버 실기기 E2E D 신규(수정 전 red — 두 workspace 모두 tc-e2e-d1) · A/B/C 재실행 PASS · 토글 red 29 tests 7 failures · swift test 634/0 · node --test 252/252
+- 판정: ①②는 드라이버 실측·정적 확인으로 재현되어 차단으로 배정했고, ③은 fail-closed라 안전 결함이 아니고 retry 분류기 확장이 비목표 #76과 같은 부류이므로 열린 질문으로 적립한다 (드라이버, cold R2)
+
 ## 열린 질문
 
-없음 — Q1∼Q4는 U4와 D1∼D3으로 처분되었다.
+- cold review R2 지적 3 — keyed create의 응답 유실/timeout 재시도: fail-closed라 안전 결함 아님, `#76`과 같은 부류라 사용자 처분 대기
 
 원 요구 충족 후 발견된 마이너·에지케이스 방어 후보는 여기 적립한다(즉시 배정 금지) — 사용자 대화로 포함/이슈/기록 중 처분이 정해지면 그 결과를 원장에 남기고 지운다.

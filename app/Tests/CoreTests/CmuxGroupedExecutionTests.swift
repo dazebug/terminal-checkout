@@ -11,6 +11,18 @@ private func cmuxGroupedTestItemIDs(count: Int) -> [UUID] {
     }
 }
 
+private func inlineLeafCommands(in layout: [String: Any]) -> [String] {
+    if let children = layout["children"] as? [[String: Any]] {
+        return children.flatMap { inlineLeafCommands(in: $0) }
+    }
+    guard let pane = layout["pane"] as? [String: Any],
+          let surface = (pane["surfaces"] as? [[String: Any]])?.first,
+          let command = surface["command"] as? String else {
+        return []
+    }
+    return [command]
+}
+
 final class CmuxGroupedExecutionTests: XCTestCase {
     private struct Call {
         let method: String
@@ -525,6 +537,100 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         XCTAssertEqual(execution.path, .workspacePerItem)
     }
 
+    func testWorkspacePerItemUsesEachSourceCommandInItsCreateLayout() throws {
+        let commands = ["echo tc-e2e-d1", "echo tc-e2e-d2"]
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(
+                identityMode: .alwaysNew,
+                arrangement: .workspacePerItem
+            ),
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var inlineCommandsByCreate: [[String]] = []
+        let dependencies = makeDependencies(
+            rpc: { method, _ in
+                method == cmuxSurfaceSendTextMethod ? ["queued": false] : [:]
+            },
+            createWorkspace: { params in
+                guard let layout = params["layout"] as? [String: Any] else {
+                    XCTFail("workspace.create must carry a layout")
+                    return [:]
+                }
+                inlineCommandsByCreate.append(inlineLeafCommands(in: layout))
+                let index = inlineCommandsByCreate.count - 1
+                return [
+                    "workspace_id": "workspace-\(index)",
+                    "surface_id": "surface-\(index)",
+                ]
+            }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        XCTAssertEqual(inlineCommandsByCreate, commands.map { [$0] })
+        XCTAssertEqual(execution.results.count, commands.count)
+        XCTAssertTrue(execution.results.allSatisfy { result in
+            if case .success = result { return true }
+            return false
+        })
+    }
+
+    func testWorkspacePerItemRoutesAnOversizedLaterCommandToGuardedSend() throws {
+        let commands = ["short", String(repeating: "x", count: 1024)]
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(
+                identityMode: .alwaysNew,
+                arrangement: .workspacePerItem
+            ),
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var inlineCommandsByCreate: [[String]] = []
+        var sentPayloads: [String] = []
+        let dependencies = makeDependencies(
+            rpc: { method, params in
+                if method == cmuxSurfaceSendTextMethod {
+                    sentPayloads.append(params["text"] as? String ?? "")
+                    return ["queued": false]
+                }
+                return [:]
+            },
+            createWorkspace: { params in
+                guard let layout = params["layout"] as? [String: Any] else {
+                    XCTFail("workspace.create must carry a layout")
+                    return [:]
+                }
+                inlineCommandsByCreate.append(inlineLeafCommands(in: layout))
+                let index = inlineCommandsByCreate.count - 1
+                return [
+                    "workspace_id": "workspace-\(index)",
+                    "surface_id": "surface-\(index)",
+                ]
+            }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        XCTAssertEqual(inlineCommandsByCreate, [[commands[0]], []])
+        XCTAssertEqual(sentPayloads, [commands[1] + claudeSubmitKey])
+        XCTAssertEqual(execution.results.count, commands.count)
+        XCTAssertTrue(execution.results.allSatisfy { result in
+            if case .success = result { return true }
+            return false
+        })
+    }
+
     func testDeadlineStopsGuardedItemsBeforeSending() throws {
         let commands = [
             String(repeating: "x", count: 1024),
@@ -593,6 +699,108 @@ final class CmuxGroupedExecutionTests: XCTestCase {
             return XCTFail("the item at the deadline must fail closed")
         }
         XCTAssertEqual(String(describing: error), batchResponseDeadlineExceededMessage)
+    }
+
+    func testDeadlineDoesNotRelabelInlineCommandsAlreadyRunByLayoutCreate() throws {
+        let commands = ["echo inline-one", "echo inline-two"]
+        let plan = cmuxPlacementPlan(
+            preset: .defaultPreset,
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var createCount = 0
+        var inlineCommands: [String] = []
+        let dependencies = makeDependencies(
+            rpc: { method, _ in
+                switch method {
+                case cmuxPaneListMethod:
+                    return [
+                        "panes": [
+                            ["id": "pane-0", "index": 0],
+                            ["id": "pane-1", "index": 1],
+                        ]
+                    ]
+                case cmuxSurfaceListMethod:
+                    return [
+                        "surfaces": [
+                            ["id": "surface-0", "index_in_pane": 0, "pane_id": "pane-0"],
+                            ["id": "surface-1", "index_in_pane": 0, "pane_id": "pane-1"],
+                        ]
+                    ]
+                default:
+                    return [:]
+                }
+            },
+            createWorkspace: { params in
+                createCount += 1
+                guard let layout = params["layout"] as? [String: Any] else {
+                    XCTFail("workspace.create must carry a layout")
+                    return [:]
+                }
+                inlineCommands = inlineLeafCommands(in: layout)
+                return ["workspace_id": "workspace-1", "surface_id": "surface-0"]
+            },
+            deadlineExceeded: { true }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        XCTAssertEqual(createCount, 1)
+        XCTAssertEqual(inlineCommands, commands)
+        XCTAssertTrue(execution.results.allSatisfy { result in
+            if case .success = result { return true }
+            return false
+        }, "a successful layout create must not be contradicted by not-launched results")
+    }
+
+    func testDeadlineStopsWorkspacePerItemCreatesBeforeTheNextSideEffect() throws {
+        let commands = ["short-one", "short-two", "short-three"]
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(
+                identityMode: .alwaysNew,
+                arrangement: .workspacePerItem
+            ),
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var createCount = 0
+        let dependencies = makeDependencies(
+            rpc: { method, _ in
+                method == cmuxSurfaceSendTextMethod ? ["queued": false] : [:]
+            },
+            createWorkspace: { _ in
+                createCount += 1
+                return [
+                    "workspace_id": "workspace-\(createCount)",
+                    "surface_id": "surface-\(createCount)",
+                ]
+            },
+            deadlineExceeded: { createCount >= 1 }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        XCTAssertEqual(createCount, 1)
+        XCTAssertEqual(execution.results.count, commands.count)
+        guard case .success = execution.results[0] else {
+            return XCTFail("the create before the deadline should succeed")
+        }
+        for result in execution.results.dropFirst() {
+            guard case .failure(let error) = result else {
+                return XCTFail("items after the deadline must not launch")
+            }
+            XCTAssertEqual(String(describing: error), batchResponseDeadlineExceededMessage)
+        }
     }
 
     func testCreateRecoveryReusesTheSameOperationParametersAfterMeasuredReachabilityFailure() throws {

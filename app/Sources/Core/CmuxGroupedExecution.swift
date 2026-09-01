@@ -373,6 +373,12 @@ private func sendGuardedCommand(
         )
     }
 
+    // The shell gate may wait for raw mode. Recheck immediately before the RPC so a wait that
+    // crosses the response deadline still fails closed without sending the command.
+    if dependencies.deadlineExceeded() {
+        throw CommandError.badRequest(batchResponseDeadlineExceededMessage)
+    }
+
     let response = try dependencies.rpc(
         cmuxSurfaceSendTextMethod,
         cmuxSurfaceSendTextParameters(surfaceID: surfaceID, text: payload)
@@ -400,12 +406,6 @@ private func itemResults(
     var results: [Result<TerminalSessionHandle, Error>] = []
     results.reserveCapacity(commands.count)
     for index in commands.indices {
-        if dependencies.deadlineExceeded() {
-            results.append(
-                .failure(CommandError.badRequest(batchResponseDeadlineExceededMessage))
-            )
-            continue
-        }
         if let error = itemErrors.isEmpty ? nil : itemErrors[index] {
             results.append(.failure(error))
             continue
@@ -418,6 +418,14 @@ private func itemResults(
         }
         do {
             if itemRoutes[index] == .guardedSurfaceSend {
+                // The deadline applies immediately before an unstarted send. An inline leaf was
+                // already submitted by a successful workspace.create and must not be relabeled.
+                if dependencies.deadlineExceeded() {
+                    results.append(
+                        .failure(CommandError.badRequest(batchResponseDeadlineExceededMessage))
+                    )
+                    continue
+                }
                 try sendGuardedCommand(
                     commands[index], to: surfaceID, using: dependencies
                 )
@@ -467,6 +475,8 @@ private func executeCreatedLayout(
         guard layoutCommandsAreSafe(createPlan.layout.tree, commands: commands) else {
             throw CmuxPlacementResponseError.invalidShape("layout command byte bound")
         }
+        // This grouped create is the launch point for inline leaves. Once it returns, those
+        // commands have run; a later deadline check must not relabel their results.
         let response = try dependencies.createWorkspace(
             cmuxWorkspaceCreateParameters(for: createPlan, commands: commands)
         )
@@ -784,6 +794,14 @@ private func executeWorkspacePerItem(
     var results: [Result<TerminalSessionHandle, Error>] = []
     results.reserveCapacity(commands.count)
     for index in commands.indices {
+        // This create has not started the item's command yet, so the response deadline can stop
+        // this and all later workspace-per-item side effects before they are issued.
+        if dependencies.deadlineExceeded() {
+            results.append(
+                .failure(CommandError.badRequest(batchResponseDeadlineExceededMessage))
+            )
+            continue
+        }
         do {
             guard layoutCommandsAreSafe(
                 workspacePlan.creates[index].layout.tree, commands: commands
