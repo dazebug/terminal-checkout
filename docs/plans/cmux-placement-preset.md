@@ -4,7 +4,7 @@
 - 대상: terminal-checkout · `app` grouped execution 및 setup window
 - 시작 커밋: `e5b1b9b` (`docs: measure the cmux RPC placement contract for batch fan-out (#77)`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/cmux-placement-preset-review` (`worktree-cmux-placement-preset-review`) · 메인 체크아웃: `/Users/choongjaelee/Codes/terminal-checkout` (`main`, 무변경) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-cmux-placement-preset-work` (`cmux-placement-preset-work`)
-- 현재: R0 반영 완료 · 첫 승격 대기
+- 현재: R0 반영 완료 · 항목 1 verified
 - 최근 검증자 판정: "이 계획으로 시작하는 데 합의한다 — window identity 제외와 found-split 계약 반영을 전제로." (드라이버, R0) · 원문 없음
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
@@ -96,7 +96,7 @@ cmux 외 터미널의 현재 N-tab loop와 Claude per-session 전달은 유지�
 | 설정 `worktree.baseRef: "head"` — 에이전트 첫 보고의 `git log --oneline -2`가 기준 HEAD를 보이는가 | 설정 key는 `.claude/drive-agent-loop.md`에서 확인되지 않음; 첫 보고와 기준 트리 모두 `e5b1b9b`를 가리킴 |
 | 에이전트 첫 보고: 작업 트리 경로 · 브랜치 · HEAD | `/Users/choongjaelee/Codes/terminal-checkout-cmux-placement-preset-work` · `cmux-placement-preset-work` · `e5b1b9b` |
 | 리포 오버레이 `.claude/drive-agent-loop.md` — 있으면 경로, 없으면 이번 초안과 함께 작성 | 있음 — `/Users/choongjaelee/Codes/terminal-checkout-cmux-placement-preset-work/.claude/drive-agent-loop.md` |
-| cmux 패널 (점검 블록 `cmux:` 신호가 켜졌을 때만, 아니면 N/A) — `cmux markdown open <작업 트리 계획 파일 절대경로>` → pane id. 계획 파일 첫 승격 전에 채운다 | 드라이버 실행 대기 — 첫 승격 후 드라이버가 `cmux markdown open <이 계획 파일 절대경로>`를 실행해 pane id를 다음 커밋에 기입 |
+| cmux 패널 (점검 블록 `cmux:` 신호가 켜졌을 때만, 아니면 N/A) — `cmux markdown open <작업 트리 계획 파일 절대경로>` → pane id. 계획 파일 첫 승격 전에 채운다 | pane:228 · surface:243 (드라이버 실행 2026-09-01) |
 | 트리마다 의존성 동기화 (기준·작업) | 불필요 — SPM 의존성은 `swift test`가 해소하고 extension은 무의존(런타임 의존성 없음) |
 | git 밖 로컬 자산을 가리키는 env (이름=절대경로) — 에이전트가 읽기 확인 | 없음 — overlay에 local asset env 없음 |
 | 증분 리뷰 소요(분) — 첫 세 번 | N/A — 승격·증분 리뷰 없음 |
@@ -105,7 +105,7 @@ cmux 외 터미널의 현재 N-tab loop와 Claude per-session 전달은 유지�
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | `items[]`를 전체 preflight 후 grouped executor로 넘기는 Core 계약과 cmux placement plan을 만든다; workspace identity/arrangement 조합 검증, pane default, N>8 tab fallback, depth-first leaf order를 순수 값으로 고정한다. | Core 계약·순수 계획 | (a) `handleBatchRequest`가 현재 `run`을 item마다 호출함 (b) 앱 소유 placement 상태와 grouped hook이 없음 | `app/Sources/Core/Request.swift`, 신규 `app/Sources/Core/CmuxPlacement.swift`, `app/Tests/CoreTests/BatchProtocolTests.swift`, 신규 `app/Tests/CoreTests/CmuxPlacementTests.swift` | — | todo | `Request.swift:246-350`의 현재 per-item loop; `docs/context/cmux-integration.md` Placement contract matrix; red-first Core tests를 먼저 추가 | — |
+| 1 | `items[]`를 전체 preflight 후 grouped executor로 넘기는 Core 계약과 cmux placement plan을 만든다; workspace identity/arrangement 조합 검증, pane default, N>8 tab fallback, depth-first leaf order를 순수 값으로 고정한다. | Core 계약·순수 계획 | (a) `handleBatchRequest`가 현재 `run`을 item마다 호출함 (b) 앱 소유 placement 상태와 grouped hook이 없음 | `app/Sources/Core/Request.swift`, 신규 `app/Sources/Core/CmuxPlacement.swift`, `app/Tests/CoreTests/BatchProtocolTests.swift`, 신규 `app/Tests/CoreTests/CmuxPlacementTests.swift` | — | verified | 재실행: `cd app && swift test` → Executed 602 tests, 0 failures (드라이버, 기준선 587) · `node --test` → 252/252 · F1(found-split item 순서)의 red는 발견 시점 조합(depth-first 기대값 × 응답순 구현)으로 실관찰 — 토글 재실행 생략(순열 불일치가 논리 확정) | — |
 | 2 | cmux 전용 app-local preset 저장과 setup window section을 추가한다; workspace identity/mode/name 및 arrangement control을 cmux stable/NIGHTLY에서만 노출하고 fresh default `workspace × always-new × pane-per-item`, 다섯 locale, 기존 Theme/refill/redraw contract를 맞춘다. | App 설정·UI | (a) placement preset의 `UserDefaults` 소스가 없음 (b) 현재 cmux section은 socket status/config만 제공함 | `app/Sources/App/Settings.swift`, `app/Sources/App/SetupWindowController.swift`, `app/Sources/App/Theme.swift` 확인·필요 시 최소 수정, `app/Sources/App/Resources/{en,ko,ja,zh-Hans,zh-Hant}.lproj/Localizable.strings`, `app/Tests/AppTests/SetupWindowLayoutTests.swift`, `app/Tests/AppTests/SetupWindowRedrawTests.swift`, `app/Tests/AppTests/LocalizationTests.swift`, 신규 preset settings test | 1 | todo | `Settings.swift:4-55`; `SetupWindowController.swift:274-306,883-996,1332-1341`; D1·D2; existing cmux layout tests | — |
 | 3 | placement plan에 따라 cmux grouped executor와 RPC call sequence를 구현한다; N≤8 layout, found fixed-name pane의 target 지정 균형 `surface.split`, N>8 및 found+pane N>8 tab fallback, workspace identity/current-window placement, 1023-byte inline 및 guarded oversize send, enumeration/order, operation ID를 stable/NIGHTLY 양쪽에 적용한다. | Core 실행·cmux RPC | (a) `runInCmux`가 item마다 unaddressed workspace 하나만 만듦 (b) layout/leaf enumeration/order 복원이 없음 (c) `operation_id` 없는 retry 계약임 (d) found fixed-name 경로의 균형 split 시퀀스·응답 수집 매핑이 없음 | `app/Sources/Core/CmuxControl.swift`, `app/Sources/Core/TerminalRunner.swift`, `app/Sources/Core/ClaudeInjector.swift`는 handle collection이 필요할 때만, `app/Tests/CoreTests/CmuxTests.swift`, 신규 grouped execution tests, `app/Tests/CoreTests/BatchDeliveryTests.swift` | 1 | todo | `TerminalRunner.swift:523-624`; `CmuxControl.swift:1-45,245-285,345-390`; issue #68 items 5,7,9,11,12,13; U4의 N∈{3,5,8} split geometry와 기존 pane 불변 실측; driver-only cmux hands-on 필요 | — |
 | 4 | HostServer가 cmux일 때만 preset-aware grouped executor를 호출하고, 기존 전체 validation·ordered per-item response·timeline·비동기 Claude delivery를 유지한다; layout create/found split/tab/N>8 폴백 경로 선택은 per-item timeline과 `checkoutLog`에 기록하고 응답 계약은 바꾸지 않으며, cmux 외에는 현재 serial N-tab loop를 그대로 둔다. | HostServer 통합·응답 | (a) `HostServer`가 모든 batch item을 같은 per-item launch closure로 순차 실행함 (b) grouped handles와 local preset을 전달하지 않음 | `app/Sources/App/HostServer.swift`, `app/Tests/AppTests/HostProtocolTests.swift` | 1, 2, 3 | todo | `HostServer.swift:177-264`; `Request.swift:239-245`; D3; current sequential batch tests; red-first grouped/non-cmux regression cases | — |
@@ -139,15 +139,15 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 `파일:행` |
 |:--|:--|:--|
-| `app/Sources/Core/Request.swift` · `BatchProtocolTests.swift` | 구멍(항목 1, 4) | `Request.swift:246-350` — 전체 validation 뒤에도 batch `run`이 item마다 호출됨 |
-| `app/Sources/Core/CmuxPlacement.swift` · `CmuxPlacementTests.swift` | 신규(항목 1) | 현재 source에 placement value/plan이 없음; workspace-only identity와 issue #69의 arrangement 조합 판정이 필요 |
+| `app/Sources/Core/Request.swift` · `BatchProtocolTests.swift` | 처리됨(항목 1; legacy fallback 유지) | `Request.swift:250-366` — 전체 validation 뒤 optional grouped hook이 검증된 순서의 `[ResolvedRequest]`를 한 번 받고, 없으면 기존 per-item `run`을 사용함 |
+| `app/Sources/Core/CmuxPlacement.swift` · `CmuxPlacementTests.swift` | 처리됨(항목 1) | `CmuxPlacement.swift:1-563` — workspace-only preset parser와 measured layout/found-split/tab-fallback/workspace-per-item plan value가 실행부 없이 고정됨 |
 | `app/Sources/Core/CmuxControl.swift` · `CmuxTests.swift` | 구멍(항목 3) | `CmuxControl.swift:1-45,245-285,345-390` — layout/list/operation ID parameter 계약이 없음 |
-| `app/Sources/Core/TerminalRunner.swift` · grouped tests | 구멍(항목 3) | `TerminalRunner.swift:523-624` — unaddressed single workspace create와 단일 surface만 반환; found fixed-name의 target 지정 균형 split sequence와 response mapping도 없음 |
+| `app/Sources/Core/TerminalRunner.swift` · grouped tests | 소탕 대기(항목 3) | `TerminalRunner.swift:523-624` — 이 부류에서는 placement를 판단하지 않고 `CmuxPlacementPlan`의 route·operation ID·leaf/surface order·guarded target만 소비해야 함 |
 | `app/Sources/Core/ClaudeInjector.swift` · `BatchDeliveryTests.swift` | 안전·재사용(항목 3) | `ClaudeInjector.swift:4-25,976-1045` — surface UUID handle과 기존 delivery pipeline을 유지해야 하며 새 입력 알고리즘은 범위 밖 |
 | `app/Sources/App/Settings.swift` | 구멍(항목 2) | `Settings.swift:20-55` — terminal/baseDirectory만 app-local로 저장하고 placement key가 없음 |
-| `SetupWindowController.swift` · `Theme.swift` · App layout/redraw tests | 구멍(항목 2) | `SetupWindowController.swift:274-306,883-996,1332-1341` — cmux socket section만 있고 placement control/refill slot이 없음 |
+| `SetupWindowController.swift` · `Theme.swift` · App layout/redraw tests | 소탕 대기(항목 2) | `SetupWindowController.swift:274-306,883-996,1332-1341` — 이 부류에서는 placement를 선택하지 않고 Core parser에 raw 값을 넘기는 cmux 전용 section만 소비해야 함 |
 | 다섯 `app/Sources/App/Resources/*/Localizable.strings` | 구멍(항목 2) | 기존 cmux keys는 socket status/config에 한정됨; 새 section key parity는 runtime catalogue가 결정 |
-| `app/Sources/App/HostServer.swift` · `HostProtocolTests.swift` | 구멍(항목 4) | `HostServer.swift:192-264` — terminal별 item launch closure와 async delivery는 있으나 grouped cmux context가 없음 |
+| `app/Sources/App/HostServer.swift` · `HostProtocolTests.swift` | 소탕 대기(항목 4) | `HostServer.swift:192-264` — 이 부류에서는 terminal 분기·local preset 전달·D3 timeline만 나중에 배선하고 placement 판단을 새로 두지 않아야 함 |
 | `extension/defaults.js` · relay/native host | 안전·변경 없음 | `buildListBatchRequest`가 이미 top-level `command`+`items[]`를 만든다; placement는 app-owned이고 extension은 이번 범위 밖 |
 | `docs/new-terminal-checklist.md` | 구멍(항목 5) | `docs/new-terminal-checklist.md:87-105,144-160`에는 기존 batch/cmux oracle은 있으나 preset identity·arrangement·N>8 fallback·layout byte/order matrix가 없음 |
 | `docs/context/cmux-integration.md` · `docs/context/testing.md` | 보강(항목 5) | Placement matrix는 RPC contract까지 말하고 preset selection/fallback과 found split contract는 말하지 않음; typed source-audit와 driver-only cmux gate를 유지해야 함 |

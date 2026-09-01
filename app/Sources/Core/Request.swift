@@ -236,6 +236,10 @@ public struct BatchItemPosition {
     public let total: Int
 }
 
+/// Executes all already-resolved batch items as one grouped operation and returns one result per
+/// item in input order. The per-item run closure remains the legacy execution path.
+public typealias BatchRun = ([ResolvedRequest]) throws -> [Result<Void, Error>]
+
 /// Handles a request: resolve → run → a success/failure response JSON. The batch-position overload is
 /// what HostServer uses so each item can be labeled without request re-parsing.
 ///
@@ -247,6 +251,7 @@ public func handleRequest(
     json: [String: Any], baseDirectory: String = "",
     run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
     notLaunched: ((BatchItemPosition, String) -> Void)? = nil,
+    runBatch: BatchRun? = nil,
     message: (Error) -> String = errorMessage
 ) -> [String: Any] {
     if json["items"] != nil {
@@ -255,6 +260,7 @@ public func handleRequest(
             baseDirectory: baseDirectory,
             run: run,
             notLaunched: notLaunched,
+            runBatch: runBatch,
             message: message
         )
     }
@@ -282,6 +288,7 @@ private func handleBatchRequest(
     baseDirectory: String,
     run: (ResolvedRequest, BatchItemPosition?) throws -> Void,
     notLaunched: ((BatchItemPosition, String) -> Void)?,
+    runBatch: BatchRun?,
     message: (Error) -> String
 ) -> [String: Any] {
     do {
@@ -322,29 +329,76 @@ private func handleBatchRequest(
             ]
         }
 
-        var results: [[String: Any]] = []
-        results.reserveCapacity(resolvedItems.count)
-        var failedCount = 0
+        if let runBatch {
+            let resolved = resolvedItems.map { $0! }
+            do {
+                let executionResults = try runBatch(resolved)
+                guard executionResults.count == resolved.count else {
+                    let error = CommandError.badRequest(
+                        "grouped batch execution returned \(executionResults.count) result(s) for \(resolved.count) item(s)"
+                    )
+                    let failures: [Result<Void, Error>] = Array(
+                        repeating: .failure(error),
+                        count: resolved.count
+                    )
+                    return batchResponse(
+                        results: failures,
+                        message: message
+                    )
+                }
+                return batchResponse(results: executionResults, message: message)
+            } catch {
+                let failures: [Result<Void, Error>] = Array(
+                    repeating: .failure(error),
+                    count: resolved.count
+                )
+                return batchResponse(
+                    results: failures,
+                    message: message
+                )
+            }
+        }
+
+        var executionResults: [Result<Void, Error>] = []
+        executionResults.reserveCapacity(resolvedItems.count)
         for index in resolvedItems.indices {
             let resolved = resolvedItems[index]
             let position = BatchItemPosition(index: index + 1, total: resolvedItems.count)
             do {
                 try run(resolved!, position)
-                results.append(["success": true])
+                executionResults.append(.success(()))
             } catch {
-                failedCount += 1
-                results.append(["success": false, "error": message(error)])
+                executionResults.append(.failure(error))
             }
         }
-        if failedCount == 0 {
-            return ["success": true, "items": results]
-        }
-        return [
-            "success": false,
-            "error": "\(failedCount) of \(results.count) items failed",
-            "items": results,
-        ]
+        return batchResponse(results: executionResults, message: message)
     } catch {
         return ["success": false, "error": message(error)]
     }
+}
+
+private func batchResponse(
+    results: [Result<Void, Error>],
+    message: (Error) -> String
+) -> [String: Any] {
+    var itemResults: [[String: Any]] = []
+    itemResults.reserveCapacity(results.count)
+    var failedCount = 0
+    for result in results {
+        switch result {
+        case .success:
+            itemResults.append(["success": true])
+        case .failure(let error):
+            failedCount += 1
+            itemResults.append(["success": false, "error": message(error)])
+        }
+    }
+    guard failedCount > 0 else {
+        return ["success": true, "items": itemResults]
+    }
+    return [
+        "success": false,
+        "error": "\(failedCount) of \(itemResults.count) items failed",
+        "items": itemResults,
+    ]
 }
