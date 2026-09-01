@@ -304,6 +304,9 @@ public func cmuxBalancedLayoutPlan(commandByteCounts: [Int]) -> CmuxLayoutPlan {
     )
 }
 
+/// `itemIndices` are batch item indices, and a subset of them is a subset of the layout's leaves —
+/// never a renumbering. `itemRoutes` and the executor's command array stay batch-wide, so a leaf
+/// labelled with a local position would read another item's command at execution time.
 private func makeBalancedLayoutPlan(
     commandByteCounts: [Int],
     itemIndices: [Int]

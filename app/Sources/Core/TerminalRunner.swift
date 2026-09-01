@@ -617,7 +617,7 @@ public func runInCmux(
     let context = try makeCmuxRuntimeContext(channel: channel)
 
     // The execution path deliberately does not ping first: workspace.create is the authoritative
-    // diagnosis for the request, and a normal run stays at D7's two RPCs. A first denial is final;
+    // diagnosis for the request, and a normal run stays at two RPCs. A first denial is final;
     // only another first failure gets one launch and one workspace retry, never a second workspace
     // creation after a successful first response.
     let workspace = try cmuxCreateWorkspaceWithRecovery(
