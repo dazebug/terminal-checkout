@@ -578,8 +578,11 @@ function interpretListBatchResponse(response) {
   }
 
   const batch = response.batch;
-  // The app rejects malformed batch requests before producing per-item results, so it answers
-  // without items; an app that does not know batch requests answers in the same shape.
+  // Keep the app's own error when it rejected the whole batch. The app answers a malformed batch
+  // request without `items` (it never reached per-item results), and an app that predates batch
+  // requests answers in the same shape — so the hint below cannot assert which one it was. Only a
+  // *missing* `items` key qualifies: a present but non-array `items` did not come from the app
+  // and stays on the generic branch below.
   if (batch && typeof batch === 'object' && !Array.isArray(batch) &&
       batch.success === false && typeof batch.error === 'string' && batch.error !== '' &&
       batch.items === undefined) {
