@@ -1,51 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [ -z "$repo_root" ]; then
-  exit 0
-fi
-
-cd "$repo_root"
-
-# Remove stale AGENTS.md symlinks in directories that have no CLAUDE.md
-while IFS= read -r -d '' link_file; do
-  link_dir="$(dirname "$link_file")"
-  source_file="$link_dir/CLAUDE.md"
-  link_target="$(readlink "$link_file" || true)"
-  if [ "${link_target##*/}" != "CLAUDE.md" ]; then
-    continue
-  fi
-  if [ ! -f "$source_file" ]; then
-    rm -f "$link_file"
-    git add -A -- "$link_file" || true
-  fi
-done < <(find "$repo_root" -path "$repo_root/.git" -prune -o -type l -name 'AGENTS.md' -print0)
-
-# Create/update AGENTS.md for every directory containing CLAUDE.md
-while IFS= read -r -d '' source_file; do
-  source_dir="$(dirname "$source_file")"
-  link_file="$source_dir/AGENTS.md"
-
-  if [ -L "$link_file" ]; then
-    current_target="$(readlink "$link_file" || true)"
-    if [ "$current_target" != "CLAUDE.md" ]; then
-      rm -f "$link_file"
-    fi
-  elif [ -e "$link_file" ]; then
-    rm -f "$link_file"
-  fi
-
-  if [ ! -L "$link_file" ]; then
-    (cd "$source_dir" && ln -s "CLAUDE.md" "AGENTS.md") || {
-      echo "pre-commit: failed to create AGENTS.md symlink in $source_dir" >&2
-      exit 0
-    }
-  fi
-
-  if ! git add -f "$link_file"; then
-    echo "pre-commit: failed to stage AGENTS.md in $source_dir" >&2
-  fi
-done < <(find "$repo_root" -path "$repo_root/.git" -prune -o -type f -name 'CLAUDE.md' -print0)
-
-exit 0
+# Sync CLAUDE.md -> AGENTS.md symlinks
+"$(git rev-parse --show-toplevel)/.githooks/sync-agents-symlink.sh"
