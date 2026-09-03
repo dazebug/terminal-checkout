@@ -1,12 +1,9 @@
-# Git Hook for AGENTS symlink
+# Git Hooks
 
-Before each commit, this repository creates or removes an `AGENTS.md` symlink in every folder, based on whether that folder has a `CLAUDE.md`.
+pre-commit: 이번 커밋에 CLAUDE.md가 추가·삭제·이름 변경되면 그 디렉터리의 `AGENTS.md → CLAUDE.md` 심볼릭 링크를 만들거나 지우고 함께 스테이징한다. CLAUDE.md 변화가 없는 커밋에서는 아무것도 하지 않는다. 전체 동기화는 `.githooks/sync-agents-symlink.sh --all`.
 
-- Folder with a `CLAUDE.md`: create (or keep) an `AGENTS.md` in that folder
-- Folder without a `CLAUDE.md`: delete the existing `AGENTS.md` symlink
+## 활성화
 
-To enable it locally, run:
-
-```bash
+```
 git config core.hooksPath .githooks
 ```
