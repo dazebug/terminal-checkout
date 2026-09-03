@@ -2,7 +2,8 @@
 # CLAUDE.md가 있는 디렉터리마다 AGENTS.md -> CLAUDE.md 심볼릭 링크를 유지한다. 루트·중첩 모두.
 #   (인자 없음) pre-commit 모드 — 이번 커밋에 CLAUDE.md의 추가·삭제·이름 변경이 스테이징된 디렉터리만 처리한다.
 #               CLAUDE.md 변화가 없는 커밋에서는 아무것도 하지 않는다.
-#   --all       전체 모드 — 트리 전체를 훑어 링크를 만들고 CLAUDE.md가 없는 디렉터리의 링크를 지운다(설치 시 1회).
+#   --all       전체 모드 — 추적 중이거나 무시되지 않은 CLAUDE.md·AGENTS.md 전부를 대상으로 링크를 만들고 CLAUDE.md가 없는
+#               디렉터리의 링크를 지운다(설치 시 1회). 무시된 경로와 중첩 worktree는 대상이 아니다.
 # 두 모드 모두 만든 링크와 지운 링크를 스테이징한다. 출력: created|removed|kept|skipped <경로> [사유]
 set -euo pipefail
 
@@ -39,9 +40,13 @@ sync_dir() {
 }
 
 if [ "${1:-}" = "--all" ]; then
-  { find . -path ./.git -prune -o -type l -name AGENTS.md -print0
-    find . -path ./.git -prune -o -type f -name CLAUDE.md -print0; } \
-    | xargs -0 -r -n1 dirname | sort -u | while IFS= read -r dir; do sync_dir "$dir"; done  # -r: GNU xargs는 입력이 없어도 dirname을 실행해 pipefail로 죽는다(BSD는 실행하지 않음)
+  # find로 트리를 훑지 않는다 — .gitignore된 디렉터리 안의 중첩 worktree(.claude/worktrees/ 등)까지 내려가
+  # 다른 worktree 안에 링크를 만든다. git ls-files는 무시 경로와 중첩 저장소를 밖에서 보지 않으며,
+  # --cached --others --exclude-standard 로 추적 중인 파일과 아직 추적되지 않은(무시되지 않은) 파일을 함께 잡는다.
+  git ls-files -z --cached --others --exclude-standard -- 'CLAUDE.md' '*/CLAUDE.md' 'AGENTS.md' '*/AGENTS.md' \
+    | xargs -0 -r -n1 dirname | sort -u | while IFS= read -r dir; do
+      if [ "$dir" = "." ]; then sync_dir "."; else sync_dir "./$dir"; fi
+    done  # -r: GNU xargs는 입력이 없어도 dirname을 실행해 pipefail로 죽는다(BSD는 실행하지 않음)
   exit 0
 fi
 

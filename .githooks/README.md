@@ -1,9 +1,11 @@
 # Git Hooks
 
-pre-commit: 이번 커밋에 CLAUDE.md가 추가·삭제·이름 변경되면 그 디렉터리의 `AGENTS.md → CLAUDE.md` 심볼릭 링크를 만들거나 지우고 함께 스테이징한다. CLAUDE.md 변화가 없는 커밋에서는 아무것도 하지 않는다. 전체 동기화는 `.githooks/sync-agents-symlink.sh --all`.
+`pre-commit`: when a commit stages an addition, deletion, or rename of `CLAUDE.md`, create or remove the `AGENTS.md → CLAUDE.md` symlink in that directory and stage it with the commit. A commit that does not touch any `CLAUDE.md` is left alone. Full sync (tracked and untracked-but-not-ignored files only; ignored paths and nested worktrees are skipped): `.githooks/sync-agents-symlink.sh --all`.
 
-## 활성화
+`sync-agents-symlink.sh` is vendored verbatim from the `agents-md` plugin (watcha-claude-plugins, 1.1.1), Korean comments included — update it through the plugin (`/agents-md:setup-agents-md`), not by editing it here.
 
-```
+## Enable
+
+```bash
 git config core.hooksPath .githooks
 ```

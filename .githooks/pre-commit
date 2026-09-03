@@ -2,4 +2,4 @@
 set -euo pipefail
 
 # Sync CLAUDE.md -> AGENTS.md symlinks
-"$(dirname "$0")/sync-agents-symlink.sh"
+"$(git rev-parse --show-toplevel)/.githooks/sync-agents-symlink.sh"
