@@ -77,8 +77,8 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | PR 목록·이슈 목록 옵션 도움말에 `{owner}`를 추가하고 다섯 로케일의 의도된 번역 편집에 맞춰 baseline pin을 갱신한다. | 로케일 내용·바이트 핀 | — | `extension/_locales/{en,ja,ko,zh_CN,zh_TW}/messages.json`, `tools/check-locales.js`, `tests/i18n.test.js` | — | verified | red 후보: `tests/i18n.test.js`의 kind→도움말 키 매핑 `{pr: ext.section.pr.variables, 'pr-list': ext.section.prList.variables, issue: ext.section.issue.variables, 'issue-list': ext.section.issueList.variables, repo: ext.section.repo.variables}`으로 5 locale × 5 kind에서 `BUTTON_KINDS[kind].variables`와 `APP_VARIABLES`의 모든 `{name}` 부분 문자열을 단언. `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, `exit_code=1`; 원문 누락 10건: `en/pr-list help omits {owner}`, `en/issue-list help omits {owner}`, `ko/pr-list help omits {owner}`, `ko/issue-list help omits {owner}`, `ja/pr-list help omits {owner}`, `ja/issue-list help omits {owner}`, `zh-Hans/pr-list help omits {owner}`, `zh-Hans/issue-list help omits {owner}`, `zh-Hant/pr-list help omits {owner}`, `zh-Hant/issue-list help omits {owner}`. 10개 문자열 편집 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 251`, `ℹ fail 2`, 다섯 `_locales/*/messages.json differs from the committed catalogue baseline pin` 및 편집 pin 테스트 실패, `exit_code=1`. 갱신 pin: `en=092fc4f057daa2e48a38f9f90844a5550688b282bcbf83ef6a6816ad82f3dd11`, `ja=88905b4bc396b0c9996fb59ac105a469653f34609b55706561fbdf7fcb30deab`, `ko=1148f7e0ce096f5b0e19fa639a1554a811a8b12733f88ba62dddf642ac6fff13`, `zh-Hans=f71114794d54388234cc59bdffd9f6a612354aaa10f6cd9140eb0d24b532c929`, `zh-Hant=6f2c0cee6f698f7fae5f0a14ff43bc0804977b271664ab77ea50606e19f886d8`. 갱신 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 253`, `ℹ fail 0`, `exit_code=0`; `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, `exit_code=0`. 토글: `git diff -- extension/_locales tools/check-locales.js > /private/tmp/tc-batch-polish-toggle.patch`·`git apply -R /private/tmp/tc-batch-polish-toggle.patch`·`git apply /private/tmp/tc-batch-polish-toggle.patch` 각각 exit 0; 역적용 중 `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, 동일 D6 누락 10건, `exit_code=1`; 복원 뒤 `git status --porcelain`은 `docs/plans/batch-polish.md`, 다섯 locale, `tests/i18n.test.js`, `tools/check-locales.js`만 출력하고 repo의 `toggle.patch` 없음. 재실행(드라이버): node --test → 253 pass / 0 fail exit 0 · check-locales exit 0 | — |
-| 2 | 앱이 배치를 통째로 거절(per-item 결과 없음)한 응답의 원래 `error`와 앱 세대 불일치 가능성 힌트를 보존하고, 무형 응답만 기존 제네릭 오류로 남긴다. 전체-거절 predicate는 `batch.success === false && typeof batch.error === 'string' && batch.error !== '' && batch.items === undefined`이다. | 전체-거절 응답 호환·오류 해석 | (a) 전체-거절 응답의 error 유실 — 제네릭으로 덮임 (b) 무형 응답과의 경계 미정의 | `extension/defaults.js`, `tests/list-pages.test.js` | — | todo | red 후보: `interpretListBatchResponse({success:true,batch:{success:false,error:'command_template is required'}})`와 `interpretListBatchResponse({success:true,batch:{success:false,error:'items must contain at most 25 item(s)'}})`는 원문과 정본 힌트를 보존; nested `success` 비boolean 또는 `items` 비배열 shape는 제네릭 유지. 표시 경로 근거: `extension/content.js:574-582`의 catch는 `console.error`와 button text만 처리하고 `:532-537`에서 title을 라벨로 복원 | — |
+| 1 | PR 목록·이슈 목록 옵션 도움말에 `{owner}`를 추가하고 다섯 로케일의 의도된 번역 편집에 맞춰 baseline pin을 갱신한다. | 로케일 내용·바이트 핀 | — | `extension/_locales/{en,ja,ko,zh_CN,zh_TW}/messages.json`, `tools/check-locales.js`, `tests/i18n.test.js` | — | cleared | red 후보: `tests/i18n.test.js`의 kind→도움말 키 매핑 `{pr: ext.section.pr.variables, 'pr-list': ext.section.prList.variables, issue: ext.section.issue.variables, 'issue-list': ext.section.issueList.variables, repo: ext.section.repo.variables}`으로 5 locale × 5 kind에서 `BUTTON_KINDS[kind].variables`와 `APP_VARIABLES`의 모든 `{name}` 부분 문자열을 단언. `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, `exit_code=1`; 원문 누락 10건: `en/pr-list help omits {owner}`, `en/issue-list help omits {owner}`, `ko/pr-list help omits {owner}`, `ko/issue-list help omits {owner}`, `ja/pr-list help omits {owner}`, `ja/issue-list help omits {owner}`, `zh-Hans/pr-list help omits {owner}`, `zh-Hans/issue-list help omits {owner}`, `zh-Hant/pr-list help omits {owner}`, `zh-Hant/issue-list help omits {owner}`. 10개 문자열 편집 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 251`, `ℹ fail 2`, 다섯 `_locales/*/messages.json differs from the committed catalogue baseline pin` 및 편집 pin 테스트 실패, `exit_code=1`. 갱신 pin: `en=092fc4f057daa2e48a38f9f90844a5550688b282bcbf83ef6a6816ad82f3dd11`, `ja=88905b4bc396b0c9996fb59ac105a469653f34609b55706561fbdf7fcb30deab`, `ko=1148f7e0ce096f5b0e19fa639a1554a811a8b12733f88ba62dddf642ac6fff13`, `zh-Hans=f71114794d54388234cc59bdffd9f6a612354aaa10f6cd9140eb0d24b532c929`, `zh-Hant=6f2c0cee6f698f7fae5f0a14ff43bc0804977b271664ab77ea50606e19f886d8`. 갱신 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 253`, `ℹ fail 0`, `exit_code=0`; `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, `exit_code=0`. 토글: `git diff -- extension/_locales tools/check-locales.js > /private/tmp/tc-batch-polish-toggle.patch`·`git apply -R /private/tmp/tc-batch-polish-toggle.patch`·`git apply /private/tmp/tc-batch-polish-toggle.patch` 각각 exit 0; 역적용 중 `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, 동일 D6 누락 10건, `exit_code=1`; 복원 뒤 `git status --porcelain`은 `docs/plans/batch-polish.md`, 다섯 locale, `tests/i18n.test.js`, `tools/check-locales.js`만 출력하고 repo의 `toggle.patch` 없음. 재실행(드라이버): node --test → 253 pass / 0 fail exit 0 · check-locales exit 0 | 855a4c7 |
+| 2 | 앱이 배치를 통째로 거절(per-item 결과 없음)한 응답의 원래 `error`와 앱 세대 불일치 가능성 힌트를 보존하고, 무형 응답만 기존 제네릭 오류로 남긴다. 전체-거절 predicate는 `batch.success === false && typeof batch.error === 'string' && batch.error !== '' && batch.items === undefined`이다. | 전체-거절 응답 호환·오류 해석 | (a) 전체-거절 응답의 error 유실 — 제네릭으로 덮임 (b) 무형 응답과의 경계 미정의 | `extension/defaults.js`, `tests/list-pages.test.js` | — | verified | red: `node --test` → `ℹ tests 256`, `ℹ pass 254`, `ℹ fail 2`, `exit_code=1`; `✖ interpretListBatchResponse preserves an older app whole-batch rejection`, `✖ interpretListBatchResponse preserves a current app whole-batch rejection`; 두 actual error는 `native host returned no result`, 기대는 각각 `${batch.error} — the app rejected the whole batch without per-item results; an app older than this extension answers this way`. `interpretListBatchResponse keeps malformed whole-batch shapes generic`은 `items:null`, `items:'x'`, items 부재, 빈 error 네 입력에서 통과했고, 기존 `interpretListBatchResponse preserves transport and app failure layers with per-item results`도 통과했다. 구현 근거: `extension/defaults.js:580-591`의 전체-거절 predicate와 D5 error 문구, 기존 제네릭 분기 `:594-602`; `tests/list-pages.test.js`의 두 재현 테스트와 malformed 경계 테스트. 최종 `node --test` → `ℹ tests 256`, `ℹ pass 256`, `ℹ fail 0`, `exit_code=0`; `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, `exit_code=0`. 토글: `git diff -- extension/defaults.js > /private/tmp/tc-batch-polish-toggle2.patch` → 24 lines, exit 0; `git apply -R /private/tmp/tc-batch-polish-toggle2.patch` 및 재적용 각각 exit 0; 역적용 중 `node --test`는 새 두 재현 테스트만 실패(`ℹ tests 256`, `ℹ pass 254`, `ℹ fail 2`, `exit_code=1`). 재실행(드라이버): node --test → 256 pass / 0 fail exit 0 · check-locales exit 0 · diff 대조 통과 | — |
 
 ## 결정 원장
 
@@ -90,6 +90,7 @@
 | D4 | 드라이버 | "구버전 앱 전용 분기"라는 전제 | 전체-거절 분기의 predicate는 `batch.success === false && typeof batch.error === 'string' && batch.error !== '' && batch.items === undefined`. `items` 키가 있으나 비배열이면 무형(제네릭), `success:true`인데 `items` 없음도 무형 | `app/Sources/Core/Request.swift:376` — parseBatchRequest 실패는 items 키 없이 `{success:false,error}`; 앱은 null items를 만들지 않는다 | — |
 | D5 | 드라이버 | 힌트 문구가 "앱이 낡았다"고 단정하면 현행 앱의 형태 거절에서 거짓 진단이 된다 | 콘솔 영문 진단, i18n 키 없음. 문구 정본: `${batch.error} — the app rejected the whole batch without per-item results; an app older than this extension answers this way`. 반환 outcome은 transportSuccess true · appSuccess null · items [] 유지 | R0-5 · `extension/content.js:109-110,579` | 표시 경로 재분류는 비목표 |
 | D6 | 드라이버 | 10개 문자열의 `{owner}` 포함 검사는 재발을 못 막는다 | 항목 1의 red 테스트는 (ii) 계약 테스트: BUTTON_KINDS의 kind마다 옵션 도움말이 그 kind의 variables 전부(+APP_VARIABLES)를 `{name}` 토큰으로 안내한다 — 5로케일 | R0-8 | — |
+| D7 | 드라이버 | 도움말 계약 테스트의 부정 언급 오탐 | 감수 — 허용 변수를 '없다'고 쓰는 도움말은 자기모순이라 실제 회귀 경로가 아니다; 트리거 조건만 기록 | 리뷰 1 | — |
 
 ## 전수 소탕 표
 
@@ -103,11 +104,12 @@
 | options help 소비 경로·static args | 안전·변경 없음 | `extension/options.html:403-426`, `extension/options.js:50-70` — 기존 `data-i18n` key를 그대로 소비하며 새 인자는 없다 |
 | `batchNativeOutcome` · `sendBatchToNativeHost` | 안전·변경 없음 | `extension/background.js:338-359` — boolean `success:false`를 정상 batch response로 넘긴다 |
 | `executeListBatch` · background listener | 안전·변경 없음 | `extension/background.js:477-518,590-618` — native response를 outer `{success:true,batch}`로 전달하는 기존 envelope를 유지한다 |
-| `interpretListBatchResponse` modern envelope | 안전·변경 없음 | `extension/defaults.js:580-597` — boolean app success와 array items를 가진 현대 응답의 item 결과 계약은 유지한다 |
-| `interpretListBatchResponse` 전체-거절 envelope | 구멍(항목 2) | `extension/defaults.js:569-588` — 앱이 배치를 통째로 거절한 boolean `success:false`와 string `error`가 있어도 items 부재 branch가 제네릭으로 덮는다 |
+| `interpretListBatchResponse` modern envelope | 안전·변경 없음 | `extension/defaults.js:594-610` — boolean app success와 array items를 가진 현대 응답의 item 결과 계약은 유지한다 |
+| `interpretListBatchResponse` 전체-거절 envelope | 안전·항목 2에서 해소 | `extension/defaults.js:580-591` — boolean `success:false`·비어 있지 않은 string `error`·`items` 부재만 원문과 힌트로 반환한다 |
 | list command error consumer·button UI | 안전·새 표시 경로 없음 | `extension/content.js:101-111,574-582` — `appSuccess:null`이면 throw 후 `console.error`; `extension/content.js:532-537` — title은 config label이다 |
+| `runButtonCommand` 단일 요청 소비자 | 안전·변경 없음 | `extension/content.js:84-95` — 단일 요청은 items 계약이 없으므로 전체-거절 해석 대상이 아니다 |
 | extension i18n policy | 안전·조건부 질문 | `tests/i18n.test.js:1795-1799,1874-1894` — `console.*`는 English diagnostic으로 분류되며 새 dictionary key가 필요하지 않다; UI 재분류는 열린 질문이다 |
-| Core request handling | 안전·변경 없음 | `app/Sources/Core/Request.swift:20-31,81-98,375-377` — 앱은 command 오류를 string error로 반환하는 경계이며 이번 항목에서 재설계하지 않는다 |
+| 앱의 items 없는 `{success:false,error}` 반환 | 안전·변경 없음 | `app/Sources/Core/Request.swift:271` 단일 요청 실패와 `:376` 배치 parse 실패가 items 없이 반환한다; 앱 코드는 읽기만 한다(D2) |
 
 ## 라운드 로그
 
@@ -122,12 +124,19 @@
 
 ### R1
 
-#### 리뷰 1 — 증분 · (항목 1 커밋 해시는 커밋 뒤 채움 — 다음 커밋에서) · 승격 — · 리뷰 — · 왕복 — · 원문 —
+#### 리뷰 1 — 증분 · 855a4c7 · 승격 23:01 · 리뷰 23:01∼23:05 · 왕복 0 · 원문 —
 
 - 차단: —
 - 수정: 항목 1 (배정 22:3x · 완료 22:49)
 - 실측: 재실행(드라이버): node --test → 253 pass / 0 fail exit 0 · check-locales exit 0
-- 판정: 대기 — 승격 뒤 드라이버 증분 리뷰
+- 판정: 항목 1 차단 확인 — 계약 테스트가 5kind×5로케일을 전수 고정. 새 표면의 우회 1건 인지: 테스트는 `{name}` 부분 문자열 포함만 보므로 '없음'을 뜻하는 부정 언급도 통과한다 — 허용 변수의 부정 언급은 자기모순이라 감수(비차단). → 항목 1 `cleared`
+
+#### 리뷰 2 — 증분 · (항목 2 커밋 해시는 커밋 뒤 채움) · 승격 — · 리뷰 23:05∼23:09 · 왕복 0 · 원문 —
+
+- 차단: —
+- 수정: 항목 2 (배정 22:56 · 완료 23:00)
+- 실측: 드라이버 재실행 256/256 · check-locales 0
+- 판정: 대기 — 승격 뒤 최종 리뷰 ③④와 함께
 
 ## 열린 질문
 

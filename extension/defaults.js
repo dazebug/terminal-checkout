@@ -578,6 +578,19 @@ function interpretListBatchResponse(response) {
   }
 
   const batch = response.batch;
+  // The app rejects malformed batch requests before producing per-item results, so it answers
+  // without items; an app that does not know batch requests answers in the same shape.
+  if (batch && typeof batch === 'object' && !Array.isArray(batch) &&
+      batch.success === false && typeof batch.error === 'string' && batch.error !== '' &&
+      batch.items === undefined) {
+    return {
+      transportSuccess: true,
+      appSuccess: null,
+      error: `${batch.error} — the app rejected the whole batch without per-item results; an app older than this extension answers this way`,
+      items: [],
+    };
+  }
+
   if (!batch || typeof batch !== 'object' || Array.isArray(batch) ||
       typeof batch.success !== 'boolean' || !Array.isArray(batch.items)) {
     return {
