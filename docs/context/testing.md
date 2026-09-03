@@ -153,7 +153,7 @@ Grouped cmux placement shipped 630 green tests, and one of its three arrangement
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured — the contract test failed on exactly the ten list-section strings before the edit, passed after, and failed again with the edit reverted)
-**Source:** issue #78; commit `855a4c7`; `tests/i18n.test.js` (`every page kind help advertises its variables in every locale`)
+**Source:** issue #78; PR #82 (commit `855a4c7`); `tests/i18n.test.js` (`every page kind help advertises its variables in every locale`)
 **Revisit when:** a kind's help legitimately needs to leave out a variable it accepts, or the help strings gain a structured variable list the options page renders itself
 
 The list-section help on the options page omitted `{owner}` in all five catalogues while `BUTTON_KINDS` accepted it and every batch item carried it. The obvious red — assert that those ten strings mention `{owner}` — would have fixed the report and nothing else: the next kind, the next variable, or the next locale could drift the same way and no gate would notice.

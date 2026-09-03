@@ -5,7 +5,7 @@
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured — the app's two no-items answers are read from `app/Sources/Core/Request.swift`, and both fixtures went red before the branch and green after)
-**Source:** issue #79; commit `345635f`; `interpretListBatchResponse` in `extension/defaults.js`
+**Source:** issue #79; PR #82 (commit `345635f`); `interpretListBatchResponse` in `extension/defaults.js`
 **Revisit when:** the app starts returning `items` on a request-shape rejection, or a visible display path for whole-batch errors is added to the list button
 
 The extension has two verdicts to read out of a batch response: the worker's outer `success` says whether the request reached the app at all, and the app's inner `success` says how the batch went. A response with the inner `success: false`, a string `error`, and **no `items` key** used to fall through to the "shapeless response" branch and be replaced by the generic `native host returned no result`. Now that exact shape keeps the app's own text and appends a hedged hint — `… — the app rejected the whole batch without per-item results; an app older than this extension answers this way`.
