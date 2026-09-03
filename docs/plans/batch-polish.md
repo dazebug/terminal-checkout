@@ -77,7 +77,7 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | PR 목록·이슈 목록 옵션 도움말에 `{owner}`를 추가하고 다섯 로케일의 의도된 번역 편집에 맞춰 baseline pin을 갱신한다. | 로케일 내용·바이트 핀 | — | `extension/_locales/{en,ja,ko,zh_CN,zh_TW}/messages.json`, `tools/check-locales.js`, `tests/i18n.test.js` | — | todo | red 후보: `tests/i18n.test.js`에 kind→도움말 키 매핑 `{pr: ext.section.pr.variables, 'pr-list': ext.section.prList.variables, issue: ext.section.issue.variables, 'issue-list': ext.section.issueList.variables, repo: ext.section.repo.variables}`을 두고, 5 locale × 5 kind에서 `BUTTON_KINDS[kind].variables`와 `APP_VARIABLES`의 모든 이름이 `{name}` 부분 문자열로 메시지에 있는지 단언; 드라이버 사전 확인상 pr·issue·repo는 통과하고 두 list kind만 red여야 하며 다른 red는 같은 승격에서 포함·소탕 표 반영. baseline 재실행: `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, exit 0 | — |
+| 1 | PR 목록·이슈 목록 옵션 도움말에 `{owner}`를 추가하고 다섯 로케일의 의도된 번역 편집에 맞춰 baseline pin을 갱신한다. | 로케일 내용·바이트 핀 | — | `extension/_locales/{en,ja,ko,zh_CN,zh_TW}/messages.json`, `tools/check-locales.js`, `tests/i18n.test.js` | — | verified | red 후보: `tests/i18n.test.js`의 kind→도움말 키 매핑 `{pr: ext.section.pr.variables, 'pr-list': ext.section.prList.variables, issue: ext.section.issue.variables, 'issue-list': ext.section.issueList.variables, repo: ext.section.repo.variables}`으로 5 locale × 5 kind에서 `BUTTON_KINDS[kind].variables`와 `APP_VARIABLES`의 모든 `{name}` 부분 문자열을 단언. `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, `exit_code=1`; 원문 누락 10건: `en/pr-list help omits {owner}`, `en/issue-list help omits {owner}`, `ko/pr-list help omits {owner}`, `ko/issue-list help omits {owner}`, `ja/pr-list help omits {owner}`, `ja/issue-list help omits {owner}`, `zh-Hans/pr-list help omits {owner}`, `zh-Hans/issue-list help omits {owner}`, `zh-Hant/pr-list help omits {owner}`, `zh-Hant/issue-list help omits {owner}`. 10개 문자열 편집 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 251`, `ℹ fail 2`, 다섯 `_locales/*/messages.json differs from the committed catalogue baseline pin` 및 편집 pin 테스트 실패, `exit_code=1`. 갱신 pin: `en=092fc4f057daa2e48a38f9f90844a5550688b282bcbf83ef6a6816ad82f3dd11`, `ja=88905b4bc396b0c9996fb59ac105a469653f34609b55706561fbdf7fcb30deab`, `ko=1148f7e0ce096f5b0e19fa639a1554a811a8b12733f88ba62dddf642ac6fff13`, `zh-Hans=f71114794d54388234cc59bdffd9f6a612354aaa10f6cd9140eb0d24b532c929`, `zh-Hant=6f2c0cee6f698f7fae5f0a14ff43bc0804977b271664ab77ea50606e19f886d8`. 갱신 뒤 `node --test` → `ℹ tests 253`, `ℹ pass 253`, `ℹ fail 0`, `exit_code=0`; `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, `exit_code=0`. 토글: `git diff -- extension/_locales tools/check-locales.js > /private/tmp/tc-batch-polish-toggle.patch`·`git apply -R /private/tmp/tc-batch-polish-toggle.patch`·`git apply /private/tmp/tc-batch-polish-toggle.patch` 각각 exit 0; 역적용 중 `node --test` → `ℹ tests 253`, `ℹ pass 252`, `ℹ fail 1`, 동일 D6 누락 10건, `exit_code=1`; 복원 뒤 `git status --porcelain`은 `docs/plans/batch-polish.md`, 다섯 locale, `tests/i18n.test.js`, `tools/check-locales.js`만 출력하고 repo의 `toggle.patch` 없음. 재실행(드라이버): node --test → 253 pass / 0 fail exit 0 · check-locales exit 0 | — |
 | 2 | 앱이 배치를 통째로 거절(per-item 결과 없음)한 응답의 원래 `error`와 앱 세대 불일치 가능성 힌트를 보존하고, 무형 응답만 기존 제네릭 오류로 남긴다. 전체-거절 predicate는 `batch.success === false && typeof batch.error === 'string' && batch.error !== '' && batch.items === undefined`이다. | 전체-거절 응답 호환·오류 해석 | (a) 전체-거절 응답의 error 유실 — 제네릭으로 덮임 (b) 무형 응답과의 경계 미정의 | `extension/defaults.js`, `tests/list-pages.test.js` | — | todo | red 후보: `interpretListBatchResponse({success:true,batch:{success:false,error:'command_template is required'}})`와 `interpretListBatchResponse({success:true,batch:{success:false,error:'items must contain at most 25 item(s)'}})`는 원문과 정본 힌트를 보존; nested `success` 비boolean 또는 `items` 비배열 shape는 제네릭 유지. 표시 경로 근거: `extension/content.js:574-582`의 catch는 `console.error`와 button text만 처리하고 `:532-537`에서 title을 라벨로 복원 | — |
 
 ## 결정 원장
@@ -119,6 +119,15 @@
 - 처리: 8건 전부 반영 — 원장 D1∼D6
 - 실측: `node --test` → `ℹ tests 252`, `ℹ suites 0`, `ℹ pass 252`, `ℹ fail 0`, `exit_code=0`; `node tools/check-locales.js` → `all 5 live catalogues carry the same names and argument bindings as en`, `exit_code=0`
 - 판정: 반박 8건 전부 반영으로 처리 — 이 계획으로 시작하는 데 합의한다 (드라이버, R0)
+
+### R1
+
+#### 리뷰 1 — 증분 · (항목 1 커밋 해시는 커밋 뒤 채움 — 다음 커밋에서) · 승격 — · 리뷰 — · 왕복 — · 원문 —
+
+- 차단: —
+- 수정: 항목 1 (배정 22:3x · 완료 22:49)
+- 실측: 재실행(드라이버): node --test → 253 pass / 0 fail exit 0 · check-locales exit 0
+- 판정: 대기 — 승격 뒤 드라이버 증분 리뷰
 
 ## 열린 질문
 
