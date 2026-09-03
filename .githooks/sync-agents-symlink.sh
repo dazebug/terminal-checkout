@@ -5,6 +5,9 @@
 #   --all       전체 모드 — 추적 중이거나 무시되지 않은 CLAUDE.md·AGENTS.md 전부를 대상으로 링크를 만들고 CLAUDE.md가 없는
 #               디렉터리의 링크를 지운다(설치 시 1회). 무시된 경로와 중첩 worktree는 대상이 아니다.
 # 두 모드 모두 만든 링크와 지운 링크를 스테이징한다. 출력: created|removed|kept|skipped <경로> [사유]
+#
+# 경로는 어디서도 개행으로 나누지 않는다 — git은 경로에 개행을 허용하므로 줄 단위로 다루면 그런 디렉터리의
+# 링크를 조용히 만들지 않거나 이름이 겹치는 엉뚱한 디렉터리를 동기화한다. 입력·중간 스트림·정렬 전부 NUL 구분이다.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -39,32 +42,42 @@ sync_dir() {
   fi
 }
 
+# NUL 구분 경로 스트림을 NUL 구분 디렉터리 스트림으로 바꾼다. dirname 대신 parameter expansion을 쓰므로
+# 개행이 든 경로가 보존되고 경로마다 프로세스를 만들지 않는다.
+paths_to_dirs() {
+  local path dir
+  while IFS= read -r -d '' path; do
+    dir="${path%/*}"
+    [ "$dir" = "$path" ] && dir="."
+    printf '%s\0' "$dir"
+  done
+}
+
+# NUL 구분 디렉터리 스트림을 정렬·중복 제거해 처리한다. sort -z는 macOS(Apple sort 2.3)와 GNU sort 모두 지원한다.
+sync_dirs() {
+  local dir
+  sort -zu | while IFS= read -r -d '' dir; do
+    if [ "$dir" = "." ]; then sync_dir "."; else sync_dir "./$dir"; fi
+  done
+}
+
 if [ "${1:-}" = "--all" ]; then
   # find로 트리를 훑지 않는다 — .gitignore된 디렉터리 안의 중첩 worktree(.claude/worktrees/ 등)까지 내려가
   # 다른 worktree 안에 링크를 만든다. git ls-files는 무시 경로와 중첩 저장소를 밖에서 보지 않으며,
   # --cached --others --exclude-standard 로 추적 중인 파일과 아직 추적되지 않은(무시되지 않은) 파일을 함께 잡는다.
   git ls-files -z --cached --others --exclude-standard -- 'CLAUDE.md' '*/CLAUDE.md' 'AGENTS.md' '*/AGENTS.md' \
-    | xargs -0 -r -n1 dirname | sort -u | while IFS= read -r dir; do
-      if [ "$dir" = "." ]; then sync_dir "."; else sync_dir "./$dir"; fi
-    done  # -r: GNU xargs는 입력이 없어도 dirname을 실행해 pipefail로 죽는다(BSD는 실행하지 않음)
+    | paths_to_dirs | sync_dirs
   exit 0
 fi
 
 # pre-commit 모드 — 이름 변경(R)은 옛 디렉터리의 링크 제거와 새 디렉터리의 링크 생성이 둘 다 필요해 두 경로를 모은다.
 # 경로 패턴의 *는 /도 매치하므로 중첩 디렉터리의 CLAUDE.md까지 잡힌다.
-dirs=""
-while IFS= read -r -d '' status; do
-  IFS= read -r -d '' path || break
-  dirs="$dirs$(dirname "$path")"$'\n'
-  case "$status" in
-    R*|C*) IFS= read -r -d '' path || break; dirs="$dirs$(dirname "$path")"$'\n' ;;
-  esac
-done < <(git diff --cached --name-status -z --diff-filter=ADR -- 'CLAUDE.md' '*/CLAUDE.md')
-[ -n "$dirs" ] || exit 0
-printf '%s' "$dirs" | sort -u | while IFS= read -r dir; do
-  if [ "$dir" = "." ]; then
-    sync_dir "."
-  else
-    sync_dir "./$dir"
-  fi
-done
+{
+  while IFS= read -r -d '' status; do
+    IFS= read -r -d '' path || break
+    printf '%s\0' "$path"
+    case "$status" in
+      R*|C*) IFS= read -r -d '' path || break; printf '%s\0' "$path" ;;
+    esac
+  done < <(git diff --cached --name-status -z --diff-filter=ADR -- 'CLAUDE.md' '*/CLAUDE.md')
+} | paths_to_dirs | sync_dirs
