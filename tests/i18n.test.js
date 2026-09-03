@@ -723,6 +723,29 @@ test('message strings and calls are separate projections of every JavaScript lex
   }
 });
 
+test('every page kind help advertises its variables in every locale', () => {
+  const helpKeyForKind = {
+    pr: 'ext.section.pr.variables',
+    'pr-list': 'ext.section.prList.variables',
+    issue: 'ext.section.issue.variables',
+    'issue-list': 'ext.section.issueList.variables',
+    repo: 'ext.section.repo.variables',
+  };
+  const { BUTTON_KINDS, APP_VARIABLES } =
+    vm.runInThisContext('({ BUTTON_KINDS, APP_VARIABLES })');
+  const failures = [];
+
+  for (const locale of TC_I18N_LOCALES) {
+    for (const [kind, logicalKey] of Object.entries(helpKeyForKind)) {
+      const message = liveMessageFor(locale, logicalKey);
+      for (const name of [...BUTTON_KINDS[kind].variables, ...APP_VARIABLES]) {
+        if (!message.includes(`{${name}}`)) failures.push(`${locale}/${kind} help omits {${name}}`);
+      }
+    }
+  }
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
 test('_locales is pinned by bytes, and its machine structure is checked live', () => {
   // The live `_locales` values are canonical and may evolve, so their exact-byte pin is a review
   // prompt, not an edit ban. The command checks the machine-structure contracts; the test checks

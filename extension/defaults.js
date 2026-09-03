@@ -578,6 +578,22 @@ function interpretListBatchResponse(response) {
   }
 
   const batch = response.batch;
+  // Keep the app's own error when it rejected the whole batch. The app answers a malformed batch
+  // request without `items` (it never reached per-item results), and an app that predates batch
+  // requests answers in the same shape — so the hint below cannot assert which one it was. Only a
+  // *missing* `items` key qualifies: a present but non-array `items` did not come from the app
+  // and stays on the generic branch below.
+  if (batch && typeof batch === 'object' && !Array.isArray(batch) &&
+      batch.success === false && typeof batch.error === 'string' && batch.error !== '' &&
+      batch.items === undefined) {
+    return {
+      transportSuccess: true,
+      appSuccess: null,
+      error: `${batch.error} — the app rejected the whole batch without per-item results; an app older than this extension answers this way`,
+      items: [],
+    };
+  }
+
   if (!batch || typeof batch !== 'object' || Array.isArray(batch) ||
       typeof batch.success !== 'boolean' || !Array.isArray(batch.items)) {
     return {

@@ -463,7 +463,7 @@
     "message": "issueListButtons <span class=\"section-where\">— issue リストページ</span>"
   },
   "ext_section_issueList_variables": {
-    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。"
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。"
   },
   "ext_section_main_help": {
     "message": "<code>{main}</code> が決まる順序: リポジトリごとの個別設定 → ページから検出 → 下の既定値。検出は PR ページでは base ブランチを、リポジトリと issue のページではリポジトリの既定ブランチを読みます — 下の設定は検出に失敗したときの備えです。PR が実際にマージされるブランチを常に使うには <code>{base}</code> を使ってください。個別設定と既定値の両方を飛ばします。"
@@ -514,7 +514,7 @@
     "message": "prListButtons <span class=\"section-where\">— PR リストページ</span>"
   },
   "ext_section_prList_variables": {
-    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。ブランチをローカルで解決するには <code>gh pr checkout {number}</code> を使います。"
+    "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。ブランチをローカルで解決するには <code>gh pr checkout {number}</code> を使います。"
   },
   "ext_section_repo_help": {
     "message": "リポジトリページ (コード、issue 一覧、Actions など) のヘッダーで、リポジトリ名の横に置かれるボタンです — 最大 $ARG1$ 個。PR・issue のボタンと違って GitHub の緑のアクションボタンのように見えるので、<b>$ARG3$</b> には絵文字より <code>$ARG2$</code> のような名前が向いています。PR でも issue でもない GitHub ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。",

@@ -463,7 +463,7 @@
     "message": "issueListButtons <span class=\"section-where\">— 이슈 목록 페이지</span>"
   },
   "ext_section_issueList_variables": {
-    "message": "사용 가능한 변수: <code>{cd}</code> <span class=\"faint\">(저장소로 이동 — 앱이 채움)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(이슈 번호, 숫자만)</span> — 목록 페이지에는 <code>{branch}</code>와 <code>{base}</code>가 없습니다."
+    "message": "사용 가능한 변수: <code>{cd}</code> <span class=\"faint\">(저장소로 이동 — 앱이 채움)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(이슈 번호, 숫자만)</span> — 목록 페이지에는 <code>{branch}</code>와 <code>{base}</code>가 없습니다."
   },
   "ext_section_main_help": {
     "message": "<code>{main}</code>이 결정되는 순서: 저장소별 재정의 → 페이지에서 감지 → 아래 기본값. 감지는 PR 페이지에서는 base 브랜치를, 저장소·이슈 페이지에서는 저장소 기본 브랜치를 읽습니다 — 아래 설정은 감지가 실패했을 때의 대비책입니다. PR이 실제로 병합될 브랜치를 항상 쓰려면 <code>{base}</code>를 쓰세요. 재정의와 기본값을 모두 건너뜁니다."
@@ -514,7 +514,7 @@
     "message": "prListButtons <span class=\"section-where\">— PR 목록 페이지</span>"
   },
   "ext_section_prList_variables": {
-    "message": "사용 가능한 변수: <code>{cd}</code> <span class=\"faint\">(저장소로 이동 — 앱이 채움)</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">(PR 번호, 숫자만)</span> — 목록 페이지에는 <code>{branch}</code>와 <code>{base}</code>가 없습니다. 브랜치를 로컬에서 확인하려면 <code>gh pr checkout {number}</code>을 사용하세요."
+    "message": "사용 가능한 변수: <code>{cd}</code> <span class=\"faint\">(저장소로 이동 — 앱이 채움)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 번호, 숫자만)</span> — 목록 페이지에는 <code>{branch}</code>와 <code>{base}</code>가 없습니다. 브랜치를 로컬에서 확인하려면 <code>gh pr checkout {number}</code>을 사용하세요."
   },
   "ext_section_repo_help": {
     "message": "저장소 페이지(코드, 이슈 목록, Actions 등) 헤더에서 저장소 이름 옆에 놓이는 버튼입니다 — 최대 $ARG1$개. PR·이슈 버튼과 달리 GitHub의 초록색 액션 버튼처럼 보이므로, <b>$ARG3$</b>에는 이모지보다 <code>$ARG2$</code> 같은 이름이 어울립니다. PR도 이슈도 아닌 GitHub 페이지에서 확장 아이콘을 누르면 여기의 첫 번째 버튼이 실행됩니다.",

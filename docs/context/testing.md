@@ -147,3 +147,19 @@ Grouped cmux placement shipped 630 green tests, and one of its three arrangement
 **Rejected alternative — add the missing case and move on.** That is what the previous two instances of this shape got. The values are chosen per test, so the next fixture picks its own branch; the durable half is the live case per route plus a sweep table that lists every plan-to-executor pair and its index space, both of which name what must be entered rather than trusting the values to enter it.
 
 **Consequence, accepted:** those live cases are not in the suite. They need a running cmux server and a built bundle, so they stay driver-run scripts recorded on the manual checklist — a route added without one is unverified, and the suite cannot say so.
+
+## Help text is checked against the variable contract, not against ten strings
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured — the contract test failed on exactly the ten list-section strings before the edit, passed after, and failed again with the edit reverted)
+**Source:** issue #78; PR #82 (commit `855a4c7`); `tests/i18n.test.js` (`every page kind help advertises its variables in every locale`)
+**Revisit when:** a kind's help legitimately needs to leave out a variable it accepts, or the help strings gain a structured variable list the options page renders itself
+
+The list-section help on the options page omitted `{owner}` in all five catalogues while `BUTTON_KINDS` accepted it and every batch item carried it. The obvious red — assert that those ten strings mention `{owner}` — would have fixed the report and nothing else: the next kind, the next variable, or the next locale could drift the same way and no gate would notice.
+
+So the test is a contract instead: for every kind in `BUTTON_KINDS` and every locale, the section's variables help must mention each of that kind's variables plus the app-supplied `{cd}`. `BUTTON_KINDS` is already the single source the content script and worker read, so the help is checked against the same authority the buttons obey, and the three detail-page sections passed on the first run — which is what showed the ten failures were the whole class.
+
+**Rejected alternative — assert the ten strings.** Green after the fix, blind to the class; see the third-instance rule above for why a class-wide gate beats another instance fix.
+
+**Consequence, accepted:** the check is token presence (`{name}` as a substring), so a help string that *denied* an allowed variable — "has no `{owner}`" — would pass. That string would contradict the kind's own contract, which is not a mistake a translator makes by accident, so the weaker check was kept rather than parsing the sentence.

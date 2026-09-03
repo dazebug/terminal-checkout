@@ -250,6 +250,73 @@ test('validateListBatchResultKeyProtocol requires the active protocol token', ()
   assert.equal(validateListBatchResultKeyProtocol({ resultKeyProtocol: 2 }), false);
 });
 
+test('interpretListBatchResponse preserves an older app whole-batch rejection', () => {
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: false, error: 'command_template is required' },
+    }),
+    {
+      transportSuccess: true,
+      appSuccess: null,
+      error: 'command_template is required — the app rejected the whole batch without per-item results; an app older than this extension answers this way',
+      items: [],
+    },
+  );
+});
+
+test('interpretListBatchResponse preserves a current app whole-batch rejection', () => {
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: false, error: 'items must contain at most 25 item(s)' },
+    }),
+    {
+      transportSuccess: true,
+      appSuccess: null,
+      error: 'items must contain at most 25 item(s) — the app rejected the whole batch without per-item results; an app older than this extension answers this way',
+      items: [],
+    },
+  );
+});
+
+test('interpretListBatchResponse keeps malformed whole-batch shapes generic', () => {
+  const generic = {
+    transportSuccess: true,
+    appSuccess: null,
+    error: 'native host returned no result',
+    items: [],
+  };
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: false, error: 'rejected', items: null },
+    }),
+    generic,
+  );
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: false, error: 'rejected', items: 'x' },
+    }),
+    generic,
+  );
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: true },
+    }),
+    generic,
+  );
+  assert.deepEqual(
+    interpretListBatchResponse({
+      success: true,
+      batch: { success: false, error: '' },
+    }),
+    generic,
+  );
+});
+
 test('interpretListBatchResponse preserves transport and app failure layers with per-item results', () => {
   const outcome = interpretListBatchResponse({
     success: true,

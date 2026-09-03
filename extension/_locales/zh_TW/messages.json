@@ -463,7 +463,7 @@
     "message": "issueListButtons <span class=\"section-where\">— issue 清單頁面</span>"
   },
   "ext_section_issueList_variables": {
-    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">（issue 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>。"
+    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>。"
   },
   "ext_section_main_help": {
     "message": "<code>{main}</code> 的解析順序：按儲存庫的覆寫項 → 從頁面偵測 → 下面的預設值。偵測在 PR 頁面讀取 base 分支，在儲存庫和 issue 頁面讀取儲存庫的預設分支 — 下面的設定是偵測失敗時的後備。若想始終使用 PR 實際會合併進去的分支，請用 <code>{base}</code>，它會略過覆寫項和預設值。"
@@ -514,7 +514,7 @@
     "message": "prListButtons <span class=\"section-where\">— PR 清單頁面</span>"
   },
   "ext_section_prList_variables": {
-    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{number}</code> <span class=\"faint\">（PR 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {number}</code> 在本機解析分支。"
+    "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {number}</code> 在本機解析分支。"
   },
   "ext_section_repo_help": {
     "message": "在儲存庫頁面（程式碼、issue 清單、Actions 等）的標題列中位於儲存庫名稱旁邊的按鈕 — 最多 $ARG1$ 個。與 PR 和 issue 按鈕不同，它們看起來像 GitHub 的綠色操作按鈕，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 這樣的名稱比表情符號更合適。在既不是 PR 也不是 issue 的 GitHub 頁面上點擊擴充功能圖示，會執行這裡的第一個按鈕。",
