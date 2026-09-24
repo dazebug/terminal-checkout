@@ -34,7 +34,7 @@ On 2026-09-24 the repository buttons disappeared from every repository, PR, issu
 **Type:** incident
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed (measured on github.com, 2026-09-24 — on a PR with a three-line title the head link sat at 257px until GitHub's stack notice loaded, then at 328px, and no PR button appeared within 8 seconds; the header's `a[data-component="BranchName"]` pair reads base then head in document order on the conversation and changes tabs and on a merged PR, followed by a hidden 0×0 copy; scrolled 1000px down, the pair still reads base `main` and the PR's head)
+**Evidence:** confirmed (measured on github.com, 2026-09-24 — on a PR with a three-line title the head link sat at 257px until GitHub's stack notice loaded, then at 328px, and no PR button appeared within 8 seconds; the header's `a[data-component="BranchName"]` pair reads base then head in document order on the conversation and changes tabs and on a merged PR, followed by a hidden 0×0 copy; scrolled 1000px down, the pair still reads base `main` and the PR's head; the commits tab carries 33 `/tree/` links, browse-at-commit ones included, and the selector matches only the header pair and its copy)
 **Source:** PR #86; `PR_BRANCH_LINK_SELECTOR` in `extension/defaults.js`; `tests/buttons.test.js` (`the PR branch links have one home, and neither reader finds them by screen position`)
 **Revisit when:** GitHub's PR header stops naming the base before the head, or stops rendering the branches as links
 
