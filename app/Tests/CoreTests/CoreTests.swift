@@ -134,12 +134,13 @@ final class BaseDirectoryTests: XCTestCase {
 
 // MARK: - Repository entry clause assembly (the value of {cd})
 
+/// The entry jump for `remy`, spelled out once so every test that pins it compares the same bytes
+private let remyEntryJump = "{ tc_dir=$(zoxide query --list -- remy | command grep -i -m1 '/remy$'"
+    + " || { echo 'zoxide has not recorded a directory named remy' >&2; false; })"
+    + " && cd -- \"$tc_dir\"; }"
+
 final class RepoEntryCommandTests: XCTestCase {
     private let base = "/Users/x/Codes"
-    /// The jump for `remy`, spelled out once so every chain below is pinned against the same bytes
-    private let remyJump = "{ tc_dir=$(zoxide query --list -- remy | command grep -i -m1 '/remy$'"
-        + " || { echo 'zoxide has not recorded a directory named remy' >&2; false; })"
-        + " && cd -- \"$tc_dir\"; }"
 
     // Never `z remy`: zoxide matches `remy` anywhere in the last path component and ranks by
     // frecency, so a sibling worktree the presets themselves create (`remy-fix_x`) wins once it was
@@ -148,7 +149,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testWithoutBaseDirectoryTheEntryIsTheExactZoxideJump() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: ""),
-            remyJump
+            remyEntryJump
         )
     }
 
@@ -158,7 +159,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testBaseDirectoryAddsCdThenCloneFallback() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base),
-            "{ \(remyJump) || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
         )
@@ -169,7 +170,7 @@ final class RepoEntryCommandTests: XCTestCase {
         let cmd = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: base)
         XCTAssertEqual(
             cmd,
-            "{ \(remyJump) || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
         )
         XCTAssertFalse(cmd.contains("clone"))
@@ -178,7 +179,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testEmptyOwnerCountsAsAbsent() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "", baseDirectory: base),
-            "{ \(remyJump) || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
         )
     }
@@ -212,7 +213,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testTheZoxideJumpComesFirst() throws {
         XCTAssertTrue(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
-                .hasPrefix("{ \(remyJump) || ")
+                .hasPrefix("{ \(remyEntryJump) || ")
         )
     }
 
@@ -256,7 +257,7 @@ final class RepoEntryCommandTests: XCTestCase {
     func testRootBaseDirectoryDoesNotDoubleTheSlash() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "/"),
-            "{ \(remyJump) || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
+            "{ \(remyEntryJump) || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
         )
     }
 }
@@ -353,6 +354,21 @@ final class RepoEntryRuntimeTests: XCTestCase {
                 "\(jump) && echo moved; echo \"exit=$? pwd=$PWD\"", in: shell, path: "/usr/bin:/bin"
             )
             XCTAssertEqual(result.stdout, "exit=1 pwd=\(root)\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    // `z` tries its argument as a folder relative to the current directory before asking zoxide,
+    // so from inside a checkout whose package folder shares its name (`remy/remy`) it entered the
+    // package folder (measured). The clause has no such shortcut
+    func testASameNamedFolderInsideTheCheckoutIsNotEntered() throws {
+        try FileManager.default.createDirectory(
+            atPath: "\(root)/Codes/remy/remy", withIntermediateDirectories: true
+        )
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy"])
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("cd Codes/remy && \(jump) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Codes/remy\n", "\(shell): \(result.stderr)")
         }
     }
 
@@ -604,10 +620,6 @@ final class RequestTests: XCTestCase {
 
     // MARK: {cd} — the shell fragment the app assembles and fills in
 
-    private let remyJump = "{ tc_dir=$(zoxide query --list -- remy | command grep -i -m1 '/remy$'"
-        + " || { echo 'zoxide has not recorded a directory named remy' >&2; false; })"
-        + " && cd -- \"$tc_dir\"; }"
-
     func testCDWithoutBaseDirectoryRendersTheExactZoxideJump() throws {
         let req: [String: Any] = [
             "command_template": "{cd} && git fetch origin && git checkout {branch}",
@@ -615,7 +627,7 @@ final class RequestTests: XCTestCase {
         ]
         XCTAssertEqual(
             try resolveRequest(req).command,
-            "\(remyJump) && git fetch origin && git checkout fix/x"
+            "\(remyEntryJump) && git fetch origin && git checkout fix/x"
         )
     }
 
@@ -626,7 +638,7 @@ final class RequestTests: XCTestCase {
         ]
         XCTAssertEqual(
             try resolveRequest(req, baseDirectory: "/Users/x/Codes").command,
-            "{ \(remyJump) || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
                 + " && git fetch origin"
@@ -696,7 +708,7 @@ final class RequestTests: XCTestCase {
             "command_template": "{cd} && claude", "variables": ["repo": "remy"],
             "claude_inputs": ["!{cd} && git status"],
         ], baseDirectory: "")
-        XCTAssertEqual(r.claudeInputs, ["!\(remyJump) && git status"])
+        XCTAssertEqual(r.claudeInputs, ["!\(remyEntryJump) && git status"])
     }
 
     // A corrupted stored value is not silently ignored — the button fails and carries the reason
@@ -718,7 +730,7 @@ final class RequestTests: XCTestCase {
             "command_template": "{cd}", "variables": ["repo": "remy", "owner": "frograms"],
         ], baseDirectory: "/Users/x/Codes").command
         XCTAssertTrue(cmd.contains(" || "), cmd)
-        XCTAssertTrue(cmd.hasPrefix("{ \(remyJump)"), cmd)
+        XCTAssertTrue(cmd.hasPrefix("{ \(remyEntryJump)"), cmd)
     }
 }
 

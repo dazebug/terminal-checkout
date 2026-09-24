@@ -96,7 +96,9 @@ public func repoEntryCommand(repo: String, owner: String?, baseDirectory: String
 /// matches the `remy-<branch>` worktrees the presets create next to the checkout, and the higher
 /// frecency wins — a worktree used in the last hour scores four times its rank. And `z` excludes the
 /// current directory from its candidates, so from inside `remy` it lands in a worktree even when
-/// `remy` scores ten times higher (both measured).
+/// `remy` scores ten times higher. Before asking zoxide at all, `z` tries its argument as a folder
+/// relative to the current directory, so from inside a checkout whose package folder shares its
+/// name it enters `remy/remy` (all three measured).
 ///
 /// - `zoxide query --list` prints every match, highest score first, skipping folders that no
 ///   longer exist. It is asked without `--exclude`, so already standing in the repository is a

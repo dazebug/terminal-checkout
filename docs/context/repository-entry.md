@@ -12,6 +12,7 @@
 
 - **Frecency.** The score is rank times a recency weight — ×4 within the hour, ×2 within the day, ×0.5 within the week, ×0.25 after that — so a worktree someone just worked in outranks the checkout (88 against 48 in the reproduction), and `z foo` goes there.
 - **The current directory is excluded.** The `z` function queries with `--exclude "$PWD"`, so from inside `foo` it landed in `foo-feature_x` while `foo` scored ten times higher (40 against 4). A tab that opens in the checkout's directory therefore never stays in it.
+- **A folder under the current directory wins before zoxide is asked.** `z` first tries its argument with `cd` (which also honors `CDPATH`), so from inside a checkout whose package folder shares the repository's name, `z foo` entered `foo/foo`.
 
 zoxide cannot be asked for an exact match. Its last keyword is found with `rfind` anywhere inside the path's last component, with no way to anchor the end, and neither a flag nor an environment variable changes that. The spellings that look like anchors are something else: `z foo/` is a relative path, `z foo /` means a subdirectory of a `foo` match, an unquoted trailing space is dropped by the shell, and a quoted one is searched for literally (`zoxide: no match found`).
 
@@ -22,7 +23,7 @@ So `{cd}` asks `zoxide query --list -- {repo}` — every match, highest score fi
 
 **z.sh is dropped (user decision).** The clause runs the `zoxide` executable, and the setup window's tool check moved from `z` to `zoxide` with it. z.sh mostly did not have this problem: it prefers the shortest match when that match is a prefix of all the others, rank notwithstanding (`common` in `z.sh`). Keeping it would have meant a runtime `command -v zoxide` branch in every typed command, about 60 characters more on every command, where cmux layout leaf commands are capped at 1023 bytes. That was offered and declined.
 
-**Consequences, accepted:** a clone kept under a folder name other than the repository's is no longer found by the jump — the base directory catches it, or renaming the folder does. The variable `tc_dir` stays set in the user's shell after the jump.
+**Consequences, accepted:** a clone kept under a folder name other than the repository's is no longer found by the jump — the base directory catches it, or renaming the folder does. `z`'s own shortcut is gone too: with an empty database and `CDPATH` pointing at the parent folder, `z foo` still entered `foo` (measured); the clause asks only zoxide's database. The variable `tc_dir` stays set in the user's shell after the jump.
 
 **Rejected alternative — normalize whatever `z` finds to its main worktree** (`git rev-parse --git-common-dir`, then its parent). It works with any `z`, but in a bare-repository layout the common directory's parent is not a checkout, and when `z` lands in a different repository that merely contains the name, the result is that repository's checkout with nothing on screen saying so.
 
