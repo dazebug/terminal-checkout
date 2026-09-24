@@ -10,9 +10,9 @@
 "app.automation.targetNotRunning" = "iTerm2 未运行，无法检查 — 按 [%@] 会启动它";
 "app.automation.unknown" = "状态检查失败 (OSStatus %d)";
 "app.baseDir.missingFolder" = "%@ — 该文件夹尚不存在，会在首次 clone 时创建";
-"app.baseDir.notConfigured" = "未设置 — 仅用 z 跳转。在 zoxide 从未记录过的仓库中，命令不会有任何作用";
+"app.baseDir.notConfigured" = "未设置 — 仅用 zoxide 跳转。在 zoxide 从未记录过的仓库中，命令不会有任何作用";
 "app.baseDir.notSaved" = "未保存 — %@";
-"app.baseDir.ok" = "%@ — z 失败时的落脚处，也是仓库缺失时的 clone 目标";
+"app.baseDir.ok" = "%@ — zoxide 跳转失败时的落脚处，也是仓库缺失时的 clone 目标";
 "app.baseDir.placeholder" = "例如 ~/Codes";
 "app.baseDir.reason.invalidCharacters" = "其中包含在 shell 中不安全的字符，例如空格或非 ASCII 字母";
 "app.baseDir.reason.notAbsolute" = "不是绝对路径";
@@ -29,7 +29,7 @@
 "app.button.restartNow" = "立即重新启动";
 "app.button.runInTerminal" = "在终端中运行";
 "app.button.showSetupGuide" = "再次显示设置指南";
-"app.card.baseDir.help" = "你克隆仓库的顶层文件夹。当 z 无法跳转时（没有 zoxide 历史，或根本没有 zoxide），命令会进入该文件夹下的仓库，若不存在则用 gh 克隆。留空则与此前完全一样，仅用 z 跳转。";
+"app.card.baseDir.help" = "你克隆仓库的顶层文件夹。当 zoxide 无法跳转时（没有与仓库名称完全相同的文件夹记录，或根本没有 zoxide），命令会进入该文件夹下的仓库，若不存在则用 gh 克隆。留空则仅用 zoxide 跳转。";
 "app.card.baseDir.legacyNote" = "由早期版本保存的按钮保留它们存下的命令 — 选择文件夹并不会为它们加上回退。进入扩展程序选项页，顶部会出现更新提示；逐个查看按钮并保存即可应用。";
 "app.card.baseDir.title" = "仓库基准文件夹";
 "app.card.chrome.title" = "Chrome 连接 (Native Host)";
@@ -123,6 +123,6 @@
 "app.tools.claude.advice" = "找不到命令 — 预约了 claude 输入的按钮无法传送它。";
 "app.tools.claudeWrapper.advice" = "找不到作为可执行文件的 claude，因此 claude 输入不会并入命令（它可能只作为函数或别名安装、PATH 中可能含有相对路径项，或者文件没有执行权限）— 输入改为直接键入会话，这在 Warp 上需要辅助功能权限。";
 "app.tools.gh.advice" = "找不到命令 — issue 按钮上的 gh 预设会失败，仓库基准文件夹的克隆步骤也会失败。请运行 brew install gh，然后 gh auth login。";
-"app.tools.z.adviceNoBaseDir" = "找不到命令 — 由于默认命令以 z 开头，所有按钮都会失败。请运行 brew install zoxide 并把 eval \"$(zoxide init zsh)\" 加到 ~/.zshrc，或者设置下面的“仓库基准文件夹”。";
-"app.tools.z.adviceWithBaseDir" = "找不到命令 — 按钮仍然可用，因为它们会回退到仓库基准文件夹。安装 zoxide 还能让它们跳到该文件夹之外的仓库（brew install zoxide）。";
+"app.tools.zoxide.adviceNoBaseDir" = "找不到命令 — 由于默认命令用 zoxide 进入仓库，所有按钮都会失败。请运行 brew install zoxide 并把 eval \"$(zoxide init zsh)\" 加到 ~/.zshrc，或者设置下面的“仓库基准文件夹”。";
+"app.tools.zoxide.adviceWithBaseDir" = "找不到命令 — 按钮仍然可用，因为它们会回退到仓库基准文件夹。安装 zoxide 还能让它们跳到该文件夹之外的仓库（brew install zoxide）。";
 "app.window.title" = "Terminal Checkout 设置";

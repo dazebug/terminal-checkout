@@ -10,9 +10,9 @@
 "app.automation.targetNotRunning" = "iTerm2 が起動していないため確認できません — [%@] を押すと起動します";
 "app.automation.unknown" = "状態の確認に失敗しました (OSStatus %d)";
 "app.baseDir.missingFolder" = "%@ — このフォルダはまだありません。最初の clone のときに作成されます";
-"app.baseDir.notConfigured" = "未設定 — z だけで移動します。zoxide が一度も記録していないリポジトリでは、コマンドは何もしません";
+"app.baseDir.notConfigured" = "未設定 — zoxide だけで移動します。zoxide が一度も記録していないリポジトリでは、コマンドは何もしません";
 "app.baseDir.notSaved" = "保存されていません — %@";
-"app.baseDir.ok" = "%@ — z が失敗したときの移動先であり、リポジトリがないときの clone 先です";
+"app.baseDir.ok" = "%@ — zoxide での移動が失敗したときの移動先であり、リポジトリがないときの clone 先です";
 "app.baseDir.placeholder" = "例: ~/Codes";
 "app.baseDir.reason.invalidCharacters" = "スペースや非 ASCII 文字など、シェルで安全でない文字が含まれています";
 "app.baseDir.reason.notAbsolute" = "絶対パスではありません";
@@ -29,7 +29,7 @@
 "app.button.restartNow" = "今すぐ再起動";
 "app.button.runInTerminal" = "ターミナルで実行";
 "app.button.showSetupGuide" = "セットアップガイドをもう一度表示";
-"app.card.baseDir.help" = "リポジトリを clone する最上位のフォルダです。z が移動できないとき(zoxide の履歴がない、または zoxide 自体がない)、コマンドはこのフォルダの下のリポジトリへ移動し、なければ gh で clone します。空のままにすると、これまでどおり z だけで移動します。";
+"app.card.baseDir.help" = "リポジトリを clone する最上位のフォルダです。zoxide が移動できないとき(リポジトリとまったく同じ名前のフォルダの履歴がない、または zoxide 自体がない)、コマンドはこのフォルダの下のリポジトリへ移動し、なければ gh で clone します。空のままにすると、zoxide だけで移動します。";
 "app.card.baseDir.legacyNote" = "以前のバージョンで保存されたボタンは、保存されたコマンドのままです — フォルダを選んでも、そのボタンにフォールバックは追加されません。拡張機能のオプションページを表示すると上部に更新のお知らせが出ます。ボタンごとに確認して保存すると適用されます。";
 "app.card.baseDir.title" = "リポジトリのベースフォルダ";
 "app.card.chrome.title" = "Chrome 連携 (Native Host)";
@@ -123,6 +123,6 @@
 "app.tools.claude.advice" = "コマンドが見つかりません — claude 入力を予約したボタンはそれを配信できません。";
 "app.tools.claudeWrapper.advice" = "claude を実行可能ファイルとして見つけられなかったため、claude 入力はコマンドにマージされません(関数やエイリアスとしてだけインストールされている、PATH に相対パスの項目がある、またはファイルに実行権限がない可能性があります) — 代わりにセッションへ入力されるので、Warp ではアクセシビリティ権限が必要です。";
 "app.tools.gh.advice" = "コマンドが見つかりません — issue ボタンの gh プリセットが失敗し、リポジトリのベースフォルダの clone 手順も失敗します。brew install gh を実行してから gh auth login してください。";
-"app.tools.z.adviceNoBaseDir" = "コマンドが見つかりません — 既定のコマンドは z で始まるため、すべてのボタンが失敗します。brew install zoxide を実行し、~/.zshrc に eval \"$(zoxide init zsh)\" を追加するか、下の「リポジトリのベースフォルダ」を設定してください。";
-"app.tools.z.adviceWithBaseDir" = "コマンドが見つかりません — リポジトリのベースフォルダにフォールバックするので、ボタンは動作します。zoxide をインストールすると、そのフォルダの外にあるリポジトリへも移動できるようになります (brew install zoxide)。";
+"app.tools.zoxide.adviceNoBaseDir" = "コマンドが見つかりません — 既定のコマンドは zoxide でリポジトリへ移動するため、すべてのボタンが失敗します。brew install zoxide を実行し、~/.zshrc に eval \"$(zoxide init zsh)\" を追加するか、下の「リポジトリのベースフォルダ」を設定してください。";
+"app.tools.zoxide.adviceWithBaseDir" = "コマンドが見つかりません — リポジトリのベースフォルダにフォールバックするので、ボタンは動作します。zoxide をインストールすると、そのフォルダの外にあるリポジトリへも移動できるようになります (brew install zoxide)。";
 "app.window.title" = "Terminal Checkout セットアップ";

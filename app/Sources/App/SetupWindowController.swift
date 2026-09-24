@@ -365,7 +365,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var toolsObserver: (any NSObjectProtocol)?
 
     /// What breaks without the tool — the sentence a user judges "do I need to install this?" by.
-    /// Only `z` splits on whether a base directory is configured: with one, the entry clause falls
+    /// Only `zoxide` splits on whether a base directory is configured: with one, the entry clause falls
     /// back to `cd`/`clone`, so "every button fails" stops being true. The severity verdict itself
     /// lives in Core (`toolIsCritical`) so it can be pinned by a test; only the copy is here.
     private func toolAdvice(
@@ -373,13 +373,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     ) -> [(name: String, critical: Bool, advice: String)] {
         [
             (
-                "z", toolIsCritical("z", baseDirectoryConfigured: baseDirectoryConfigured),
+                "zoxide", toolIsCritical("zoxide", baseDirectoryConfigured: baseDirectoryConfigured),
                 // Two complete messages rather than a shared opening plus two tails: a
                 // sentence assembled from pieces cannot be reordered by a translator, and three of
                 // these did share an opening clause
                 localized(
                     baseDirectoryConfigured
-                        ? "app.tools.z.adviceWithBaseDir" : "app.tools.z.adviceNoBaseDir"
+                        ? "app.tools.zoxide.adviceWithBaseDir" : "app.tools.zoxide.adviceNoBaseDir"
                 )
             ),
             (
@@ -755,8 +755,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
-    /// Where repositories live. `z {repo}` silently does nothing when zoxide's DB has never
-    /// recorded that repository (issue #30); with this set, the command falls back to
+    /// Where repositories live. The zoxide jump fails when zoxide has never recorded that
+    /// repository (issue #30); with this set, the command falls back to
     /// `cd <base>/<repo>` and then to cloning. Validation, `~` expansion, and clause assembly all
     /// live in Core — this card stores the **normalized** result (echoed back into the field) and
     /// only words the rejection reasons.
@@ -793,8 +793,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The check on the tools a command calls. The login shell has to be asked rather than the
-    /// app's own PATH — `z` is a shell function zoxide defines in an rc file, so looking for an
-    /// executable of that name finds nothing.
+    /// app's own PATH — a GUI app's PATH is not the login shell's, and a name can be a function or
+    /// alias defined in an rc file.
     private func buildToolsCard() -> NSView {
         toolsList.orientation = .vertical
         toolsList.alignment = .leading
@@ -1630,7 +1630,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         // nil covers both "not configured" and "stored value is unusable" — in either case the
-        // fallback cannot run, so z is back to being critical
+        // fallback cannot run, so zoxide is back to being critical
         let configured = (try? normalizedBaseDirectory(Settings.baseDirectory)) != nil
         let missing = toolAdvice(baseDirectoryConfigured: configured)
             .filter { availability[$0.name] == false }

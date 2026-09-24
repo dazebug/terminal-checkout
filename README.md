@@ -40,16 +40,16 @@ flowchart LR
 - Google Chrome
 - One of iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY
 - Swift toolchain, for building (Command Line Tools via `xcode-select --install` is enough)
-- A way for the commands to reach your repository on disk: [zoxide](https://github.com/ajeetdsouza/zoxide)/[z.sh](https://github.com/rupa/z), a **base directory** set in the app, or both — see [Getting into the repository](#getting-into-the-repository)
+- A way for the commands to reach your repository on disk: [zoxide](https://github.com/ajeetdsouza/zoxide), a **base directory** set in the app, or both — see [Getting into the repository](#getting-into-the-repository). The commands run the `zoxide` executable, so z.sh and its ports don't count
 - Optional: [gh](https://cli.github.com) for the issue presets and for cloning a repository you don't have locally yet, `claude` for claude input
 
-On every launch the app checks `z`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window. With a base directory set, a missing `z` is a note rather than an error — the commands fall back to that folder.
+On every launch the app checks `zoxide`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window. With a base directory set, a missing `zoxide` is a note rather than an error — the commands fall back to that folder.
 
 ## Installation
 
 ### 1. Decide how commands find your repositories
 
-The buttons run a command that starts by moving into the repository. Give it at least one way to get there — the two combine, and `z` is always tried first:
+The buttons run a command that starts by moving into the repository. Give it at least one way to get there — the two combine, and zoxide is always tried first:
 
 **zoxide** — jumps to a repository wherever it lives (skip if you already have it):
 
@@ -63,9 +63,9 @@ Add this line to `~/.zshrc`, then `source ~/.zshrc`:
 eval "$(zoxide init zsh)"
 ```
 
-> zoxide learns the directories you visit, so a repository you have never `cd`'d into isn't in its database yet. Until it is, `z <folder>` fails — which is exactly what the base directory covers.
+> zoxide learns the directories you visit, so a repository you have never `cd`'d into isn't in its database yet. Until it is, the jump fails — which is exactly what the base directory covers. The jump only takes a folder named exactly like the repository, so a clone kept under a different folder name isn't found by it either.
 
-**A base directory** — the folder you keep repositories in, e.g. `~/Codes`. You set it in the app's setup window, in installation step 3 below. It is used whenever `z` fails, and it clones the repository if you don't have it locally yet, so a first click works on a repository you've never opened. Details: [Getting into the repository](#getting-into-the-repository).
+**A base directory** — the folder you keep repositories in, e.g. `~/Codes`. You set it in the app's setup window, in installation step 3 below. It is used whenever the zoxide jump fails, and it clones the repository if you don't have it locally yet, so a first click works on a repository you've never opened. Details: [Getting into the repository](#getting-into-the-repository).
 
 ### 2. Build and install the app
 
@@ -92,7 +92,7 @@ When the app opens, walk through the setup window in order. Native Host registra
    - **cmux socket control** (shown only when cmux or cmux NIGHTLY is selected) — the card shows not installed, not running, denied, or reachable. Automation means every process run by the same macOS user can control cmux. Enable it in cmux Settings → Automation, or use [Open Config File] to copy the setting and open `~/.config/cmux/cmux.json`; both channels share this file, so enabling automation once covers both. cmux applies file changes immediately, so no restart is needed. The app never writes the file.
 4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm, cmux, and cmux NIGHTLY need none, while Warp needs no TCC permission but does need Accessibility for typed claude input.
    - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the four shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path.
-5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use `z`, exactly as before. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
+5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use zoxide. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
 6. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
 
 Once setup completes, the window keeps only the language, the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
@@ -216,10 +216,12 @@ Every preset opens with `{cd}`, the clause that moves into the repository. The a
 
 | Base directory | What `{cd}` becomes |
 |:---|:---|
-| not set | `z {repo}` |
-| `<base>` | `z {repo}`, falling back to `<base>/{repo}` **if that is a git repository**, falling back to `gh repo clone {owner}/{repo} <base>/{repo}` |
+| not set | the zoxide jump — into the folder zoxide has recorded under exactly the name `{repo}` |
+| `<base>` | the zoxide jump, falling back to `<base>/{repo}` **if that is a git repository**, falling back to `gh repo clone {owner}/{repo} <base>/{repo}` |
 
-`z` is tried first either way, so a jump it makes is never overridden, and with no base directory the command is exactly what it was before this setting existed. That is also the failure the setting removes: a freshly installed zoxide has an empty database, `z {repo}` exits non-zero with `zoxide: no match found`, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and nothing on screen contradicts it.
+The jump is tried first either way, so a jump it makes is never overridden. It asks `zoxide query --list` for the folders zoxide has recorded under the repository's name and enters the highest-ranked one whose name is exactly `{repo}`, ignoring case. That is deliberately not `z {repo}`: zoxide matches `{repo}` anywhere in a folder's name and prefers the more recently used match, so `z` can land in a `{repo}-<branch>` worktree the presets create next to the checkout — and from inside the checkout itself it always goes somewhere else, because `z` skips the current directory.
+
+The jump is also where the base directory comes in. A freshly installed zoxide has an empty database, so the jump prints `zoxide has not recorded a directory named {repo}`, exits non-zero, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and that message in the terminal is the only sign.
 
 With a base directory, that same button falls through to the folder and clones the repository when it isn't there — which also covers not having zoxide at all, since `command not found` fails the same way. Cloning goes through `gh`, so it follows your `gh` protocol and auth settings and works for private repositories.
 
@@ -282,13 +284,13 @@ Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLA
 
 **claude input isn't delivered on Warp** — Typed input (every `!` input, so all four shipped presets that schedule claude input) needs the Accessibility permission; a lone plain-text input, which rides in the opening message, does not. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
 
-**A claude input was typed instead of riding in the opening message** — That is the normal path for anything with a `!`, a slash command or a `#` line in the list: only a list holding exactly one plain-text input is appended to the command (two plain lines would need a newline between them, so they are typed). If a single plain-text input is still being typed, the command has to end in a bare `claude` (no trailing flag, redirect, pipe or comment), every word of it has to be readable and safe as a command name (`git add .`, `-m 'msg'`, `export …` and `PATH=…` all stop it), the message must be single-line, your login shell has to be POSIX-family, and `claude` has to be a real executable rather than a function or an alias.
+**A claude input was typed instead of riding in the opening message** — That is the normal path for anything with a `!`, a slash command or a `#` line in the list: only a list holding exactly one plain-text input is appended to the command (two plain lines would need a newline between them, so they are typed). If a single plain-text input is still being typed, the command has to end in a bare `claude` (no trailing flag, redirect, pipe or comment), every word you wrote has to be readable and safe as a command name (`git add .`, `-m 'msg'`, `export …` and `PATH=…` all stop it; the app's own `{cd}` clause counts as one plain word), the message must be single-line, your login shell has to be POSIX-family, and `claude` has to be a real executable rather than a function or an alias.
 
 **Permission prompts again after rebuilding** — Ad-hoc signing means a build whose code changed also changes the signing identity; allow the Automation prompt once more. The Accessibility grant fails worse than that: the old entry stays listed in System Settings with its switch on but no longer applies, and toggling it does not revive it. `./install.sh` compares the installed and freshly built code hashes and, only when they differ, resets that entry so you can grant it again — it matters only if you use Warp claude input. If the reset can't run, the script prints the single command to run yourself instead of doing anything interactive.
 
-**`zoxide: no match found`, and nothing after it runs** — zoxide has never recorded that repository, so the first clause of the command fails and the `&&` chain stops there. The app can't see this: the command was delivered and died inside your shell, so the button still reports success. Set a **repository base folder** in the setup window and the command falls through to `<base>/<repo>`, cloning it when missing — or `cd` into the repository once by hand, which is what teaches zoxide. See [Getting into the repository](#getting-into-the-repository).
+**`zoxide has not recorded a directory named …`, and nothing after it runs** — zoxide has no folder of exactly that name: you haven't `cd`'d into the repository since installing zoxide, or your clone's folder is named differently from the repository. The first clause of the command fails and the `&&` chain stops there. The app can't see this: the command was delivered and died inside your shell, so the button still reports success. Set a **repository base folder** in the setup window and the command falls through to `<base>/<repo>`, cloning it when missing — or `cd` into the repository once by hand, which is what teaches zoxide. See [Getting into the repository](#getting-into-the-repository).
 
-**`z` doesn't work** — Make sure your terminal uses a login shell and zoxide/z is set up in your shell config (`.zshrc`, `.bashrc`). A base folder covers this case too, since a missing `z` fails the same way a cold database does.
+**`command not found: zoxide`** — Make sure zoxide is installed, your terminal uses a login shell that has it on its `PATH`, and `eval "$(zoxide init zsh)"` (or your shell's equivalent) is in your shell config — without the init line zoxide never learns new folders. A base folder covers this case too, since a missing zoxide fails the same way an empty database does.
 
 **Buttons don't appear** — GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
 

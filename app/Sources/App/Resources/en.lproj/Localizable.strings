@@ -18,9 +18,9 @@
 "app.automation.targetNotRunning" = "Cannot check while iTerm2 is not running — pressing [%@] launches it";
 "app.automation.unknown" = "Status check failed (OSStatus %d)";
 "app.baseDir.missingFolder" = "%@ — this folder does not exist yet. It is created on the first clone";
-"app.baseDir.notConfigured" = "Not set — jumps with z alone. In a repository zoxide has never recorded, the command does nothing";
+"app.baseDir.notConfigured" = "Not set — jumps with zoxide alone. In a repository zoxide has never recorded, the command does nothing";
 "app.baseDir.notSaved" = "Not saved — %@";
-"app.baseDir.ok" = "%@ — where a failed z lands, and where a missing repository is cloned";
+"app.baseDir.ok" = "%@ — where a failed zoxide jump lands, and where a missing repository is cloned";
 "app.baseDir.placeholder" = "e.g. ~/Codes";
 "app.baseDir.reason.invalidCharacters" = "it contains characters that are unsafe in a shell, such as spaces or non-ASCII letters";
 "app.baseDir.reason.notAbsolute" = "it is not an absolute path";
@@ -37,7 +37,7 @@
 "app.button.restartNow" = "Restart Now";
 "app.button.runInTerminal" = "Run in Terminal";
 "app.button.showSetupGuide" = "Show Setup Guide Again";
-"app.card.baseDir.help" = "The top-level folder you clone repositories into. When z cannot jump (no zoxide history, or no zoxide at all) the command moves into the repository under this folder, and clones it with gh when it is not there. Leave it empty to keep jumping with z alone, exactly as before.";
+"app.card.baseDir.help" = "The top-level folder you clone repositories into. When zoxide cannot jump (no folder recorded under the repository's exact name, or no zoxide at all) the command moves into the repository under this folder, and clones it with gh when it is not there. Leave it empty to jump with zoxide alone.";
 "app.card.baseDir.legacyNote" = "Buttons saved by an earlier version keep the command they stored — choosing a folder does not add the fallback to them. Open the extension options page and an update notice appears at the top; review each button and save to apply it.";
 "app.card.baseDir.title" = "Repository base folder";
 "app.card.chrome.title" = "Chrome connection (Native Host)";
@@ -131,6 +131,6 @@
 "app.tools.claude.advice" = "Command not found — buttons that schedule claude input cannot deliver it.";
 "app.tools.claudeWrapper.advice" = "claude could not be found as an executable, so claude input is not merged into the command (it may be installed only as a function or an alias, PATH may hold a relative entry, or the file may not be executable) — the input is typed into the session instead, which on Warp needs the Accessibility permission.";
 "app.tools.gh.advice" = "Command not found — the gh presets on issue buttons fail, and so does the clone step of the repository base folder. Run brew install gh, then gh auth login.";
-"app.tools.z.adviceNoBaseDir" = "Command not found — every button fails, because the default command starts with z. Run brew install zoxide and add eval \"$(zoxide init zsh)\" to ~/.zshrc, or set the “Repository base folder” below.";
-"app.tools.z.adviceWithBaseDir" = "Command not found — the buttons still work, since they fall back to the repository base folder. Installing zoxide also lets them jump to repositories outside that folder (brew install zoxide).";
+"app.tools.zoxide.adviceNoBaseDir" = "Command not found — every button fails, because the default commands move into the repository with zoxide. Run brew install zoxide and add eval \"$(zoxide init zsh)\" to ~/.zshrc, or set the “Repository base folder” below.";
+"app.tools.zoxide.adviceWithBaseDir" = "Command not found — the buttons still work, since they fall back to the repository base folder. Installing zoxide also lets them jump to repositories outside that folder (brew install zoxide).";
 "app.window.title" = "Terminal Checkout Setup";

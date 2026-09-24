@@ -58,9 +58,11 @@ const MIGRATIONS = [
     // The effect is declared per *candidate kind*, because the two make very different promises.
     //
     // Replacing a preset we shipped, byte for byte, is unconditional: we know the entire command.
-    // With no base directory the render is identical; with one, the fallbacks come from a setting
-    // the user switched on themselves, and `{cd}` is how that setting was always meant to reach the
-    // command — the rewrite is the wiring, not the decision.
+    // With no base directory `{cd}` jumps to the folder named exactly `{repo}` — the checkout every
+    // later clause of those presets assumes it stands in, where `z {repo}` could land in one of their
+    // own `{repo}-<branch>` worktrees; with one, the fallbacks come from a setting the user switched
+    // on themselves, and `{cd}` is how that setting was always meant to reach the command — the
+    // rewrite is the wiring, not the decision.
     verbatimEffect: 'unconditional',
     // Replacing the first clause of a command someone else wrote is not, because the rest of it is
     // arbitrary and will now run somewhere else. `z {repo} && git clean -fdx` did nothing when the

@@ -5,6 +5,24 @@ import Foundation
 public struct ResolvedRequest {
     public let command: String
     public let claudeInputs: [String]
+    /// `command` with every app-assembled fragment (`{cd}`) standing in as the one simple command
+    /// it is — what `commandAcceptsAppendedClaudePrompt` judges instead of `command`.
+    ///
+    /// That scanner exists to judge syntax the **user** wrote, and it folds on anything it does not
+    /// model. The zoxide jump needs a command substitution, a variable, quotes and `command`, each of
+    /// which folds it, so judging the real text would move every `{cd} && claude` button's argv
+    /// prompt to typing (and on Warp, behind the Accessibility permission). The stand-in is earned
+    /// the way the whitelist exemption is: the fragment is built only by `repoEntryCommand` from
+    /// validated values, defines no function or alias, touches no `PATH`, and is one closed
+    /// `{ …; }` group — `RepoEntryRuntimeTests` runs it with an appended prompt in real shells.
+    public let commandJudgedForAppendedPrompt: String
+
+    /// A request built without app fragments is judged as it is written.
+    public init(command: String, claudeInputs: [String], commandJudgedForAppendedPrompt: String? = nil) {
+        self.command = command
+        self.claudeInputs = claudeInputs
+        self.commandJudgedForAppendedPrompt = commandJudgedForAppendedPrompt ?? command
+    }
 }
 
 /// The maximum number of item requests one batch may carry. The extension will mirror this value
@@ -22,8 +40,7 @@ public let batchResponseDeadlineExceededMessage = "not launched — response dea
 ///
 /// `baseDirectory` follows the same rule — the app hands over **only the stored string**, and
 /// validation, normalization, and fragment assembly all happen here in Core. An empty string means
-/// not configured, and the rendered result is then byte-identical to what it was before this
-/// feature existed.
+/// not configured, and `{cd}` is then the zoxide jump with no fallback behind it.
 public func resolveRequest(
     _ json: [String: Any], baseDirectory: String = ""
 ) throws -> ResolvedRequest {
@@ -143,6 +160,11 @@ private func resolveRequestItem(
         template: commandTemplate, variables: variables, appVariables: appVariables
     )
     try rejectNUL(in: command, what: templateWireKey)
+    // Each fragment stands in as its own name — `{cd}` as `cd`, a plain simple command
+    let judged = try renderCommand(
+        template: commandTemplate, variables: variables,
+        appVariables: Dictionary(uniqueKeysWithValues: appVariables.keys.map { ($0, $0) })
+    )
 
     var claudeInputs: [String] = []
     for text in claudeInputTemplates {
@@ -159,7 +181,9 @@ private func resolveRequestItem(
         guard !rendered.isEmpty else { continue }
         claudeInputs.append(rendered)
     }
-    return ResolvedRequest(command: command, claudeInputs: claudeInputs)
+    return ResolvedRequest(
+        command: command, claudeInputs: claudeInputs, commandJudgedForAppendedPrompt: judged
+    )
 }
 
 /// A NUL cannot be delivered faithfully by either route: on the argv track command substitution

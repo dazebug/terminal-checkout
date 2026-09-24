@@ -4,10 +4,11 @@
 // The content script, the service worker, and the options page all load this file first.
 
 // Every preset opens with `{cd}` — the clause that moves into the repository. Its value comes from
-// the app, not from this file: with no base directory configured it is exactly `z {repo}`, and with
-// one configured it falls back to `cd <base>/<repo>` and
-// then to cloning. A bare `z {repo}` exits non-zero on a cold zoxide DB, which kills the whole `&&`
-// chain with nothing to see anywhere (issue #30).
+// the app, not from this file: a zoxide jump to the folder named exactly `{repo}` (never `z {repo}`,
+// which also lands in the `{repo}-<branch>` worktrees these presets create), and with a base
+// directory configured it falls back to `cd <base>/<repo>` and then to cloning. A bare `z {repo}`
+// exits non-zero on a cold zoxide DB, which kills the whole `&&` chain with nothing to see anywhere
+// (issue #30).
 //
 // A preset is *named* by its `id` and *shown* by its `name` and `face`. Those last two are display
 // text and will be translated, so nothing may find a preset by them: the dropdown's value, and the
