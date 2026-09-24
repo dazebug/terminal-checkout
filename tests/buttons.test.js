@@ -348,9 +348,8 @@ test('pageTypeOf: no verdict without a repository name', () => {
 
 // Past the path, "GitHub drew this as a repository" is read from the crumb in its banner: content.js
 // attaches the repository buttons to it and background.js lets an icon click run only where it
-// exists. Each file used to spell `header[role="banner"]` itself, so when GitHub's redesigned header
-// dropped the attribute, every repository button and every icon click stopped together — and a fix
-// to one file would have left the other on the old header. The source half is a lint over
+// exists. Both take the selectors from defaults.js — a spelling of their own lets the fix for
+// GitHub's next header change reach one file and not the other. The source half is a lint over
 // spellings; which element GitHub draws is settled in a real browser.
 test('the repository crumb selectors have one home, and both readers take them from it', () => {
   const { repoCrumbSelectors } = vm.runInThisContext('({ repoCrumbSelectors })');

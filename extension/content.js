@@ -912,8 +912,8 @@ const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        // Insert the buttons if the added node is, or contains, a relevant element. GitHub sometimes
-        // replaces its whole banner after the page loads (seen 8s in), taking the repository buttons with it.
+        // Insert the buttons if the added node is, or contains, a relevant element. GitHub can replace
+        // its whole banner after the page loads (seen once, 8s in), taking the repository buttons with it.
         if (node.classList?.contains('gh-header-actions') ||
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
