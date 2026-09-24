@@ -284,6 +284,25 @@ function pageTypeOf(pathname) {
   return new RegExp(`^/[^/]+/[^/]+/(${REPO_TABS})`).test(pathname) ? 'repo' : null;
 }
 
+// The DOM half of the same verdict: a page GitHub drew as a repository carries the repository's
+// crumb in its banner — the lock icon when private, the link to the repository otherwise — and a 404
+// has neither (measured). content.js attaches the repository buttons to the first match, and the
+// worker lets an icon click run only where one exists, passing these into the page as an argument
+// because chrome.scripting injects a function without anything around it.
+//
+// Find the banner as a landmark, never by an attribute GitHub happens to write: the redesigned
+// header dropped `role="banner"` and left the role implicit (measured 2026-09-24), which HTML gives
+// a <header> outside <main> and sectioning content. The page header inside <main> also holds the
+// repository link and lock, and is not the banner.
+const GITHUB_BANNER_SELECTOR = '[role="banner"], header:not(:is(main, article, aside, nav, section) header)';
+
+function repoCrumbSelectors(owner, repo) {
+  return {
+    banner: GITHUB_BANNER_SELECTOR,
+    crumb: ['svg.octicon-lock', `a[href="/${owner}/${repo}"]`],
+  };
+}
+
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;
