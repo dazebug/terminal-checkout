@@ -7,6 +7,7 @@
 - [options-page-reordering.md](options-page-reordering.md) — why claude input rows stay in one card, why a redraw cancels a drag, and why the reorder tooltip key is shared by meaning
 - [testing.md](testing.md) — the typed source-audit boundary, the distinction between a source lint and a runtime oracle, why a gate goes on passing after the thing it describes moves, what a harness that drives its own layout stops measuring, and why options-page help is checked against the variable contract rather than as strings
 - [repository-entry.md](repository-entry.md) — why `{cd}` enters the zoxide folder named exactly `{repo}` instead of running `z {repo}`, why z.sh was dropped, and why the appended-prompt scanner judges `{cd}` as one word
+- [github-page-reading.md](github-page-reading.md) — why the repository buttons find GitHub's header as the banner landmark rather than by an attribute, and why its selectors reach the worker's injected check as an argument
 - [batch-fan-out.md](batch-fan-out.md) — why a whole-batch rejection keeps the app's own error text and hedges about the app's age instead of asserting it
 - [setup-window-placement.md](setup-window-placement.md) — why the window's measured size is applied outside the pass that measured it, and why one layout cycle gets one screen decision
 - [signing-and-permissions.md](signing-and-permissions.md) — the ad-hoc signing churn, and the permission it silently revoked

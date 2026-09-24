@@ -518,15 +518,14 @@ async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
   return { batch, itemKeys };
 }
 
-// Check whether this page really rendered as a repository. Only pages GitHub drew as a repository
-// have the repository name link in the header (a lock icon if it is private); 404s and non-
-// repository paths don't (measured). The path pattern and the reserved word list alone can't tell
-// apart a repository that doesn't exist or a GitHub path that doesn't exist yet.
-// chrome.scripting injects this function on its own, so it cannot reference outer constants or helpers.
-function isRepoPageFromDOM(owner, repo) {
-  const header = document.querySelector('header[role="banner"]');
-  if (!header) return false;
-  return !!(header.querySelector(`a[href="/${owner}/${repo}"]`) || header.querySelector('svg.octicon-lock'));
+// Check whether this page really rendered as a repository, by the crumb `repoCrumbSelectors`
+// (defaults.js) describes. The path pattern and the reserved word list alone can't tell apart a
+// repository that doesn't exist or a GitHub path that doesn't exist yet.
+// chrome.scripting injects this function on its own, so it cannot reference outer constants or
+// helpers — the selectors arrive as its argument.
+function isRepoPageFromDOM({ banner, crumb }) {
+  const header = document.querySelector(banner);
+  return !!header && crumb.some(selector => header.querySelector(selector));
 }
 
 // A button click doesn't need this check — the content script only attaches buttons once it has
@@ -537,7 +536,7 @@ async function isRepoPage(tab, owner, repo) {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: isRepoPageFromDOM,
-      args: [owner, repo],
+      args: [repoCrumbSelectors(owner, repo)],
     });
     return results[0]?.result === true;
   } catch (error) {

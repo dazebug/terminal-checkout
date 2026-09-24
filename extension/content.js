@@ -814,19 +814,15 @@ async function tryInsertIssueButtons() {
 }
 
 // Add the buttons to the repository header (returns true on success)
-async function tryInsertRepoButtons() {
+async function tryInsertRepoButtons(target) {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
 
-  const header = document.querySelector('header[role="banner"]');
-  // Private repository: the breadcrumb item with the lock icon / public: after the repository name link
-  let anchor = header?.querySelector('svg.octicon-lock');
-  if (!anchor) {
-    const pathMatch = location.pathname.match(/^\/([^/]+\/[^/]+)/);
-    if (!pathMatch) return false;
-    anchor = header?.querySelector(`a[href="/${pathMatch[1]}"]`);
-  }
+  // Private repository: the breadcrumb item with the lock icon / public: the repository name link
+  const { banner, crumb } = repoCrumbSelectors(target.owner, target.repo);
+  const header = document.querySelector(banner);
+  const anchor = header && crumb.map(selector => header.querySelector(selector)).find(Boolean);
   if (!anchor) return false;
 
   const buttons = await loadButtonConfigs('repo');
@@ -853,7 +849,7 @@ async function tryInsertButton() {
   let result = false;
 
   // Repository, PR, and issue pages all get the repository buttons in the header
-  result = await tryInsertRepoButtons() || result;
+  result = await tryInsertRepoButtons(target) || result;
 
   // PR and issue pages also get their own custom command buttons (configured separately)
   if (target.kind === 'pr') {
@@ -916,11 +912,14 @@ const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        // Insert the buttons if the added node is, or contains, a relevant element
+        // Insert the buttons if the added node is, or contains, a relevant element. GitHub can replace
+        // its whole banner after the page loads (seen once, 8s in), taking the repository buttons with it.
         if (node.classList?.contains('gh-header-actions') ||
             node.classList?.contains('AppHeader-context-full') ||
             node.querySelector?.('.gh-header-actions') ||
             node.querySelector?.('.AppHeader-context-full') ||
+            node.matches?.(GITHUB_BANNER_SELECTOR) ||
+            node.querySelector?.(GITHUB_BANNER_SELECTOR) ||
             (listKind && readListRows(node, listKind, target).length > 0)) {
           tryInsertButton();
           return;

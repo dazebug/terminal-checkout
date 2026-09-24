@@ -346,6 +346,23 @@ test('pageTypeOf: no verdict without a repository name', () => {
   assert.equal(pageTypeOf('/dazebug'), null);
 });
 
+// Past the path, "GitHub drew this as a repository" is read from the crumb in its banner: content.js
+// attaches the repository buttons to it and background.js lets an icon click run only where it
+// exists. Both take the selectors from defaults.js — a spelling of their own lets the fix for
+// GitHub's next header change reach one file and not the other. The source half is a lint over
+// spellings; which element GitHub draws is settled in a real browser.
+test('the repository crumb selectors have one home, and both readers take them from it', () => {
+  const { repoCrumbSelectors } = vm.runInThisContext('({ repoCrumbSelectors })');
+  const { crumb } = repoCrumbSelectors('dazebug', 'terminal-checkout');
+  // Lock first: the buttons attach to the first match, and a private repository's crumb holds both
+  assert.deepEqual(crumb, ['svg.octicon-lock', 'a[href="/dazebug/terminal-checkout"]']);
+  for (const file of ['content.js', 'background.js']) {
+    const source = readExtension(file);
+    assert.match(source, /repoCrumbSelectors\(/, `${file} does not read the shared selectors`);
+    assert.doesNotMatch(source, /octicon-lock|role="banner"/, `${file} spells a crumb selector of its own`);
+  }
+});
+
 // Every preset that carries claude inputs is `!`-only, so its whole run merges into ONE typed
 // line (one type/submit cycle, one model turn). That property lives in the Swift join gate, so
 // nothing on this side would notice a preset drifting out of the shape — and a preset gaining a
