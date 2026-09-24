@@ -290,10 +290,10 @@ function pageTypeOf(pathname) {
 // worker lets an icon click run only where one exists, passing these into the page as an argument
 // because chrome.scripting injects a function without anything around it.
 //
-// Find the banner as a landmark, never by an attribute GitHub happens to write: the redesigned
-// header dropped `role="banner"` and left the role implicit (measured 2026-09-24), which HTML gives
-// a <header> outside <main> and sectioning content. The page header inside <main> also holds the
-// repository link and lock, and is not the banner.
+// Find the banner as a landmark, declared or implicit — never by the attribute alone: the
+// redesigned header dropped `role="banner"` and left the role implicit (measured 2026-09-24), which
+// HTML gives a <header> outside <main> and sectioning content. The page header inside <main> also
+// holds the repository link and lock, and is not the banner.
 const GITHUB_BANNER_SELECTOR = '[role="banner"], header:not(:is(main, article, aside, nav, section) header)';
 
 function repoCrumbSelectors(owner, repo) {
