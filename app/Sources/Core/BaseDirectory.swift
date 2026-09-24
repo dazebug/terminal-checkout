@@ -3,11 +3,10 @@ import Foundation
 /// The base directory — the top-level folder the user clones repositories into.
 ///
 /// Command templates open by moving into the repository. When zoxide has never recorded the
-/// repository, that jump exits non-zero and the whole `&&` chain dies (issue #30, back when the
-/// clause was a bare `z {repo}` failing with `zoxide: no match found`). The app cannot observe a
-/// failure inside the user's shell, so the button still reports success. Hence a fallback rather
-/// than detection: if the jump fails, `cd` into the base directory, and if the repository isn't
-/// there either, clone it.
+/// repository, that jump exits non-zero and the whole `&&` chain dies (issue #30). The app cannot
+/// observe a failure inside the user's shell, so the button still reports success. Hence a fallback
+/// rather than detection: if the jump fails, `cd` into the base directory, and if the repository
+/// isn't there either, clone it.
 ///
 /// The app owns this value; the extension gets no way to specify it. Paths differ per machine
 /// while extension settings ride `storage.sync` across an account — synced, the value would be
@@ -91,30 +90,22 @@ public func repoEntryCommand(repo: String, owner: String?, baseDirectory: String
 /// Moves into the folder zoxide has recorded under **exactly** the repository's name — the
 /// highest-scoring one when there are several — and fails, saying so, when there is none.
 ///
-/// It is never `z <repo>`. zoxide matches the last keyword anywhere inside a path's last component
-/// and has no way to anchor its end (`filter_by_keywords`, v0.10.0 and main), so `z remy` also
-/// matches the `remy-<branch>` worktrees the presets create next to the checkout, and the higher
-/// frecency wins — a worktree used in the last hour scores four times its rank. And `z` excludes the
-/// current directory from its candidates, so from inside `remy` it lands in a worktree even when
-/// `remy` scores ten times higher. Before asking zoxide at all, `z` tries its argument as a folder
-/// relative to the current directory, so from inside a checkout whose package folder shares its
-/// name it enters `remy/remy` (all three measured).
+/// Never `z <repo>`: zoxide cannot anchor a match to the end of a folder name, so `z` also lands in
+/// the `<repo>-<branch>` worktrees the presets create (the measured routes are in
+/// `docs/context/repository-entry.md`).
 ///
 /// - `zoxide query --list` prints every match, highest score first, skipping folders that no
-///   longer exist. It is asked without `--exclude`, so already standing in the repository is a
-///   match rather than a reason to go elsewhere.
-/// - The match ignores case, as zoxide's own does. `.` is the one character the value whitelist
-///   lets through that grep reads as a wildcard, so it is escaped; zoxide's keyword is a plain
-///   substring and stays as it is. `command grep` keeps a `grep --color=always` alias from
-///   painting escape codes into the path.
-/// - The result goes through a variable, and `&&`, because `cd ""` **succeeds** in zsh 5.9 and bash
-///   3.2 (measured): `cd -- "$(…)"` would leave the chain running wherever the tab opened.
-/// - The message is the only thing on screen that says why the chain stopped when no base
-///   directory catches the failure: `zoxide query --list` itself prints nothing and exits 0 when
-///   nothing matches (measured). It is ASCII because it is typed into a shell, never translated.
+///   longer exist. Do not add `--exclude`: standing in the repository has to count as a match.
+/// - The match ignores case, as zoxide's does. `.` is the one whitelisted character grep reads as a
+///   wildcard, so it is escaped; `command grep` keeps a `grep --color=always` alias from painting
+///   escape codes into the path.
+/// - Do not collapse this to `cd -- "$(…)"` — `cd ""` succeeds in zsh 5.9 and bash 3.2 (measured),
+///   and the chain would run wherever the tab opened.
+/// - `zoxide query --list` prints nothing and exits 0 on no match (measured), so the clause prints
+///   the only line that explains a stopped chain. It is ASCII because it is typed into a shell.
 ///
-/// The variable `tc_dir` stays set in the user's shell afterwards. The appended-prompt scanner never
-/// sees any of this syntax — see `commandJudgedForAppendedPrompt` on `ResolvedRequest`.
+/// `tc_dir` stays set in the user's shell. The appended-prompt scanner never sees this syntax
+/// (`ResolvedRequest.commandJudgedForAppendedPrompt`), so keep the fragment one closed group.
 private func zoxideExactJump(repo: String) -> String {
     let pattern = repo.replacingOccurrences(of: ".", with: "\\.")
     return "{ tc_dir=$(zoxide query --list -- \(repo) | command grep -i -m1 '/\(pattern)$'"

@@ -5,16 +5,15 @@ import Foundation
 public struct ResolvedRequest {
     public let command: String
     public let claudeInputs: [String]
-    /// `command` with every app-assembled fragment (`{cd}`) standing in as the one simple command
-    /// it is — what `commandAcceptsAppendedClaudePrompt` judges instead of `command`.
+    /// `command` with each app-assembled fragment (`{cd}`) replaced by its own name — what
+    /// `commandAcceptsAppendedClaudePrompt` judges instead of `command`.
     ///
-    /// That scanner exists to judge syntax the **user** wrote, and it folds on anything it does not
-    /// model. The zoxide jump needs a command substitution, a variable, quotes and `command`, each of
-    /// which folds it, so judging the real text would move every `{cd} && claude` button's argv
-    /// prompt to typing (and on Warp, behind the Accessibility permission). The stand-in is earned
-    /// the way the whitelist exemption is: the fragment is built only by `repoEntryCommand` from
-    /// validated values, defines no function or alias, touches no `PATH`, and is one closed
-    /// `{ …; }` group — `RepoEntryRuntimeTests` runs it with an appended prompt in real shells.
+    /// That scanner judges syntax the user wrote, and the zoxide jump's `$(…)`, quotes, assignment
+    /// and `command` would each fold it, moving every `{cd} && claude` argv prompt to typing. The
+    /// stand-in holds only while a fragment stays what `repoEntryCommand` builds: validated values in
+    /// one closed `{ …; }` group that defines no function or alias and touches no `PATH`.
+    /// `RepoEntryRuntimeTests` runs it with an appended prompt; the decision is in
+    /// `docs/context/repository-entry.md`.
     public let commandJudgedForAppendedPrompt: String
 
     /// A request built without app fragments is judged as it is written.

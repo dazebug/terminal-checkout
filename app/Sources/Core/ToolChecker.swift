@@ -31,7 +31,7 @@ public func loginShellPath() -> String {
 /// The shell script that makes the shell answer two questions per tool, one marker line each.
 /// `tools` receives code constants only — putting user input in here would be shell injection.
 ///
-/// `TC_OK` means "typing that name calls something" and **includes functions and aliases** (zoxide's `z` is exactly that case, and `claude` sometimes is). `TC_EXE` means **`command <name>` has an actual file to run**. Why they are separate: the merge path invokes `command claude`, and `command` skips functions and aliases, so on an install like `alias claude='npx …'` `TC_OK` is true while the merged command dies with command not found.
+/// `TC_OK` means "typing that name calls something" and **includes functions and aliases** (`claude` sometimes is one). `TC_EXE` means **`command <name>` has an actual file to run**. Why they are separate: the merge path invokes `command claude`, and `command` skips functions and aliases, so on an install like `alias claude='npx …'` `TC_OK` is true while the merged command dies with command not found.
 ///
 /// Why `TC_EXE` is asked of a **child `/bin/sh`** (measured):
 ///  - In the login shell, `command -v` returns just the name when a function or alias shadows it. But if that is a **wrapper around a real file**, `command claude` runs that file — a case where merging is fine. A child shell, which reads no rc, answers with the file itself.

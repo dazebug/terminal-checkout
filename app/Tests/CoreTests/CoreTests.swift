@@ -142,10 +142,8 @@ private let remyEntryJump = "{ tc_dir=$(zoxide query --list -- remy | command gr
 final class RepoEntryCommandTests: XCTestCase {
     private let base = "/Users/x/Codes"
 
-    // Never `z remy`: zoxide matches `remy` anywhere in the last path component and ranks by
-    // frecency, so a sibling worktree the presets themselves create (`remy-fix_x`) wins once it was
-    // used more recently — and `z` drops the current directory from its candidates, so from inside
-    // `remy` it lands in a worktree even when `remy` scores ten times higher (both measured)
+    // Never `z remy`: it also lands in the `remy-<branch>` worktrees the presets create
+    // (docs/context/repository-entry.md)
     func testWithoutBaseDirectoryTheEntryIsTheExactZoxideJump() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: ""),
@@ -645,10 +643,8 @@ final class RequestTests: XCTestCase {
         )
     }
 
-    // The lookup needs a command substitution, a variable, quotes and `command` — every one of
-    // them folds the appended-prompt scanner, which exists to judge syntax the *user* wrote. The
-    // fragment is ours, so it is judged as the one simple command it stands for; without that,
-    // every `{cd} && claude` button would lose its argv prompt to typing
+    // The jump's `$(…)`, quotes, assignment and `command` would each fold the appended-prompt
+    // scanner; judged as the word it stands for, `{cd}` keeps a claude button's argv prompt
     func testTheEntryClauseDoesNotCostAClaudeButtonItsArgvPrompt() throws {
         for baseDirectory in ["", "/Users/x/Codes"] {
             let prepared = prepareRequest(try resolveRequest([
