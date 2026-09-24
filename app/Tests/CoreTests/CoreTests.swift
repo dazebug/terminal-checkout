@@ -134,15 +134,20 @@ final class BaseDirectoryTests: XCTestCase {
 
 // MARK: - Repository entry clause assembly (the value of {cd})
 
+/// The entry jump for `remy`, spelled out once so every test that pins it compares the same bytes
+private let remyEntryJump = "{ tc_dir=$(zoxide query --list -- remy | command grep -i -m1 '/remy$'"
+    + " || { echo 'zoxide has not recorded a directory named remy' >&2; false; })"
+    + " && cd -- \"$tc_dir\"; }"
+
 final class RepoEntryCommandTests: XCTestCase {
     private let base = "/Users/x/Codes"
 
-    // For a user with no base directory the command must be **byte-identical** to before this
-    // change
-    func testWithoutBaseDirectoryTheEntryIsExactlyTodaysFirstClause() throws {
+    // Never `z remy`: it also lands in the `remy-<branch>` worktrees the presets create
+    // (docs/context/repository-entry.md)
+    func testWithoutBaseDirectoryTheEntryIsTheExactZoxideJump() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: ""),
-            "z remy"
+            remyEntryJump
         )
     }
 
@@ -152,18 +157,18 @@ final class RepoEntryCommandTests: XCTestCase {
     func testBaseDirectoryAddsCdThenCloneFallback() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base),
-            "{ z remy || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
         )
     }
 
-    // Without an owner there is no clone address — drop the clause and chain z→cd only
+    // Without an owner there is no clone address — drop the clause and chain jump→cd only
     func testWithoutOwnerTheCloneClauseIsOmitted() throws {
         let cmd = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: base)
         XCTAssertEqual(
             cmd,
-            "{ z remy || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
         )
         XCTAssertFalse(cmd.contains("clone"))
@@ -172,28 +177,51 @@ final class RepoEntryCommandTests: XCTestCase {
     func testEmptyOwnerCountsAsAbsent() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: "", baseDirectory: base),
-            "{ z remy || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; }; }"
         )
     }
 
-    // ( … ) is a subshell, so a cd inside it does not stick in the current shell — grouping is
-    // { …; } and nothing else
-    func testGroupingNeverUsesASubshell() throws {
-        for owner in ["frograms", ""] {
-            let cmd = try repoEntryCommand(repo: "remy", owner: owner, baseDirectory: base)
-            XCTAssertFalse(cmd.contains("("), "subshell grouping leaked in: \(cmd)")
-            XCTAssertFalse(cmd.contains(")"), "subshell grouping leaked in: \(cmd)")
+    // A cd inside ( … ) or $( … ) runs in a subshell and does not stick in the current shell.
+    // The lookup does need one command substitution, so the check is on where each `cd` sits
+    func testEveryCdRunsInTheCurrentShell() throws {
+        for baseDirectory in ["", base] {
+            for owner in ["frograms", ""] {
+                let cmd = try repoEntryCommand(repo: "remy", owner: owner, baseDirectory: baseDirectory)
+                let chars = Array(cmd)
+                var depth = 0
+                var cdCount = 0
+                for (index, character) in chars.enumerated() {
+                    if character == "(" { depth += 1 }
+                    if character == ")" { depth -= 1 }
+                    let atWordStart = index == 0 || chars[index - 1] == " "
+                    if atWordStart, cmd[cmd.index(cmd.startIndex, offsetBy: index)...].hasPrefix("cd ") {
+                        cdCount += 1
+                        XCTAssertEqual(depth, 0, "a cd runs in a subshell: \(cmd)")
+                    }
+                }
+                XCTAssertEqual(depth, 0, "unbalanced parentheses: \(cmd)")
+                XCTAssertGreaterThan(cdCount, 0, cmd)
+            }
         }
     }
 
-    // The base directory must not override a jump z made successfully — z is always the first
-    // clause
-    func testZComesFirst() throws {
+    // The base directory must not override a jump zoxide made successfully — the jump is always
+    // the first clause
+    func testTheZoxideJumpComesFirst() throws {
         XCTAssertTrue(
             try repoEntryCommand(repo: "remy", owner: "frograms", baseDirectory: base)
-                .hasPrefix("{ z remy || ")
+                .hasPrefix("{ \(remyEntryJump) || ")
         )
+    }
+
+    // `.` is the one character the value whitelist lets through that grep reads as a wildcard, so
+    // `socket.io` must not match `socketXio`; zoxide's own keyword is a plain substring and stays
+    // as it is
+    func testADotInTheNameIsLiteralInTheExactMatch() throws {
+        let cmd = try repoEntryCommand(repo: "socket.io", owner: nil, baseDirectory: "")
+        XCTAssertTrue(cmd.contains("zoxide query --list -- socket.io |"), cmd)
+        XCTAssertTrue(cmd.contains("'/socket\\.io$'"), cmd)
     }
 
     // The reason for the fallback has to stay readable on screen — suppressing stderr would take
@@ -227,8 +255,174 @@ final class RepoEntryCommandTests: XCTestCase {
     func testRootBaseDirectoryDoesNotDoubleTheSlash() throws {
         XCTAssertEqual(
             try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "/"),
-            "{ z remy || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
+            "{ \(remyEntryJump) || { git -C /remy rev-parse --git-dir >/dev/null && cd /remy; }; }"
         )
+    }
+}
+
+// MARK: - The entry clause in real shells
+
+/// The entry clause run by real shells against a stub `zoxide`. A byte pin cannot tell whether the
+/// shell lands where the clause means to — the repository folder, not a worktree ranked above it —
+/// or whether it stays put when nothing matches: zsh and bash 3.2 answer `cd ""` with success
+/// (measured), so a clause that fed an empty lookup straight to `cd` would pass every string test
+/// and leave the rest of the chain running in whatever folder the tab opened in.
+final class RepoEntryRuntimeTests: XCTestCase {
+    private var root = ""
+    private var shells: [String] {
+        ["/bin/zsh", "/bin/bash", "/bin/sh", "/bin/dash"].filter {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+    }
+
+    override func setUpWithError() throws {
+        var template = Array("/tmp/tc-entry.XXXXXX".utf8CString)
+        let created = try XCTUnwrap(mkdtemp(&template).map { String(cString: $0) })
+        // The physical path (`/private/tmp/…`): a child that cannot inherit the shell's logical
+        // PWD reports the physical one, and the stub claude below prints what its child sees
+        let resolved = try XCTUnwrap(realpath(created, nil))
+        defer { free(resolved) }
+        root = String(cString: resolved)
+        for folder in ["bin", "Codes/remy", "Codes/remy-fix_x", "Codes/socket.io", "Codes/socketXio"] {
+            try FileManager.default.createDirectory(
+                atPath: "\(root)/\(folder)", withIntermediateDirectories: true
+            )
+        }
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(atPath: root)
+    }
+
+    private func writeExecutable(_ name: String, _ body: String) throws {
+        let path = "\(root)/bin/\(name)"
+        try ("#!/bin/sh\n" + body).write(toFile: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+    }
+
+    /// A `zoxide` that answers `query --list -- <keyword>` with `listing`, highest score first —
+    /// the order the real one prints (`Stream::new` sorts by score) — and fails on anything else, so
+    /// a clause that stopped asking for the list would show up here
+    private func stubZoxide(keyword: String, listing: [String]) throws {
+        let lines = listing.map { "\(root)/\($0)" }.joined(separator: "\n")
+        try writeExecutable("zoxide", """
+            [ "$1 $2 $3 $4" = "query --list -- \(keyword)" ] || { echo "unexpected: $*" >&2; exit 2; }
+            printf '%s\\n' '\(lines)'
+            """)
+    }
+
+    private func run(
+        _ script: String, in shell: String, path: String? = nil
+    ) throws -> (status: Int32, stdout: String, stderr: String) {
+        let flags = shell.hasSuffix("zsh") ? ["-f", "-c"] : ["-c"]
+        return try runProcess(
+            shell, flags + ["cd \"$HOME\" && \(script)"],
+            env: ["PATH": path ?? "\(root)/bin:/usr/bin:/bin", "HOME": root], timeout: 10
+        )
+    }
+
+    func testTheRepositoryFolderWinsOverAWorktreeRankedAboveIt() throws {
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy-fix_x", "Codes/remy"])
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("\(jump) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Codes/remy\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    // Falling through to the base directory depends on this exit status, and without a base
+    // directory the message is the only thing on screen that says why the chain stopped
+    func testNothingNamedExactlyTheRepositoryFailsVisiblyAndStaysPut() throws {
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy-fix_x"])
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("\(jump) && echo moved; echo \"exit=$? pwd=$PWD\"", in: shell)
+            XCTAssertEqual(result.stdout, "exit=1 pwd=\(root)\n", shell)
+            XCTAssertTrue(
+                result.stderr.contains("zoxide has not recorded a directory named remy"),
+                "\(shell): \(result.stderr)"
+            )
+        }
+    }
+
+    func testWithoutZoxideTheJumpFailsAndStaysPut() throws {
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run(
+                "\(jump) && echo moved; echo \"exit=$? pwd=$PWD\"", in: shell, path: "/usr/bin:/bin"
+            )
+            XCTAssertEqual(result.stdout, "exit=1 pwd=\(root)\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    // `z` tries its argument as a folder relative to the current directory before asking zoxide,
+    // so from inside a checkout whose package folder shares its name (`remy/remy`) it entered the
+    // package folder (measured). The clause has no such shortcut
+    func testASameNamedFolderInsideTheCheckoutIsNotEntered() throws {
+        try FileManager.default.createDirectory(
+            atPath: "\(root)/Codes/remy/remy", withIntermediateDirectories: true
+        )
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy"])
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("cd Codes/remy && \(jump) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Codes/remy\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    func testADotMatchesOnlyADot() throws {
+        try stubZoxide(keyword: "socket.io", listing: ["Codes/socketXio", "Codes/socket.io"])
+        let jump = try repoEntryCommand(repo: "socket.io", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("\(jump) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Codes/socket.io\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    // zoxide lowercases both sides when it matches; the exact match keeps that, so a clone whose
+    // folder differs from the GitHub name only in case is still found
+    func testTheMatchIgnoresCaseAsZoxideDoes() throws {
+        try FileManager.default.createDirectory(
+            atPath: "\(root)/Other/Remy", withIntermediateDirectories: true
+        )
+        try stubZoxide(keyword: "remy", listing: ["Other/Remy"])
+        let jump = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "")
+        for shell in shells {
+            let result = try run("\(jump) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Other/Remy\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    func testTheBaseDirectoryCatchesAMissingExactEntry() throws {
+        try FileManager.default.createDirectory(
+            atPath: "\(root)/Base/remy", withIntermediateDirectories: true
+        )
+        let initialized = try runProcess("/usr/bin/git", ["init", "-q", "\(root)/Base/remy"], timeout: 20)
+        XCTAssertEqual(initialized.status, 0, initialized.stderr)
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy-fix_x"])
+        let entry = try repoEntryCommand(repo: "remy", owner: nil, baseDirectory: "\(root)/Base")
+        for shell in shells {
+            let result = try run("\(entry) && pwd", in: shell)
+            XCTAssertEqual(result.stdout, "\(root)/Base/remy\n", "\(shell): \(result.stderr)")
+        }
+    }
+
+    // End to end through the append path: the one plain-text input rides claude's argv behind the
+    // new entry clause and arrives in the repository folder
+    func testTheAppendedPromptReachesClaudeInTheRepositoryFolder() throws {
+        try stubZoxide(keyword: "remy", listing: ["Codes/remy-fix_x", "Codes/remy"])
+        try writeExecutable("claude", #"printf '%s\n' "$PWD" "$@""#)
+        let prepared = prepareRequest(try resolveRequest([
+            "command_template": "{cd} && claude", "variables": ["repo": "remy"],
+            "claude_inputs": ["hello there"],
+        ]))
+        XCTAssertEqual(prepared.claudeInputs, [], "the input fell back to typing")
+        for shell in shells {
+            let result = try run(prepared.command, in: shell)
+            XCTAssertEqual(
+                result.stdout, "\(root)/Codes/remy\n--\nhello there\n", "\(shell): \(result.stderr)"
+            )
+        }
     }
 }
 
@@ -424,15 +618,14 @@ final class RequestTests: XCTestCase {
 
     // MARK: {cd} — the shell fragment the app assembles and fills in
 
-    // For a user with no base directory the command must be byte-identical to before this change
-    func testCDWithoutBaseDirectoryRendersTodaysCommand() throws {
+    func testCDWithoutBaseDirectoryRendersTheExactZoxideJump() throws {
         let req: [String: Any] = [
             "command_template": "{cd} && git fetch origin && git checkout {branch}",
             "variables": ["repo": "remy", "owner": "frograms", "branch": "fix/x"],
         ]
         XCTAssertEqual(
             try resolveRequest(req).command,
-            "z remy && git fetch origin && git checkout fix/x"
+            "\(remyEntryJump) && git fetch origin && git checkout fix/x"
         )
     }
 
@@ -443,11 +636,39 @@ final class RequestTests: XCTestCase {
         ]
         XCTAssertEqual(
             try resolveRequest(req, baseDirectory: "/Users/x/Codes").command,
-            "{ z remy || "
+            "{ \(remyEntryJump) || "
                 + "{ git -C /Users/x/Codes/remy rev-parse --git-dir >/dev/null && cd /Users/x/Codes/remy; } || "
                 + "{ gh repo clone frograms/remy /Users/x/Codes/remy && cd /Users/x/Codes/remy; }; }"
                 + " && git fetch origin"
         )
+    }
+
+    // The jump's `$(…)`, quotes, assignment and `command` would each fold the appended-prompt
+    // scanner; judged as the word it stands for, `{cd}` keeps a claude button's argv prompt
+    func testTheEntryClauseDoesNotCostAClaudeButtonItsArgvPrompt() throws {
+        for baseDirectory in ["", "/Users/x/Codes"] {
+            let prepared = prepareRequest(try resolveRequest([
+                "command_template": "{cd} && claude",
+                "variables": ["repo": "remy", "owner": "frograms"],
+                "claude_inputs": ["hello"],
+            ], baseDirectory: baseDirectory))
+            XCTAssertEqual(prepared.claudeInputs, [], baseDirectory)
+            XCTAssertTrue(
+                prepared.command.hasSuffix("; } && command claude -- 'hello'"), prepared.command
+            )
+        }
+    }
+
+    // Only the fragment is stood in for: syntax the user wrote around it is still judged
+    func testUserSyntaxAroundTheEntryClauseIsStillJudged() throws {
+        for template in ["{cd} && eval x && claude", "{cd} && PATH=/tmp/evil claude"] {
+            let prepared = prepareRequest(try resolveRequest([
+                "command_template": template, "variables": ["repo": "remy"],
+                "claude_inputs": ["hello"],
+            ]))
+            XCTAssertEqual(prepared.claudeInputs, ["hello"], template)
+            XCTAssertFalse(prepared.command.contains("hello"), prepared.command)
+        }
     }
 
     // The app is the single source for the base directory — a value the extension sends under the
@@ -483,7 +704,7 @@ final class RequestTests: XCTestCase {
             "command_template": "{cd} && claude", "variables": ["repo": "remy"],
             "claude_inputs": ["!{cd} && git status"],
         ], baseDirectory: "")
-        XCTAssertEqual(r.claudeInputs, ["!z remy && git status"])
+        XCTAssertEqual(r.claudeInputs, ["!\(remyEntryJump) && git status"])
     }
 
     // A corrupted stored value is not silently ignored — the button fails and carries the reason
@@ -505,7 +726,7 @@ final class RequestTests: XCTestCase {
             "command_template": "{cd}", "variables": ["repo": "remy", "owner": "frograms"],
         ], baseDirectory: "/Users/x/Codes").command
         XCTAssertTrue(cmd.contains(" || "), cmd)
-        XCTAssertTrue(cmd.hasPrefix("{ z remy"), cmd)
+        XCTAssertTrue(cmd.hasPrefix("{ \(remyEntryJump)"), cmd)
     }
 }
 
@@ -3198,18 +3419,26 @@ final class ToolCheckTests: XCTestCase {
         // not run (measured: bash and dash do, /bin/sh and zsh do not), so it must not be dropped
         XCTAssertTrue(toolCheckScript(["claude"]).contains("[ -x "), toolCheckScript(["claude"]))
     }
-    // "Without z every button fails" holds only until a base directory is configured. Keeping it
-    // an error afterwards leaves a red line in the setup window of a perfectly fine environment
-    func testZIsCriticalOnlyWhileNoBaseDirectoryIsConfigured() {
-        XCTAssertTrue(toolIsCritical("z", baseDirectoryConfigured: false))
-        XCTAssertFalse(toolIsCritical("z", baseDirectoryConfigured: true))
+    // "Without zoxide every button fails" holds only until a base directory is configured. Keeping
+    // it an error afterwards leaves a red line in the setup window of a perfectly fine environment
+    func testZoxideIsCriticalOnlyWhileNoBaseDirectoryIsConfigured() {
+        XCTAssertTrue(toolIsCritical("zoxide", baseDirectoryConfigured: false))
+        XCTAssertFalse(toolIsCritical("zoxide", baseDirectoryConfigured: true))
+    }
+
+    // The entry clause runs the `zoxide` executable, not the `z` function its init defines — a
+    // z.sh `z` passes a `z` check and still fails every button
+    func testTheCheckedJumpToolIsTheOneTheEntryClauseRuns() throws {
+        XCTAssertTrue(try repoEntryCommand(repo: "r", owner: nil, baseDirectory: "").contains("zoxide query"))
+        XCTAssertTrue(checkedTools.contains("zoxide"))
+        XCTAssertFalse(checkedTools.contains("z"))
     }
 
     // gh and claude are used by some presets only, so either way they are warnings
-    // (gh also appears in the clone clause once a base directory is set, but the z and cd
+    // (gh also appears in the clone clause once a base directory is set, but the jump and cd
     // fallbacks survive without it)
     func testOtherToolsAreNeverCritical() {
-        for tool in ["gh", "claude"] {
+        for tool in ["z", "gh", "claude"] {
             XCTAssertFalse(toolIsCritical(tool, baseDirectoryConfigured: false), tool)
             XCTAssertFalse(toolIsCritical(tool, baseDirectoryConfigured: true), tool)
         }

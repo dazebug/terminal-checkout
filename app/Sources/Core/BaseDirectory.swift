@@ -2,11 +2,11 @@ import Foundation
 
 /// The base directory — the top-level folder the user clones repositories into.
 ///
-/// Command templates open by moving into the repository. When that clause is a bare `z {repo}` and
-/// zoxide's DB has never recorded the repository, it exits non-zero with `zoxide: no match found`
-/// and the whole `&&` chain dies (issue #30). The app cannot observe a failure inside the user's
-/// shell, so the button still reports success. Hence a fallback rather than detection: if `z`
-/// fails, `cd` into the base directory, and if the repository isn't there either, clone it.
+/// Command templates open by moving into the repository. When zoxide has never recorded the
+/// repository, that jump exits non-zero and the whole `&&` chain dies (issue #30). The app cannot
+/// observe a failure inside the user's shell, so the button still reports success. Hence a fallback
+/// rather than detection: if the jump fails, `cd` into the base directory, and if the repository
+/// isn't there either, clone it.
 ///
 /// The app owns this value; the extension gets no way to specify it. Paths differ per machine
 /// while extension settings ride `storage.sync` across an account — synced, the value would be
@@ -46,14 +46,14 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
 
 /// The value of `{cd}` — the clause a command opens with to move into the repository.
 ///
-/// With no base directory configured this is `z <repo>`, **byte-identical** to the preset form.
-/// That equivalence is why the app assembles the clause instead of the presets carrying a path
-/// variable: a path variable would leave every button of an unconfigured user failing with
-/// `Variable {basedir} not provided`.
+/// With no base directory configured this is the zoxide jump alone (`zoxideExactJump`). The app
+/// assembles the clause instead of the presets carrying a path variable because a path variable
+/// would leave every button of an unconfigured user failing with `Variable {basedir} not provided`.
 ///
-/// Configured, it chains `z` → `cd` (guarded) → `clone`. `z` coming first is a rule: the base
-/// directory must not override a jump `z` made successfully. Measured, a cold DB exits 1 and a
-/// missing `z` exits 127, so this one branch covers both.
+/// Configured, it chains jump → `cd` (guarded) → `clone`. The jump coming first is a rule: the base
+/// directory must not override a jump zoxide made successfully. The jump exits non-zero both when
+/// zoxide has no folder of that exact name and when zoxide is missing (measured), so this one
+/// branch covers both.
 ///
 /// The middle clause asks git whether the directory **is a repository** before entering it. Plain
 /// `cd` returns 0 for any directory that exists — an empty one, a scratch folder, someone else's
@@ -62,7 +62,7 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
 /// (measured: with an empty `<base>/<repo>`, an unguarded chain ends up sitting in it).
 ///
 /// Grouping is `{ …; }` only — `( … )` is a subshell, and `cd` inside one does not stick in the
-/// current shell. **stderr is never redirected**: `fatal: not a git repository` and `cannot change
+/// current shell (the jump's one `$( … )` only looks the folder up; its `cd` runs outside it). **stderr is never redirected**: `fatal: not a git repository` and `cannot change
 /// to` are what explain the fallback on screen, and hiding them would hide real failures
 /// (permissions, and so on) along with them. The `>/dev/null` on the guard is stdout only — the
 /// `.git` path git prints on success, which is noise nobody asked for.
@@ -72,12 +72,12 @@ public func normalizedBaseDirectory(_ raw: String) throws -> String? {
 /// `sanitizeValue`, and re-checking the ingredients right here is what earns that exemption.
 public func repoEntryCommand(repo: String, owner: String?, baseDirectory: String) throws -> String {
     let repo = try sanitizeValue(repo)
-    let jump = "z \(repo)"
+    let jump = zoxideExactJump(repo: repo)
     guard let base = try normalizedBaseDirectory(baseDirectory) else { return jump }
 
     let dir = base == "/" ? "/\(repo)" : "\(base)/\(repo)"
     var clauses = [jump, "{ git -C \(dir) rev-parse --git-dir >/dev/null && cd \(dir); }"]
-    // Without an owner there is no clone address — drop the clause and chain z→cd only.
+    // Without an owner there is no clone address — drop the clause and chain jump→cd only.
     // `gh` defers protocol (SSH/HTTPS) and auth to the user's gh config, which covers private
     // repositories too.
     if let owner, !owner.isEmpty {
@@ -85,4 +85,30 @@ public func repoEntryCommand(repo: String, owner: String?, baseDirectory: String
         clauses.append("{ gh repo clone \(cloneOwner)/\(repo) \(dir) && cd \(dir); }")
     }
     return "{ \(clauses.joined(separator: " || ")); }"
+}
+
+/// Moves into the folder zoxide has recorded under **exactly** the repository's name — the
+/// highest-scoring one when there are several — and fails, saying so, when there is none.
+///
+/// Never `z <repo>`: zoxide cannot anchor a match to the end of a folder name, so `z` also lands in
+/// the `<repo>-<branch>` worktrees the presets create (the measured routes are in
+/// `docs/context/repository-entry.md`).
+///
+/// - `zoxide query --list` prints every match, highest score first, skipping folders that no
+///   longer exist. Do not add `--exclude`: standing in the repository has to count as a match.
+/// - The match ignores case, as zoxide's does. `.` is the one whitelisted character grep reads as a
+///   wildcard, so it is escaped; `command grep` keeps a `grep --color=always` alias from painting
+///   escape codes into the path.
+/// - Do not collapse this to `cd -- "$(…)"` — `cd ""` succeeds in zsh 5.9 and bash 3.2 (measured),
+///   and the chain would run wherever the tab opened.
+/// - `zoxide query --list` prints nothing and exits 0 on no match (measured), so the clause prints
+///   the only line that explains a stopped chain. It is ASCII because it is typed into a shell.
+///
+/// `tc_dir` stays set in the user's shell. The appended-prompt scanner never sees this syntax
+/// (`ResolvedRequest.commandJudgedForAppendedPrompt`), so keep the fragment one closed group.
+private func zoxideExactJump(repo: String) -> String {
+    let pattern = repo.replacingOccurrences(of: ".", with: "\\.")
+    return "{ tc_dir=$(zoxide query --list -- \(repo) | command grep -i -m1 '/\(pattern)$'"
+        + " || { echo 'zoxide has not recorded a directory named \(repo)' >&2; false; })"
+        + " && cd -- \"$tc_dir\"; }"
 }

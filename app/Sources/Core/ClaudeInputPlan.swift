@@ -768,7 +768,9 @@ public func prepareRequest(
 
     let typed = claudeTypedInputs(resolved.claudeInputs)
     guard let message = claudeArgvOpeningMessage(resolved.claudeInputs), claudeIsExecutable,
-          commandAcceptsAppendedClaudePrompt(resolved.command),
+          // The judged text differs from `command` only inside app fragments, so its tail — the
+          // `claude` the append rewrites — is the real command's tail
+          commandAcceptsAppendedClaudePrompt(resolved.commandJudgedForAppendedPrompt),
           shellCanRunAppendedPrompt(loginShell),
           // A newline would end the command line early: iTerm2 writes it with `write text` and
           // WezTerm with `send-text`, and both treat a newline as "run this now"

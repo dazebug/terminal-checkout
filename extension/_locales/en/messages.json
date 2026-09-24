@@ -358,10 +358,10 @@
     "message": "This command was edited, so it is left exactly as it is — z {repo} is not its first clause, and rewriting it safely would mean parsing the shell. Replace the leading jump with {cd} yourself if you want the same fallbacks."
   },
   "ext_migration_v1_describe": {
-    "message": "The command opens with {cd} instead of z {repo}. With no repository base folder set in the Terminal Checkout app this runs exactly what it runs today; if you have set one, z failing now falls back to that folder and clones the repository when it is not there."
+    "message": "The command opens with {cd} instead of z {repo}. {cd} jumps with zoxide only to a folder named exactly like the repository, where z could also land in a worktree whose name merely contains it. If you have set a repository base folder in the Terminal Checkout app, a failed jump now falls back to that folder and clones the repository when it is not there."
   },
   "ext_migration_v1_prefixDescribe": {
-    "message": "Your command continues after the jump. With a base folder set, a failed z now lands in the repository folder underneath it, or in a fresh clone — make sure the rest of this command is safe to run there before accepting it."
+    "message": "Your command continues after the jump. The jump now lands only in a folder named exactly like the repository, and with a base folder set, a failed jump lands in the repository folder underneath it, or in a fresh clone — make sure the rest of this command is safe to run there before accepting it."
   },
   "ext_migration_v2_describe": {
     "message": "This generation adds separate buttons for PR and issue list pages; existing commands are not rewritten."
@@ -494,7 +494,7 @@
     }
   },
   "ext_section_pr_migrationHelp": {
-    "message": "Rewrites of presets we shipped are pre-checked. A command you customized is offered <b>unchecked</b> and marked as a behavior change: only its leading jump is replaced, and the rest of it will now run wherever the new entry clause lands. Every preset starts with <code>{cd}</code>. With no base folder set it is just <code>z {repo}</code>; with one, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally."
+    "message": "Rewrites of presets we shipped are pre-checked. A command you customized is offered <b>unchecked</b> and marked as a behavior change: only its leading jump is replaced, and the rest of it will now run wherever the new entry clause lands. Every preset starts with <code>{cd}</code>. It jumps with zoxide to the folder named exactly like the repository, not to a worktree whose name merely contains it as <code>z {repo}</code> could; with a base folder set, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally."
   },
   "ext_section_pr_title": {
     "message": "buttons <span class=\"section-where\">— PR pages</span>"

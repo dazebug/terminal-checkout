@@ -38,7 +38,7 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "terminal") }
     }
 
-    /// The top-level folder repositories are cloned into — where a command moves when `z` fails.
+    /// The top-level folder repositories are cloned into — where a command moves when the zoxide jump fails.
     /// This only **stores the string**; validation, normalization, and fragment assembly all live
     /// in Core (`normalizedBaseDirectory`, `repoEntryCommand`). The extension neither knows nor
     /// sends this value: paths differ per machine while extension settings ride storage.sync

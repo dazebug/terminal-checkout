@@ -11,9 +11,9 @@
 "app.automation.targetNotRunning" = "iTerm2 未執行，無法檢查 — 按 [%@] 會啟動它";
 "app.automation.unknown" = "狀態檢查失敗 (OSStatus %d)";
 "app.baseDir.missingFolder" = "%@ — 該資料夾尚不存在，會在首次 clone 時建立";
-"app.baseDir.notConfigured" = "未設定 — 僅用 z 跳轉。在 zoxide 從未記錄過的儲存庫中，指令不會有任何作用";
+"app.baseDir.notConfigured" = "未設定 — 僅用 zoxide 跳轉。在 zoxide 從未記錄過的儲存庫中，指令不會有任何作用";
 "app.baseDir.notSaved" = "未儲存 — %@";
-"app.baseDir.ok" = "%@ — z 失敗時的落腳處，也是儲存庫缺失時的 clone 目標";
+"app.baseDir.ok" = "%@ — zoxide 跳轉失敗時的落腳處，也是儲存庫缺失時的 clone 目標";
 "app.baseDir.placeholder" = "例如 ~/Codes";
 "app.baseDir.reason.invalidCharacters" = "其中包含在 shell 中不安全的字元，例如空格或非 ASCII 字母";
 "app.baseDir.reason.notAbsolute" = "不是絕對路徑";
@@ -30,7 +30,7 @@
 "app.button.restartNow" = "立即重新啟動";
 "app.button.runInTerminal" = "在終端機中執行";
 "app.button.showSetupGuide" = "再次顯示設定指南";
-"app.card.baseDir.help" = "你複製儲存庫的頂層資料夾。當 z 無法跳轉時（沒有 zoxide 紀錄，或根本沒有 zoxide），指令會進入該資料夾下的儲存庫，若不存在則用 gh 複製。留空則與先前完全一樣，僅用 z 跳轉。";
+"app.card.baseDir.help" = "你複製儲存庫的頂層資料夾。當 zoxide 無法跳轉時（沒有與儲存庫名稱完全相同的資料夾紀錄，或根本沒有 zoxide），指令會進入該資料夾下的儲存庫，若不存在則用 gh 複製。留空則僅用 zoxide 跳轉。";
 "app.card.baseDir.legacyNote" = "由早期版本儲存的按鈕保留它們存下的指令 — 選擇資料夾並不會為它們加上回退。進入擴充功能選項頁，頂部會出現更新提示；逐一檢視按鈕並儲存即可套用。";
 "app.card.baseDir.title" = "儲存庫基準資料夾";
 "app.card.chrome.title" = "Chrome 連線 (Native Host)";
@@ -124,6 +124,6 @@
 "app.tools.claude.advice" = "找不到指令 — 預約了 claude 輸入的按鈕無法傳送它。";
 "app.tools.claudeWrapper.advice" = "找不到作為可執行檔的 claude，因此 claude 輸入不會併入指令（它可能只作為函式或別名安裝、PATH 中可能含有相對路徑項目，或者檔案沒有執行權限）— 輸入改為直接鍵入工作階段，這在 Warp 上需要輔助使用權限。";
 "app.tools.gh.advice" = "找不到指令 — issue 按鈕上的 gh 預設會失敗，儲存庫基準資料夾的複製步驟也會失敗。請執行 brew install gh，然後 gh auth login。";
-"app.tools.z.adviceNoBaseDir" = "找不到指令 — 由於預設指令以 z 開頭，所有按鈕都會失敗。請執行 brew install zoxide 並把 eval \"$(zoxide init zsh)\" 加到 ~/.zshrc，或者設定下面的「儲存庫基準資料夾」。";
-"app.tools.z.adviceWithBaseDir" = "找不到指令 — 按鈕仍然可用，因為它們會回退到儲存庫基準資料夾。安裝 zoxide 還能讓它們跳到該資料夾之外的儲存庫（brew install zoxide）。";
+"app.tools.zoxide.adviceNoBaseDir" = "找不到指令 — 由於預設指令用 zoxide 進入儲存庫，所有按鈕都會失敗。請執行 brew install zoxide 並把 eval \"$(zoxide init zsh)\" 加到 ~/.zshrc，或者設定下面的「儲存庫基準資料夾」。";
+"app.tools.zoxide.adviceWithBaseDir" = "找不到指令 — 按鈕仍然可用，因為它們會回退到儲存庫基準資料夾。安裝 zoxide 還能讓它們跳到該資料夾之外的儲存庫（brew install zoxide）。";
 "app.window.title" = "Terminal Checkout 設定";

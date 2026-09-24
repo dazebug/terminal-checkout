@@ -10,9 +10,9 @@
 "app.automation.targetNotRunning" = "iTerm2가 실행 중이 아니라 확인 불가 — [%@]을 누르면 실행됩니다";
 "app.automation.unknown" = "상태 확인 실패 (OSStatus %d)";
 "app.baseDir.missingFolder" = "%@ — 아직 없는 폴더입니다. clone할 때 만들어집니다";
-"app.baseDir.notConfigured" = "설정하지 않음 — z로만 이동합니다. zoxide 기록에 없는 저장소에서는 명령이 아무것도 하지 않습니다";
+"app.baseDir.notConfigured" = "설정하지 않음 — zoxide로만 이동합니다. zoxide 기록에 없는 저장소에서는 명령이 아무것도 하지 않습니다";
 "app.baseDir.notSaved" = "저장하지 않았습니다 — %@";
-"app.baseDir.ok" = "%@ — z가 실패하면 여기로 이동하고, 저장소가 없으면 clone합니다";
+"app.baseDir.ok" = "%@ — zoxide 이동이 실패하면 여기로 이동하고, 저장소가 없으면 clone합니다";
 "app.baseDir.placeholder" = "예: ~/Codes";
 "app.baseDir.reason.invalidCharacters" = "공백이나 한글 등 셸에서 안전하지 않은 문자가 있습니다";
 "app.baseDir.reason.notAbsolute" = "절대 경로가 아닙니다";
@@ -29,7 +29,7 @@
 "app.button.restartNow" = "지금 다시 시작";
 "app.button.runInTerminal" = "터미널에서 실행";
 "app.button.showSetupGuide" = "설치 안내 다시 보기";
-"app.card.baseDir.help" = "저장소들을 클론해 두는 최상위 폴더입니다. z가 이동에 실패하면(zoxide 기록이 없거나 zoxide를 안 쓰는 경우) 이 폴더 아래의 저장소로 이동하고, 없으면 gh로 clone합니다. 비워 두면 지금까지와 똑같이 z로만 이동합니다.";
+"app.card.baseDir.help" = "저장소들을 클론해 두는 최상위 폴더입니다. zoxide가 이동에 실패하면(저장소와 이름이 정확히 같은 폴더의 기록이 없거나 zoxide를 안 쓰는 경우) 이 폴더 아래의 저장소로 이동하고, 없으면 gh로 clone합니다. 비워 두면 zoxide로만 이동합니다.";
 "app.card.baseDir.legacyNote" = "이전 버전부터 쓰던 버튼은 저장해 둔 command를 그대로 유지합니다 — 폴더만 지정해서는 폴백이 걸리지 않습니다. 확장 옵션 페이지를 열면 위쪽에 업데이트 표시가 뜨고, 버튼별로 확인한 뒤 저장하면 반영됩니다.";
 "app.card.baseDir.title" = "저장소 기본 폴더";
 "app.card.chrome.title" = "Chrome 연결 (Native Host)";
@@ -123,6 +123,6 @@
 "app.tools.claude.advice" = "명령을 찾을 수 없습니다 — claude 입력을 예약한 버튼이 입력을 전달하지 못합니다.";
 "app.tools.claudeWrapper.advice" = "claude를 실행 파일로 찾지 못해 claude 입력을 병합하지 못합니다 (함수·별칭으로만 설치됐거나, PATH에 상대 경로 항목이 있거나, 실행 권한이 없는 경우입니다) — 입력은 세션에 타이핑으로 전달되고, Warp에서는 손쉬운 사용 권한이 필요해집니다.";
 "app.tools.gh.advice" = "명령을 찾을 수 없습니다 — 이슈 버튼의 gh 프리셋과 저장소 기본 폴더의 clone 단계가 실패합니다. brew install gh 후 gh auth login.";
-"app.tools.z.adviceNoBaseDir" = "명령을 찾을 수 없습니다 — 기본 command가 z로 시작하므로 모든 버튼이 실패합니다. brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하거나, 아래 「저장소 기본 폴더」를 설정하세요.";
-"app.tools.z.adviceWithBaseDir" = "명령을 찾을 수 없습니다 — 저장소 기본 폴더로 대신 이동하므로 버튼은 동작합니다. zoxide를 설치하면 기본 폴더 밖의 저장소로도 점프합니다(brew install zoxide).";
+"app.tools.zoxide.adviceNoBaseDir" = "명령을 찾을 수 없습니다 — 기본 command는 zoxide로 저장소에 들어가므로 모든 버튼이 실패합니다. brew install zoxide 후 ~/.zshrc에 eval \"$(zoxide init zsh)\"를 추가하거나, 아래 「저장소 기본 폴더」를 설정하세요.";
+"app.tools.zoxide.adviceWithBaseDir" = "명령을 찾을 수 없습니다 — 저장소 기본 폴더로 대신 이동하므로 버튼은 동작합니다. zoxide를 설치하면 기본 폴더 밖의 저장소로도 점프합니다(brew install zoxide).";
 "app.window.title" = "Terminal Checkout 설정";

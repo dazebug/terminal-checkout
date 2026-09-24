@@ -1,20 +1,22 @@
 import Foundation
 
 /// Checks whether the tools a command template calls can actually be called in the user's shell.
-/// Why ask the shell rather than search the filesystem: `z` is a shell function zoxide defines in an rc file, so there is no executable at any path, and a GUI app's PATH differs from the login shell's anyway.
+/// Why ask the shell rather than search the filesystem: a GUI app's PATH differs from the login shell's (Homebrew's bin directory is often added only by an rc file), and a name can be a function or alias there (`claude` sometimes is).
 
-/// What is checked by default. `z` is the first word of the default command template, so without it every button fails; `gh` and `claude` are used only by the issue preset and by claude input respectively.
-public let checkedTools = ["z", "gh", "claude"]
+/// What is checked by default. `zoxide` is what `{cd}` runs to move into the repository, so without it every button fails; `gh` and `claude` are used only by the issue preset and by claude input respectively.
+///
+/// It is the `zoxide` executable and not the `z` function its init defines: `{cd}` never calls `z` (`zoxideExactJump`), and a z.sh `z` would pass a `z` check while every button fails.
+public let checkedTools = ["zoxide", "gh", "claude"]
 
 /// Whether missing this tool means "every button fails" — how the setup window splits error (red)
 /// from warning (yellow).
 ///
-/// Only `z` depends on whether a base directory is configured. With one, `{cd}`'s fallback
-/// (`cd` → `clone`) covers a failing `z` (`BaseDirectory.swift`), so "every button fails" stops
-/// being true. `gh` also appears in the clone clause once a base directory is set, but the z and
+/// Only `zoxide` depends on whether a base directory is configured. With one, `{cd}`'s fallback
+/// (`cd` → `clone`) covers a failing jump (`BaseDirectory.swift`), so "every button fails" stops
+/// being true. `gh` also appears in the clone clause once a base directory is set, but the jump and
 /// cd branches survive without it, so it stays a warning.
 public func toolIsCritical(_ tool: String, baseDirectoryConfigured: Bool) -> Bool {
-    tool == "z" && !baseDirectoryConfigured
+    tool == "zoxide" && !baseDirectoryConfigured
 }
 
 /// The user's login shell. A GUI app's SHELL environment variable is whatever launchd handed down and cannot be trusted, so this reads the account record directly.
@@ -29,7 +31,7 @@ public func loginShellPath() -> String {
 /// The shell script that makes the shell answer two questions per tool, one marker line each.
 /// `tools` receives code constants only — putting user input in here would be shell injection.
 ///
-/// `TC_OK` means "typing that name calls something" and **includes functions and aliases** (`z` is exactly that case). `TC_EXE` means **`command <name>` has an actual file to run**. Why they are separate: the merge path invokes `command claude`, and `command` skips functions and aliases, so on an install like `alias claude='npx …'` `TC_OK` is true while the merged command dies with command not found.
+/// `TC_OK` means "typing that name calls something" and **includes functions and aliases** (`claude` sometimes is one). `TC_EXE` means **`command <name>` has an actual file to run**. Why they are separate: the merge path invokes `command claude`, and `command` skips functions and aliases, so on an install like `alias claude='npx …'` `TC_OK` is true while the merged command dies with command not found.
 ///
 /// Why `TC_EXE` is asked of a **child `/bin/sh`** (measured):
 ///  - In the login shell, `command -v` returns just the name when a function or alias shadows it. But if that is a **wrapper around a real file**, `command claude` runs that file — a case where merging is fine. A child shell, which reads no rc, answers with the file itself.
@@ -57,7 +59,7 @@ public func toolCheckScript(_ tools: [String]) -> String {
     // false for the shell we ask — `/bin/sh` (bash 3.2 here) absolutises it (`/./claude`), while
     // bash, zsh and dash return `./claude` or `claude`. So the residual is real: with `/claude`
     // present and `claude` nowhere on the absolute PATH, we would answer "executable" and the pane
-    // would fail. The mirror case is a pane whose `z` command enters a repository that happens to
+    // would fail. The mirror case is a pane whose `{cd}` enters a repository that happens to
     // contain an executable `./claude`, so the check and the run resolve **different files** —
     // it needs a PATH ending in `:` *and* that file, and it does not hold otherwise.
     // Both failures are visible `command not found` or a wrong-but-user-owned program (a lost

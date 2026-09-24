@@ -95,10 +95,10 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 echo "[1/3] Dependency preflight check ✓"
 echo "      Detected terminals: ${DETECTED_TERMINALS[*]}"
-if ! command -v zoxide >/dev/null 2>&1 && ! command -v z >/dev/null 2>&1; then
-    echo "      Note: zoxide/z not found. Commands try 'z' first to reach your repository — either install it"
-    echo "            (brew install zoxide), or set a repository base folder in the setup window, which is"
-    echo "            used whenever 'z' fails and clones the repository when it isn't there yet"
+if ! command -v zoxide >/dev/null 2>&1; then
+    echo "      Note: zoxide not found. Commands jump to your repository with zoxide first (z.sh doesn't count) —"
+    echo "            either install it (brew install zoxide), or set a repository base folder in the setup window,"
+    echo "            which is used whenever the jump fails and clones the repository when it isn't there yet"
 fi
 
 # [2/3] Build the app

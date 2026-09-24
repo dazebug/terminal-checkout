@@ -133,7 +133,8 @@ test('the default repository button only moves to the repo', () => {
   // The Open in Terminal behavior from before it became customizable — changing the default changes
   // existing users' buttons. `{cd}` replaced the bare `z {repo}` (issue #30): with a cold zoxide DB
   // that first clause exits non-zero and the whole && chain dies silently, so the app now renders
-  // the entry clause itself — and with no base directory configured it renders exactly `z {repo}`.
+  // the entry clause itself — a zoxide jump to the folder named exactly `{repo}`, with the base
+  // directory fallback behind it when one is configured.
   assert.equal(BUTTON_KINDS.repo.defaults.length, 1);
   assert.equal(BUTTON_KINDS.repo.defaults[0].command, '{cd}');
 });
