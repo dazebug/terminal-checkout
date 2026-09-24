@@ -724,22 +724,14 @@ async function tryInsertPRButtons() {
     return true;
   }
 
-  // New GitHub UI: find the PR's source branch link
   const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return false;
 
-  // Cross-fork PRs: the head ref link can point at the fork's path, so search every tree link
-  const branchLinks = document.querySelectorAll('a[href*="/tree/"]');
-
-  // Find the branch link that is visible on screen
-  let headBranchLink = null;
-  for (const link of branchLinks) {
+  // The header's branch links, base first and head second (`PR_BRANCH_LINK_SELECTOR`, defaults.js)
+  const [, headBranchLink] = [...document.querySelectorAll(PR_BRANCH_LINK_SELECTOR)].filter(link => {
     const rect = link.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0 && rect.top < 300 && rect.top > 0) {
-      headBranchLink = link;
-    }
-  }
-
+    return rect.width > 0 && rect.height > 0;
+  });
   if (!headBranchLink) return false;
 
   const buttons = await loadButtonConfigs('pr');

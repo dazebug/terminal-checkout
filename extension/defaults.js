@@ -303,6 +303,19 @@ function repoCrumbSelectors(owner, repo) {
   };
 }
 
+// A PR header says "wants to merge N commits into BASE from HEAD", so its branch links come base
+// first and head second in document order — the redesigned header's `BranchName` links and the
+// legacy `.base-ref`/`.head-ref` ones alike, under any owner's `/tree/` because a cross-fork head
+// points at the fork. content.js draws the PR buttons after the head and the worker reads both names
+// at click time, receiving this as an argument for the same reason as the crumb above.
+//
+// Take the first two rendered matches, never the ones inside a band of the screen: a long title or
+// GitHub's stack notice pushes the pair below any fixed line (257px to 328px once the notice loaded,
+// and the buttons never came — measured 2026-09-24), and a scrolled page puts it above the viewport.
+// The header also renders a hidden (0×0) copy of the pair after the visible one.
+const PR_BRANCH_LINK_SELECTOR =
+  'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
+
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 const MAX_CLAUDE_INPUTS = 5;

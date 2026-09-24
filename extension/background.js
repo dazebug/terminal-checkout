@@ -16,8 +16,10 @@ function parseGitHubUrl(url) {
   return pageTargetOfUrl(url);
 }
 
-// Extract the branch name and the base branch from the DOM
-function getBranchAndMainFromDOM() {
+// Extract the branch name and the base branch from the DOM. chrome.scripting injects this function
+// on its own, so the header's branch-link selector (`PR_BRANCH_LINK_SELECTOR`, defaults.js) arrives
+// as its argument.
+function getBranchAndMainFromDOM(branchLinkSelector) {
   // The location is read here, in the same synchronous pass as the branch, so the two cannot come
   // from different pages: the caller compares it against the page the click came from.
   // The whole href, not just the path — a path cannot say which origin served it, and the caller's
@@ -26,28 +28,17 @@ function getBranchAndMainFromDOM() {
   const match = location.pathname.match(/^\/([^/]+\/[^/]+)\/pull\/\d+/);
   if (!match) return null;
 
-  // Cross-fork PRs: the head ref link can point at the fork's path, so search every tree link
-  const branchLinks = document.querySelectorAll('a[href*="/tree/"]');
-
-  let baseBranch = null;
-  let headBranch = null;
-
-  for (const link of branchLinks) {
+  // Base first, head second, in document order; the hidden copy of the pair comes after them
+  const [baseLink, headLink] = [...document.querySelectorAll(branchLinkSelector)].filter(link => {
     const rect = link.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0 && rect.top < 300 && rect.top > 0) {
-      const href = link.getAttribute('href');
-      const branchMatch = href.match(/\/tree\/(.+)$/);
-      if (branchMatch) {
-        const branch = decodeURIComponent(branchMatch[1]);
-        if (!baseBranch) {
-          baseBranch = branch; // first visible one = base ref
-        }
-        headBranch = branch; // last visible one = head ref
-      }
-    }
-  }
-
-  if (headBranch) return { branch: headBranch, detectedMain: baseBranch, href };
+    return rect.width > 0 && rect.height > 0;
+  });
+  const branchOf = link => {
+    const branchMatch = link?.getAttribute('href').match(/\/tree\/(.+)$/);
+    return branchMatch ? decodeURIComponent(branchMatch[1]) : null;
+  };
+  const headBranch = branchOf(headLink);
+  if (headBranch) return { branch: headBranch, detectedMain: branchOf(baseLink), href };
 
   // Legacy UI fallback 1: head-ref element
   const headRef = document.querySelector('.head-ref a, .head-ref span');
@@ -395,7 +386,8 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
   // Extract the branch and the base branch from the DOM
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: getBranchAndMainFromDOM
+    func: getBranchAndMainFromDOM,
+    args: [PR_BRANCH_LINK_SELECTOR],
   });
 
   const domResult = results[0]?.result;
