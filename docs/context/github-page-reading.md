@@ -28,3 +28,26 @@ On 2026-09-24 the repository buttons disappeared from every repository, PR, issu
 **Consequence, accepted:** the committed test is a lint over spellings. Whether the selector matches the GitHub that is live today is settled only in a browser; a fixture of GitHub's HTML would be the frozen store `testing.md` warns about.
 
 **Observed once:** GitHub replaced its whole banner about 8 seconds after a load, taking the buttons with it, and the 1-second poll put them back 1.4 seconds later. The mutation observer now also fires when a banner is inserted. The replacement did not recur in two more 10-second watches, so that trigger is verified only by its predicate against the live header.
+
+## A PR header's branch links are picked by document order, never by screen position
+
+**Type:** incident
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured on github.com, 2026-09-24 — on a PR with a three-line title the head link sat at 257px until GitHub's stack notice loaded, then at 328px, and no PR button appeared within 8 seconds; the header's `a[data-component="BranchName"]` pair reads base then head in document order on the conversation and changes tabs and on a merged PR, followed by a hidden 0×0 copy; scrolled 1000px down, the pair still reads base `main` and the PR's head; the commits tab carries 33 `/tree/` links, browse-at-commit ones included, and the selector matches only the header pair and its copy)
+**Source:** PR #86; `PR_BRANCH_LINK_SELECTOR` in `extension/defaults.js`; `tests/buttons.test.js` (`the PR branch links have one home, and neither reader finds them by screen position`)
+**Revisit when:** GitHub's PR header stops naming the base before the head, or stops rendering the branches as links
+
+content.js drew the PR buttons after the last visible `/tree/` link between 0 and 300px from the top of the viewport, and background.js read the branch names at click time by the same rule. A title that wraps to three lines under GitHub's stack notice puts the links at 328px, and a page opened at a comment or scrolled down puts them above the viewport. Either way no button appeared, and a button drawn earlier could not find a branch when clicked.
+
+The band stood in for "the links in the PR header" as opposed to `/tree/` links in the description or the timeline below it. Document order says the same thing from structure: the header comes first, and it names the branches "into BASE from HEAD".
+
+**Decision — the first two rendered matches of one selector, base then head.** The selector lives in `defaults.js` (the redesigned header's `BranchName` links and the legacy `.base-ref`/`.head-ref` links) and reaches the worker's injected reader as an argument, like the repository crumb above.
+
+**Rejected alternative — widen the band.** Any fixed line fails for a longer title or a scrolled page.
+
+**Rejected alternative — the "Copy head branch name to clipboard" control beside the head.** It names the head outright, but through a tooltip's wording.
+
+**Rejected alternative — read the names from the page's embedded JSON.** An undocumented payload, and the buttons still need the header element to sit beside.
+
+**Behavior change, accepted:** with a single rendered link, the old rule took that link as both base and head, so a click would have used the base branch as `{branch}`. The pair rule finds no head there; no button is drawn, and a click reports that it could not read a branch.

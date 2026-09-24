@@ -363,6 +363,20 @@ test('the repository crumb selectors have one home, and both readers take them f
   }
 });
 
+// A PR page's branches are read from the header's branch links: content.js draws the PR buttons after
+// the head, and background.js reads both names when one is clicked. Both take the selector from
+// defaults.js and pick the pair by document order, never by where it sits on screen — a long title,
+// GitHub's stack notice or a scrolled page moves it. This is a lint over spellings; which elements
+// GitHub draws is settled in a real browser.
+test('the PR branch links have one home, and neither reader finds them by screen position', () => {
+  for (const file of ['content.js', 'background.js']) {
+    const source = readExtension(file);
+    assert.match(source, /PR_BRANCH_LINK_SELECTOR/, `${file} does not read the shared selector`);
+    assert.doesNotMatch(source, /a\[href\*="\/tree\/"\]/, `${file} spells a branch-link selector of its own`);
+    assert.doesNotMatch(source, /\.top\s*[<>]/, `${file} finds something by where it sits on screen`);
+  }
+});
+
 // Every preset that carries claude inputs is `!`-only, so its whole run merges into ONE typed
 // line (one type/submit cycle, one model turn). That property lives in the Swift join gate, so
 // nothing on this side would notice a preset drifting out of the shape — and a preset gaining a
