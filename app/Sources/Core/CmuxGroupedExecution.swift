@@ -466,6 +466,7 @@ private func layoutCommandsAreSafe(
 private func executeCreatedLayout(
     _ createPlan: CmuxWorkspaceCreatePlan,
     commands: [String],
+    activation: TabActivation,
     itemRoutes: [CmuxPlacementCommandRoute],
     path: CmuxPlacementExecutionPath,
     plan: CmuxPlacementPlan,
@@ -478,7 +479,7 @@ private func executeCreatedLayout(
         // This grouped create is the launch point for inline leaves. Once it returns, those
         // commands have run; a later deadline check must not relabel their results.
         let response = try dependencies.createWorkspace(
-            cmuxWorkspaceCreateParameters(for: createPlan, commands: commands)
+            cmuxWorkspaceCreateParameters(for: createPlan, commands: commands, activation: activation)
         )
         guard let identifiers = cmuxWorkspaceIdentifiers(from: response) else {
             throw CmuxPlacementResponseError.invalidShape(
@@ -592,6 +593,7 @@ private func executePanePlacement(
     _ panePlan: CmuxPanePlacementPlan,
     plan: CmuxPlacementPlan,
     commands: [String],
+    activation: TabActivation,
     using dependencies: CmuxPlacementExecutionDependencies
 ) -> CmuxGroupedExecution {
     switch panePlan.target {
@@ -606,6 +608,7 @@ private func executePanePlacement(
         return executeCreatedLayout(
             createPlan,
             commands: commands,
+            activation: activation,
             itemRoutes: createPlan.layout.itemRoutes,
             path: .layoutCreate,
             plan: plan,
@@ -640,6 +643,7 @@ private func executePanePlacement(
             return executeCreatedLayout(
                 createPlan,
                 commands: commands,
+                activation: activation,
                 itemRoutes: createPlan.layout.itemRoutes,
                 path: .layoutCreate,
                 plan: plan,
@@ -655,6 +659,7 @@ private func executeTabPlacement(
     _ tabPlan: CmuxTabPlacementPlan,
     plan: CmuxPlacementPlan,
     commands: [String],
+    activation: TabActivation,
     using dependencies: CmuxPlacementExecutionDependencies
 ) -> CmuxGroupedExecution {
     var selectedPath: CmuxPlacementExecutionPath = .tabCreate
@@ -678,7 +683,7 @@ private func executeTabPlacement(
                 throw CmuxPlacementResponseError.invalidShape("layout command byte bound")
             }
             let response = try dependencies.createWorkspace(
-                cmuxWorkspaceCreateParameters(for: createPlan, commands: commands)
+                cmuxWorkspaceCreateParameters(for: createPlan, commands: commands, activation: activation)
             )
             guard let identifiers = cmuxWorkspaceIdentifiers(from: response) else {
                 throw CmuxPlacementResponseError.invalidShape(
@@ -722,7 +727,7 @@ private func executeTabPlacement(
                     throw CmuxPlacementResponseError.invalidShape("layout command byte bound")
                 }
                 let response = try dependencies.createWorkspace(
-                    cmuxWorkspaceCreateParameters(for: createPlan, commands: commands)
+                    cmuxWorkspaceCreateParameters(for: createPlan, commands: commands, activation: activation)
                 )
                 guard let identifiers = cmuxWorkspaceIdentifiers(from: response) else {
                     throw CmuxPlacementResponseError.invalidShape(
@@ -780,6 +785,7 @@ private func executeWorkspacePerItem(
     _ workspacePlan: CmuxWorkspacePerItemPlan,
     plan: CmuxPlacementPlan,
     commands: [String],
+    activation: TabActivation,
     using dependencies: CmuxPlacementExecutionDependencies
 ) -> CmuxGroupedExecution {
     guard workspacePlan.creates.count == commands.count,
@@ -810,7 +816,7 @@ private func executeWorkspacePerItem(
             }
             let response = try dependencies.createWorkspace(
                 cmuxWorkspaceCreateParameters(
-                    for: workspacePlan.creates[index], commands: commands
+                    for: workspacePlan.creates[index], commands: commands, activation: activation
                 )
             )
             guard let identifiers = cmuxWorkspaceIdentifiers(from: response) else {
@@ -853,6 +859,7 @@ private func failurePath(for plan: CmuxPlacementPlan) -> CmuxPlacementExecutionP
 public func executeCmuxPlacementPlan(
     _ plan: CmuxPlacementPlan,
     commands: [String],
+    activation: TabActivation = .foreground,
     using dependencies: CmuxPlacementExecutionDependencies
 ) -> CmuxGroupedExecution {
     guard commands.count == plan.itemCount, !commands.isEmpty else {
@@ -866,15 +873,15 @@ public func executeCmuxPlacementPlan(
     switch plan.route {
     case .pane(let panePlan):
         return executePanePlacement(
-            panePlan, plan: plan, commands: commands, using: dependencies
+            panePlan, plan: plan, commands: commands, activation: activation, using: dependencies
         )
     case .tab(let tabPlan):
         return executeTabPlacement(
-            tabPlan, plan: plan, commands: commands, using: dependencies
+            tabPlan, plan: plan, commands: commands, activation: activation, using: dependencies
         )
     case .workspacePerItem(let workspacePlan):
         return executeWorkspacePerItem(
-            workspacePlan, plan: plan, commands: commands, using: dependencies
+            workspacePlan, plan: plan, commands: commands, activation: activation, using: dependencies
         )
     }
 }
@@ -885,12 +892,14 @@ public func runCmuxBatch(
     _ requests: [ResolvedRequest],
     plan: CmuxPlacementPlan,
     channel: CmuxChannel = .stable,
+    activation: TabActivation = .foreground,
     deadlineExceeded: @escaping () -> Bool = { false }
 ) -> CmuxGroupedExecution {
     runCmuxBatch(
         commands: requests.map(\.command),
         plan: plan,
         channel: channel,
+        activation: activation,
         deadlineExceeded: deadlineExceeded
     )
 }
@@ -901,6 +910,7 @@ public func runCmuxBatch(
     commands: [String],
     plan: CmuxPlacementPlan,
     channel: CmuxChannel = .stable,
+    activation: TabActivation = .foreground,
     deadlineExceeded: @escaping () -> Bool = { false }
 ) -> CmuxGroupedExecution {
     guard commands.count == plan.itemCount, !commands.isEmpty else {
@@ -940,7 +950,7 @@ public func runCmuxBatch(
             },
             deadlineExceeded: deadlineExceeded
         )
-        return executeCmuxPlacementPlan(plan, commands: commands, using: dependencies)
+        return executeCmuxPlacementPlan(plan, commands: commands, activation: activation, using: dependencies)
     } catch {
         return failedExecution(
             plan: plan,

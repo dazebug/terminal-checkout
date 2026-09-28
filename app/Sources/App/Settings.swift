@@ -46,6 +46,13 @@ enum Settings {
     ///
     /// A stored value that isn't a string must not read as "not configured". It is handed on as
     /// text so `normalizedBaseDirectory` rejects it and the button fails carrying the reason.
+    /// Whether a new session's tab comes to the front (`TabActivation`); foreground unless the user
+    /// turned background on in the setup window.
+    static var tabActivation: TabActivation {
+        get { TabActivation(storedValue: UserDefaults.standard.string(forKey: "tabActivation")) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "tabActivation") }
+    }
+
     static var baseDirectory: String {
         get {
             guard let stored = UserDefaults.standard.object(forKey: "baseDirectory") else { return "" }

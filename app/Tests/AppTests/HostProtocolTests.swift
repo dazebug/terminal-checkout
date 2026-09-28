@@ -206,7 +206,7 @@ final class HostProtocolTests: XCTestCase {
         var terminals: [Terminal] = []
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, terminal, _ in
+            runInTerminal: { _, terminal, _, _ in
                 lock.lock()
                 let index = terminals.count
                 terminals.append(terminal)
@@ -285,7 +285,7 @@ final class HostProtocolTests: XCTestCase {
         var launches = 0
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 launches += 1
                 fakeNow = fakeNow.addingTimeInterval(30)
@@ -361,7 +361,7 @@ final class HostProtocolTests: XCTestCase {
         let linesLock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 launches += 1
                 fakeMonotonicNow += 150
@@ -437,7 +437,7 @@ final class HostProtocolTests: XCTestCase {
         var launchDurations: [TimeInterval] = []
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 let start = fakeMonotonicNow
                 let duration: TimeInterval = launches == 0 ? 149 : 32
@@ -503,7 +503,7 @@ final class HostProtocolTests: XCTestCase {
         var launches = 0
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 launches += 1
                 fakeMonotonicNow += 40
@@ -581,7 +581,7 @@ final class HostProtocolTests: XCTestCase {
         var logs: [String] = []
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in .none },
+            runInTerminal: { _, _, _, _ in .none },
             log: { message in
                 logsLock.lock()
                 logs.append(message)
@@ -639,7 +639,7 @@ final class HostProtocolTests: XCTestCase {
         var logs: [String] = []
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 fakeNow = fakeNow.addingTimeInterval(150)
                 fakeMonotonicNow += 150
@@ -712,7 +712,7 @@ final class HostProtocolTests: XCTestCase {
         let lock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in .none },
+            runInTerminal: { _, _, _, _ in .none },
             timelineFactory: { _, label in
                 let itemLabel = label ?? "legacy"
                 lock.lock()
@@ -790,7 +790,7 @@ final class HostProtocolTests: XCTestCase {
         var linesByItem: [String: [String]] = [:]
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 launchesLock.lock()
                 launches += 1
                 launchesLock.unlock()
@@ -879,7 +879,7 @@ final class HostProtocolTests: XCTestCase {
         var anchors: [Date] = []
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 clockLock.lock()
                 fakeNow = fakeNow?.addingTimeInterval(2)
                 clockLock.unlock()
@@ -961,7 +961,7 @@ final class HostProtocolTests: XCTestCase {
         let lock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 lock.lock()
                 active += 1
                 maximumActive = max(maximumActive, active)
@@ -1028,7 +1028,7 @@ final class HostProtocolTests: XCTestCase {
         let logsLock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in .none },
+            runInTerminal: { _, _, _, _ in .none },
             log: { message in
                 logsLock.lock()
                 logs.append(message)
@@ -1105,7 +1105,7 @@ final class HostProtocolTests: XCTestCase {
         let runLock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 runLock.lock()
                 runInvocations += 1
                 runLock.unlock()
@@ -1160,7 +1160,7 @@ final class HostProtocolTests: XCTestCase {
         let runLock = NSLock()
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 runLock.lock()
                 runInvocations += 1
                 runLock.unlock()
@@ -1219,7 +1219,7 @@ final class HostProtocolTests: XCTestCase {
         var wasAdmitted = false
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in
+            runInTerminal: { _, _, _, _ in
                 lock.lock()
                 perItemCalls += 1
                 lock.unlock()
@@ -1298,7 +1298,7 @@ final class HostProtocolTests: XCTestCase {
         var groupedCalls = 0
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, _, _ in XCTFail("cmux grouped batches must not use runInTerminal"); return .none },
+            runInTerminal: { _, _, _, _ in XCTFail("cmux grouped batches must not use runInTerminal"); return .none },
             runCmuxBatch: { request in
                 receivedPlan = request.plan
                 groupedCalls += 1
@@ -1453,7 +1453,7 @@ final class HostProtocolTests: XCTestCase {
         var groupedCalls = 0
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, terminal, _ in
+            runInTerminal: { _, terminal, _, _ in
                 lock.lock()
                 perItemCalls += 1
                 XCTAssertEqual(terminal, .iterm)
@@ -1488,6 +1488,66 @@ final class HostProtocolTests: XCTestCase {
         XCTAssertEqual(observed.1, 0)
     }
 
+    /// The background setting is read per request, from the same single source as the terminal, and
+    /// reaches both the single launch and a cmux batch
+    func testStoredTabActivationReachesTheSingleLaunchAndTheCmuxBatch() throws {
+        let directory = "/tmp/tc-activation-\(UUID().uuidString.prefix(8))"
+        let path = directory + "/s.sock"
+        let canonical = CanonicalSocketOverride(path)
+        try FileManager.default.createDirectory(
+            atPath: directory, withIntermediateDirectories: true, attributes: nil
+        )
+        let lock = NSLock()
+        var single: [TabActivation] = []
+        var batch: [TabActivation] = []
+        let server = HostServer(
+            socketPath: path,
+            runInTerminal: { _, _, _, activation in
+                lock.lock()
+                single.append(activation)
+                lock.unlock()
+                return .none
+            },
+            runCmuxBatch: { request in
+                lock.lock()
+                batch.append(request.activation)
+                lock.unlock()
+                return CmuxGroupedExecution(results: [], path: .layoutCreate, didFallbackToTabs: false)
+            }
+        )
+        try server.start()
+        defer {
+            server.stop()
+            _ = canonical
+            try? FileManager.default.removeItem(atPath: directory)
+            UserDefaults.standard.removeObject(forKey: "tabActivation")
+        }
+        UserDefaults.standard.set(TabActivation.background.rawValue, forKey: "tabActivation")
+
+        UserDefaults.standard.set(Terminal.iterm.rawValue, forKey: "terminal")
+        let first = RelayAtTheDoor()
+        let noVariables: [String: Any] = [:]
+        first.connectAndAsk(["command_template": "echo one", "variables": noVariables], at: path, givingUp: 10)
+        _ = try answer(for: first)
+
+        UserDefaults.standard.set(Terminal.cmux.rawValue, forKey: "terminal")
+        UserDefaults.standard.set("always-new", forKey: CmuxPlacementStorageKey.identityMode)
+        UserDefaults.standard.set("", forKey: CmuxPlacementStorageKey.fixedName)
+        UserDefaults.standard.set("pane", forKey: CmuxPlacementStorageKey.arrangement)
+        let second = RelayAtTheDoor()
+        second.connectAndAsk(
+            ["command": "echo batch", "items": [["variables": noVariables], ["variables": noVariables]]],
+            at: path, givingUp: 10
+        )
+        _ = try answer(for: second)
+
+        lock.lock()
+        let observed = (single, batch)
+        lock.unlock()
+        XCTAssertEqual(observed.0, [.background])
+        XCTAssertEqual(observed.1, [.background])
+    }
+
     func testLegacySingleRequestDoesNotUseGroupedHook() throws {
         let request: [String: Any] = ["command_template": "echo legacy-single"]
         let directory = "/tmp/tc-cmux-legacy-single-\(UUID().uuidString.prefix(8))"
@@ -1502,7 +1562,7 @@ final class HostProtocolTests: XCTestCase {
         var groupedCalls = 0
         let server = HostServer(
             socketPath: path,
-            runInTerminal: { _, terminal, _ in
+            runInTerminal: { _, terminal, _, _ in
                 lock.lock()
                 perItemCalls += 1
                 XCTAssertEqual(terminal, .cmux)

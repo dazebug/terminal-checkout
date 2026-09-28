@@ -118,6 +118,8 @@
 "app.terminal.notInstalled" = "%@（未安裝）";
 "app.terminal.note.common" = "按下 GitHub 上的按鈕會在新分頁中執行指令，預約的 claude 輸入會在 claude 啟動後傳送。在完成之前不要在該分頁中輸入。";
 "app.terminal.note.warp" = " 在 Warp 上，只有當你正在檢視該分頁時傳送才會進行 — 切換走會暫停，切回來會繼續。";
+"app.terminal.openInBackground" = "按下按鈕後仍停留在目前畫面";
+"app.terminal.openInBackground.note" = "啟用後，可以繼續在目前的應用程式或分頁中輸入。指令會在新分頁（cmux 中為 workspace）中執行，預約的 claude 輸入也會照常傳送到該處。Warp 一律切換到新分頁。";
 "app.test.failed" = "失敗：%@";
 "app.test.running" = "執行中…";
 "app.test.succeeded" = "如果終端機裡開啟了新分頁，就表示成功了。";

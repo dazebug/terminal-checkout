@@ -2,6 +2,7 @@
 
 - [claude-input-delivery.md](claude-input-delivery.md) — how scheduled input reaches a claude session, and the routes that were tried and dropped; why a click-time note is plain text with no variables, what ✅ does and does not promise, which page a note goes to, what holds a split button's run, and why the popover lists the inputs before a note from the list that is sent
 - [cmux-integration.md](cmux-integration.md) — why the app asks the user to set one cmux option instead of setting it, why `rpc` is the only control path, how a launch retry is decided, and the measured placement contract for batch fan-out
+- [tab-activation.md](tab-activation.md) — why a button's tab can open behind the screen you are on, why iTerm2 and WezTerm select your tab again, and why Warp always opens in front
 - [subprocess-execution.md](subprocess-execution.md) — what actually bounds a timed-out child process, and why its output is decoded lossily
 - [localization.md](localization.md) — where the catalogues live, how macOS and Chrome independently choose each surface's language, the adjacent-generation compatibility boundary, and which strings may never become machine input
 - [options-page-reordering.md](options-page-reordering.md) — why claude input rows stay in one card, why a redraw cancels a drag, and why the reorder tooltip key is shared by meaning

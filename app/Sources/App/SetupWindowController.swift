@@ -302,6 +302,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var cmuxRadio: NSButton!
     private var cmuxNightlyRadio: NSButton!
     private var terminalNoteLabel: NSTextField!
+    private var backgroundCheckbox: NSButton!
     /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
     /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
     /// permission at all, which is why it has no section of its own.
@@ -927,12 +928,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         radioRow.alignment = .top
         radioRow.spacing = 18
 
+        backgroundCheckbox = NSButton(
+            checkboxWithTitle: localized("app.terminal.openInBackground"),
+            target: self, action: #selector(tabActivationChanged)
+        )
+        backgroundCheckbox.identifier = role(#selector(tabActivationChanged))
+        let backgroundColumn = NSStackView(views: [
+            backgroundCheckbox, helpLabel(localized("app.terminal.openInBackground.note")),
+        ])
+        backgroundColumn.orientation = .vertical
+        backgroundColumn.alignment = .leading
+        backgroundColumn.spacing = 4
+
         buildPermissionSection()
         buildCmuxSection()
         buildAccessibilitySection()
         return card(
             localized("app.card.terminal.title"),
-            [radioRow, permissionSection, cmuxSection, accessibilitySection]
+            [radioRow, backgroundColumn, permissionSection, cmuxSection, accessibilitySection]
         )
     }
 
@@ -1395,6 +1408,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             note += localized("app.terminal.note.warp")
         }
         terminalNoteLabel.stringValue = note
+        // Warp always opens in front — its delivery can only confirm the tab being looked at — so
+        // there the box is unticked and disabled, and the stored choice waits for the next terminal
+        let offered = Settings.terminal != .warp
+        backgroundCheckbox.isEnabled = offered
+        backgroundCheckbox.state = offered && Settings.tabActivation == .background ? .on : .off
+    }
+
+    @objc private func tabActivationChanged() {
+        Settings.tabActivation = backgroundCheckbox.state == .on ? .background : .foreground
     }
 
     // MARK: - Refreshing the state

@@ -64,7 +64,7 @@ The window walks you through each step and hides it once complete; Native Host r
 
 1. **Extension** — click [Install in Chrome]. The folder path is copied and `chrome://extensions` opens: turn on **Developer mode**, click **Load unpacked**, then **⇧⌘G → ⌘V → Enter → [Select]**. Keep Developer mode on — from Chrome 133, turning it off disables unpacked extensions.
 2. **Language** — the app's own language, defaulting to [Follow the system language]. The extension follows Chrome ([Language](#language)).
-3. **Terminal** — pick one from the [table above](#supported-terminals).
+3. **Terminal** — pick one from the [table above](#supported-terminals). Tick **Keep the current screen when you press a button** to stay in the app or tab you are using: the command runs in a new tab (a workspace in cmux) behind it, you can go on typing, and its claude input is still delivered. Warp always switches to the new tab.
 4. **Permissions** — shown only when your terminal needs one: [Request iTerm2 Permission] for iTerm2, the cmux socket card for cmux, and Accessibility for typed claude input on Warp.
 5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or use [Choose Folder…]. When zoxide doesn't know a repository, the command looks for `<base>/<repo>` and, if it isn't there, clones it with `gh`, which must be installed and authenticated.
 6. **Run Test** — click [Run in Terminal]. You are done when `echo` runs in a new tab.

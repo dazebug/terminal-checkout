@@ -117,6 +117,8 @@
 "app.terminal.notInstalled" = "%@ (未インストール)";
 "app.terminal.note.common" = "GitHub のボタンを押すと新しいタブでコマンドが実行され、予約された claude 入力は claude が起動してから配信されます。終わるまでそのタブに入力しないでください。";
 "app.terminal.note.warp" = " Warp では、そのタブを見ている間だけ配信が進みます — ほかに切り替えると一時停止し、戻ると再開します。";
+"app.terminal.openInBackground" = "ボタンを押しても今の画面のままにする";
+"app.terminal.openInBackground.note" = "オンにすると、今使っているアプリやタブで入力を続けられます。コマンドは新しいタブ（cmux では workspace）で実行され、予約された claude 入力もそこに配信されます。Warp は常に新しいタブに切り替わります。";
 "app.test.failed" = "失敗: %@";
 "app.test.running" = "実行中…";
 "app.test.succeeded" = "ターミナルで新しいタブが開いていれば成功です。";

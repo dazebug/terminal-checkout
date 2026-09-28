@@ -1,5 +1,19 @@
 /// The single identifier for a supported terminal. The rawValue *is* the value stored in `UserDefaults` — `iterm` is an identifier that denotes iTerm2 regardless of the product's name, so it does not change.
 /// Adding a case makes every `default`-less switch a compile error, which is how the branches that need touching reveal themselves — for the branches that live outside a switch (visibility conditions and the like) and for the hands-on checks, docs/new-terminal-checklist.md is the source of truth.
+/// Whether a new session's tab comes to the front. The rawValue is the value stored in
+/// `UserDefaults` under `tabActivation`. Background exists so that typing elsewhere is not
+/// captured by the new tab the moment it opens; Warp ignores it, because its input delivery can
+/// only confirm what is on the screen of the tab being looked at.
+public enum TabActivation: String {
+    case foreground
+    case background
+
+    /// A missing or unknown value is the behaviour everyone had before the setting existed.
+    public init(storedValue: String?) {
+        self = storedValue.flatMap(TabActivation.init(rawValue:)) ?? .foreground
+    }
+}
+
 public enum Terminal: String, CaseIterable {
     case iterm
     case wezterm

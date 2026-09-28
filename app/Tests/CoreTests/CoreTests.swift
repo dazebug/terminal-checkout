@@ -1116,6 +1116,20 @@ final class ClaudeInputPreconditionTests: XCTestCase {
         XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false))
     }
 
+    /// …except in background mode. `wezterm start` shows a new window and WezTerm activates itself
+    /// when it does, so the command would take the keyboard from whatever the user is typing in —
+    /// the one thing the setting promises not to do. Refused before anything is started
+    func testWezTermFallbackIsRefusedInBackgroundMode() throws {
+        let rejection = try XCTUnwrap(
+            wezTermFallbackRejection(injectsClaudeInput: false, activation: .background)
+        )
+        guard case .backgroundNeedsARunningTerminal = rejection else {
+            return XCTFail("unexpected rejection: \(rejection)")
+        }
+        XCTAssertTrue(rejection.description.contains("WezTerm"))
+        XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false, activation: .foreground))
+    }
+
     /// Regression: a Warp button with **no tail** still runs without the permission, exactly as
     /// it does today. Every shipped preset is in that case — this gate must not take back what
     /// the argv track won.
@@ -3555,6 +3569,38 @@ final class AppleScriptTests: XCTestCase {
         XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
     }
 
+    /// Foreground is what every existing user has: iTerm2 comes to the front on the new tab
+    func testITermScriptInForegroundActivatesITerm() {
+        let script = iTermScript(for: "echo hi", activation: .foreground)
+        XCTAssertTrue(script.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "activate" })
+    }
+
+    /// Background leaves the user where they were. Without `activate` iTerm2 stays behind, but
+    /// creating a tab still selects it — so the tab they were on is selected again, or whatever
+    /// they are typing in iTerm2 lands in the new session. The handle names the new session,
+    /// captured before the old tab is selected again
+    func testITermScriptInBackgroundKeepsTheUsersTab() {
+        let script = iTermScript(for: "echo hi", activation: .background)
+        XCTAssertFalse(script.contains("activate"))
+        XCTAssertTrue(script.contains("set previousTab to current tab of w"))
+        XCTAssertTrue(script.contains("tell previousTab to select"))
+        if let capture = script.range(of: "set s to current session of w"),
+           let reselect = script.range(of: "tell previousTab to select") {
+            XCTAssertLessThan(capture.lowerBound, reselect.lowerBound)
+        } else {
+            XCTFail("the new session has to be captured, then the old tab selected again")
+        }
+        XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
+    }
+
+    /// An unknown or missing stored value means the behaviour everyone had before the setting existed
+    func testTabActivationStoredValues() {
+        XCTAssertEqual(TabActivation(storedValue: "background"), .background)
+        XCTAssertEqual(TabActivation(storedValue: "foreground"), .foreground)
+        XCTAssertEqual(TabActivation(storedValue: nil), .foreground)
+        XCTAssertEqual(TabActivation(storedValue: "sideways"), .foreground)
+    }
+
     // Typing mode: the text alone goes in, with no newline — the submission is sent separately once the screen is confirmed to reflect it
     func testITermWriteToSessionScriptTypingSuppressesNewline() {
         let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#, submit: false)
@@ -3689,8 +3735,53 @@ final class WezTermWindowTests: XCTestCase {
      {"window_id":0,"tab_id":4,"pane_id":5,"tty_name":"/dev/ttys001"}]
     """.utf8)
 
+    /// Background needs the pane as well as its window: spawning selects the new tab, and the pane
+    /// the user was on is what gets activated again
+    func testFocusCarriesThePaneAndItsWindow() {
+        let focus = wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)
+        XCTAssertEqual(focus?.windowID, "3")
+        XCTAssertEqual(focus?.paneID, "146")
+    }
+
+    func testBackgroundRefocusesThePaneTheUserWasOnAndForegroundDoesNot() {
+        XCTAssertEqual(
+            wezTermRefocusArguments(activation: .background, focusedPaneID: "146"),
+            ["cli", "activate-pane", "--pane-id", "146"]
+        )
+        XCTAssertNil(wezTermRefocusArguments(activation: .background, focusedPaneID: nil))
+        XCTAssertNil(wezTermRefocusArguments(activation: .foreground, focusedPaneID: "146"))
+    }
+
+    private func launchCalls(_ activation: TabActivation) -> (pane: String?, calls: [String]) {
+        var calls: [String] = []
+        let pane = wezTermLaunchInMux(
+            cli: "/wz", focus: WezTermFocus(windowID: "3", paneID: "146"),
+            command: "echo hi", activation: activation
+        ) { path, args, _ in
+            calls.append(([path == "/wz" ? "wz" : path] + args.prefix(2)).joined(separator: " "))
+            return args.prefix(2) == ["cli", "spawn"] ? (status: 0, stdout: "200\n") : (status: 0, stdout: "")
+        }
+        return (pane, calls)
+    }
+
+    /// Background: the pane the user was on is active again before a byte of the command goes out.
+    /// `spawn` selects the new tab, so anything typed until the refocus lands in the new shell and
+    /// mixes with the command
+    func testBackgroundRefocusComesBeforeTheCommandIsSent() {
+        let launch = launchCalls(.background)
+        XCTAssertEqual(launch.pane, "200")
+        XCTAssertEqual(launch.calls, ["wz cli spawn", "wz cli activate-pane", "wz cli send-text"])
+    }
+
+    /// Foreground is unchanged: the command goes in, then WezTerm is brought to the front on it
+    func testForegroundSendsTheCommandThenBringsWezTermForward() {
+        let launch = launchCalls(.foreground)
+        XCTAssertEqual(launch.pane, "200")
+        XCTAssertEqual(launch.calls, ["wz cli spawn", "wz cli send-text", "/usr/bin/open -a WezTerm"])
+    }
+
     func testFocusedWindowIDFromClientsAndList() {
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: listJSON), "3")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)?.windowID, "3")
     }
 
     // With several clients, the most recently active one (the shortest idle_time) is the window the user is looking at
@@ -3699,7 +3790,7 @@ final class WezTermWindowTests: XCTestCase {
         [{"pid":1,"idle_time":{"secs":300,"nanos":0},"focused_pane_id":5},
          {"pid":2,"idle_time":{"secs":2,"nanos":500000000},"focused_pane_id":147}]
         """.utf8)
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "4")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clients, listJSON: listJSON)?.windowID, "4")
     }
 
     // A client with no focused_pane_id (a mux connection attached without a window) has to be dropped from the candidates
@@ -3708,19 +3799,19 @@ final class WezTermWindowTests: XCTestCase {
         [{"pid":1,"idle_time":{"secs":0,"nanos":0}},
          {"pid":2,"idle_time":{"secs":90,"nanos":0},"focused_pane_id":5}]
         """.utf8)
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "0")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clients, listJSON: listJSON)?.windowID, "0")
     }
 
     // When the focused pane is not in the list (it closed a moment ago) no window is named — rather than pick the wrong window and spill a tab into it, the choice is left to wezterm's default
     func testUnknownFocusedPaneYieldsNil() {
         let clients = Data(#"[{"idle_time":{"secs":0,"nanos":0},"focused_pane_id":999}]"#.utf8)
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: clients, listJSON: listJSON))
     }
 
     func testBrokenOrEmptyJSONYieldsNil() {
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("nope".utf8), listJSON: listJSON))
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: Data("nope".utf8)))
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("[]".utf8), listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: Data("nope".utf8), listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: clientsJSON, listJSON: Data("nope".utf8)))
+        XCTAssertNil(wezTermFocus(clientsJSON: Data("[]".utf8), listJSON: listJSON))
     }
 
     // With a window identified, that window is aimed at first, and on failure it is tried once more without one — if the window found closes just before the spawn, wezterm fails with "window_id N not found" (measured), and giving up there lets the `wezterm start` fallback open a new window, resurrecting the very symptom this fixes

@@ -359,16 +359,18 @@ public func cmuxRPCResponse(_ data: Data) throws -> [String: Any] {
 
 /// The workspace request deliberately leaves window selection and cwd to cmux. The server's
 /// default is the user's last active window, while the command's `{cd}` clause owns the cwd.
-public func cmuxWorkspaceCreateParameters() -> [String: Any] {
-    ["focus": true]
+/// `focus:false` is the background setting: the user's workspace stays selected, and the new
+/// surface still warms up and runs the command sent to it (`docs/context/cmux-integration.md`).
+public func cmuxWorkspaceCreateParameters(activation: TabActivation = .foreground) -> [String: Any] {
+    ["focus": activation == .foreground]
 }
 
 /// The grouped create shape builds on the legacy focus-only parameters so the single-request
 /// path keeps its exact wire contract.
 public func cmuxWorkspaceCreateParameters(
-    for plan: CmuxWorkspaceCreatePlan, commands: [String]
+    for plan: CmuxWorkspaceCreatePlan, commands: [String], activation: TabActivation = .foreground
 ) -> [String: Any] {
-    var parameters = cmuxWorkspaceCreateParameters()
+    var parameters = cmuxWorkspaceCreateParameters(activation: activation)
     parameters["layout"] = cmuxLayoutJSON(for: plan.layout.tree, commands: commands)
     parameters["operation_id"] = plan.operationID
     if let title = plan.title { parameters["title"] = title }

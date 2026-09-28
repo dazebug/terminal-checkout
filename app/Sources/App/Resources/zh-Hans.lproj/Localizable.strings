@@ -117,6 +117,8 @@
 "app.terminal.notInstalled" = "%@（未安装）";
 "app.terminal.note.common" = "按下 GitHub 上的按钮会在新标签页中运行命令，预约的 claude 输入会在 claude 启动后传送。在完成之前不要在该标签页中输入。";
 "app.terminal.note.warp" = " 在 Warp 上，只有当你正在查看该标签页时传送才会进行 — 切换走会暂停，切回来会继续。";
+"app.terminal.openInBackground" = "按下按钮后仍停留在当前画面";
+"app.terminal.openInBackground.note" = "启用后，可以继续在当前应用或标签页中输入。命令在新标签页（cmux 中为 workspace）中运行，预约的 claude 输入也会照常传送到那里。Warp 始终切换到新标签页。";
 "app.test.failed" = "失败：%@";
 "app.test.running" = "运行中…";
 "app.test.succeeded" = "如果终端里打开了新标签页，就说明成功了。";

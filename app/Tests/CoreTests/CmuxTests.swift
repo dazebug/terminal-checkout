@@ -312,6 +312,13 @@ final class CmuxTests: XCTestCase {
         }
     }
 
+    /// Background mode leaves the user's workspace selected; an unfocused create still warms up and
+    /// runs the command sent to it (measured — `docs/context/cmux-integration.md`)
+    func testBackgroundCreateDoesNotTakeFocus() {
+        XCTAssertEqual(cmuxWorkspaceCreateParameters(activation: .background)["focus"] as? Bool, false)
+        XCTAssertEqual(cmuxWorkspaceCreateParameters(activation: .foreground)["focus"] as? Bool, true)
+    }
+
     func testItem5CmuxRunParametersUseFocusOnlyAndPreserveCommandCR() {
         let workspace = cmuxWorkspaceCreateParameters()
         XCTAssertEqual(workspace["focus"] as? Bool, true)
