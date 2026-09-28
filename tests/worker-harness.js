@@ -15,7 +15,9 @@
 // checked against what the worker owes it — the tab the click came from, the arguments each page
 // reader has to be handed, the one host the app registers, keys the settings live under, message ids
 // the catalogue carries, one listener per event — and the expected values come from the click and
-// from defaults.js loaded on its own, never from the call being checked. A call that misses is a
+// from defaults.js loaded on its own, never from the call being checked, and never from anything the
+// worker can write to: not the tab object it is handed, which it may change as Chrome lets it, and not
+// a binding in its own realm, which it may rebind. A call that misses is a
 // breach and is recorded — an asynchronous one also fails without an answer, the way the worker's own
 // code sees a failed call — and the click or icon press it happened in then fails whatever the worker
 // made of it, which matters where the worker is allowed to shrug a failed read off.
@@ -118,8 +120,9 @@ function loadWorker({ extensionDir = EXTENSION, store = {}, page = PAGES.pr, rep
   const breaches = [];
   const logs = [];
   const messages = catalogueBackend('en');
-  let inFlight = null; // the tab of the click being served
+  let inFlight = null; // the tab of the click being served, as the stand-in took it down
   let context = null;
+  let readerFunctions = new Map(); // the page readers as the worker declared them, taken once it has loaded
 
   const breach = (reason) => {
     breaches.push(reason);
@@ -180,7 +183,7 @@ function loadWorker({ extensionDir = EXTENSION, store = {}, page = PAGES.pr, rep
         const name = typeof details?.func === 'function' ? details.func.name : '(no function)';
         calls.scripting.push(name);
         const miss = (reason) => { throw breach(`executeScript ${name}: ${reason}`); };
-        if (!Object.hasOwn(READER_ARGS, name) || details.func !== vm.runInContext(name, context)) {
+        if (!readerFunctions.has(name) || details.func !== readerFunctions.get(name)) {
           miss('not one of the worker\'s page readers');
         }
         if (!inFlight) miss('no click in flight');
@@ -219,12 +222,21 @@ function loadWorker({ extensionDir = EXTENSION, store = {}, page = PAGES.pr, rep
   for (const [event, fn] of Object.entries(listeners)) {
     if (!fn) throw new Error(`the worker registered no ${event} listener`);
   }
+  // A reader rebound later — `readCurrentHref = …` in a listener — is not one of these
+  readerFunctions = new Map(Object.keys(READER_ARGS).map(name => [
+    name, vm.runInContext(`typeof ${name} === 'function' ? ${name} : undefined`, context),
+  ]).filter(([, fn]) => fn !== undefined));
 
   // One click or icon press, served with `tab` as the tab it came from. A breach recorded on the way
   // fails it — checked once the work the worker left pending has run, so a late second answer counts.
+  //
+  // The tab the calls are checked against is taken down here, apart from the object the worker is
+  // handed. That object is not frozen — Chrome hands the listener one it may write to — but a worker
+  // that writes a different id into it and reads it back is reading another tab, and the tab the
+  // click came from did not change with it.
   const asClick = async (tab, run) => {
     if (inFlight) throw new Error('one click at a time: calls are checked against the tab of the click in flight');
-    inFlight = tab;
+    inFlight = { id: tab.id, url: tab.url };
     try {
       const outcome = await run();
       await new Promise(resolve => setImmediate(resolve));

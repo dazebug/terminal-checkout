@@ -36,11 +36,11 @@ const ITEMS = {
 };
 
 // The native call a click on `kind` must produce: to the host the app registers, a single command, or
-// a batch on a list page
-function expected(kind, command, inputs) {
+// a batch on a list page — its items in the page's order unless a test reorders the page
+function expected(kind, command, inputs, items = ITEMS[kind]) {
   const claude = inputs.length ? { claude_inputs: inputs } : {};
   const message = LIST_KINDS.has(kind)
-    ? { command, items: ITEMS[kind], ...claude }
+    ? { command, items, ...claude }
     : { command_template: command, variables: VARIABLES[kind], ...claude };
   return { host: NATIVE_HOST, message };
 }
@@ -230,8 +230,9 @@ test('a batch the app ran in part arrives as the app\'s own result, keyed in the
     });
     const response = await worker.dispatch(click(kind, button, { note: 'hi' }));
     assert.deepEqual(response, { success: true, batch: outcome, itemKeys: current.map(row => row.key) }, kind);
-    const [{ message }] = worker.native();
-    assert.deepEqual(message.items.map(item => item.variables.number), current.map(row => row.key.split('/').at(-1)), kind);
+    // One request, its items in the page's current order — an item that failed is not sent again
+    const currentItems = [...ITEMS[kind]].reverse();
+    assert.deepEqual(worker.native(), [expected(kind, button.command, [...button.claudeInputs, 'hi'], currentItems)], kind);
   }
 });
 
