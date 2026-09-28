@@ -404,8 +404,8 @@ final class SetupWindowRedrawTests: XCTestCase {
     /// one-line recomputation, so the check says what the sentence says. (The attribute lint next
     /// door is the opposite case: what it would take to close is a parser, and a lint
     /// stops short of one.)
-    /// The background checkbox writes the stored choice, shows it after a rebuild, and is not offered
-    /// on Warp, which always opens in front
+    /// The background checkbox writes the stored choice, is unticked and not offered on Warp, which
+    /// always opens in front, and shows the choice again on the next terminal
     func testTheBackgroundCheckboxStoresTheChoiceAndIsWithheldOnWarp() throws {
         let previousTerminal = UserDefaults.standard.string(forKey: "terminal")
         defer {

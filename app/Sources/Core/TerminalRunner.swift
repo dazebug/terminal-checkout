@@ -990,7 +990,7 @@ func wezTermFallbackArguments(command: String) -> [String] {
 }
 
 /// Opens a new tab in the WezTerm window currently being looked at and runs the command (falling back to a new process when the spawn fails).
-/// With `injectsClaudeInput` that fallback is not reachable — the pane cannot be addressed there, so the input would vanish (`wezTermFallbackRejection`).
+/// That fallback is refused (`wezTermFallbackRejection`) with `injectsClaudeInput` — the pane cannot be addressed there, so the input would vanish — and in background mode, where its first window would take focus.
 @discardableResult
 public func runInWezTerm(
     _ command: String, injectsClaudeInput: Bool = false, activation: TabActivation = .foreground

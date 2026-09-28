@@ -312,9 +312,8 @@ final class CmuxTests: XCTestCase {
         }
     }
 
-    /// Background mode leaves the user's workspace selected. Measured on the installed cmux: an
-    /// unfocused create kept `current-workspace` unchanged, reported a tty at 2.1s and ran the
-    /// queued command by 2.9s
+    /// Background mode leaves the user's workspace selected; an unfocused create still warms up and
+    /// runs the command sent to it (measured — `docs/context/cmux-integration.md`)
     func testBackgroundCreateDoesNotTakeFocus() {
         XCTAssertEqual(cmuxWorkspaceCreateParameters(activation: .background)["focus"] as? Bool, false)
         XCTAssertEqual(cmuxWorkspaceCreateParameters(activation: .foreground)["focus"] as? Bool, true)

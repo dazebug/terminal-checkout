@@ -3577,8 +3577,8 @@ final class AppleScriptTests: XCTestCase {
 
     /// Background leaves the user where they were. Without `activate` iTerm2 stays behind, but
     /// creating a tab still selects it — so the tab they were on is selected again, or whatever
-    /// they are typing in iTerm2 lands in the new session (maintainer's report). The handle names
-    /// the new session, captured before the old tab is selected again
+    /// they are typing in iTerm2 lands in the new session. The handle names the new session,
+    /// captured before the old tab is selected again
     func testITermScriptInBackgroundKeepsTheUsersTab() {
         let script = iTermScript(for: "echo hi", activation: .background)
         XCTAssertFalse(script.contains("activate"))
