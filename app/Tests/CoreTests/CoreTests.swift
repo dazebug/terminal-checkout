@@ -3739,7 +3739,7 @@ final class WezTermWindowTests: XCTestCase {
     }
 
     func testFocusedWindowIDFromClientsAndList() {
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: listJSON), "3")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)?.windowID, "3")
     }
 
     // With several clients, the most recently active one (the shortest idle_time) is the window the user is looking at
@@ -3748,7 +3748,7 @@ final class WezTermWindowTests: XCTestCase {
         [{"pid":1,"idle_time":{"secs":300,"nanos":0},"focused_pane_id":5},
          {"pid":2,"idle_time":{"secs":2,"nanos":500000000},"focused_pane_id":147}]
         """.utf8)
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "4")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clients, listJSON: listJSON)?.windowID, "4")
     }
 
     // A client with no focused_pane_id (a mux connection attached without a window) has to be dropped from the candidates
@@ -3757,19 +3757,19 @@ final class WezTermWindowTests: XCTestCase {
         [{"pid":1,"idle_time":{"secs":0,"nanos":0}},
          {"pid":2,"idle_time":{"secs":90,"nanos":0},"focused_pane_id":5}]
         """.utf8)
-        XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON), "0")
+        XCTAssertEqual(wezTermFocus(clientsJSON: clients, listJSON: listJSON)?.windowID, "0")
     }
 
     // When the focused pane is not in the list (it closed a moment ago) no window is named — rather than pick the wrong window and spill a tab into it, the choice is left to wezterm's default
     func testUnknownFocusedPaneYieldsNil() {
         let clients = Data(#"[{"idle_time":{"secs":0,"nanos":0},"focused_pane_id":999}]"#.utf8)
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clients, listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: clients, listJSON: listJSON))
     }
 
     func testBrokenOrEmptyJSONYieldsNil() {
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("nope".utf8), listJSON: listJSON))
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: Data("nope".utf8)))
-        XCTAssertNil(wezTermFocusedWindowID(clientsJSON: Data("[]".utf8), listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: Data("nope".utf8), listJSON: listJSON))
+        XCTAssertNil(wezTermFocus(clientsJSON: clientsJSON, listJSON: Data("nope".utf8)))
+        XCTAssertNil(wezTermFocus(clientsJSON: Data("[]".utf8), listJSON: listJSON))
     }
 
     // With a window identified, that window is aimed at first, and on failure it is tried once more without one — if the window found closes just before the spawn, wezterm fails with "window_id N not found" (measured), and giving up there lets the `wezterm start` fallback open a new window, resurrecting the very symptom this fixes

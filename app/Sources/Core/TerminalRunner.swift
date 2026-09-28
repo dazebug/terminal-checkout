@@ -873,15 +873,11 @@ public func wezTermSpawnAttempts(windowID: String?) -> [[String]] {
 
 /// Finds the id of the window holding the currently focused pane, out of the mux responses (list-clients + list).
 /// Without --window-id, `wezterm cli spawn` picks the window from the pane in the WEZTERM_PANE environment variable, which a GUI app does not have — so the tab lands in the mux's first (= oldest) window and some other window than the one the user was looking at jumps to the front (measured). Hence the focused window is looked up and named explicitly.
-/// The pane the user is looking at and the window holding it — `wezTermFocusedWindowID` names the
-/// window a new tab goes into, and background mode activates the pane again once the tab exists.
+/// The pane the user is looking at and the window holding it — the window is where a new tab
+/// goes, and background mode activates the pane again once the tab exists.
 public struct WezTermFocus: Equatable {
     public let windowID: String
     public let paneID: String
-}
-
-public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String? {
-    wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)?.windowID
 }
 
 /// `wezterm cli spawn` selects the new tab in its window, so background mode activates the pane the
