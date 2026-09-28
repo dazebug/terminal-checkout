@@ -1052,6 +1052,78 @@ function clickPayload(button, note) {
   return note === undefined ? executionPayload(button) : executionPayloadWithNote(button, note);
 }
 
+// --- The content script's note popover, its pure parts ---
+
+// The message a header button's click sends. A click with a note carries it under `note`, after
+// everything else; a click without one carries no `note` key at all, so it is byte for byte the message
+// the button sent before notes existed — the worker judges a present key whatever it holds, so only
+// `undefined` means no note.
+function buildButtonMessage(action, buttonIndex, shown, target, note) {
+  const message = { action, buttonIndex, shown, target };
+  if (note !== undefined) message.note = note;
+  return message;
+}
+
+// Which header button a run belongs to: the page it was drawn for, its kind and index, and the
+// fingerprint of what it runs. Not a DOM node — GitHub rebuilds its header while a request is in
+// flight, and the button it draws again is the same button, which has to come back as busy as it was.
+function splitButtonIdentity(target, kind, index, shown) {
+  return JSON.stringify([
+    target?.kind ?? null, target?.owner ?? null, target?.repo ?? null, target?.number ?? null, kind, index, shown,
+  ]);
+}
+
+// The runs of header buttons, one entry per identity. `busy` from the first synchronous step of a run
+// until its answer — while it holds, no way into that button starts it again: not its body, its
+// caret, the popover's send button or Enter — then the outcome, `done` or `error`, which is only shown:
+// a new run may start while the marker is up. Each run has a token, so the answer or the timer of an
+// earlier run cannot finish or clear a later one.
+function createSplitButtonRuns() {
+  const runs = new Map();
+  let lastToken = 0;
+  return {
+    phaseOf: identity => runs.get(identity)?.phase ?? null,
+    start(identity) {
+      if (runs.get(identity)?.phase === 'busy') return null;
+      lastToken += 1;
+      runs.set(identity, { token: lastToken, phase: 'busy' });
+      return lastToken;
+    },
+    finish(identity, token, phase) {
+      const run = runs.get(identity);
+      if (run?.token !== token || run.phase !== 'busy') return false;
+      run.phase = phase;
+      return true;
+    },
+    clear(identity, token) {
+      if (runs.get(identity)?.token !== token) return false;
+      runs.delete(identity);
+      return true;
+    },
+  };
+}
+
+// What a refused note says on the page: a message id for each verdict code, which the content script
+// resolves in the catalogue it paints with — the verdict itself carries no sentence. `null` for a code
+// this list does not know, which the page shows as a failure that names no cause.
+const CLAUDE_NOTE_REFUSAL_MESSAGES = Object.freeze({
+  'not-string': 'ext.claudeNote.refused.notString',
+  empty: 'ext.claudeNote.refused.empty',
+  'unpaired-surrogate': 'ext.claudeNote.refused.unpairedSurrogate',
+  'control-character': 'ext.claudeNote.refused.controlCharacter',
+  'leading-character': 'ext.claudeNote.refused.leadingCharacter',
+  braces: 'ext.claudeNote.refused.braces',
+  'too-long': 'ext.claudeNote.refused.tooLong',
+});
+
+function claudeNoteRefusalNotice(code) {
+  if (!Object.hasOwn(CLAUDE_NOTE_REFUSAL_MESSAGES, code)) return null;
+  return {
+    messageKey: CLAUDE_NOTE_REFUSAL_MESSAGES[code],
+    args: code === 'too-long' ? [MAX_CLAUDE_NOTE_BYTES] : [],
+  };
+}
+
 // --- The main-branch settings, validated once for every reader ---
 // The override lookup is keyed by a repository name taken straight out of a page URL, and whatever
 // comes back is handed to the app as a branch name. Only the options page checked the shape, so the

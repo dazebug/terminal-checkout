@@ -306,3 +306,175 @@ test('the note joins the button\'s own inputs once, at the end, and the button i
     assert.notEqual(payload.claudeInputs, button.claudeInputs, 'the payload shares the stored array');
   }
 });
+
+// --- The popover's pure parts ---
+
+const PR_7 = { kind: 'pr', owner: 'o', repo: 'r', number: '7' };
+
+test('a click without a note sends the message it sent before notes existed, byte for byte', () => {
+  const { buildButtonMessage } = pick('buildButtonMessage');
+  const shown = '{"command":"{cd} && claude","claudeInputs":[]}';
+  // What the content script sent until now, in its key order
+  const before = { action: 'execute_command', buttonIndex: 2, shown, target: PR_7 };
+  const message = buildButtonMessage('execute_command', 2, shown, PR_7);
+  assert.equal(JSON.stringify(message), JSON.stringify(before));
+  assert.equal(Object.hasOwn(message, 'note'), false);
+});
+
+test('a click with a note carries it last, and only an absent note is no note', () => {
+  const { buildButtonMessage } = pick('buildButtonMessage');
+  const message = buildButtonMessage('execute_repo_command', 0, 'fingerprint', PR_7, 'look here');
+  assert.deepEqual(Object.keys(message), ['action', 'buttonIndex', 'shown', 'target', 'note']);
+  assert.equal(message.note, 'look here');
+  // The worker judges a present key whatever it holds, so nothing but `undefined` may drop it
+  for (const note of ['', null, 0]) {
+    assert.equal(Object.hasOwn(buildButtonMessage('execute_command', 0, 'fingerprint', PR_7, note), 'note'), true);
+  }
+});
+
+test('a split button is named by its page, kind, index and what it runs, never by a DOM node', () => {
+  const { splitButtonIdentity } = pick('splitButtonIdentity');
+  const identity = splitButtonIdentity(PR_7, 'pr', 0, 'fingerprint');
+  assert.equal(typeof identity, 'string');
+  assert.equal(splitButtonIdentity({ ...PR_7 }, 'pr', 0, 'fingerprint'), identity, 'a redrawn button is the same button');
+  const others = [
+    splitButtonIdentity({ ...PR_7, number: '8' }, 'pr', 0, 'fingerprint'),
+    splitButtonIdentity({ ...PR_7, owner: 'o2' }, 'pr', 0, 'fingerprint'),
+    splitButtonIdentity(PR_7, 'repo', 0, 'fingerprint'),
+    splitButtonIdentity(PR_7, 'pr', 1, 'fingerprint'),
+    splitButtonIdentity(PR_7, 'pr', 0, 'other fingerprint'),
+  ];
+  for (const other of others) assert.notEqual(other, identity);
+  assert.equal(new Set(others).size, others.length);
+});
+
+test('a split button runs once at a time, and a stale answer or timer cannot touch a later run', () => {
+  const { createSplitButtonRuns } = pick('createSplitButtonRuns');
+  const runs = createSplitButtonRuns();
+  assert.equal(runs.phaseOf('a'), null);
+  const first = runs.start('a');
+  assert.equal(typeof first, 'number');
+  assert.equal(runs.phaseOf('a'), 'busy');
+  assert.equal(runs.start('a'), null, 'a second run started while the first was in flight');
+  assert.notEqual(runs.start('b'), null, 'one button held another');
+  assert.equal(runs.finish('a', first, 'done'), true);
+  assert.equal(runs.phaseOf('a'), 'done');
+  // The outcome marker is only shown, not held: a new run may start while it is up
+  const second = runs.start('a');
+  assert.notEqual(second, null);
+  assert.equal(runs.clear('a', first), false, 'the first run\'s timer cleared the second run');
+  assert.equal(runs.finish('a', first, 'error'), false, 'the first run\'s answer finished the second run');
+  assert.equal(runs.phaseOf('a'), 'busy');
+  assert.equal(runs.finish('a', second, 'error'), true);
+  assert.equal(runs.clear('a', second), true);
+  assert.equal(runs.phaseOf('a'), null);
+});
+
+test('every refusal code has its own message in every language the content script can paint', () => {
+  const { CLAUDE_NOTE_ERRORS, MAX_CLAUDE_NOTE_BYTES, claudeNoteRefusalNotice } =
+    pick('CLAUDE_NOTE_ERRORS, MAX_CLAUDE_NOTE_BYTES, claudeNoteRefusalNotice');
+  const locales = ['en', 'ko', 'ja', 'zh_CN', 'zh_TW'];
+  const catalogues = Object.fromEntries(locales.map(locale => [locale, JSON.parse(readExtension(`_locales/${locale}/messages.json`))]));
+  const keys = new Set();
+  for (const code of CLAUDE_NOTE_ERRORS) {
+    const notice = claudeNoteRefusalNotice(code);
+    assert.match(notice?.messageKey ?? '', /^ext\.claudeNote\.refused\.[A-Za-z]+$/, code);
+    keys.add(notice.messageKey);
+    for (const locale of locales) {
+      const entry = catalogues[locale][notice.messageKey.replace(/\./g, '_')];
+      assert.ok(entry && entry.message.trim(), `${locale} has no message for ${code}`);
+    }
+  }
+  assert.equal(keys.size, CLAUDE_NOTE_ERRORS.length, 'two codes share one message');
+  assert.deepEqual(claudeNoteRefusalNotice('too-long').args, [MAX_CLAUDE_NOTE_BYTES]);
+  // A code this content script does not know yet has no message of its own; the page falls back
+  assert.equal(claudeNoteRefusalNotice('no-such-code'), null);
+});
+
+// --- The content script's wiring: lints, not proofs ---
+// The content page has no DOM harness (docs/context/testing.md), so what the pure parts above cannot
+// carry is pinned as source structure. Every lint first finds its subject — a lint that found nothing
+// would pass by saying nothing.
+const content = () => readExtension('content.js');
+const bodyOf = (source, signature) => {
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `${signature} is gone`);
+  const rest = source.slice(start);
+  return rest.slice(0, rest.indexOf('\n}\n') + 2);
+};
+const count = (text, needle) => text.split(needle).length - 1;
+
+test('every header button run goes through one function, held before its first await (lint)', () => {
+  const source = content();
+  const run = bodyOf(source, 'async function runHeaderButton(');
+  const held = run.indexOf('headerButtonRuns.start(view.identity)');
+  const refused = run.indexOf('if (token === null) return;');
+  const firstAwait = run.indexOf('await ');
+  assert.ok(held !== -1 && refused > held && firstAwait > refused, 'the run is held after an await, or not at all');
+  assert.ok(run.includes('sendButtonMessage(buildButtonMessage(view.action, view.index, view.shown, target, note))'));
+  // Declared once, and entered from the body's click and from a note's send — nothing else runs a header button
+  assert.equal(count(source, 'runHeaderButton('), 3);
+  assert.match(bodyOf(source, 'function headerButton('), /onUserClick\(body, \(\) => runHeaderButton\(view, /);
+  assert.match(bodyOf(source, 'function submitNote('), /runHeaderButton\(popover\.view, /);
+  // And a header button's message leaves from one place
+  assert.equal(count(source, 'sendButtonMessage('), 2, 'declared once and called once');
+  assert.equal(count(source, 'chrome.runtime.sendMessage('), 2, 'a message leaves some other way');
+  assert.ok(bodyOf(source, 'async function sendButtonMessage(').includes('chrome.runtime.sendMessage('));
+});
+
+test('a drawing takes its state from the run of its identity, and the caret only from a button that takes a note (lint)', () => {
+  const source = content();
+  const head = bodyOf(source, 'function headerButton(');
+  assert.match(head, /identity: splitButtonIdentity\(pageTargetOfUrl\(location\.href\), kind, index, shown\)/);
+  const takes = head.indexOf('if (!buttonTakesClaudeNote(config))');
+  const caret = head.indexOf('createNoteCaret(view, look)');
+  assert.ok(takes !== -1 && caret > takes, 'the caret is drawn before, or without, asking whether the button takes a note');
+  assert.equal(count(source, 'createNoteCaret('), 2, 'the caret is created somewhere else too');
+  assert.equal(count(head, 'paintHeaderButton(view)'), 2, 'a drawing does not start from its run');
+  assert.match(bodyOf(source, 'function paintHeaderButton('), /headerButtonRuns\.phaseOf\(view\.identity\)/);
+  assert.match(bodyOf(source, 'function toggleNotePopover('), /headerButtonRuns\.phaseOf\(view\.identity\) === 'busy'/);
+});
+
+test('a note is for the page its popover opened on, read once, and judged before anything is sent (lint)', () => {
+  const source = content();
+  assert.match(bodyOf(source, 'function openNotePopover('), /const target = pageTargetOfUrl\(location\.href\);/);
+  const submit = bodyOf(source, 'function submitNote(');
+  assert.equal(count(submit, '.value'), 1, 'the note is read more than once, or not at all');
+  const judged = submit.indexOf('const verdict = claudeNoteVerdict(typed);');
+  assert.ok(judged !== -1 && judged < submit.indexOf('runHeaderButton('), 'sent before it is judged, or never judged');
+  assert.match(submit, /note: verdict\.note/);
+  assert.match(submit, /target: popover\.target/);
+  assert.doesNotMatch(submit, /location\.|pageTargetOfUrl/);
+  assert.doesNotMatch(bodyOf(source, 'async function runHeaderButton('), /\.value\b|location\.|pageTargetOfUrl/);
+});
+
+test('Enter sends only for a person and never mid-composition, and keys stop at the popover (lint)', () => {
+  const open = bodyOf(content(), 'function openNotePopover(');
+  const enter = open.slice(open.indexOf("input.addEventListener('keydown'"));
+  const handler = enter.slice(0, enter.indexOf('});'));
+  assert.ok(handler.includes("event.key !== 'Enter' || event.isComposing"), 'Enter is taken while composing');
+  const guarded = handler.indexOf('if (isUserGesture(event)) submitNote(popover);');
+  assert.ok(guarded !== -1 && count(handler, 'submitNote(') === 1, 'a synthetic Enter sends');
+  assert.ok(open.includes("for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());"));
+  assert.match(open, /onUserClick\(send, \(\) => submitNote\(popover\)\)/);
+});
+
+test('every refusal the notice names is drawn through its own literal lookup (lint)', () => {
+  const { CLAUDE_NOTE_ERRORS, claudeNoteRefusalNotice } = pick('CLAUDE_NOTE_ERRORS, claudeNoteRefusalNotice');
+  const source = content();
+  for (const code of CLAUDE_NOTE_ERRORS) {
+    const { messageKey } = claudeNoteRefusalNotice(code);
+    assert.equal(count(source, `'${messageKey}': `), 1, `${code} has no row in NOTE_REFUSAL_TEXT`);
+    assert.equal(count(source, `tr('${messageKey}'`), 1, `${code} is not drawn through a literal lookup`);
+  }
+});
+
+test('taking the buttons away takes the popover and the split buttons with them (lint)', () => {
+  const source = content();
+  const remove = bodyOf(source, 'function removeInsertedButtons(');
+  assert.match(remove, /closeNotePopover\(\{ restoreFocus: false \}\)/);
+  assert.match(remove, /\.\$\{SPLIT_BUTTON_CLASS\}/);
+  assert.match(bodyOf(source, 'async function tryInsertButton('), /forgetDetachedHeaderButtons\(\)/);
+  assert.match(bodyOf(source, 'function forgetDetachedHeaderButtons('), /closeNotePopover\(\{ restoreFocus: false \}\)/);
+  assert.match(bodyOf(source, 'function onUrlChange('), /removeInsertedButtons\(\)/);
+});

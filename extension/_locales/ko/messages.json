@@ -88,6 +88,47 @@
       }
     }
   },
+  "ext_claudeNote_caret": {
+    "message": "claude에게 한 마디"
+  },
+  "ext_claudeNote_failed": {
+    "message": "보내지 못했습니다. 적은 내용은 남아 있으니 다시 시도해 주세요."
+  },
+  "ext_claudeNote_input": {
+    "message": "claude에게 전할 한 마디"
+  },
+  "ext_claudeNote_placeholder": {
+    "message": "예: 불안정한 테스트부터 봐 줘"
+  },
+  "ext_claudeNote_refused_braces": {
+    "message": "{…}는 빼 주세요. 앱이 변수로 읽습니다."
+  },
+  "ext_claudeNote_refused_controlCharacter": {
+    "message": "줄바꿈이나 제어 문자 없이 한 줄로 적어 주세요."
+  },
+  "ext_claudeNote_refused_empty": {
+    "message": "먼저 한 마디를 적어 주세요."
+  },
+  "ext_claudeNote_refused_leadingCharacter": {
+    "message": "공백이나 !, /, #가 아닌 글자로 시작해 주세요."
+  },
+  "ext_claudeNote_refused_notString": {
+    "message": "한 마디는 텍스트여야 합니다."
+  },
+  "ext_claudeNote_refused_tooLong": {
+    "message": "너무 깁니다. $ARG1$바이트 이하로 줄여 주세요.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_claudeNote_refused_unpairedSurrogate": {
+    "message": "깨진 문자가 들어 있습니다. 다시 입력해 주세요."
+  },
+  "ext_claudeNote_send": {
+    "message": "보내기"
+  },
   "ext_confirm_presetOverwrite": {
     "message": "$ARG1$번 버튼을 \"$ARG2$\" 프리셋으로 덮어씁니다. 계속할까요?",
     "placeholders": {

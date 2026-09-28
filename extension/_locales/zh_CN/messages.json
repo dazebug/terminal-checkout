@@ -88,6 +88,47 @@
       }
     }
   },
+  "ext_claudeNote_caret": {
+    "message": "给 claude 的一句话"
+  },
+  "ext_claudeNote_failed": {
+    "message": "发送失败。已保留你输入的内容，请重试。"
+  },
+  "ext_claudeNote_input": {
+    "message": "要告诉 claude 的一句话"
+  },
+  "ext_claudeNote_placeholder": {
+    "message": "例如：先看不稳定的测试"
+  },
+  "ext_claudeNote_refused_braces": {
+    "message": "请去掉 {…}，应用会把它当作变量读取。"
+  },
+  "ext_claudeNote_refused_controlCharacter": {
+    "message": "请写成一行，不要包含换行或控制字符。"
+  },
+  "ext_claudeNote_refused_empty": {
+    "message": "请先写一句话。"
+  },
+  "ext_claudeNote_refused_leadingCharacter": {
+    "message": "请以文字开头，不要以空格或 !、/、# 开头。"
+  },
+  "ext_claudeNote_refused_notString": {
+    "message": "这句话必须是文本。"
+  },
+  "ext_claudeNote_refused_tooLong": {
+    "message": "太长了，请控制在 $ARG1$ 字节以内。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_claudeNote_refused_unpairedSurrogate": {
+    "message": "其中有损坏的字符，请重新输入。"
+  },
+  "ext_claudeNote_send": {
+    "message": "发送"
+  },
   "ext_confirm_presetOverwrite": {
     "message": "按钮 $ARG1$ 将被“$ARG2$”预设覆盖。要继续吗？",
     "placeholders": {

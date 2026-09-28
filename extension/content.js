@@ -41,33 +41,14 @@ function createRepoButton(buttonConfig, index) {
     button.style.backgroundColor = '#238636';
   });
 
-  // onUserClick refuses anything the browser did not mark as a real click, before the body runs
-  onUserClick(button, async () => {
-    button.textContent = phases.busy;
-    button.disabled = true;
-
-    try {
-      await runButtonCommand('execute_repo_command', index, buttonConfig);
-      button.textContent = phases.done;
-      setTimeout(() => {
-        button.textContent = face;
-        button.disabled = false;
-      }, 2000);
-    } catch (error) {
-      console.error('repo command error:', error);
-      button.textContent = phases.error;
-      setTimeout(() => {
-        button.textContent = face;
-        button.disabled = false;
-      }, 2000);
-    }
+  return headerButton(button, buttonConfig, index, {
+    action: 'execute_repo_command', kind: 'repo', face, phases, delays: { done: 2000, error: 2000 }, look: 'filled',
   });
-
-  return button;
 }
 
-// Run a single button. sendMessage does not reject when the background returns {success:false}, so
-// without inspecting the response a rejected command would still show up as success on the button.
+// Send a single button's message (`buildButtonMessage`, defaults.js). sendMessage does not reject when
+// the background returns {success:false}, so without inspecting the response a rejected command would
+// still show up as success on the button.
 //
 // The index says which button; the fingerprint says what that button was going to run when it was
 // drawn; the target says which page it was clicked on. The service worker reads storage again for
@@ -80,17 +61,11 @@ function createRepoButton(buttonConfig, index) {
 //
 // Both are comparison keys, never sources. The command still comes from storage, and the repository,
 // number and branch still come from the tab and its DOM; these two only decide whether to refuse.
-// Sending them as sources would let a message name its own repository.
-async function runButtonCommand(action, index, config) {
-  const response = await chrome.runtime.sendMessage({
-    action,
-    buttonIndex: index,
-    shown: buttonFingerprint(config),
-    // Read now, not when the button was drawn: the button is drawn once and the page moves under it.
-    // From the full href rather than the pathname, so this goes through the same origin check the
-    // service worker uses — one validator, one answer to "is this a page of ours".
-    target: pageTargetOfUrl(location.href),
-  });
+// Sending them as sources would let a message name its own repository. The one value a click adds is
+// a note typed into a claude button's popover, and it can only become that run's last claude input:
+// the worker judges it again and puts it after the stored inputs.
+async function sendButtonMessage(message) {
+  const response = await chrome.runtime.sendMessage(message);
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
@@ -622,7 +597,7 @@ async function tryInsertListButtons(kind) {
 }
 
 // Create the custom command button next to the PR branch or the issue badge (emoji icon or text pill)
-function createCommandIconButton(buttonConfig, index, { action, className }) {
+function createCommandIconButton(buttonConfig, index, { action, kind, className }) {
   const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
   button.className = className;
@@ -670,29 +645,422 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.style.backgroundColor = 'transparent';
   });
 
-  onUserClick(button, async () => {
-    const originalText = button.textContent;
-    button.textContent = '⏳';
-    button.disabled = true;
-
-    try {
-      await runButtonCommand(action, index, buttonConfig);
-      button.textContent = '✅';
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-      }, 1500);
-    } catch (error) {
-      console.error('command error:', error);
-      button.textContent = '❌';
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-      }, 2000);
-    }
+  return headerButton(button, buttonConfig, index, {
+    action, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' }, delays: { done: 1500, error: 2000 },
+    look: isTextFace(face) ? 'pill' : 'icon',
   });
+}
 
-  return button;
+// --- Header buttons: one run per button, and the note a claude button can carry ---
+//
+// A header button is its body and, when it starts claude with room for one more input
+// (`buttonTakesClaudeNote`, defaults.js), a caret beside it that opens a one-line note for claude —
+// one split button, kept on one line. Every run goes through `runHeaderButton`: the body's click, and
+// the popover's send button and Enter. The run is held by the button's identity (defaults.js), not by
+// the node that was pressed, so the same button drawn again while its request is in flight comes back
+// busy, and no other button or page is held.
+//
+// The popover lives in <body>, not in the header: the PR header's rows clip (layout.js). It is placed
+// absolutely rather than as an HTML `popover` in the top layer, which needs Chrome 114 while the
+// manifest sets no minimum version. There is no shadow root: a key event from inside one reaches the
+// page retargeted to its host, which is no longer an editable field to GitHub's shortcut handling,
+// while our own input stays the target of its events — and the popover stops key events besides.
+// Styles are CSSOM, like every other node this script draws, with GitHub's colour variables and a
+// fallback for each, so the popover follows the light and dark themes.
+const SPLIT_BUTTON_CLASS = 'terminal-split-btn';
+const NOTE_CARET_CLASS = 'terminal-note-caret';
+const NOTE_POPOVER_CLASS = 'terminal-note-popover';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const SPLIT_BUTTON_STYLE = `
+  display: inline-flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  vertical-align: middle;
+`;
+// The body's corners where it meets its caret, per look
+const SPLIT_BODY_RADIUS = { filled: '6px 0 0 6px', pill: '2em 0 0 2em', icon: '4px 0 0 4px' };
+// The caret carries on its body's look: a green piece joined to the filled repository button, the
+// rest of a text pill's outline, or a narrow transparent piece past an icon behind a thin divider
+const NOTE_CARET_STYLE = {
+  filled: `
+    background-color: #238636;
+    color: white;
+    border: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 0 6px 6px 0;
+    padding: 0 5px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+  pill: `
+    background: transparent;
+    color: #57ab5a;
+    border: 1px solid rgba(87, 171, 90, 0.45);
+    border-left: none;
+    border-radius: 0 2em 2em 0;
+    padding: 0 6px 0 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+  icon: `
+    background: transparent;
+    color: #57ab5a;
+    border: none;
+    border-left: 1px solid rgba(87, 171, 90, 0.35);
+    border-radius: 0 4px 4px 0;
+    padding: 0 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+};
+const NOTE_POPOVER_STYLE = `
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  text-align: left;
+  visibility: hidden;
+`;
+const NOTE_INPUT_STYLE = `
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--bgColor-default, #ffffff);
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+`;
+const NOTE_SEND_STYLE = `
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--button-primary-fgColor-rest, #ffffff);
+  background: var(--button-primary-bgColor-rest, #1f883d);
+  border: 1px solid var(--button-primary-borderColor-rest, rgba(31, 35, 40, 0.15));
+  border-radius: 6px;
+  cursor: pointer;
+`;
+const NOTE_STATUS_STYLE = `
+  display: none;
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+`;
+const NOTE_QUIET_COLOR = 'var(--fgColor-muted, #59636e)';
+const NOTE_PROBLEM_COLOR = 'var(--fgColor-danger, #d1242f)';
+
+const headerButtonRuns = createSplitButtonRuns();
+// Every drawing of a header button, so a run can repaint the ones on screen; detached ones are dropped
+// as they are met
+const drawnHeaderButtons = new Set();
+// What a closed or failed popover leaves typed, by button identity, for the next time it opens
+const noteDrafts = new Map();
+let notePopover = null;
+
+// A header button around its body. Returns the node to insert: the body, or the split button.
+function headerButton(body, config, index, { action, kind, face, phases, delays, look }) {
+  const shown = buttonFingerprint(config);
+  const view = {
+    identity: splitButtonIdentity(pageTargetOfUrl(location.href), kind, index, shown),
+    action, index, shown, body, face, phases, delays, caret: null,
+  };
+  // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
+  // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
+  // the full href rather than the pathname, so it goes through the same origin check the service worker
+  // uses — one validator, one answer to "is this a page of ours".
+  onUserClick(body, () => runHeaderButton(view, { target: pageTargetOfUrl(location.href) }));
+  drawnHeaderButtons.add(view);
+  if (!buttonTakesClaudeNote(config)) {
+    paintHeaderButton(view);
+    return body;
+  }
+  view.caret = createNoteCaret(view, look);
+  const split = document.createElement('span');
+  split.className = SPLIT_BUTTON_CLASS;
+  split.style.cssText = SPLIT_BUTTON_STYLE;
+  // The gap in front belongs to the pair now, and the corners where the two meet are squared
+  split.style.marginLeft = body.style.marginLeft;
+  body.style.marginLeft = '0';
+  body.style.borderRadius = SPLIT_BODY_RADIUS[look];
+  split.append(body, view.caret);
+  paintHeaderButton(view);
+  return split;
+}
+
+// A drawing shows the run its identity has now, whichever node it is. The body stays off through the
+// outcome marker as it always has; the caret is off only while the request is in flight.
+function paintHeaderButton(view) {
+  const phase = headerButtonRuns.phaseOf(view.identity);
+  view.body.textContent = phase ? view.phases[phase] : view.face;
+  view.body.disabled = phase !== null;
+  if (view.caret) {
+    view.caret.disabled = phase === 'busy';
+    view.caret.style.opacity = phase === 'busy' ? '0.5' : '';
+  }
+}
+
+function repaintHeaderButtons(identity) {
+  for (const view of drawnHeaderButtons) {
+    if (!view.body.isConnected) drawnHeaderButtons.delete(view);
+    else if (view.identity === identity) paintHeaderButton(view);
+  }
+  if (notePopover?.view.identity === identity) syncNoteSend(notePopover);
+}
+
+// Every header button run starts here, and it is held before the first await — by identity, so the
+// body, the caret, the send button and Enter all stop at the same run.
+async function runHeaderButton(view, { target, note, popover, typed }) {
+  const token = headerButtonRuns.start(view.identity);
+  if (token === null) return;
+  if (popover) startNoteSend(popover);
+  repaintHeaderButtons(view.identity);
+  let phase = 'done';
+  try {
+    await sendButtonMessage(buildButtonMessage(view.action, view.index, view.shown, target, note));
+  } catch (failure) {
+    console.error('command error:', failure);
+    phase = 'error';
+  }
+  headerButtonRuns.finish(view.identity, token, phase);
+  repaintHeaderButtons(view.identity);
+  if (popover) settleNoteSend(popover, phase, typed);
+  setTimeout(() => {
+    if (headerButtonRuns.clear(view.identity, token)) repaintHeaderButtons(view.identity);
+  }, view.delays[phase]);
+}
+
+function createNoteCaret(view, look) {
+  const caret = document.createElement('button');
+  caret.type = 'button';
+  caret.className = NOTE_CARET_CLASS;
+  caret.title = tr('ext.claudeNote.caret');
+  caret.setAttribute('aria-label', tr('ext.claudeNote.caret'));
+  caret.setAttribute('aria-haspopup', 'dialog');
+  caret.setAttribute('aria-expanded', 'false');
+  caret.style.cssText = NOTE_CARET_STYLE[look];
+  caret.appendChild(noteCaretIcon());
+  const rest = look === 'filled' ? '#238636' : 'transparent';
+  const hover = look === 'filled' ? '#2ea043' : 'rgba(87, 171, 90, 0.1)';
+  caret.addEventListener('mouseenter', () => { caret.style.backgroundColor = hover; });
+  caret.addEventListener('mouseleave', () => { caret.style.backgroundColor = rest; });
+  onUserClick(caret, () => toggleNotePopover(view));
+  return caret;
+}
+
+// ▾ in the caret's own colour: a triangle of our own, filled with currentColor
+function noteCaretIcon() {
+  const icon = document.createElementNS(SVG_NS, 'svg');
+  icon.setAttribute('viewBox', '0 0 16 16');
+  icon.setAttribute('width', '10');
+  icon.setAttribute('height', '10');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+  icon.style.cssText = 'display: block; fill: currentColor;';
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M3 6h10l-5 5z');
+  icon.appendChild(path);
+  return icon;
+}
+
+function toggleNotePopover(view) {
+  if (headerButtonRuns.phaseOf(view.identity) === 'busy') return;
+  const reopening = notePopover?.caret === view.caret;
+  closeNotePopover();
+  if (!reopening) openNotePopover(view);
+}
+
+// The note for one button. The page it is for is read as it opens: the note goes with the page the
+// person was looking at when they started writing it, and a page that moves on in the meantime is
+// refused by the worker rather than sent to.
+function openNotePopover(view) {
+  const target = pageTargetOfUrl(location.href);
+  const root = document.createElement('div');
+  root.className = NOTE_POPOVER_CLASS;
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-label', tr('ext.claudeNote.caret'));
+  root.style.cssText = NOTE_POPOVER_STYLE;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.placeholder = tr('ext.claudeNote.placeholder');
+  input.setAttribute('aria-label', tr('ext.claudeNote.input'));
+  input.style.cssText = NOTE_INPUT_STYLE;
+  input.value = noteDrafts.get(view.identity) ?? '';
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.textContent = tr('ext.claudeNote.send');
+  send.style.cssText = NOTE_SEND_STYLE;
+  const status = document.createElement('div');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.style.cssText = NOTE_STATUS_STYLE;
+  const row = document.createElement('div');
+  row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+  row.append(input, send);
+  root.append(row, status);
+
+  const popover = { view, caret: view.caret, target, root, input, send, status, sending: false };
+  // GitHub's shortcuts listen on the document; nothing typed in here is theirs
+  for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.isComposing) return;
+    event.preventDefault();
+    closeNotePopover();
+  });
+  // Enter sends only when a person pressed it, and never while it is ending an IME composition
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    if (isUserGesture(event)) submitNote(popover);
+  });
+  input.addEventListener('input', () => {
+    showNoteStatus(popover, '', false);
+    syncNoteSend(popover);
+  });
+  onUserClick(send, () => submitNote(popover));
+  popover.onPointerDown = (event) => {
+    if (!root.contains(event.target) && !popover.caret.contains(event.target)) closeNotePopover();
+  };
+  popover.onResize = () => placeNotePopover(popover);
+  document.addEventListener('pointerdown', popover.onPointerDown, true);
+  window.addEventListener('resize', popover.onResize);
+
+  document.body.appendChild(root);
+  notePopover = popover;
+  view.caret.setAttribute('aria-expanded', 'true');
+  syncNoteSend(popover);
+  placeNotePopover(popover);
+  input.focus();
+}
+
+function placeNotePopover(popover) {
+  const box = popover.root.getBoundingClientRect();
+  const { left, top } = notePopoverPosition({
+    anchor: (popover.caret.parentElement ?? popover.caret).getBoundingClientRect(),
+    size: { width: box.width, height: box.height },
+    viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+    scroll: { x: window.scrollX, y: window.scrollY },
+  });
+  popover.root.style.left = `${left}px`;
+  popover.root.style.top = `${top}px`;
+  popover.root.style.visibility = 'visible';
+}
+
+// A note is read here, once, and judged by the one verdict (defaults.js) before anything is sent: a
+// refusal is shown in this page's language and nothing leaves. What goes out is the verdict's note.
+function submitNote(popover) {
+  const typed = popover.input.value;
+  const verdict = claudeNoteVerdict(typed);
+  if (!verdict.valid) {
+    showNoteStatus(popover, noteRefusalText(claudeNoteRefusalNotice(verdict.error)), true);
+    return;
+  }
+  runHeaderButton(popover.view, { target: popover.target, note: verdict.note, popover, typed });
+}
+
+// A refused note's message in this page's language, by the message ids `claudeNoteRefusalNotice`
+// (defaults.js) names. Each lookup is written out, so the catalogue audit sees every message drawn
+// here; an id without one reads as the failure that names no cause.
+const NOTE_REFUSAL_TEXT = {
+  'ext.claudeNote.refused.notString': () => tr('ext.claudeNote.refused.notString'),
+  'ext.claudeNote.refused.empty': () => tr('ext.claudeNote.refused.empty'),
+  'ext.claudeNote.refused.unpairedSurrogate': () => tr('ext.claudeNote.refused.unpairedSurrogate'),
+  'ext.claudeNote.refused.controlCharacter': () => tr('ext.claudeNote.refused.controlCharacter'),
+  'ext.claudeNote.refused.leadingCharacter': () => tr('ext.claudeNote.refused.leadingCharacter'),
+  'ext.claudeNote.refused.braces': () => tr('ext.claudeNote.refused.braces'),
+  'ext.claudeNote.refused.tooLong': limit => tr('ext.claudeNote.refused.tooLong', limit),
+};
+
+function noteRefusalText(notice) {
+  const text = notice && Object.hasOwn(NOTE_REFUSAL_TEXT, notice.messageKey) ? NOTE_REFUSAL_TEXT[notice.messageKey] : null;
+  return text ? text(...notice.args) : tr('ext.claudeNote.failed');
+}
+
+function showNoteStatus(popover, message, problem) {
+  popover.status.textContent = message;
+  popover.status.style.display = message ? 'block' : 'none';
+  popover.status.style.color = problem ? NOTE_PROBLEM_COLOR : NOTE_QUIET_COLOR;
+}
+
+// The send button is off while the box is empty, while this button has a run in flight, and while
+// this popover's own note is on its way
+function syncNoteSend(popover) {
+  const off = popover.sending || popover.input.value === ''
+    || headerButtonRuns.phaseOf(popover.view.identity) === 'busy';
+  popover.send.disabled = off;
+  popover.send.style.opacity = off ? '0.5' : '1';
+  popover.send.style.cursor = off ? 'default' : 'pointer';
+}
+
+function startNoteSend(popover) {
+  popover.sending = true;
+  popover.input.readOnly = true;
+  popover.send.textContent = '⏳';
+  showNoteStatus(popover, '', false);
+  syncNoteSend(popover);
+}
+
+// What a note's answer does to its popover. Success closes it and forgets the draft. Failure keeps the
+// typed note — in the popover when it is still the open one, and for the next opening either way —
+// under a line that names no cause: the worker's reason is an English sentence composed where no page
+// language exists, and it goes to the console only. A popover closed in the meantime, or another one
+// open now, is left alone.
+function settleNoteSend(popover, phase, typed) {
+  popover.sending = false;
+  const identity = popover.view.identity;
+  if (phase === 'done') {
+    if (notePopover === popover) closeNotePopover();
+    noteDrafts.delete(identity);
+    return;
+  }
+  noteDrafts.set(identity, typed);
+  if (notePopover !== popover) return;
+  popover.input.readOnly = false;
+  popover.send.textContent = tr('ext.claudeNote.send');
+  showNoteStatus(popover, tr('ext.claudeNote.failed'), true);
+  syncNoteSend(popover);
+}
+
+function closeNotePopover({ restoreFocus = true } = {}) {
+  const popover = notePopover;
+  if (!popover) return;
+  notePopover = null;
+  if (popover.input.value) noteDrafts.set(popover.view.identity, popover.input.value);
+  else noteDrafts.delete(popover.view.identity);
+  popover.root.remove();
+  document.removeEventListener('pointerdown', popover.onPointerDown, true);
+  window.removeEventListener('resize', popover.onResize);
+  popover.caret.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && popover.caret.isConnected && !popover.caret.disabled) popover.caret.focus();
+}
+
+// Drawings GitHub took away with a rebuilt header, or that a page change removed, are dropped — and a
+// popover whose caret went with them has nothing to hang from or return focus to. Safe at the start
+// of an insert pass: every insert creates and inserts its buttons in one synchronous stretch, so no
+// drawing is ever waiting, created but not yet inserted, across an await.
+function forgetDetachedHeaderButtons() {
+  for (const view of drawnHeaderButtons) {
+    if (!view.body.isConnected) drawnHeaderButtons.delete(view);
+  }
+  if (notePopover && !notePopover.caret.isConnected) closeNotePopover({ restoreFocus: false });
 }
 
 // Inside a breadcrumb item of the new GitHub header (an li with display:block), leaving the button
@@ -753,7 +1121,7 @@ async function tryInsertPRButtons() {
   // Insert the buttons in reverse order (insertAdjacentElement afterend inserts immediately after)
   for (let i = buttons.length - 1; i >= 0; i--) {
     const iconButton = createCommandIconButton(buttons[i], i, {
-      action: 'execute_command', className: 'terminal-cmd-btn',
+      action: 'execute_command', kind: 'pr', className: 'terminal-cmd-btn',
     });
     insertAfter.insertAdjacentElement('afterend', iconButton);
   }
@@ -798,7 +1166,7 @@ async function tryInsertIssueButtons() {
 
   buttons.forEach((config, index) => {
     row.appendChild(createCommandIconButton(config, index, {
-      action: 'execute_issue_command', className: 'terminal-issue-btn',
+      action: 'execute_issue_command', kind: 'issue', className: 'terminal-issue-btn',
     }));
   });
 
@@ -835,6 +1203,7 @@ async function tryInsertRepoButtons(target) {
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
+  forgetDetachedHeaderButtons();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
 
@@ -863,9 +1232,11 @@ let lastTarget = pageTargetOfUrl(location.href);
 // Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
 // insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
 // could survive onto PR #2, where their position and the header around them mean something else.
-// Removing them makes the next insert redraw for the page that is actually showing.
+// Removing them makes the next insert redraw for the page that is actually showing. A note popover
+// belongs to its button's page too, and goes with it.
 function removeInsertedButtons() {
-  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .terminal-list-btn, .terminal-list-btn-row')
+  closeNotePopover({ restoreFocus: false });
+  document.querySelectorAll(`.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .${SPLIT_BUTTON_CLASS}, .terminal-list-btn, .terminal-list-btn-row`)
     .forEach(node => node.remove());
   resetListSelectionState();
 }

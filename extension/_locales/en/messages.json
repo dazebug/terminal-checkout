@@ -88,6 +88,47 @@
       }
     }
   },
+  "ext_claudeNote_caret": {
+    "message": "Add a note for claude"
+  },
+  "ext_claudeNote_failed": {
+    "message": "Couldn't send — your note is still here. Try again."
+  },
+  "ext_claudeNote_input": {
+    "message": "Note for claude"
+  },
+  "ext_claudeNote_placeholder": {
+    "message": "e.g. start with the flaky test"
+  },
+  "ext_claudeNote_refused_braces": {
+    "message": "Leave out {…} — the app would read it as a variable."
+  },
+  "ext_claudeNote_refused_controlCharacter": {
+    "message": "Keep the note on one line, without control characters."
+  },
+  "ext_claudeNote_refused_empty": {
+    "message": "Write a note first."
+  },
+  "ext_claudeNote_refused_leadingCharacter": {
+    "message": "Start the note with a word — not a space, !, / or #."
+  },
+  "ext_claudeNote_refused_notString": {
+    "message": "The note has to be text."
+  },
+  "ext_claudeNote_refused_tooLong": {
+    "message": "The note is too long — at most $ARG1$ bytes.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_claudeNote_refused_unpairedSurrogate": {
+    "message": "The note has a broken character in it. Type it again."
+  },
+  "ext_claudeNote_send": {
+    "message": "Send"
+  },
   "ext_confirm_presetOverwrite": {
     "message": "Button $ARG1$ will be overwritten with the \"$ARG2$\" preset. Continue?",
     "placeholders": {
