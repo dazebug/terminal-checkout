@@ -1,4 +1,4 @@
-<!-- Translated from README.md at commit 0e56484. Keep this file line-for-line with README.md; see CONTRIBUTING.md. -->
+<!-- Translated from README.md at commit 59a640c. Keep this file line-for-line with README.md; see CONTRIBUTING.md. -->
 <div align="center">
   <p><b>🇰🇷 한국어</b> · <a href="README.zh-Hant.md">🇹🇼 繁體中文</a> · <a href="README.md">🇺🇸 English</a> · <a href="README.ja.md">🇯🇵 日本語</a></p>
   <img src="docs/assets/icon.png" width="96" height="96" alt="">
@@ -14,12 +14,7 @@
   <p><a href="#설치">설치</a> · <a href="#사용법">사용법</a> · <a href="#지원-터미널">터미널</a> · <a href="#문제-해결">문제 해결</a> · <a href="CONTRIBUTING.md">기여하기</a></p>
 </div>
 
-<!--
-  Hero demo slot. Planned: select two PRs on a PR list page, press "Checkout PR + Claude", and cmux opens
-  one worktree and one Claude Code session per PR. Fallback: "Review PR (claude)" with a ▾ note on a single PR.
-  A real recording with startup waits shortened and disclosed, no account data in frame. Add as
-  docs/assets/demo.gif once it exists; until then nothing renders here.
--->
+![GitHub 이슈 목록에서 8개를 골라 보내면 cmux에 Claude Code 세션 8개가 한 번에 열리고, 해결된 이슈는 닫힙니다 (녹화는 배속)](docs/assets/demo.ko.gif)
 
 ## 기능
 

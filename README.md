@@ -13,12 +13,7 @@
   <p><a href="#installation">Installation</a> · <a href="#usage">Usage</a> · <a href="#supported-terminals">Terminals</a> · <a href="#troubleshooting">Troubleshooting</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 </div>
 
-<!--
-  Hero demo slot. Planned: select two PRs on a PR list page, press "Checkout PR + Claude", and cmux opens
-  one worktree and one Claude Code session per PR. Fallback: "Review PR (claude)" with a ▾ note on a single PR.
-  A real recording with startup waits shortened and disclosed, no account data in frame. Add as
-  docs/assets/demo.gif once it exists; until then nothing renders here.
--->
+![Eight issues picked on a GitHub issue list open eight Claude Code sessions in cmux at once; the resolved ones get closed (recording sped up)](docs/assets/demo.gif)
 
 ## Features
 
