@@ -1062,9 +1062,10 @@ function clickPayload(button, note) {
   return note === undefined ? executionPayload(button) : executionPayloadWithNote(button, note);
 }
 
-// --- The content script's note popover, its pure parts ---
+// --- The content script's split buttons and note popover, their pure parts ---
 
-// The message a header button's click sends. A click with a note carries it under `note`, after
+// The message a header button's click sends (a list button's is `buildListBatchMessage`, which treats
+// its note the same way). A click with a note carries it under `note`, after
 // everything else; a click without one carries no `note` key at all, so it is byte for byte the message
 // the button sent before notes existed — the worker judges a present key whatever it holds, so only
 // `undefined` means no note.
@@ -1074,9 +1075,9 @@ function buildButtonMessage(action, buttonIndex, shown, target, note) {
   return message;
 }
 
-// Which header button a run belongs to: a page, the button's kind and index, and the fingerprint of
-// what it runs. Not a DOM node — GitHub rebuilds its header while a request is in flight, and the
-// button it draws again is the same button, which has to come back as busy as it was.
+// Which split button — header or list — a run belongs to: a page, the button's kind and index, and the
+// fingerprint of what it runs. Not a DOM node — GitHub rebuilds its pages while a request is in flight,
+// and the button it draws again is the same button, which has to come back as busy as it was.
 function splitButtonIdentity(target, kind, index, shown) {
   return JSON.stringify([
     target?.kind ?? null, target?.owner ?? null, target?.repo ?? null, target?.number ?? null, kind, index, shown,
@@ -1090,17 +1091,20 @@ function drawingIdentityOn(drawing, target) {
   return splitButtonIdentity(target, drawing.kind, drawing.index, drawing.shown);
 }
 
-// A header button's run: the message it sends and the identity it holds, made from one target, so
-// what is held is what is sent. Holding the page the button was drawn on while sending the page on
-// screen let a rebuilt button send the same request again (measured).
-function headerButtonRun(drawing, target, note) {
+// A split button's run: the message it sends and the identity it holds, made from one target, so what
+// is held is what is sent. A list button sends a batch for `selected`, the rows its run read as it
+// started; any other button sends one command. Holding the page a button was drawn on while sending the
+// page on screen let a rebuilt button send the same request again (measured).
+function splitButtonRun(drawing, target, note, selected) {
   return {
     identity: drawingIdentityOn(drawing, target),
-    message: buildButtonMessage(drawing.action, drawing.index, drawing.shown, target, note),
+    message: drawing.action === LIST_BATCH_ACTION
+      ? buildListBatchMessage(drawing.index, drawing.shown, target, selected, note)
+      : buildButtonMessage(drawing.action, drawing.index, drawing.shown, target, note),
   };
 }
 
-// The runs of header buttons, one entry per identity. `busy` from the first synchronous step of a run
+// The runs of split buttons, one entry per identity. `busy` from the first synchronous step of a run
 // until its answer — while it holds, no way into that button starts it again: not its body, its
 // caret, the popover's send button or Enter — then the outcome, `done` or `error`, which is only shown:
 // a new run may start while the marker is up. Each run has a token, so the answer or the timer of an

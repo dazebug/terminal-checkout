@@ -371,31 +371,50 @@ test('a split button runs once at a time, and a stale answer or timer cannot tou
 });
 
 test('a run holds the page its message goes to, not the page its button was drawn on', () => {
-  const { drawingIdentityOn, headerButtonRun, splitButtonIdentity, buildButtonMessage } =
-    pick('drawingIdentityOn, headerButtonRun, splitButtonIdentity, buildButtonMessage');
+  const { drawingIdentityOn, splitButtonRun, splitButtonIdentity, buildButtonMessage } =
+    pick('drawingIdentityOn, splitButtonRun, splitButtonIdentity, buildButtonMessage');
   const drawing = { action: 'execute_command', kind: 'pr', index: 0, shown: 'fingerprint' };
   const PR_8 = { ...PR_7, number: '8' };
-  const run = headerButtonRun(drawing, PR_8, 'look here');
+  const run = splitButtonRun(drawing, PR_8, 'look here');
   assert.deepEqual(run.message, buildButtonMessage('execute_command', 0, 'fingerprint', PR_8, 'look here'));
   // One target makes both halves: what is held is what is sent
   assert.equal(run.identity, drawingIdentityOn(drawing, run.message.target));
   assert.equal(run.identity, splitButtonIdentity(PR_8, 'pr', 0, 'fingerprint'));
   assert.notEqual(run.identity, drawingIdentityOn(drawing, PR_7));
-  assert.equal(Object.hasOwn(headerButtonRun(drawing, PR_8).message, 'note'), false);
+  assert.equal(Object.hasOwn(splitButtonRun(drawing, PR_8).message, 'note'), false);
+});
+
+test('a list run sends the batch it sent before, with a note only when there is one, and holds the list page', () => {
+  const { splitButtonRun, drawingIdentityOn, buildListBatchMessage, LIST_BATCH_ACTION } =
+    pick('splitButtonRun, drawingIdentityOn, buildListBatchMessage, LIST_BATCH_ACTION');
+  const list = { kind: 'pr-list', owner: 'o', repo: 'r', number: null };
+  const selected = [{ key: 'o/r/pr/7', title: 'Seven' }, { key: 'o/r/pr/8', title: 'Eight' }];
+  const drawing = { action: LIST_BATCH_ACTION, kind: 'pr-list', index: 1, shown: 'fingerprint' };
+  const run = splitButtonRun(drawing, list, undefined, selected);
+  // What a list click sent until now, in its key order
+  const before = { action: 'execute_list_batch', buttonIndex: 1, shown: 'fingerprint', resultKeyProtocol: 1, target: list, selected };
+  assert.equal(JSON.stringify(run.message), JSON.stringify(before));
+  assert.equal(JSON.stringify(run.message), JSON.stringify(buildListBatchMessage(1, 'fingerprint', list, selected)));
+  assert.equal(run.identity, drawingIdentityOn(drawing, list));
+  const withNote = splitButtonRun(drawing, list, 'look here', selected).message;
+  assert.deepEqual(Object.keys(withNote), [...Object.keys(before), 'note']);
+  assert.equal(withNote.note, 'look here');
+  // A list button and a header button with the same index and fingerprint are two buttons
+  assert.notEqual(run.identity, drawingIdentityOn({ ...drawing, kind: 'pr', action: 'execute_command' }, list));
 });
 
 test('a drawing that outlived a page change holds and shows the run of the page it now sends for', () => {
   // The reviewer's reproduction, measured in a browser: drawn on PR 86, the page moved to PR 87 with
   // nothing taking the button away, the body pressed, and the header rebuilt mid-request — the rebuilt
   // button was free, and a second press sent the same PR 87 request again
-  const { createSplitButtonRuns, drawingIdentityOn, headerButtonRun } =
-    pick('createSplitButtonRuns, drawingIdentityOn, headerButtonRun');
+  const { createSplitButtonRuns, drawingIdentityOn, splitButtonRun } =
+    pick('createSplitButtonRuns, drawingIdentityOn, splitButtonRun');
   const runs = createSplitButtonRuns();
   const PR_8 = { ...PR_7, number: '8' };
   const drawn = { action: 'execute_command', kind: 'pr', index: 0, shown: 'fingerprint' }; // on PR 7
   const sent = [];
   const press = (drawing, onScreen) => {
-    const run = headerButtonRun(drawing, onScreen, undefined);
+    const run = splitButtonRun(drawing, onScreen, undefined);
     if (runs.start(run.identity) !== null) sent.push(run.message);
   };
   press(drawn, PR_8);
@@ -459,46 +478,76 @@ const bodyOf = (source, signature) => {
 };
 const count = (text, needle) => text.split(needle).length - 1;
 
-test('every header button run goes through one function, held before its first await (lint)', () => {
+test('every split button run goes through one function, held before its first await (lint)', () => {
   const source = content();
-  const run = bodyOf(source, 'async function runHeaderButton(');
+  const run = bodyOf(source, 'async function runSplitButton(');
   // The identity held and the message sent come out of one call, from the one target the run carries
-  const made = run.indexOf('const run = headerButtonRun(view, target, note);');
-  const held = run.indexOf('headerButtonRuns.start(run.identity)');
+  const made = run.indexOf('const run = splitButtonRun(view, target, note, selected);');
+  const held = run.indexOf('splitButtonRuns.start(run.identity)');
   const refused = run.indexOf('if (token === null) return;');
   const firstAwait = run.indexOf('await ');
   assert.ok(made !== -1 && held > made && refused > held && firstAwait > refused, 'the run is held after an await, or not at all');
-  assert.ok(run.includes('await sendButtonMessage(run.message);'), 'the message sent is not the one the run holds');
-  assert.equal(count(run, 'headerButtonRun('), 1);
+  assert.ok(run.includes('await sendListBatchMessage(run.message)'), 'a list run sends something other than what it holds');
+  assert.ok(run.includes('await sendButtonMessage(run.message);'), 'a header run sends something other than what it holds');
+  assert.equal(count(run, 'await '), 2, 'the run waits on something else too');
+  assert.equal(count(run, 'splitButtonRun('), 1);
   assert.equal(count(run, 'drawingIdentityOn('), 0, 'the run computes a second identity');
-  // Declared once, and entered from the body's click and from a note's send — nothing else runs a header button
-  assert.equal(count(source, 'runHeaderButton('), 3);
-  assert.match(bodyOf(source, 'function headerButton('), /onUserClick\(body, \(\) => runHeaderButton\(view, /);
-  assert.match(bodyOf(source, 'function submitNote('), /runHeaderButton\(popover\.view, /);
-  // And a header button's message leaves from one place
+  // Declared once, and entered from a body's click — header and list alike — and from a note's send
+  assert.equal(count(source, 'runSplitButton('), 3);
+  assert.match(bodyOf(source, 'function splitButton('), /onUserClick\(body, \(\) => runSplitButton\(view, /);
+  assert.match(bodyOf(source, 'function submitNote('), /runSplitButton\(popover\.view, /);
+  // And a split button's message leaves from one of two places, one per kind of message
   assert.equal(count(source, 'sendButtonMessage('), 2, 'declared once and called once');
+  assert.equal(count(source, 'sendListBatchMessage('), 2, 'declared once and called once');
   assert.equal(count(source, 'chrome.runtime.sendMessage('), 2, 'a message leaves some other way');
   assert.ok(bodyOf(source, 'async function sendButtonMessage(').includes('chrome.runtime.sendMessage('));
+  assert.ok(bodyOf(source, 'async function sendListBatchMessage(').includes('chrome.runtime.sendMessage('));
+});
+
+test('a list button is a split button: its rows are read once as the run starts, before any await (lint)', () => {
+  const source = content();
+  const create = bodyOf(source, 'function createListBatchButton(');
+  assert.match(create, /return splitButton\(button, buttonConfig, index, \{/);
+  assert.match(create, /action: LIST_BATCH_ACTION,/);
+  assert.match(create, /look: 'pill'/);
+  assert.equal(count(create, 'onUserClick('), 0, 'the list body has a click path of its own');
+  const run = bodyOf(source, 'async function runSplitButton(');
+  const read = run.indexOf('const selected = view.list ? readSelectedListRows(document, ');
+  assert.ok(read !== -1 && read < run.indexOf('splitButtonRuns.start(') && read < run.indexOf('await '), 'the rows are read after the run is held or after an await');
+  assert.equal(count(run, 'readSelectedListRows('), 1, 'the rows are read more than once');
+  // A selection the batch cannot take: in the popover, its line and nothing sent; on the body, the marker
+  const refusedInPopover = run.indexOf('showNoteStatus(popover, listSelectionNoticeText(notice), true);');
+  assert.ok(refusedInPopover !== -1 && refusedInPopover < run.indexOf('splitButtonRuns.start('), 'a refused selection reaches the send');
+  // The answer is read the way the list always read it: result view, then row badges
+  assert.ok(run.includes('const result = listBatchResultView(view.resultIdentity, selected, outcome);'));
+  assert.ok(run.includes('renderListBatchResultView(result, view.kind, generation);'));
+  assert.equal(count(source, 'runListBatchCommand'), 0, 'the old list send path is still there');
+});
+
+test('a list selection notice is drawn in the popover through its own literal lookups (lint)', () => {
+  const text = bodyOf(content(), 'function listSelectionNoticeText(');
+  assert.ok(text.includes("tr('ext.list.batch.selection.empty')"));
+  assert.ok(text.includes("tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1])"));
 });
 
 test('a drawing shows, and its caret and send button obey, the run of the page on screen now (lint)', () => {
   const source = content();
-  const head = bodyOf(source, 'function headerButton(');
+  const head = bodyOf(source, 'function splitButton(');
   const takes = head.indexOf('if (!buttonTakesClaudeNote(config))');
   const caret = head.indexOf('createNoteCaret(view, look)');
   assert.ok(takes !== -1 && caret > takes, 'the caret is drawn before, or without, asking whether the button takes a note');
   assert.equal(count(source, 'createNoteCaret('), 2, 'the caret is created somewhere else too');
-  assert.equal(count(head, 'paintHeaderButton(view)'), 2, 'a drawing does not start from its run');
+  assert.equal(count(head, 'paintSplitButton(view)'), 2, 'a drawing does not start from its run');
   // A drawing keeps no identity of its own: the page it was drawn on can be gone
   assert.equal(count(source, 'view.identity'), 0, 'a drawing carries the identity of the page it was drawn on');
-  const onScreen = 'headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)))';
-  assert.ok(bodyOf(source, 'function paintHeaderButton(').includes(onScreen), 'a drawing is painted from another page');
+  const onScreen = 'splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)))';
+  assert.ok(bodyOf(source, 'function paintSplitButton(').includes(onScreen), 'a drawing is painted from another page');
   assert.ok(bodyOf(source, 'function toggleNotePopover(').includes(`${onScreen} === 'busy'`), 'the caret obeys another page');
   assert.ok(bodyOf(source, 'function syncNoteSend(').includes(
-    "headerButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy'",
+    "splitButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy'",
   ), 'the send button obeys another page');
   // After a run moves, every drawing on screen is painted again, whichever page it was drawn for
-  assert.match(bodyOf(source, 'function repaintHeaderButtons('), /else paintHeaderButton\(view\);/);
+  assert.match(bodyOf(source, 'function repaintSplitButtons('), /else paintSplitButton\(view\);/);
 });
 
 test('a multi-line paste or drop is refused as it arrives by the verdict\'s own rule, never let in changed (lint)', () => {
@@ -530,11 +579,11 @@ test('a note is for the page its popover opened on, read once, and judged before
   const submit = bodyOf(source, 'function submitNote(');
   assert.equal(count(submit, '.value'), 1, 'the note is read more than once, or not at all');
   const judged = submit.indexOf('const verdict = claudeNoteVerdict(typed);');
-  assert.ok(judged !== -1 && judged < submit.indexOf('runHeaderButton('), 'sent before it is judged, or never judged');
+  assert.ok(judged !== -1 && judged < submit.indexOf('runSplitButton('), 'sent before it is judged, or never judged');
   assert.match(submit, /note: verdict\.note/);
   assert.match(submit, /target: popover\.target/);
   assert.doesNotMatch(submit, /location\.|pageTargetOfUrl/);
-  assert.doesNotMatch(bodyOf(source, 'async function runHeaderButton('), /\.value\b|location\.|pageTargetOfUrl/);
+  assert.doesNotMatch(bodyOf(source, 'async function runSplitButton('), /\.value\b|location\.|pageTargetOfUrl/);
 });
 
 test('Enter sends only for a person and never mid-composition, and keys stop at the popover (lint)', () => {
@@ -563,7 +612,7 @@ test('taking the buttons away takes the popover and the split buttons with them 
   const remove = bodyOf(source, 'function removeInsertedButtons(');
   assert.match(remove, /closeNotePopover\(\{ restoreFocus: false \}\)/);
   assert.match(remove, /\.\$\{SPLIT_BUTTON_CLASS\}/);
-  assert.match(bodyOf(source, 'async function tryInsertButton('), /forgetDetachedHeaderButtons\(\)/);
-  assert.match(bodyOf(source, 'function forgetDetachedHeaderButtons('), /closeNotePopover\(\{ restoreFocus: false \}\)/);
+  assert.match(bodyOf(source, 'async function tryInsertButton('), /forgetDetachedSplitButtons\(\)/);
+  assert.match(bodyOf(source, 'function forgetDetachedSplitButtons('), /closeNotePopover\(\{ restoreFocus: false \}\)/);
   assert.match(bodyOf(source, 'function onUrlChange('), /removeInsertedButtons\(\)/);
 });

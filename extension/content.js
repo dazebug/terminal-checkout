@@ -41,7 +41,7 @@ function createRepoButton(buttonConfig, index) {
     button.style.backgroundColor = '#238636';
   });
 
-  return headerButton(button, buttonConfig, index, {
+  return splitButton(button, buttonConfig, index, {
     action: 'execute_repo_command', kind: 'repo', face, phases, delays: { done: 2000, error: 2000 }, look: 'filled',
   });
 }
@@ -69,18 +69,13 @@ async function sendButtonMessage(message) {
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
-// Send a list selection as a comparison snapshot. The worker reads the current document again and
-// builds every item from that read; this side never turns the snapshot's repo or number into a
-// command source. A normal app-level failure is returned as structured data so the later result UI
-// can show its overall and per-item verdicts without confusing it with transport failure.
-async function runListBatchCommand(index, config, selected = null) {
-  const target = pageTargetOfUrl(location.href);
-  const expectedKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
-  const snapshot = selected ?? readSelectedListRows(document, expectedKind);
-  const response = await chrome.runtime.sendMessage(
-    buildListBatchMessage(index, buttonFingerprint(config), target, snapshot),
-  );
-  const outcome = interpretListBatchResponse(response);
+// Send a list batch (`buildListBatchMessage`, defaults.js), whose selection is a comparison snapshot.
+// The worker reads the current document again and builds every item from that read; this side never
+// turns the snapshot's repo or number into a command source. A normal app-level failure is returned as
+// structured data so the result view can show its overall and per-item verdicts without confusing it
+// with transport failure.
+async function sendListBatchMessage(message) {
+  const outcome = interpretListBatchResponse(await chrome.runtime.sendMessage(message));
   if (!outcome.transportSuccess) throw new Error(outcome.error);
   if (outcome.appSuccess === null) throw new Error(outcome.error);
   return outcome;
@@ -495,8 +490,9 @@ function renderListBatchResultView(view, kind, generation) {
   }
 }
 
+// A body click on a selection the batch cannot take shows the error marker (its run's phase) with the
+// reason as the tooltip, until the marker clears and the label comes back
 function showListBatchSelectionError(button, notice) {
-  button.textContent = '❌';
   if (notice?.messageKey === 'ext.list.batch.selection.empty') {
     button.title = tr('ext.list.batch.selection.empty');
   } else if (notice?.messageKey === 'ext.list.batch.selection.tooMany') {
@@ -504,17 +500,19 @@ function showListBatchSelectionError(button, notice) {
   }
 }
 
-function scheduleListBatchButtonReset(button, buttonConfig, face, delay) {
-  setTimeout(() => {
-    button.textContent = face;
-    button.title = buttonConfig.label;
-    button.disabled = false;
-  }, delay);
+// The same reason, on the popover's line, where the note stays as typed
+function listSelectionNoticeText(notice) {
+  if (notice.messageKey === 'ext.list.batch.selection.tooMany') {
+    return tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
+  }
+  return tr('ext.list.batch.selection.empty');
 }
 
+// A list batch button is a split button like the header's (`splitButton` below): one run function, one
+// lock, one popover. What is its own is what it sends — a batch for the rows selected when its run
+// starts — and how its answer is shown, as badges on those rows.
 function createListBatchButton(buttonConfig, index, kind) {
   const face = buttonFace(buttonConfig);
-  const identity = listBatchButtonIdentity(kind, index);
   const button = document.createElement('button');
   button.type = 'button';
   button.className = LIST_BUTTON_CLASS;
@@ -532,33 +530,11 @@ function createListBatchButton(buttonConfig, index, kind) {
     button.style.backgroundColor = 'transparent';
   });
 
-  onUserClick(button, async () => {
-    button.textContent = '⏳';
-    button.disabled = true;
-    clearListBatchResult(identity);
-    const generation = listDocumentGeneration;
-    try {
-      const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
-      const selected = readSelectedListRows(document, expectedKind);
-      const notice = listBatchSelectionNotice(listSelectionStatus(selected));
-      if (notice) {
-        showListBatchSelectionError(button, notice);
-        return;
-      }
-
-      const outcome = await runListBatchCommand(index, buttonConfig, selected);
-      const view = listBatchResultView(identity, selected, outcome);
-      renderListBatchResultView(view, kind, generation);
-      button.textContent = view.phase === 'done' ? '✅' : '❌';
-    } catch (error) {
-      console.error('list batch error:', error);
-      button.textContent = '❌';
-    } finally {
-      scheduleListBatchButtonReset(button, buttonConfig, face, 2000);
-    }
+  return splitButton(button, buttonConfig, index, {
+    action: LIST_BATCH_ACTION, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' },
+    delays: { done: 2000, error: 2000 }, look: 'pill',
+    restoreTitle: () => { button.title = buttonConfig.label; },
   });
-
-  return button;
 }
 
 async function tryInsertListButtons(kind) {
@@ -645,17 +621,17 @@ function createCommandIconButton(buttonConfig, index, { action, kind, className 
     button.style.backgroundColor = 'transparent';
   });
 
-  return headerButton(button, buttonConfig, index, {
+  return splitButton(button, buttonConfig, index, {
     action, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' }, delays: { done: 1500, error: 2000 },
     look: isTextFace(face) ? 'pill' : 'icon',
   });
 }
 
-// --- Header buttons: one run per button, and the note a claude button can carry ---
+// --- Split buttons: one run per button, and the note a claude button can carry ---
 //
-// A header button is its body and, when it starts claude with room for one more input
-// (`buttonTakesClaudeNote`, defaults.js), a caret beside it that opens a one-line note for claude —
-// one split button, kept on one line. Every run goes through `runHeaderButton`: the body's click, and
+// A header button or a list batch button is its body and, when it starts claude with room for one more
+// input (`buttonTakesClaudeNote`, defaults.js), a caret beside it that opens a one-line note for claude
+// — one split button, kept on one line. Every run goes through `runSplitButton`: the body's click, and
 // the popover's send button and Enter. The run is held by the button's identity (defaults.js), not by
 // the node that was pressed, so the same button drawn again while its request is in flight comes back
 // busy, and no other button or page is held.
@@ -768,33 +744,38 @@ const NOTE_STATUS_STYLE = `
 const NOTE_QUIET_COLOR = 'var(--fgColor-muted, #59636e)';
 const NOTE_PROBLEM_COLOR = 'var(--fgColor-danger, #d1242f)';
 
-const headerButtonRuns = createSplitButtonRuns();
-// Every drawing of a header button, so a run can repaint the ones on screen; detached ones are dropped
+const splitButtonRuns = createSplitButtonRuns();
+// Every drawing of a split button, so a run can repaint the ones on screen; detached ones are dropped
 // as they are met
-const drawnHeaderButtons = new Set();
+const drawnSplitButtons = new Set();
 // What a closed or failed popover leaves typed, by the identity of the page it was opened for, for the
 // next time it opens
 const noteDrafts = new Map();
 let notePopover = null;
 
-// A header button around its body. Returns the node to insert: the body, or the split button.
+// A header or list button around its body. Returns the node to insert: the body, or the split button.
 //
 // A drawing holds no identity of its own. It names its kind, index and fingerprint, and the page is
 // supplied when it matters (`drawingIdentityOn`, defaults.js): a run holds the page its message goes
 // to, and a drawing is painted, and its caret and send button obey, the run of the page on screen now.
 // GitHub can move to another page without anything removing the buttons drawn for the last one, and a
 // button that held the page it was drawn on while sending the page on screen let a rebuilt button send
-// the same request again (measured).
-function headerButton(body, config, index, { action, kind, face, phases, delays, look }) {
-  const view = { action, kind, index, shown: buttonFingerprint(config), body, face, phases, delays, caret: null };
+// the same request again (measured). A list button also names the badges its results draw
+// (`resultIdentity`) and how its tooltip comes back after a refused selection (`restoreTitle`).
+function splitButton(body, config, index, { action, kind, face, phases, delays, look, restoreTitle }) {
+  const list = action === LIST_BATCH_ACTION;
+  const view = {
+    action, kind, index, shown: buttonFingerprint(config), body, face, phases, delays, caret: null,
+    list, resultIdentity: list ? listBatchButtonIdentity(kind, index) : null, restoreTitle,
+  };
   // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
   // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
   // the full href rather than the pathname, so it goes through the same origin check the service worker
   // uses — one validator, one answer to "is this a page of ours".
-  onUserClick(body, () => runHeaderButton(view, { target: pageTargetOfUrl(location.href) }));
-  drawnHeaderButtons.add(view);
+  onUserClick(body, () => runSplitButton(view, { target: pageTargetOfUrl(location.href) }));
+  drawnSplitButtons.add(view);
   if (!buttonTakesClaudeNote(config)) {
-    paintHeaderButton(view);
+    paintSplitButton(view);
     return body;
   }
   view.caret = createNoteCaret(view, look);
@@ -806,15 +787,15 @@ function headerButton(body, config, index, { action, kind, face, phases, delays,
   body.style.marginLeft = '0';
   body.style.borderRadius = SPLIT_BODY_RADIUS[look];
   split.append(body, view.caret);
-  paintHeaderButton(view);
+  paintSplitButton(view);
   return split;
 }
 
 // A drawing shows the run of the page on screen, whichever node it is and whichever page it was drawn
 // for. The body stays off through the outcome marker as it always has; the caret is off only while the
 // request is in flight.
-function paintHeaderButton(view) {
-  const phase = headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)));
+function paintSplitButton(view) {
+  const phase = splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)));
   view.body.textContent = phase ? view.phases[phase] : view.face;
   view.body.disabled = phase !== null;
   if (view.caret) {
@@ -824,35 +805,63 @@ function paintHeaderButton(view) {
 }
 
 // Every drawing on screen, and the open popover's send button, take up whatever the runs hold now
-function repaintHeaderButtons() {
-  for (const view of drawnHeaderButtons) {
-    if (!view.body.isConnected) drawnHeaderButtons.delete(view);
-    else paintHeaderButton(view);
+function repaintSplitButtons() {
+  for (const view of drawnSplitButtons) {
+    if (!view.body.isConnected) drawnSplitButtons.delete(view);
+    else paintSplitButton(view);
   }
   if (notePopover) syncNoteSend(notePopover);
 }
 
-// Every header button run starts here — the body's click with the page read when it was pressed, a
-// note with the page its popover opened on — and it is held before the first await, under the identity
-// of the page it sends for, so the body, the caret, the send button and Enter all stop at that run.
-async function runHeaderButton(view, { target, note, popover, typed }) {
-  const run = headerButtonRun(view, target, note);
-  const token = headerButtonRuns.start(run.identity);
-  if (token === null) return;
-  if (popover) startNoteSend(popover);
-  repaintHeaderButtons();
-  let phase = 'done';
-  try {
-    await sendButtonMessage(run.message);
-  } catch (failure) {
-    console.error('command error:', failure);
-    phase = 'error';
+// Every split button run starts here — the body's click with the page read when it was pressed, a note
+// with the page its popover opened on — and it is held before the first await, under the identity of
+// the page it sends for, so the body, the caret, the send button and Enter all stop at that run.
+//
+// A list run is for the rows selected when it starts: they are read here, once, before the run is held,
+// and never again once it waits — the worker reads the page again for itself and refuses a selection
+// that no longer matches. A selection the batch cannot take (none, or more than the cap) sends nothing:
+// in the popover it becomes the popover's line with the note left as typed; on the body it is the error
+// marker, with the reason as the tooltip.
+async function runSplitButton(view, { target, note, popover, typed }) {
+  const selected = view.list ? readSelectedListRows(document, view.kind === 'pr-list' ? 'pr' : 'issue') : undefined;
+  const notice = view.list ? listBatchSelectionNotice(listSelectionStatus(selected)) : null;
+  if (notice && popover) {
+    showNoteStatus(popover, listSelectionNoticeText(notice), true);
+    return;
   }
-  headerButtonRuns.finish(run.identity, token, phase);
-  repaintHeaderButtons();
+  const run = splitButtonRun(view, target, note, selected);
+  const token = splitButtonRuns.start(run.identity);
+  if (token === null) return;
+  if (view.list) clearListBatchResult(view.resultIdentity);
+  let phase = 'done';
+  if (notice) {
+    showListBatchSelectionError(view.body, notice);
+    phase = 'error';
+  } else {
+    if (popover) startNoteSend(popover);
+    repaintSplitButtons();
+    const generation = listDocumentGeneration;
+    try {
+      if (view.list) {
+        const outcome = await sendListBatchMessage(run.message);
+        const result = listBatchResultView(view.resultIdentity, selected, outcome);
+        renderListBatchResultView(result, view.kind, generation);
+        phase = result.phase;
+      } else {
+        await sendButtonMessage(run.message);
+      }
+    } catch (failure) {
+      console.error('command error:', failure);
+      phase = 'error';
+    }
+  }
+  splitButtonRuns.finish(run.identity, token, phase);
+  repaintSplitButtons();
   if (popover) settleNoteSend(popover, phase, typed);
   setTimeout(() => {
-    if (headerButtonRuns.clear(run.identity, token)) repaintHeaderButtons();
+    if (!splitButtonRuns.clear(run.identity, token)) return;
+    view.restoreTitle?.();
+    repaintSplitButtons();
   }, view.delays[phase]);
 }
 
@@ -890,7 +899,7 @@ function noteCaretIcon() {
 }
 
 function toggleNotePopover(view) {
-  if (headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href))) === 'busy') return;
+  if (splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href))) === 'busy') return;
   const reopening = notePopover?.caret === view.caret;
   closeNotePopover();
   if (!reopening) openNotePopover(view);
@@ -1009,7 +1018,7 @@ function submitNote(popover) {
     showNoteStatus(popover, noteRefusalText(claudeNoteRefusalNotice(verdict.error)), true);
     return;
   }
-  runHeaderButton(popover.view, { target: popover.target, note: verdict.note, popover, typed });
+  runSplitButton(popover.view, { target: popover.target, note: verdict.note, popover, typed });
 }
 
 // A refused note's message in this page's language, by the message ids `claudeNoteRefusalNotice`
@@ -1040,7 +1049,7 @@ function showNoteStatus(popover, message, problem) {
 // this popover's own note is on its way
 function syncNoteSend(popover) {
   const off = popover.sending || popover.input.value === ''
-    || headerButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy';
+    || splitButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy';
   popover.send.disabled = off;
   popover.send.style.opacity = off ? '0.5' : '1';
   popover.send.style.cursor = off ? 'default' : 'pointer';
@@ -1092,9 +1101,9 @@ function closeNotePopover({ restoreFocus = true } = {}) {
 // popover whose caret went with them has nothing to hang from or return focus to. Safe at the start
 // of an insert pass: every insert creates and inserts its buttons in one synchronous stretch, so no
 // drawing is ever waiting, created but not yet inserted, across an await.
-function forgetDetachedHeaderButtons() {
-  for (const view of drawnHeaderButtons) {
-    if (!view.body.isConnected) drawnHeaderButtons.delete(view);
+function forgetDetachedSplitButtons() {
+  for (const view of drawnSplitButtons) {
+    if (!view.body.isConnected) drawnSplitButtons.delete(view);
   }
   if (notePopover && !notePopover.caret.isConnected) closeNotePopover({ restoreFocus: false });
 }
@@ -1239,7 +1248,7 @@ async function tryInsertRepoButtons(target) {
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
 async function tryInsertButton() {
-  forgetDetachedHeaderButtons();
+  forgetDetachedSplitButtons();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
 

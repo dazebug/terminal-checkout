@@ -157,6 +157,17 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Navigating to another PR, issue or repository removes the caret and an open popover along with the buttons; a late answer for the old page changes nothing on the new one
 - [ ] The note reaches claude, once by each route, in the terminal the app is set to: a button with no stored inputs (`pr.checkoutClaude`) takes the note as its single plain-text input, so it rides in argv (the transcript's first user message); `pr.review` puts it after its `!` inputs, so every input is typed and the note arrives last (a plain user message after the `<bash-input>` entries)
 - [ ] The extension icon still runs the first button of the page with no note, on PR, issue and repository pages
+**claude note on list pages — the same caret and popover on the list batch buttons**
+
+- [ ] On `/owner/repo/pulls` and `/owner/repo/issues`, the ▾ caret appears on the claude batch buttons (`pr-list.checkoutClaude`, `issue-list.triageClaude`) as the rest of their pill outline, and on no list button that does not start claude or has no room for another input
+- [ ] With no row selected, open the caret, type a note and send — the popover's line says to select rows, nothing is sent (no app log entry) and the note stays. With 26 rows selected, the line names the limit, nothing is sent and the note stays. Pressing the body instead shows ❌ with the same reason as its tooltip, which returns to the button's label when the marker clears
+- [ ] Change the selection after opening the popover (select other rows, or add one), then send — the batch carries the rows selected at the moment of sending, not the ones selected when the popover opened
+- [ ] A batch where some items fail (for example one whose worktree path is already taken) — the popover stays open with the note as typed and the failure line that names no cause, each row shows its ✓ or ✕ badge, and the body shows ❌. A batch where every item succeeds closes the popover, shows ✅ and badges, and the next opening is empty
+- [ ] One batch per send: Enter pressed twice, Enter then the send button, and the body pressed while the note's batch is in flight each produce a single batch (one app log entry); the caret and the body stay busy until the answer
+- [ ] Moving to another list, paginating or filtering the list, or leaving the list page removes the caret and an open popover with the buttons; a late answer for the old list draws no badges on the new one
+- [ ] The note reaches claude in each of the N sessions the batch opens, in the terminal the app is set to, after the stored inputs (`issue-list.triageClaude`) or as the only input (`pr-list.checkoutClaude`)
+- [ ] A list body click without a note still sends the batch it always did
+
 - [ ] A long note on the argv route in iTerm2 and in WezTerm: on `pr.worktreeClaude` with a base directory set, send a note of about 4000 bytes — the whole command reaches the shell and submits. The app waits for raw mode before a long command only on cmux, so a new tab that is still in canonical mode keeps 1024 bytes of an unread line and drops the rest; if the command arrives cut short, record it — it is the known limit of those two terminals, not a note defect
 
 **Terminals using an in-pane helper (Warp)**
