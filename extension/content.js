@@ -28,7 +28,6 @@ function createRepoButton(buttonConfig, index) {
 
   const button = document.createElement('button');
   button.textContent = face;
-  button.title = buttonConfig.label;
   button.style.cssText = REPO_BUTTON_STYLE;
   button.className = 'terminal-open-btn';
   button.dataset.btnIndex = index;
@@ -41,33 +40,14 @@ function createRepoButton(buttonConfig, index) {
     button.style.backgroundColor = '#238636';
   });
 
-  // onUserClick refuses anything the browser did not mark as a real click, before the body runs
-  onUserClick(button, async () => {
-    button.textContent = phases.busy;
-    button.disabled = true;
-
-    try {
-      await runButtonCommand('execute_repo_command', index, buttonConfig);
-      button.textContent = phases.done;
-      setTimeout(() => {
-        button.textContent = face;
-        button.disabled = false;
-      }, 2000);
-    } catch (error) {
-      console.error('repo command error:', error);
-      button.textContent = phases.error;
-      setTimeout(() => {
-        button.textContent = face;
-        button.disabled = false;
-      }, 2000);
-    }
+  return splitButton(button, buttonConfig, index, {
+    action: 'execute_repo_command', kind: 'repo', face, phases, delays: { done: 2000, error: 2000 }, look: 'filled',
   });
-
-  return button;
 }
 
-// Run a single button. sendMessage does not reject when the background returns {success:false}, so
-// without inspecting the response a rejected command would still show up as success on the button.
+// Send a single button's message (`buildButtonMessage`, defaults.js). sendMessage does not reject when
+// the background returns {success:false}, so without inspecting the response a rejected command would
+// still show up as success on the button.
 //
 // The index says which button; the fingerprint says what that button was going to run when it was
 // drawn; the target says which page it was clicked on. The service worker reads storage again for
@@ -80,32 +60,21 @@ function createRepoButton(buttonConfig, index) {
 //
 // Both are comparison keys, never sources. The command still comes from storage, and the repository,
 // number and branch still come from the tab and its DOM; these two only decide whether to refuse.
-// Sending them as sources would let a message name its own repository.
-async function runButtonCommand(action, index, config) {
-  const response = await chrome.runtime.sendMessage({
-    action,
-    buttonIndex: index,
-    shown: buttonFingerprint(config),
-    // Read now, not when the button was drawn: the button is drawn once and the page moves under it.
-    // From the full href rather than the pathname, so this goes through the same origin check the
-    // service worker uses — one validator, one answer to "is this a page of ours".
-    target: pageTargetOfUrl(location.href),
-  });
+// Sending them as sources would let a message name its own repository. The one value a click adds is
+// a note typed into a claude button's popover, and it can only become that run's last claude input:
+// the worker judges it again and puts it after the stored inputs.
+async function sendButtonMessage(message) {
+  const response = await chrome.runtime.sendMessage(message);
   if (!response?.success) throw new Error(response?.error || 'unknown error');
 }
 
-// Send a list selection as a comparison snapshot. The worker reads the current document again and
-// builds every item from that read; this side never turns the snapshot's repo or number into a
-// command source. A normal app-level failure is returned as structured data so the later result UI
-// can show its overall and per-item verdicts without confusing it with transport failure.
-async function runListBatchCommand(index, config, selected = null) {
-  const target = pageTargetOfUrl(location.href);
-  const expectedKind = target?.kind === 'pr-list' ? 'pr' : target?.kind === 'issue-list' ? 'issue' : null;
-  const snapshot = selected ?? readSelectedListRows(document, expectedKind);
-  const response = await chrome.runtime.sendMessage(
-    buildListBatchMessage(index, buttonFingerprint(config), target, snapshot),
-  );
-  const outcome = interpretListBatchResponse(response);
+// Send a list batch (`buildListBatchMessage`, defaults.js), whose selection is a comparison snapshot.
+// The worker reads the current document again and builds every item from that read; this side never
+// turns the snapshot's repo or number into a command source. A normal app-level failure is returned as
+// structured data so the result view can show its overall and per-item verdicts without confusing it
+// with transport failure.
+async function sendListBatchMessage(message) {
+  const outcome = interpretListBatchResponse(await chrome.runtime.sendMessage(message));
   if (!outcome.transportSuccess) throw new Error(outcome.error);
   if (outcome.appSuccess === null) throw new Error(outcome.error);
   return outcome;
@@ -520,31 +489,24 @@ function renderListBatchResultView(view, kind, generation) {
   }
 }
 
-function showListBatchSelectionError(button, notice) {
-  button.textContent = '❌';
-  if (notice?.messageKey === 'ext.list.batch.selection.empty') {
-    button.title = tr('ext.list.batch.selection.empty');
-  } else if (notice?.messageKey === 'ext.list.batch.selection.tooMany') {
-    button.title = tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
+// Why a selection cannot be sent: on the popover's line, where the note stays as typed, and as the
+// body's tooltip while the marker of a press it refused is up (`splitButtonTooltip`)
+function listSelectionNoticeText(notice) {
+  if (notice.messageKey === 'ext.list.batch.selection.tooMany') {
+    return tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
   }
+  return tr('ext.list.batch.selection.empty');
 }
 
-function scheduleListBatchButtonReset(button, buttonConfig, face, delay) {
-  setTimeout(() => {
-    button.textContent = face;
-    button.title = buttonConfig.label;
-    button.disabled = false;
-  }, delay);
-}
-
+// A list batch button is a split button like the header's (`splitButton` below): one run function, one
+// lock, one popover. What is its own is what it sends — a batch for the rows selected when its run
+// starts — and how its answer is shown, as badges on those rows.
 function createListBatchButton(buttonConfig, index, kind) {
   const face = buttonFace(buttonConfig);
-  const identity = listBatchButtonIdentity(kind, index);
   const button = document.createElement('button');
   button.type = 'button';
   button.className = LIST_BUTTON_CLASS;
   button.textContent = face;
-  button.title = buttonConfig.label;
   button.dataset.btnIndex = index;
   button.dataset.listKind = kind;
   button.style.cssText = LIST_BUTTON_STYLE;
@@ -557,36 +519,13 @@ function createListBatchButton(buttonConfig, index, kind) {
     button.style.backgroundColor = 'transparent';
   });
 
-  onUserClick(button, async () => {
-    button.textContent = '⏳';
-    button.disabled = true;
-    clearListBatchResult(identity);
-    const generation = listDocumentGeneration;
-    try {
-      const expectedKind = kind === 'pr-list' ? 'pr' : 'issue';
-      const selected = readSelectedListRows(document, expectedKind);
-      const notice = listBatchSelectionNotice(listSelectionStatus(selected));
-      if (notice) {
-        showListBatchSelectionError(button, notice);
-        return;
-      }
-
-      const outcome = await runListBatchCommand(index, buttonConfig, selected);
-      const view = listBatchResultView(identity, selected, outcome);
-      renderListBatchResultView(view, kind, generation);
-      button.textContent = view.phase === 'done' ? '✅' : '❌';
-    } catch (error) {
-      console.error('list batch error:', error);
-      button.textContent = '❌';
-    } finally {
-      scheduleListBatchButtonReset(button, buttonConfig, face, 2000);
-    }
+  return splitButton(button, buttonConfig, index, {
+    action: LIST_BATCH_ACTION, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' },
+    delays: { done: 2000, error: 2000 }, look: 'pill',
   });
-
-  return button;
 }
 
-async function tryInsertListButtons(kind) {
+async function tryInsertListButtons(kind, generation) {
   if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
 
   const target = pageTargetOfUrl(location.href);
@@ -597,6 +536,8 @@ async function tryInsertListButtons(kind) {
 
   const buttons = await loadButtonConfigs(kind);
   if (!buttons) return false;
+  // The rows and the mount above were read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
 
@@ -622,11 +563,10 @@ async function tryInsertListButtons(kind) {
 }
 
 // Create the custom command button next to the PR branch or the issue badge (emoji icon or text pill)
-function createCommandIconButton(buttonConfig, index, { action, className }) {
+function createCommandIconButton(buttonConfig, index, { action, kind, className }) {
   const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
   button.className = className;
-  button.title = buttonConfig.label;
   // flex-shrink:0 — when space runs short, what should give is the branch name (GitHub ellipsizes
   // it), not the button. Without this the text pill is squeezed first and you can no longer read
   // which button it is
@@ -670,29 +610,557 @@ function createCommandIconButton(buttonConfig, index, { action, className }) {
     button.style.backgroundColor = 'transparent';
   });
 
-  onUserClick(button, async () => {
-    const originalText = button.textContent;
-    button.textContent = '⏳';
-    button.disabled = true;
-
-    try {
-      await runButtonCommand(action, index, buttonConfig);
-      button.textContent = '✅';
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-      }, 1500);
-    } catch (error) {
-      console.error('command error:', error);
-      button.textContent = '❌';
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-      }, 2000);
-    }
+  return splitButton(button, buttonConfig, index, {
+    action, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' }, delays: { done: 1500, error: 2000 },
+    look: isTextFace(face) ? 'pill' : 'icon',
   });
+}
 
-  return button;
+// --- Split buttons: one run per button, and the note a claude button can carry ---
+//
+// A header button or a list batch button is its body and, when it starts claude with room for one more
+// input (`buttonTakesClaudeNote`, defaults.js), a caret beside it that opens a one-line note for claude
+// — one split button, kept on one line. Every run goes through `runSplitButton`: the body's click, and
+// the popover's send button and Enter. The run is held by the button's identity (defaults.js), not by
+// the node that was pressed, so the same button drawn again while its request is in flight comes back
+// busy, and no other button or page is held.
+//
+// The popover lives in <body>, not in the header: the PR header's rows clip (layout.js). It is placed
+// absolutely rather than as an HTML `popover` in the top layer, which needs Chrome 114 while the
+// manifest sets no minimum version. There is no shadow root: a key event from inside one reaches the
+// page retargeted to its host, which is no longer an editable field to GitHub's shortcut handling,
+// while our own input stays the target of its events — and the popover stops key events besides.
+// Styles are CSSOM, like every other node this script draws, with GitHub's colour variables and a
+// fallback for each, so the popover follows the light and dark themes.
+const SPLIT_BUTTON_CLASS = 'terminal-split-btn';
+const NOTE_CARET_CLASS = 'terminal-note-caret';
+const NOTE_POPOVER_CLASS = 'terminal-note-popover';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const SPLIT_BUTTON_STYLE = `
+  display: inline-flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  vertical-align: middle;
+`;
+// The body's corners where it meets its caret, per look
+const SPLIT_BODY_RADIUS = { filled: '6px 0 0 6px', pill: '2em 0 0 2em', icon: '4px 0 0 4px' };
+// The caret carries on its body's look: a green piece joined to the filled repository button, the
+// rest of a text pill's outline, or a narrow transparent piece past an icon behind a thin divider
+const NOTE_CARET_STYLE = {
+  filled: `
+    background-color: #238636;
+    color: white;
+    border: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 0 6px 6px 0;
+    padding: 0 5px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+  pill: `
+    background: transparent;
+    color: #57ab5a;
+    border: 1px solid rgba(87, 171, 90, 0.45);
+    border-left: none;
+    border-radius: 0 2em 2em 0;
+    padding: 0 6px 0 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+  icon: `
+    background: transparent;
+    color: #57ab5a;
+    border: none;
+    border-left: 1px solid rgba(87, 171, 90, 0.35);
+    border-radius: 0 4px 4px 0;
+    padding: 0 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  `,
+};
+const NOTE_POPOVER_STYLE = `
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  text-align: left;
+  visibility: hidden;
+`;
+const NOTE_INPUT_STYLE = `
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--bgColor-default, #ffffff);
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+`;
+const NOTE_SEND_STYLE = `
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--button-primary-fgColor-rest, #ffffff);
+  background: var(--button-primary-bgColor-rest, #1f883d);
+  border: 1px solid var(--button-primary-borderColor-rest, rgba(31, 35, 40, 0.15));
+  border-radius: 6px;
+  cursor: pointer;
+`;
+const NOTE_STATUS_STYLE = `
+  display: none;
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+`;
+const NOTE_QUIET_COLOR = 'var(--fgColor-muted, #59636e)';
+const NOTE_PROBLEM_COLOR = 'var(--fgColor-danger, #d1242f)';
+// The inputs a note follows: one popover is open at a time, so one id names their label
+const NOTE_BEFORE_LABEL_ID = 'terminal-note-before-label';
+const NOTE_BEFORE_STYLE = `
+  margin: 0 0 6px;
+`;
+const NOTE_BEFORE_LABEL_STYLE = `
+  margin: 0 0 2px;
+  color: ${NOTE_QUIET_COLOR};
+`;
+// A long input wraps inside the popover's fixed width instead of widening it, and a long list scrolls
+// inside itself, so the note's input and the send button stay in reach under it
+const NOTE_BEFORE_LIST_STYLE = `
+  margin: 0;
+  padding: 0 0 0 20px;
+  max-height: 7.5em;
+  overflow-y: auto;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+`;
+
+const splitButtonRuns = createSplitButtonRuns();
+// Every drawing of a split button, so a run can repaint the ones on screen; detached ones are dropped
+// as they are met
+const drawnSplitButtons = new Set();
+// What a closed or failed popover leaves typed, by the identity of the page it was opened for, for the
+// next time it opens
+const noteDrafts = new Map();
+let notePopover = null;
+
+// A header or list button around its body. Returns the node to insert: the body, or the split button.
+//
+// A drawing holds no identity of its own. It names its kind, index and fingerprint, and the page is
+// supplied when it matters (`drawingIdentityOn`, defaults.js): a run holds the page its message goes
+// to, and a drawing is painted, and its caret and send button obey, the run of the page on screen now.
+// GitHub can move to another page without anything removing the buttons drawn for the last one, and a
+// button that held the page it was drawn on while sending the page on screen let a rebuilt button send
+// the same request again (measured). A list button also names the badges its results draw
+// (`resultIdentity`). The body's face, its tooltip and whether it can be pressed are the paint's alone
+// (`paintSplitButton`); a drawing keeps only what the paint works from, including the user's label.
+function splitButton(body, config, index, { action, kind, face, phases, delays, look }) {
+  const list = action === LIST_BATCH_ACTION;
+  const view = {
+    action, kind, index, body, face, label: config.label, phases, delays,
+    caret: null, list, resultIdentity: list ? listBatchButtonIdentity(kind, index) : null,
+    // From the one stored button at the one moment: the inputs its popover lists before a note are the
+    // inputs its fingerprint names
+    shown: buttonFingerprint(config), before: claudeInputsBeforeNote(config),
+  };
+  // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
+  // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
+  // the full href rather than the pathname, so it goes through the same origin check the service worker
+  // uses — one validator, one answer to "is this a page of ours".
+  onUserClick(body, () => runSplitButton(view, { target: pageTargetOfUrl(location.href) }));
+  drawnSplitButtons.add(view);
+  if (!buttonTakesClaudeNote(config)) {
+    paintSplitButton(view);
+    return body;
+  }
+  view.caret = createNoteCaret(view, look);
+  const split = document.createElement('span');
+  split.className = SPLIT_BUTTON_CLASS;
+  split.style.cssText = SPLIT_BUTTON_STYLE;
+  // The gap in front belongs to the pair now, and the corners where the two meet are squared
+  split.style.marginLeft = body.style.marginLeft;
+  body.style.marginLeft = '0';
+  body.style.borderRadius = SPLIT_BODY_RADIUS[look];
+  split.append(body, view.caret);
+  paintSplitButton(view);
+  return split;
+}
+
+// A drawing shows the run of the page on screen, whichever node it is and whichever page it was drawn
+// for. The body stays off through the outcome marker as it always has; the caret is off only while the
+// request is in flight.
+function paintSplitButton(view) {
+  const onScreen = drawingIdentityOn(view, pageTargetOfUrl(location.href));
+  const phase = splitButtonRuns.phaseOf(onScreen);
+  view.body.textContent = phase ? view.phases[phase] : view.face;
+  view.body.title = splitButtonTooltip(view, splitButtonRuns.reasonOf(onScreen));
+  view.body.disabled = phase !== null;
+  if (view.caret) {
+    view.caret.disabled = phase === 'busy';
+    view.caret.style.opacity = phase === 'busy' ? '0.5' : '';
+  }
+}
+
+// The user's own label, or — while the marker of a run refused before it sent is up — why it was refused.
+// The only refusal a run keeps today is a list selection the batch cannot take.
+function splitButtonTooltip(view, reason) {
+  return reason ? listSelectionNoticeText(reason) : view.label;
+}
+
+// Every drawing on screen, and the open popover's send button, take up whatever the runs hold now
+function repaintSplitButtons() {
+  for (const view of drawnSplitButtons) {
+    if (!view.body.isConnected) drawnSplitButtons.delete(view);
+    else paintSplitButton(view);
+  }
+  if (notePopover) syncNoteSend(notePopover);
+}
+
+// Every split button run starts here — the body's click with the page read when it was pressed, a note
+// with the page its popover opened on — and it is held before the first await, under the identity of
+// the page it sends for, so the body, the caret, the send button and Enter all stop at that run.
+//
+// A list run is for the rows selected when it starts: they are read here, once, before the run is held,
+// and never again once it waits — the worker reads the page again for itself and refuses a selection
+// that no longer matches. A selection the batch cannot take (none, or more than the cap) sends nothing:
+// in the popover it becomes the popover's line with the note left as typed; on the body it is the error
+// marker, with the reason kept by the run for the tooltip. A run writes nothing to the page itself: what
+// it holds is painted (`paintSplitButton`), so its timer only has to clear it.
+async function runSplitButton(view, { target, note, popover, typed }) {
+  const selected = view.list ? readSelectedListRows(document, view.kind === 'pr-list' ? 'pr' : 'issue') : undefined;
+  const notice = view.list ? listBatchSelectionNotice(listSelectionStatus(selected)) : null;
+  if (notice && popover) {
+    showNoteStatus(popover, listSelectionNoticeText(notice), true);
+    return;
+  }
+  const run = splitButtonRun(view, target, note, selected);
+  const token = splitButtonRuns.start(run.identity);
+  if (token === null) return;
+  if (view.list) clearListBatchResult(view.resultIdentity);
+  let phase = 'done';
+  let reason = null;
+  if (notice) {
+    phase = 'error';
+    reason = notice;
+  } else {
+    if (popover) startNoteSend(popover);
+    repaintSplitButtons();
+    const generation = listDocumentGeneration;
+    try {
+      if (view.list) {
+        const outcome = await sendListBatchMessage(run.message);
+        const result = listBatchResultView(view.resultIdentity, selected, outcome);
+        renderListBatchResultView(result, view.kind, generation);
+        phase = result.phase;
+      } else {
+        await sendButtonMessage(run.message);
+      }
+    } catch (failure) {
+      console.error('command error:', failure);
+      phase = 'error';
+    }
+  }
+  splitButtonRuns.finish(run.identity, token, phase, reason);
+  repaintSplitButtons();
+  if (popover) settleNoteSend(popover, phase, typed);
+  setTimeout(() => {
+    if (splitButtonRuns.clear(run.identity, token)) repaintSplitButtons();
+  }, view.delays[phase]);
+}
+
+function createNoteCaret(view, look) {
+  const caret = document.createElement('button');
+  caret.type = 'button';
+  caret.className = NOTE_CARET_CLASS;
+  caret.title = tr('ext.claudeNote.caret');
+  caret.setAttribute('aria-label', tr('ext.claudeNote.caret'));
+  caret.setAttribute('aria-haspopup', 'dialog');
+  caret.setAttribute('aria-expanded', 'false');
+  caret.style.cssText = NOTE_CARET_STYLE[look];
+  caret.appendChild(noteCaretIcon());
+  const rest = look === 'filled' ? '#238636' : 'transparent';
+  const hover = look === 'filled' ? '#2ea043' : 'rgba(87, 171, 90, 0.1)';
+  caret.addEventListener('mouseenter', () => { caret.style.backgroundColor = hover; });
+  caret.addEventListener('mouseleave', () => { caret.style.backgroundColor = rest; });
+  onUserClick(caret, () => toggleNotePopover(view));
+  return caret;
+}
+
+// ▾ in the caret's own colour: a triangle of our own, filled with currentColor
+function noteCaretIcon() {
+  const icon = document.createElementNS(SVG_NS, 'svg');
+  icon.setAttribute('viewBox', '0 0 16 16');
+  icon.setAttribute('width', '10');
+  icon.setAttribute('height', '10');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+  icon.style.cssText = 'display: block; fill: currentColor;';
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M3 6h10l-5 5z');
+  icon.appendChild(path);
+  return icon;
+}
+
+function toggleNotePopover(view) {
+  if (splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href))) === 'busy') return;
+  const reopening = notePopover?.caret === view.caret;
+  closeNotePopover();
+  if (!reopening) openNotePopover(view);
+}
+
+// The note for one button. The page it is for is read as it opens: the note goes with the page the
+// person was looking at when they started writing it, and a page that moves on in the meantime is
+// refused by the worker rather than sent to. Its draft is kept under that page's identity.
+function openNotePopover(view) {
+  const target = pageTargetOfUrl(location.href);
+  const identity = drawingIdentityOn(view, target);
+  const root = document.createElement('div');
+  root.className = NOTE_POPOVER_CLASS;
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-label', tr('ext.claudeNote.caret'));
+  root.style.cssText = NOTE_POPOVER_STYLE;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.placeholder = tr('ext.claudeNote.placeholder');
+  input.setAttribute('aria-label', tr('ext.claudeNote.input'));
+  input.style.cssText = NOTE_INPUT_STYLE;
+  input.value = noteDrafts.get(identity) ?? '';
+  const send = document.createElement('button');
+  send.type = 'button';
+  send.textContent = tr('ext.claudeNote.send');
+  send.style.cssText = NOTE_SEND_STYLE;
+  const status = document.createElement('div');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.style.cssText = NOTE_STATUS_STYLE;
+  const row = document.createElement('div');
+  row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+  row.append(input, send);
+  // What claude gets before the note comes first, and only when there is any
+  if (view.before.length) root.append(noteBeforeList(view.before));
+  root.append(row, status);
+
+  const popover = { view, caret: view.caret, target, identity, root, input, send, status, sending: false };
+  // GitHub's shortcuts listen on the document; nothing typed in here is theirs
+  for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.isComposing) return;
+    event.preventDefault();
+    closeNotePopover();
+  });
+  // Enter sends only when a person pressed it — a fresh press, not the key's auto-repeat — and never
+  // while it is ending an IME composition. A held key repeats its keydown, trusted like the first, and the
+  // note and the focus stay after a failed send, so a repeat arriving after the answer would send the
+  // same note again. A repeat still loses its default; it just sends nothing.
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    if (event.repeat) return;
+    if (isUserGesture(event)) submitNote(popover);
+  });
+  // Text a paste or a drop brings is judged as it arrives, from the original the event carries, before
+  // the input changes it
+  input.addEventListener('paste', event => refuseControlCharacterInsert(popover, event, event.clipboardData?.getData('text/plain')));
+  input.addEventListener('drop', event => refuseControlCharacterInsert(popover, event, event.dataTransfer?.getData('text/plain')));
+  input.addEventListener('input', () => {
+    showNoteStatus(popover, '', false);
+    syncNoteSend(popover);
+  });
+  onUserClick(send, () => submitNote(popover));
+  // A focused send button is activated from the keyboard through a click, and a click carries no word of
+  // a repeat; a held key's repeats lose their default here, before they can activate the button again
+  // once a failure has enabled it
+  send.addEventListener('keydown', event => { if (event.repeat) event.preventDefault(); });
+  popover.onPointerDown = (event) => {
+    if (!root.contains(event.target) && !popover.caret.contains(event.target)) closeNotePopover();
+  };
+  popover.onResize = () => placeNotePopover(popover);
+  // Anything that changes the popover's size — a status line shown or hidden, the send button's ⏳ —
+  // places it again, rather than each such place remembering to
+  popover.onSizeChange = new ResizeObserver(() => placeNotePopover(popover));
+  document.addEventListener('pointerdown', popover.onPointerDown, true);
+  window.addEventListener('resize', popover.onResize);
+
+  document.body.appendChild(root);
+  popover.onSizeChange.observe(root);
+  notePopover = popover;
+  view.caret.setAttribute('aria-expanded', 'true');
+  syncNoteSend(popover);
+  placeNotePopover(popover);
+  input.focus();
+}
+
+// The stored claude inputs a note follows (`claudeInputsBeforeNote`, defaults.js), under a label that
+// names them: an ordered list, because the order is the order they are sent in. They are the user's
+// strings, shown as stored, so each is written as text and never as markup — something to read and
+// copy, not a field to focus or edit.
+function noteBeforeList(inputs) {
+  const box = document.createElement('div');
+  box.style.cssText = NOTE_BEFORE_STYLE;
+  const label = document.createElement('div');
+  label.id = NOTE_BEFORE_LABEL_ID;
+  label.textContent = tr('ext.claudeNote.before');
+  label.style.cssText = NOTE_BEFORE_LABEL_STYLE;
+  const list = document.createElement('ol');
+  list.setAttribute('aria-labelledby', NOTE_BEFORE_LABEL_ID);
+  list.style.cssText = NOTE_BEFORE_LIST_STYLE;
+  for (const input of inputs) {
+    const item = document.createElement('li');
+    item.textContent = input;
+    list.appendChild(item);
+  }
+  box.append(label, list);
+  return box;
+}
+
+// Placed from the measured size and capped at the viewport's height (layout.js), so the input and the
+// send button stay reachable, scrolling inside the popover when the viewport is shorter than it
+function placeNotePopover(popover) {
+  const box = popover.root.getBoundingClientRect();
+  const { left, top, maxHeight } = notePopoverPosition({
+    anchor: (popover.caret.parentElement ?? popover.caret).getBoundingClientRect(),
+    size: { width: box.width, height: box.height },
+    viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+    scroll: { x: window.scrollX, y: window.scrollY },
+  });
+  popover.root.style.maxHeight = `${maxHeight}px`;
+  popover.root.style.left = `${left}px`;
+  popover.root.style.top = `${top}px`;
+  popover.root.style.visibility = 'visible';
+}
+
+// A paste or a drop brings text in before a verdict can see the value, and a single-line input changes
+// the line breaks in it — to spaces, or to nothing. The events carry the original: the clipboard's plain
+// text on `paste`, the drag's on `drop`. That original is judged by the verdict's own control-character
+// rule; text it refuses is not let in and the refusal is shown, and anything else is left to the
+// browser. Measured with synthetic events: a paste of `one` CRLF `two` came back `defaultPrevented`
+// with the refusal on the status line, and a single-line paste was not prevented — a synthetic paste
+// inserts no text, so what the browser then puts in was not observed. A script can insert text without
+// either event: `execCommand('insertText')` with `x` LF `y` left `x y` in the input and ran no
+// `beforeinput` listener (measured, in a background tab). That is script territory, like any other
+// write to the page's DOM: the note is judged again when it is sent, and by the worker after that.
+function refuseControlCharacterInsert(popover, event, original) {
+  if (typeof original !== 'string' || !claudeNoteHasControlCharacter(original)) return;
+  event.preventDefault();
+  showNoteStatus(popover, noteRefusalText(claudeNoteRefusalNotice('control-character')), true);
+}
+
+// A note is read here, once, and judged by the one verdict (defaults.js) before anything is sent: a
+// refusal is shown in this page's language and nothing leaves. What goes out is the verdict's note.
+function submitNote(popover) {
+  const typed = popover.input.value;
+  const verdict = claudeNoteVerdict(typed);
+  if (!verdict.valid) {
+    showNoteStatus(popover, noteRefusalText(claudeNoteRefusalNotice(verdict.error)), true);
+    return;
+  }
+  runSplitButton(popover.view, { target: popover.target, note: verdict.note, popover, typed });
+}
+
+// A refused note's message in this page's language, by the message ids `claudeNoteRefusalNotice`
+// (defaults.js) names. Each lookup is written out, so the catalogue audit sees every message drawn
+// here; an id without one reads as the failure that names no cause.
+const NOTE_REFUSAL_TEXT = {
+  'ext.claudeNote.refused.notString': () => tr('ext.claudeNote.refused.notString'),
+  'ext.claudeNote.refused.empty': () => tr('ext.claudeNote.refused.empty'),
+  'ext.claudeNote.refused.unpairedSurrogate': () => tr('ext.claudeNote.refused.unpairedSurrogate'),
+  'ext.claudeNote.refused.controlCharacter': () => tr('ext.claudeNote.refused.controlCharacter'),
+  'ext.claudeNote.refused.leadingCharacter': () => tr('ext.claudeNote.refused.leadingCharacter'),
+  'ext.claudeNote.refused.braces': () => tr('ext.claudeNote.refused.braces'),
+  'ext.claudeNote.refused.tooLong': limit => tr('ext.claudeNote.refused.tooLong', limit),
+};
+
+function noteRefusalText(notice) {
+  const text = notice && Object.hasOwn(NOTE_REFUSAL_TEXT, notice.messageKey) ? NOTE_REFUSAL_TEXT[notice.messageKey] : null;
+  return text ? text(...notice.args) : tr('ext.claudeNote.failed');
+}
+
+function showNoteStatus(popover, message, problem) {
+  popover.status.textContent = message;
+  popover.status.style.display = message ? 'block' : 'none';
+  popover.status.style.color = problem ? NOTE_PROBLEM_COLOR : NOTE_QUIET_COLOR;
+}
+
+// The send button is off while the box is empty, while this button has a run in flight, and while
+// this popover's own note is on its way
+function syncNoteSend(popover) {
+  const off = popover.sending || popover.input.value === ''
+    || splitButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy';
+  popover.send.disabled = off;
+  popover.send.style.opacity = off ? '0.5' : '1';
+  popover.send.style.cursor = off ? 'default' : 'pointer';
+}
+
+function startNoteSend(popover) {
+  popover.sending = true;
+  popover.input.readOnly = true;
+  popover.send.textContent = '⏳';
+  showNoteStatus(popover, '', false);
+  syncNoteSend(popover);
+}
+
+// What a note's answer does to its popover. Success closes it and forgets the draft. Failure keeps the
+// typed note — in the popover when it is still the open one, and for the next opening either way —
+// under a line that names no cause: the worker's reason is an English sentence composed where no page
+// language exists, and it goes to the console only. A popover closed in the meantime, or another one
+// open now, is left alone.
+function settleNoteSend(popover, phase, typed) {
+  popover.sending = false;
+  if (phase === 'done') {
+    if (notePopover === popover) closeNotePopover();
+    noteDrafts.delete(popover.identity);
+    return;
+  }
+  noteDrafts.set(popover.identity, typed);
+  if (notePopover !== popover) return;
+  popover.input.readOnly = false;
+  popover.send.textContent = tr('ext.claudeNote.send');
+  showNoteStatus(popover, tr('ext.claudeNote.failed'), true);
+  syncNoteSend(popover);
+}
+
+function closeNotePopover({ restoreFocus = true } = {}) {
+  const popover = notePopover;
+  if (!popover) return;
+  notePopover = null;
+  if (popover.input.value) noteDrafts.set(popover.identity, popover.input.value);
+  else noteDrafts.delete(popover.identity);
+  popover.onSizeChange.disconnect();
+  popover.root.remove();
+  document.removeEventListener('pointerdown', popover.onPointerDown, true);
+  window.removeEventListener('resize', popover.onResize);
+  popover.caret.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && popover.caret.isConnected && !popover.caret.disabled) popover.caret.focus();
+}
+
+// Drawings GitHub took away with a rebuilt header, or that a page change removed, are dropped — and a
+// popover whose caret went with them has nothing to hang from or return focus to. Safe at the start
+// of an insert pass: every insert creates and inserts its buttons in one synchronous stretch, so no
+// drawing is ever waiting, created but not yet inserted, across an await.
+function forgetDetachedSplitButtons() {
+  for (const view of drawnSplitButtons) {
+    if (!view.body.isConnected) drawnSplitButtons.delete(view);
+  }
+  if (notePopover && !notePopover.caret.isConnected) closeNotePopover({ restoreFocus: false });
 }
 
 // Inside a breadcrumb item of the new GitHub header (an li with display:block), leaving the button
@@ -718,7 +1186,7 @@ function attachToRepoCrumb(anchor, buttons) {
 }
 
 // Add the custom command buttons to the PR header (returns true on success)
-async function tryInsertPRButtons() {
+async function tryInsertPRButtons(generation) {
   // Skip if the buttons are already there
   if (document.querySelector('.terminal-cmd-btn')) {
     return true;
@@ -736,6 +1204,8 @@ async function tryInsertPRButtons() {
 
   const buttons = await loadButtonConfigs('pr');
   if (!buttons) return false; // read failed; the poll retries rather than drawing something that would refuse
+  // The branch link above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -753,7 +1223,7 @@ async function tryInsertPRButtons() {
   // Insert the buttons in reverse order (insertAdjacentElement afterend inserts immediately after)
   for (let i = buttons.length - 1; i >= 0; i--) {
     const iconButton = createCommandIconButton(buttons[i], i, {
-      action: 'execute_command', className: 'terminal-cmd-btn',
+      action: 'execute_command', kind: 'pr', className: 'terminal-cmd-btn',
     });
     insertAfter.insertAdjacentElement('afterend', iconButton);
   }
@@ -779,7 +1249,7 @@ function issueBadgeRow() {
 }
 
 // Add the issue-specific buttons to the issue header (returns true on success)
-async function tryInsertIssueButtons() {
+async function tryInsertIssueButtons(generation) {
   if (document.querySelector('.terminal-issue-btn')) {
     return true;
   }
@@ -789,6 +1259,8 @@ async function tryInsertIssueButtons() {
 
   const buttons = await loadButtonConfigs('issue');
   if (!buttons) return false;
+  // The badge row above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting, another trigger (the poll, the MutationObserver, a turbo event) may have
   // inserted them first
@@ -798,7 +1270,7 @@ async function tryInsertIssueButtons() {
 
   buttons.forEach((config, index) => {
     row.appendChild(createCommandIconButton(config, index, {
-      action: 'execute_issue_command', className: 'terminal-issue-btn',
+      action: 'execute_issue_command', kind: 'issue', className: 'terminal-issue-btn',
     }));
   });
 
@@ -806,7 +1278,7 @@ async function tryInsertIssueButtons() {
 }
 
 // Add the buttons to the repository header (returns true on success)
-async function tryInsertRepoButtons(target) {
+async function tryInsertRepoButtons(target, generation) {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
@@ -819,6 +1291,8 @@ async function tryInsertRepoButtons(target) {
 
   const buttons = await loadButtonConfigs('repo');
   if (!buttons) return false;
+  // The crumb above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -834,42 +1308,72 @@ async function tryInsertRepoButtons(target) {
 //
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
+//
+// Every pass first asks whether the page moved (`onUrlChange`, a no-op when it has not). The history
+// wrappers below see only moves made from this script's side; GitHub's own navigation goes past them.
+// A move made through a `pushState` they did not wrap left the previous PR's buttons on the next PR
+// (measured), and an open popover with them, its caret being one of them (read from the code). The
+// poll, the observer and GitHub's navigation events all run this pass, so such a move reaches the one
+// place that clears the old page at the next insert pass. The poll asks for one about every second, and
+// in a foreground tab that is roughly when it comes; it is an interval, not a deadline.
+//
+// The pass then holds the generation of the page it started on, and after every await it asks again
+// (`pageChangedSince`) before it reads or draws anything more: what it read before the await belongs to
+// that page. A pass that waited through a move and drew when it resumed put the old page's buttons on
+// the new one, and the pass started on the new page found buttons there and drew nothing — reproduced by
+// running this script in a DOM harness with the storage read held; the window is one storage read wide.
 async function tryInsertButton() {
+  onUrlChange();
+  const generation = pageGeneration;
+  forgetDetachedSplitButtons();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
 
   let result = false;
 
   // Repository, PR, and issue pages all get the repository buttons in the header
-  result = await tryInsertRepoButtons(target) || result;
+  result = await tryInsertRepoButtons(target, generation) || result;
+  // `target` was read before that await, and chooses what is drawn next
+  if (pageChangedSince(generation)) return result;
 
   // PR and issue pages also get their own custom command buttons (configured separately)
   if (target.kind === 'pr') {
-    result = await tryInsertPRButtons() || result;
+    result = await tryInsertPRButtons(generation) || result;
   } else if (target.kind === 'issue') {
-    result = await tryInsertIssueButtons() || result;
+    result = await tryInsertIssueButtons(generation) || result;
   } else if (target.kind === 'pr-list' || target.kind === 'issue-list') {
     result = tryInsertListSelection(target.kind) || result;
-    result = await tryInsertListButtons(target.kind) || result;
+    result = await tryInsertListButtons(target.kind, generation) || result;
   }
 
   return result;
 }
 
-// Wrap the History API to detect URL changes
+// The page the buttons on screen were drawn for, as `onUrlChange` last saw it
 let lastUrl = location.href;
 let lastTarget = pageTargetOfUrl(location.href);
+// Moved on by every removal, so an insert pass can tell that the page it started on is gone. Not
+// `listDocumentGeneration`: that one also moves when a list's rows change under the same page, which
+// must not cancel a pass whose buttons are still right there.
+let pageGeneration = 0;
 
 // Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
 // insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
 // could survive onto PR #2, where their position and the header around them mean something else.
-// Removing them makes the next insert redraw for the page that is actually showing.
+// Removing them makes the next insert redraw for the page that is actually showing. A note popover
+// belongs to its button's page too, and goes with it; its draft stays, under the page it was opened for.
+// The page generation moves on first, so a pass that read the old page and is still waiting draws
+// nothing when it resumes.
 function removeInsertedButtons() {
-  document.querySelectorAll('.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .terminal-list-btn, .terminal-list-btn-row')
+  pageGeneration += 1;
+  closeNotePopover({ restoreFocus: false });
+  document.querySelectorAll(`.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .${SPLIT_BUTTON_CLASS}, .terminal-list-btn, .terminal-list-btn-row`)
     .forEach(node => node.remove());
   resetListSelectionState();
 }
 
+// Reached from the history wrappers and `popstate`, and from every insert pass for the moves those miss.
+// A no-op while the URL has not moved, so being asked often costs nothing.
 function onUrlChange() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
@@ -882,7 +1386,18 @@ function onUrlChange() {
   setTimeout(tryInsertButton, 300);
 }
 
-// Detect History API events
+// Whether the page an insert pass started on is gone — asked after each of the pass's awaits, before it
+// reads or draws anything more. It asks `onUrlChange` first, so a move nothing has reported yet counts as
+// well, while it is still in effect: the generation counts the removals that happened, and a move there
+// and back that nothing saw leaves none. Only a new target moves the generation: a query change within
+// one list keeps the buttons, and a pass drawing them there is still right.
+function pageChangedSince(generation) {
+  onUrlChange();
+  return generation !== pageGeneration;
+}
+
+// History API wrappers. They wrap this script's view of `history` only — GitHub's own navigation
+// happens in the page's world and does not pass through them; the insert passes catch those moves.
 const originalPushState = history.pushState;
 history.pushState = function(...args) {
   originalPushState.apply(this, args);

@@ -88,6 +88,50 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "claude に先に送る入力"
+  },
+  "ext_claudeNote_caret": {
+    "message": "claude へのひとこと"
+  },
+  "ext_claudeNote_failed": {
+    "message": "送信できませんでした。入力内容は残っています。もう一度お試しください。"
+  },
+  "ext_claudeNote_input": {
+    "message": "claude に伝えるひとこと"
+  },
+  "ext_claudeNote_placeholder": {
+    "message": "例: まず不安定なテストを見て"
+  },
+  "ext_claudeNote_refused_braces": {
+    "message": "{…} は外してください。アプリが変数として読みます。"
+  },
+  "ext_claudeNote_refused_controlCharacter": {
+    "message": "改行や制御文字を使わず、1 行で入力してください。"
+  },
+  "ext_claudeNote_refused_empty": {
+    "message": "先にひとことを入力してください。"
+  },
+  "ext_claudeNote_refused_leadingCharacter": {
+    "message": "空白や !、/、# ではなく文字で始めてください。"
+  },
+  "ext_claudeNote_refused_notString": {
+    "message": "ひとことはテキストで入力してください。"
+  },
+  "ext_claudeNote_refused_tooLong": {
+    "message": "長すぎます。$ARG1$ バイト以下にしてください。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_claudeNote_refused_unpairedSurrogate": {
+    "message": "壊れた文字が含まれています。入力し直してください。"
+  },
+  "ext_claudeNote_send": {
+    "message": "送信"
+  },
   "ext_confirm_presetOverwrite": {
     "message": "ボタン $ARG1$ を「$ARG2$」プリセットで上書きします。続けますか?",
     "placeholders": {

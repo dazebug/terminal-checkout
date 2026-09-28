@@ -51,3 +51,33 @@ The band stood in for "the links in the PR header" as opposed to `/tree/` links 
 **Rejected alternative — read the names from the page's embedded JSON.** An undocumented payload, and the buttons still need the header element to sit beside.
 
 **Behavior change, accepted:** with a single rendered link, the old rule took that link as both base and head, so a click would have used the base branch as `{branch}`. The pair rule finds no head there; no button is drawn, and a click reports that it could not read a branch.
+
+## GitHub's own navigation is noticed by the insert passes, not only by the history wrappers
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed for what was measured. Before the fix, a move made through a `pushState` taken before the wrappers left the previous PR's buttons on the next PR; that an open note popover stayed with them was read from the code (its caret stayed connected), not observed. After it, on a live page — the real scripts injected into github.com's main world, `chrome` stubbed, trusted clicks and keys, in a hidden tab whose throttled poll was helped by passes started by hand — the same move from PR 86 to PR 87 closed an open popover and redrew the buttons at an insert pass within 2.5 seconds, the draft was back when the popover was opened on PR 86 again, and moving from the PR list to the issue list closed the popover and removed the row badges. That GitHub's own navigation goes past the wrappers follows from Chrome's isolated worlds and was not measured
+**Source:** PR #90; `tryInsertButton` and `onUrlChange` in `extension/content.js`; `tests/claude-note.test.js` (`every insert pass asks whether the page moved before it draws, so a move the history wrappers missed is seen (lint)`)
+**Revisit when:** the extension gains a main-world script, or GitHub's navigation starts firing an event a content script can hear
+
+The content script wraps `history.pushState` and `replaceState`, but a content script runs in an isolated world: the wrappers replace its own view of `history`, and a call made by GitHub's scripts in the page's world never passes through them. Only `popstate`, a DOM event every world receives, reaches `onUrlChange` directly. So every insert pass — the poll, the mutation observer and GitHub's `turbo:load`, `turbo:render` and `pjax:end` events — calls `onUrlChange` first. It returns at once for a URL that has not moved; for a new target it removes the old page's buttons, closes an open popover (whose draft stays under the page it was opened for) and resets the list selection. A move the wrappers missed is therefore cleared at the next insert pass. The poll asks for one about every second, and in a foreground tab that is roughly when it comes — an interval, not a deadline.
+
+**Rejected alternative — close only the popover when its page differs from the one on screen.** That fixes the reported symptom and leaves the old page's buttons, another list kind's batch buttons included, on the new page.
+
+## An insert pass that waited through a move draws nothing: a page generation, kept apart from the list generation
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed in a DOM harness only — the real content script under jsdom with `chrome` stubbed and the storage read held. The live page check above saw the generation move on a real page change but did not produce the race itself, whose window is one storage read wide
+**Source:** PR #90; `pageGeneration`, `pageChangedSince` and `removeInsertedButtons` in `extension/content.js`; `tests/claude-note.test.js` (`a pass that started on a page draws nothing once that page is gone: every await in it is followed by a page check (lint)`)
+**Revisit when:** an insert pass gains an await of a new kind, or the list generation changes meaning
+
+An insert pass reads the page, waits for storage, then draws. In the harness, a pass that waited on PR A and resumed after the page had moved to B drew A's buttons onto B, and the pass that started on B found buttons there and drew nothing, so the old page's buttons stayed until the next change of target; from a PR list to a PR, the waiting pass put a list checkbox and the PR-list buttons on the PR page. Every removal now moves `pageGeneration`. A pass holds the generation it started with and, after each await and before it reads or draws again, asks `pageChangedSince`, which calls `onUrlChange` first so that a move nothing has reported yet counts too. The generation counts the removals that were observed: a move there and back that nothing saw leaves no trace.
+
+**Rejected alternative — compare the page's target instead.** When the move in between was observed, A→B→A ends on the same target, and the pass that started on the first A draws after two page changes.
+
+**Rejected alternative — one insert pass at a time.** Serializing the passes does not stop a waiting pass from drawing after a move.
+
+**Rejected alternative — an `AbortController` per page.** The same job as a counter, with more machinery.
+
+**Rejected alternative — reuse `listDocumentGeneration`.** It also moves when a list's rows change under the same target, and the same pass can move it in `tryInsertListSelection`, so a shared counter would make that pass cancel its own list buttons.

@@ -122,12 +122,14 @@ The same split applies to a step this work could *not* perform: whether a langua
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed
+**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed; for the content script, PR #90 and the lints in `tests/claude-note.test.js` those harnesses backed
 **Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
 
 The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.
 
 The harness's checks need toggles just as the committed suite's checks do. The cross-card check passed when its guard was removed, and a toggle intended to disable the keyboard branch matched an identical `if` a hundred lines earlier and reddened the drag checks instead. Both looked like evidence while proving the wrong thing. An out-of-tree harness receives less scrutiny than the suite, so a check never shown to fail is worth less than no check.
+
+**The content script is in the same position.** Work on the note popover loaded the real `i18n.js`, `defaults.js`, `layout.js` and `content.js` into jsdom in the manifest's order, with only `chrome` stubbed, to show what the content script's lints cannot: an insert pass racing a page move, a batch failure reaching the popover, a refused selection's tooltip, and the list a popover shows before a note. Each harness ran under the same in-memory mutations as the suite, with an applied marker on every run, and a scenario counted only once removing its named protection failed it. Three limits hold for all of them. The script refuses untrusted events and jsdom cannot make a trusted one, so a harness calls the functions a click reaches — evidence for state transitions, not for trusted clicks, layout or how a tooltip looks. jsdom lays nothing out, so sizes are supplied. And jsdom has no `TextEncoder`, no `ResizeObserver` and no `contentEditable`; the last let an "is anything here editable" check pass on an editable list until the check read the property as well as the attribute.
 
 **Rejected alternative — promote the harness or trust green-only checks.** A fake browser or an extracted arithmetic seam would manufacture a unit boundary the production code does not have, while an un-toggled scratchpad check can mistake a missed filter for a working guard. Keep the harness disposable, and require each check to redden only when its named protection is toggled.
 

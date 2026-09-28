@@ -730,6 +730,53 @@ final class RequestTests: XCTestCase {
     }
 }
 
+// MARK: - What the request trim can strip from the front of a claude input
+
+/// The extension refuses a claude note whose first character is in Unicode category Z or C
+/// (`claudeNoteVerdict` in `extension/defaults.js`), and that keeps the first character this app
+/// classifies as `!`, `/` or `#` the one the extension checked only while everything the trim here
+/// strips from the front of an input is itself in Z or C.
+final class ClaudeInputLeadingTrimTests: XCTestCase {
+    func testEveryLeadingScalarTheTrimStripsIsASeparatorOrOther() {
+        let separatorsAndOthers: Set<Unicode.GeneralCategory> = [
+            .spaceSeparator, .lineSeparator, .paragraphSeparator,
+            .control, .format, .surrogate, .privateUse, .unassigned,
+        ]
+        let rest = "!x"
+        var stripped: [UInt32] = []
+        var outside: [String] = []
+        func resolved(_ scalars: ArraySlice<Unicode.Scalar>) -> [String]? {
+            let inputs = scalars.map { scalar -> String in
+                var input = ""
+                input.unicodeScalars.append(scalar)
+                return input + rest
+            }
+            guard let request = try? resolveRequest(["command_template": "claude", "claude_inputs": inputs]),
+                  request.claudeInputs.count == inputs.count else { return nil }
+            return request.claudeInputs
+        }
+        // Many inputs per request keeps the full range affordable. A chunk the request refuses as a
+        // whole (it holds a control byte) is resolved one scalar at a time instead, and a refused
+        // scalar was not stripped — it never reaches claude at all.
+        let scalars = (UInt32(0)...0x10FFFF).compactMap(Unicode.Scalar.init)
+        for start in stride(from: 0, to: scalars.count, by: 4096) {
+            let chunk = scalars[start..<min(start + 4096, scalars.count)]
+            let outputs = resolved(chunk) ?? chunk.map { resolved([$0][...])?.first ?? "" }
+            for (scalar, output) in zip(chunk, outputs) {
+                // Compared scalar by scalar: `==` on String is canonical equivalence, not identity
+                guard output.unicodeScalars.elementsEqual(rest.unicodeScalars) else { continue }
+                stripped.append(scalar.value)
+                if !separatorsAndOthers.contains(scalar.properties.generalCategory) {
+                    outside.append(String(format: "U+%04X", scalar.value))
+                }
+            }
+        }
+        // A scan that never saw the trim strip anything measured nothing
+        XCTAssertTrue(stripped.contains(0x20), "an ordinary space was not stripped — the scan read nothing")
+        XCTAssertEqual(outside, [], "the trim strips leading scalars outside Z and C: \(outside)")
+    }
+}
+
 // MARK: - The request handler (the success/failure JSON response shape)
 
 final class HandlerTests: XCTestCase {

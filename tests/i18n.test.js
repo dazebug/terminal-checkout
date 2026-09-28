@@ -659,13 +659,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **112 argument-supplying sites are expected.** The count is
+  // **129 argument-supplying sites are expected.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 112, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 129, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -1581,8 +1581,10 @@ test('every text-bearing attribute in the markup is a message or a declared lite
       + 'that joins it to the message naming the page',
   };
   const DECLARED_EXPRESSIONS = {
-    'buttonConfig.label': "the user's own button label, read back from their settings and shown as "
-      + 'its tooltip — it is theirs, and translating it would rename the button they named',
+    'splitButtonTooltip(view': "a split button's tooltip: the user's own button label, read back from "
+      + 'their settings — it is theirs, and translating it would rename the button they named — or, '
+      + 'while the marker of a press it refused is up, why, through the literal lookups in '
+      + '`listSelectionNoticeText`',
     'listBatchBadgeLabel(result': 'the localized result label shared by a row badge title and aria label',
     'row.title': "GitHub's own row title, shown on the extension-owned list checkbox — it is page "
       + 'content rather than extension prose',
@@ -1608,14 +1610,14 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   assert.deepEqual(found.map(([file, site]) => siteIdentity(file, site)).sort(), [
     'content.js aria-label = listBatchBadgeLabel(result',
     'content.js aria-label = row.title',
-    'content.js title = buttonConfig.label',
-    'content.js title = buttonConfig.label',
-    'content.js title = buttonConfig.label',
-    'content.js title = buttonConfig.label',
+    "content.js aria-label = tr('ext.claudeNote.caret'",
+    "content.js aria-label = tr('ext.claudeNote.caret'",
+    "content.js aria-label = tr('ext.claudeNote.input'",
+    "content.js placeholder = tr('ext.claudeNote.placeholder'",
     'content.js title = listBatchBadgeLabel(result',
     'content.js title = row.title',
-    "content.js title = tr('ext.list.batch.selection.empty'",
-    "content.js title = tr('ext.list.batch.selection.tooMany'",
+    'content.js title = splitButtonTooltip(view',
+    "content.js title = tr('ext.claudeNote.caret'",
     'options.html placeholder = main',
     "options.js aria-label = ${t('ext.card.reorder.aria')}",
     "options.js aria-label = ${t('ext.claudeInput.reorder.aria', j + 1)}",
@@ -1639,11 +1641,11 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 24, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(repeated.length, 23, `${repeated.length} sites share a (file, attribute) pair`);
   assert.equal(new Set(repeated).size, 5, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
-  assert.equal(sameValueToo.length, 8, `${sameValueToo.length} sites are indistinguishable even by value`);
+  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {

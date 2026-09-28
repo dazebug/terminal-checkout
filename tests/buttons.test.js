@@ -650,14 +650,24 @@ test('toStoredButton: claude inputs preserve controls and trim only spaces', () 
 });
 
 test('the wire message is built from the payload the fingerprint is taken of', () => {
-  // Two normalizations that agree by coincidence are two normalizations that drift. The behaviour
-  // above cannot be exercised from here — `runButton` needs the chrome APIs — so what is pinned is
-  // that the send has no normalization of its own to disagree with. A lint, not a proof.
+  // Two normalizations that agree by coincidence are two normalizations that drift. What the worker
+  // actually sends is exercised in tests/worker-note.test.js; what is pinned here is that the send has
+  // no normalization of its own to disagree with, and that the one payload it takes — `clickPayload`,
+  // which adds a click's note — starts from the fingerprint's own `executionPayload`. A lint, not a
+  // proof.
   const source = fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8');
   const runButton = source.slice(source.indexOf('async function runButton('));
   const body = runButton.slice(0, runButton.indexOf('\n}\n'));
-  assert.ok(body.includes('executionPayload('), 'runButton builds its message some other way');
+  assert.ok(body.includes('clickPayload('), 'runButton builds its message some other way');
   assert.deepEqual(body.match(/\.trim\(\)|\.filter\(/g) ?? [], [], 'runButton normalizes on its own');
+  const defaults = readExtension('defaults.js');
+  const bodyOf = name => {
+    const from = defaults.slice(defaults.indexOf(`function ${name}(`));
+    return from.slice(0, from.indexOf('\n}\n'));
+  };
+  for (const name of ['clickPayload', 'executionPayloadWithNote']) {
+    assert.match(bodyOf(name), /executionPayload\(button\)/, `${name} no longer starts from the fingerprint's payload`);
+  }
 });
 
 test('the refusal a mismatch produces is a diagnostic, and says what a user would need', () => {

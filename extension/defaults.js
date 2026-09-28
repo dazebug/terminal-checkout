@@ -556,9 +556,10 @@ function buildListBatchItems(target, selected) {
 
 // The batch protocol's command lives at the top level. A single-command request uses
 // `command_template`; putting that key into a batch would make the app reject the otherwise-valid
-// items envelope before it could report per-item results.
-function buildListBatchRequest(button, items) {
-  const { command, claudeInputs } = executionPayload(button);
+// items envelope before it could report per-item results. A note, when the click carried one, is the
+// worker's already-judged note, shared by every item.
+function buildListBatchRequest(button, items, note) {
+  const { command, claudeInputs } = clickPayload(button, note);
   const request = { command, items };
   if (claudeInputs.length) request.claude_inputs = claudeInputs;
   return request;
@@ -581,8 +582,10 @@ function sameListSelectionKeys(expected, actual) {
     [...expectedSet].every(key => actualSet.has(key));
 }
 
-function buildListBatchMessage(buttonIndex, shown, target, selected) {
-  return {
+// `note` is added only when there is one: the worker reads a present key as a note to judge, whatever it
+// holds, so a note-less click must not carry the key at all.
+function buildListBatchMessage(buttonIndex, shown, target, selected, note) {
+  const message = {
     action: LIST_BATCH_ACTION,
     buttonIndex,
     shown,
@@ -590,6 +593,8 @@ function buildListBatchMessage(buttonIndex, shown, target, selected) {
     target,
     selected,
   };
+  if (note !== undefined) message.note = note;
+  return message;
 }
 
 function validateListBatchResultKeyProtocol(message) {
@@ -853,6 +858,10 @@ function readableButtonFields(entry) {
 // a refusal, never introduce a command of its own. That is the same shape as the app owning the
 // terminal choice — the side that executes keeps the single source of truth.
 //
+// One value does come from the message: a click-time note (claudeNoteVerdict, below). The worker
+// judges it itself and it can only become the last claude input — never the command, never a
+// variable, never part of this fingerprint.
+//
 // Everything a click will hand the app, normalized exactly as the send normalizes it: the inputs are
 // trimmed for ordinary spaces only and the empty ones dropped, which is what runButton did on its
 // way out. It builds its message from this now, so the two cannot disagree — a normalization the
@@ -865,7 +874,19 @@ function readableButtonFields(entry) {
 // app and be rejected there as `{success:false}`. `face` and `label` still use `trim()` below because
 // they are display text, not typed bytes.
 function normalizeClaudeInputs(inputs) {
-  return (inputs || []).map(input => String(input).replace(/^ +| +$/g, '')).filter(Boolean);
+  return (inputs || []).map(input => trimOrdinarySpaces(String(input))).filter(Boolean);
+}
+
+// The trim above, and the only one a note gets too: ordinary spaces (U+0020) at either end. Two index
+// walks and not `/^ +| +$/g`: that regex retries ` +$` from every space of an inner run, which is
+// quadratic in the run's length, and a note reaches this before anything bounds its length — over a
+// second for a 32768-character note with one inner run (measured).
+function trimOrdinarySpaces(text) {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) === 0x20) start += 1;
+  while (end > start && text.charCodeAt(end - 1) === 0x20) end -= 1;
+  return text.slice(start, end);
 }
 
 function executionPayload(button) {
@@ -932,6 +953,223 @@ function clickMatchesWhatWasShown(button, shown) {
 // render it. That is a protocol change, and it is the trigger to revisit this.
 const BUTTON_CHANGED_ERROR =
   'This button no longer matches your saved settings — reload the page and try again.';
+
+// --- A note typed at click time ---
+// A button that starts claude can carry a one-line note from the person clicking it, delivered as
+// that click's last claude input. It is the one value a click message carries that storage did not
+// write — the command, the inputs and the fingerprint still come from storage — so what a note may
+// hold is decided here, once, for the content script that offers the note and for the worker that
+// refuses one before anything is sent.
+
+// Whether a command starts claude, as far as its text can tell: the word `claude`. The options page
+// warns on it and the note is offered on it, so the two cannot disagree. It errs towards yes
+// (`echo claude` counts), and a note sent through a false yes is lost the way a scheduled input is:
+// claude never comes up, and only the app's log says so.
+function commandStartsClaude(command) {
+  return typeof command === 'string' && /\bclaude\b/.test(command);
+}
+
+// Whether a button can take a note: it starts claude, and one more input still fits under the cap.
+// The inputs are counted the way a click sends them (executionPayload), not the way they are stored.
+function buttonTakesClaudeNote(button) {
+  if (!button || typeof button !== 'object') return false;
+  if (button.claudeInputs !== undefined && !Array.isArray(button.claudeInputs)) return false;
+  if (!commandStartsClaude(button.command)) return false;
+  return executionPayload(button).claudeInputs.length < MAX_CLAUDE_INPUTS;
+}
+
+// UTF-8 bytes. The same budget the app gives the longest line it merges out of `!` inputs
+// (claudeMergedLineLimit), well inside what the Warp helper accepts in one injection (8 KiB).
+const MAX_CLAUDE_NOTE_BYTES = 4096;
+
+// Why a note was refused — a code, not a sentence. The content script turns it into a message in the
+// language it draws in, the worker into an English diagnostic.
+const CLAUDE_NOTE_ERRORS = Object.freeze([
+  'not-string', 'empty', 'unpaired-surrogate', 'control-character', 'leading-character', 'braces',
+  'too-long',
+]);
+
+// The one verdict on a note: plain text on one line, which the app hands claude unchanged except for
+// trailing whitespace (the end of this comment).
+//
+// On its way the app renders the note as a template, refuses NUL, line breaks and C0/DEL, trims
+// `.whitespacesAndNewlines`, and reads `!` (shell mode) or `/` and `#` (input-box directives) off the
+// front. Each step could turn the note checked here into something else, so each is closed here:
+//  - unpaired surrogates: half of a UTF-16 pair is not text, and UTF-8 cannot encode it — the byte
+//    count saw U+FFFD where the note kept the half, and the app's JSON parser refused a request
+//    carrying it as a JSON escape (measured). Refused wherever it sits and never replaced: a
+//    replacement is text nobody typed. A whole pair, a joiner and a combining mark are text and pass.
+//  - the first character: that trim strips scalars `trim()` and `\p{Z}` both keep — U+0085 and U+200B
+//    among them (measured) — and everything it strips is in Unicode category Z or C, which a Swift
+//    test pins. Refusing all of Z and C at the front, with `!`, `/` and `#`, leaves the app classifying
+//    the very character checked here.
+//  - braces: the app substitutes `{name}` for any name ICU's `\w` accepts — Korean names included,
+//    which JavaScript's `\w` does not reproduce — and it has no escape. A span from `{` to the next
+//    `}` contains every such placeholder, so refusing any closed span refuses them all without
+//    modelling `\w`, and a note with no placeholder renders to itself in every item of a batch. A
+//    closed span exists exactly when a `}` comes after the first `{`, which two searches answer.
+//    `{}`, `{ a }` and `{"a":1}` are refused along with it.
+//  - control characters: C0, DEL, C1 and the line and paragraph separators, anywhere — refused, not
+//    removed: removing them is how a typed byte used to change on its way. The rule is
+//    `claudeNoteHasControlCharacter`, which the content script also asks of pasted and dropped text
+//    before the input can change it.
+//  - length: counted after the trim, so the bytes checked are the bytes sent.
+// Each check is one pass over the note. The length is judged last, so it bounds none of the checks
+// before it, and nothing limits a note's length before it gets here: a check that rescanned — a
+// regex retrying from every `{`, or a trailing-space regex from every space of an inner run — took
+// over a second from 32768 characters (measured).
+// Only ordinary spaces are trimmed, and the trimmed text is the note to send: it comes back with the
+// verdict, so nothing reads the raw value again. The app's trim is wider at the end too: a trailing
+// U+00A0 or U+200B passes here and is gone when the note arrives (measured). That trim takes
+// whitespace off the end and can go no further than the note's first character, which the check
+// above keeps out of Z and C — so everything before that whitespace, and the way the app reads the
+// note, stay as checked.
+function claudeNoteVerdict(note) {
+  const refuse = error => ({ valid: false, error, note: null });
+  if (typeof note !== 'string') return refuse('not-string');
+  const trimmed = trimOrdinarySpaces(note);
+  if (!trimmed) return refuse('empty');
+  if (/\p{Cs}/u.test(trimmed)) return refuse('unpaired-surrogate');
+  if (claudeNoteHasControlCharacter(trimmed)) return refuse('control-character');
+  if (/^[\p{Z}\p{C}!\/#]/u.test(trimmed)) return refuse('leading-character');
+  const open = trimmed.indexOf('{');
+  if (open !== -1 && trimmed.indexOf('}', open + 1) !== -1) return refuse('braces');
+  if (new TextEncoder().encode(trimmed).length > MAX_CLAUDE_NOTE_BYTES) return refuse('too-long');
+  return { valid: true, error: null, note: trimmed };
+}
+
+// The verdict's control-character rule, and the only statement of it: line breaks, C0, DEL, C1 and the
+// line and paragraph separators. A single-line input changes line breaks in pasted or dropped text
+// before any verdict sees the value, so the content script asks this of the original text as it
+// arrives — the same rule, not a second one written to agree with it.
+function claudeNoteHasControlCharacter(text) {
+  return /[\p{Cc}\p{Zl}\p{Zp}]/u.test(text);
+}
+
+// What a click with a note hands the app: the button's own payload, with the note after its inputs,
+// once. Last, so a `!` run that puts context in front of claude goes first. A new object and a new
+// array — the stored button, and with it the fingerprint of what was drawn, are not touched. The note
+// is the verdict's `note`; this does not judge it again.
+function executionPayloadWithNote(button, note) {
+  const payload = executionPayload(button);
+  return { command: payload.command, claudeInputs: [...payload.claudeInputs, note] };
+}
+
+// What a click hands the app: the button's payload, with the click's note when it carried one. The
+// single-command send and the batch builder both take it from here, so a note cannot join one kind of
+// request differently from the other — and a click with no note sends exactly executionPayload.
+function clickPayload(button, note) {
+  return note === undefined ? executionPayload(button) : executionPayloadWithNote(button, note);
+}
+
+// The claude inputs a note follows, in the order they are sent and as they are stored — a template's
+// `{branch}` is filled in at the click, by the worker and the app. It is the button's own payload, so
+// the list a popover shows went through the one normalization a click does. A drawing makes it from the
+// same stored button, at the same moment, as its fingerprint (`buttonFingerprint`): if storage moves on,
+// the click is refused (`clickMatchesWhatWasShown`) rather than sent behind a list that is no longer true.
+function claudeInputsBeforeNote(button) {
+  return executionPayload(button).claudeInputs;
+}
+
+// --- The content script's split buttons and note popover, their pure parts ---
+
+// The message a header button's click sends (a list button's is `buildListBatchMessage`, which treats
+// its note the same way). A click with a note carries it under `note`, after
+// everything else; a click without one carries no `note` key at all, so it is byte for byte the message
+// the button sent before notes existed — the worker judges a present key whatever it holds, so only
+// `undefined` means no note.
+function buildButtonMessage(action, buttonIndex, shown, target, note) {
+  const message = { action, buttonIndex, shown, target };
+  if (note !== undefined) message.note = note;
+  return message;
+}
+
+// Which split button — header or list — a run belongs to: a page, the button's kind and index, and the
+// fingerprint of what it runs. Not a DOM node — GitHub rebuilds its pages while a request is in flight,
+// and the button it draws again is the same button, which has to come back as busy as it was.
+function splitButtonIdentity(target, kind, index, shown) {
+  return JSON.stringify([
+    target?.kind ?? null, target?.owner ?? null, target?.repo ?? null, target?.number ?? null, kind, index, shown,
+  ]);
+}
+
+// A drawing's identity on a page — never on the page it was drawn on. A drawing can outlive a page
+// change nothing saw (GitHub's own navigation is not always visible to the content script), so the
+// page named is the one that matters now: the one a request is for, or the one on screen.
+function drawingIdentityOn(drawing, target) {
+  return splitButtonIdentity(target, drawing.kind, drawing.index, drawing.shown);
+}
+
+// A split button's run: the message it sends and the identity it holds, made from one target, so what
+// is held is what is sent. A list button sends a batch for `selected`, the rows its run read as it
+// started; any other button sends one command. Holding the page a button was drawn on while sending the
+// page on screen let a rebuilt button send the same request again (measured).
+function splitButtonRun(drawing, target, note, selected) {
+  return {
+    identity: drawingIdentityOn(drawing, target),
+    message: drawing.action === LIST_BATCH_ACTION
+      ? buildListBatchMessage(drawing.index, drawing.shown, target, selected, note)
+      : buildButtonMessage(drawing.action, drawing.index, drawing.shown, target, note),
+  };
+}
+
+// The runs of split buttons, one entry per identity. `busy` from the first synchronous step of a run
+// until its answer — while it holds, no way into that button starts it again: not its body, its
+// caret, the popover's send button or Enter — then the outcome, `done` or `error`, which is only shown:
+// a new run may start while the marker is up. Each run has a token, so the answer or the timer of an
+// earlier run cannot finish or clear a later one.
+//
+// A run refused before it sent also keeps why — a message id and its arguments — for the tooltip while
+// its marker is up. Everything a drawing shows is read from here, so a new run, a cleared one and a
+// drawing made again all agree; a tooltip written into the page and put back by the refused run's timer
+// stayed on the next run, because that timer stands down once a later run has started.
+function createSplitButtonRuns() {
+  const runs = new Map();
+  let lastToken = 0;
+  return {
+    phaseOf: identity => runs.get(identity)?.phase ?? null,
+    reasonOf: identity => runs.get(identity)?.reason ?? null,
+    start(identity) {
+      if (runs.get(identity)?.phase === 'busy') return null;
+      lastToken += 1;
+      runs.set(identity, { token: lastToken, phase: 'busy', reason: null });
+      return lastToken;
+    },
+    finish(identity, token, phase, reason = null) {
+      const run = runs.get(identity);
+      if (run?.token !== token || run.phase !== 'busy') return false;
+      run.phase = phase;
+      run.reason = reason;
+      return true;
+    },
+    clear(identity, token) {
+      if (runs.get(identity)?.token !== token) return false;
+      runs.delete(identity);
+      return true;
+    },
+  };
+}
+
+// What a refused note says on the page: a message id for each verdict code, which the content script
+// resolves in the catalogue it paints with — the verdict itself carries no sentence. `null` for a code
+// this list does not know, which the page shows as a failure that names no cause.
+const CLAUDE_NOTE_REFUSAL_MESSAGES = Object.freeze({
+  'not-string': 'ext.claudeNote.refused.notString',
+  empty: 'ext.claudeNote.refused.empty',
+  'unpaired-surrogate': 'ext.claudeNote.refused.unpairedSurrogate',
+  'control-character': 'ext.claudeNote.refused.controlCharacter',
+  'leading-character': 'ext.claudeNote.refused.leadingCharacter',
+  braces: 'ext.claudeNote.refused.braces',
+  'too-long': 'ext.claudeNote.refused.tooLong',
+});
+
+function claudeNoteRefusalNotice(code) {
+  if (!Object.hasOwn(CLAUDE_NOTE_REFUSAL_MESSAGES, code)) return null;
+  return {
+    messageKey: CLAUDE_NOTE_REFUSAL_MESSAGES[code],
+    args: code === 'too-long' ? [MAX_CLAUDE_NOTE_BYTES] : [],
+  };
+}
 
 // --- The main-branch settings, validated once for every reader ---
 // The override lookup is keyed by a repository name taken straight out of a page URL, and whatever

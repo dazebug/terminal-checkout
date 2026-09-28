@@ -88,6 +88,50 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "先傳送給 claude 的輸入"
+  },
+  "ext_claudeNote_caret": {
+    "message": "給 claude 的一句話"
+  },
+  "ext_claudeNote_failed": {
+    "message": "傳送失敗。已保留你輸入的內容，請再試一次。"
+  },
+  "ext_claudeNote_input": {
+    "message": "要告訴 claude 的一句話"
+  },
+  "ext_claudeNote_placeholder": {
+    "message": "例如：先看不穩定的測試"
+  },
+  "ext_claudeNote_refused_braces": {
+    "message": "請拿掉 {…}，應用程式會把它當作變數讀取。"
+  },
+  "ext_claudeNote_refused_controlCharacter": {
+    "message": "請寫成一行，不要包含換行或控制字元。"
+  },
+  "ext_claudeNote_refused_empty": {
+    "message": "請先寫一句話。"
+  },
+  "ext_claudeNote_refused_leadingCharacter": {
+    "message": "請以文字開頭，不要以空格或 !、/、# 開頭。"
+  },
+  "ext_claudeNote_refused_notString": {
+    "message": "這句話必須是文字。"
+  },
+  "ext_claudeNote_refused_tooLong": {
+    "message": "太長了，請控制在 $ARG1$ 位元組以內。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_claudeNote_refused_unpairedSurrogate": {
+    "message": "其中有損壞的字元，請重新輸入。"
+  },
+  "ext_claudeNote_send": {
+    "message": "傳送"
+  },
   "ext_confirm_presetOverwrite": {
     "message": "按鈕 $ARG1$ 將被「$ARG2$」預設覆寫。要繼續嗎？",
     "placeholders": {
