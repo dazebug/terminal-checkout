@@ -1302,12 +1302,12 @@ async function tryInsertRepoButtons(target, generation) {
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
 //
 // Every pass first asks whether the page moved (`onUrlChange`, a no-op when it has not). The history
-// wrappers below see only moves made from this script's side; GitHub's own navigation goes past them,
-// and a move made through a `pushState` they did not wrap left the previous PR's buttons, and an open
-// popover, on the next PR (measured). The poll, the observer and GitHub's navigation events all run this
-// pass, so such a move reaches the one place that clears the old page at the next insert pass. The poll
-// asks for one about every second, and in a foreground tab that is roughly when it comes; it is an
-// interval, not a deadline.
+// wrappers below see only moves made from this script's side; GitHub's own navigation goes past them.
+// A move made through a `pushState` they did not wrap left the previous PR's buttons on the next PR
+// (measured), and an open popover with them, its caret being one of them (read from the code). The
+// poll, the observer and GitHub's navigation events all run this pass, so such a move reaches the one
+// place that clears the old page at the next insert pass. The poll asks for one about every second, and
+// in a foreground tab that is roughly when it comes; it is an interval, not a deadline.
 //
 // The pass then holds the generation of the page it started on, and after every await it asks again
 // (`pageChangedSince`) before it reads or draws anything more: what it read before the await belongs to

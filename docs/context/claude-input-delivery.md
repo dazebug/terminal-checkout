@@ -1,6 +1,6 @@
 # Claude input delivery
 
-How a button's scheduled `claude_inputs` reach the Claude Code session the button just started. The mechanisms, the measurements behind them, and the invariants live in `CLAUDE.md`; this file holds the forks — what was chosen over what, and why.
+How a button's scheduled `claude_inputs` — and the one-line note a click can add after them — reach the Claude Code session the button just started. The mechanisms, the measurements behind them, and the invariants live in `CLAUDE.md`; this file holds the forks — what was chosen over what, and why.
 
 ## `!` inputs are typed into claude's shell mode, never pre-run and pasted
 
@@ -207,6 +207,106 @@ Measured by reading codepoints with AppleScript's `id of`: text handed to `osasc
 **What was done about it is a *decision* and lives in `localization.md`** ("The bytes a user typed are carried, not normalized"): the carriers changed — one stdin door for every AppleScript run, and an ASCII-only argument for the WezTerm fallback — rather than the app normalizing anything.
 
 **Unmeasured.** What iTerm2 itself received. The measurement now reaches one step further than the interpreter's codepoints — those decomposed bytes were confirmed to leave AppleScript *as bytes*, through `do shell script` and through AppleScript's own UTF-8 writer — but the last hop, `write text` putting them on the tty, needs iTerm2 running.
+
+## A click-time note is one more claude input, and only plain text
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the scope is a maintainer decision; the premise of the first-character rule is measured; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed, trusted keys) Enter on `!ls` showed the refusal and sent nothing
+**Source:** `claudeNoteVerdict` in `extension/defaults.js`; `testEveryLeadingScalarTheTrimStripsIsASeparatorOrOther` in `app/Tests/CoreTests/CoreTests.swift`; `tests/claude-note.test.js` (`no first character the app could strip or read as a directive gets through`)
+**Revisit when:** the app changes its trim, the order of its render and trim, or what a leading `!`, `/` or `#` means
+
+A ▾ caret beside a button that starts claude opens a one-line box, and what is typed there becomes the last element of that click's `claude_inputs` — no new protocol field, no app change. It is refused unless it is plain text on one line: once ordinary spaces come off its ends it may not start with `!`, `/`, `#` or any character of Unicode categories Z or C, it may hold no line break or control character, and it is at most 4096 UTF-8 bytes, the budget the app gives a merged `!` line. One function, `claudeNoteVerdict`, decides all of it: the content script asks it so the popover can say why, and the worker asks it again because only the worker's answer is authority.
+
+**Reason:** the note is a message, and the app reads a leading `!`, `/` or `#` as a shell command or an input-box directive. Checking the first character is only sound if the app cannot change it afterwards. The app renders, refuses C0, DEL and line breaks, and then trims `.whitespacesAndNewlines` — a trim that strips scalars JavaScript's `trim()` and `\p{Z}` both keep, U+0085 and U+200B among them (measured). Every non-C0 scalar it strips is in category Z or C (measured through the real `resolveRequest`, and pinned by the Swift test above), so refusing Z and C at the front leaves the app classifying the very character checked here.
+
+**Rejected alternative — allow `!`, `/` and `#` notes.** Declined by the maintainer: a note is plain text.
+
+**Rejected alternative — `trim()` or `\p{Z}` for the front.** Both miss U+0085 and U+200B, so a note starting with one of them before `!x` would pass the check and still reach the app's classification as `!x`.
+
+## A note carries no variables: any closed brace span is refused
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured through the real `resolveRequest`: a 493-byte note rendered to 8201 bytes, in a batch one item rendered to 4096 bytes and the next to 4097, and `{이거}` was read as a variable name and refused)
+**Source:** `variableRegex` and `renderCommand` in `app/Sources/Core/CommandRenderer.swift`; `claudeNoteVerdict` in `extension/defaults.js`; `tests/claude-note.test.js` (`any closed brace span is refused, whatever is inside it`)
+**Revisit when:** the app's renderer gains an escape, or stops rendering claude inputs as templates
+
+The app renders every claude input as a template, the note included, so `{repo}` typed into a note becomes the repository's name and a Korean `{이거}` is refused as an unknown variable. The popover and the worker therefore refuse a note in which any `{` has a `}` after it. With no placeholder left, the rendered note is the typed note: the 4096-byte check is the size delivered, and it is the same for every item of a batch.
+
+**Rejected alternative — render the variables the page provides and refuse the rest** (the first decision). A note's size and its fate then depended on the page kind and on each batch item, which is what the measurements above showed.
+
+**Rejected alternative — refuse only what the app's pattern `\{(\w+)\}` matches.** The app's `\w` is ICU's and takes Korean names; JavaScript's does not reproduce it, and a mirror that disagrees lets a placeholder through. Every match of that pattern is a closed span with no `}` inside, so refusing every closed span is a superset that needs no model of `\w`.
+
+**Rejected alternative — support literal braces.** The renderer has no escape — `{{repo}}` and `\{repo}` still render — and adding one is an app change this work kept out of scope.
+
+**Cost, accepted:** `{}`, `{ a }` and `{"a":1}` are refused too, with a localized reason.
+
+## ✅ on the page means the terminal opened, not that claude received anything
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed with the app's answers written by hand) a partly failed batch showed ❌ with a ✕ badge on its row and kept the note, and a failed single request kept it too
+**Source:** `serve(fd:)` in `app/Sources/App/HostServer.swift`; `handleBatchRequest` in `app/Sources/Core/Request.swift`
+**Revisit when:** the app answers a request only after delivery, or keeps the session handle to report on it later
+
+The app answers as soon as the tab exists and delivers claude input afterwards, on another queue. A button's ✅ — and a popover closing on success — therefore means only that the app accepted the command and opened the terminal; a delivery that fails later is in the app's log and nowhere on the page. A batch can run some of its items and then answer `success:false`, and the page shows that as a failure with a badge on each row.
+
+**Rejected alternative — send again automatically after a failure.** A batch that failed part-way has already run the items that succeeded, and a repeat would run them a second time; a single request whose answer was lost may already have opened its session. Sending again stays a person's decision.
+
+## Whether a note is typed or rides in argv is the app's decision, and nothing promises it
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured: a button storing one input made of U+200B, a zero-width space, plus the note `hello` reached the app as the single input `hello`, an argv candidate, although the extension saw two inputs)
+**Source:** `executionPayload` and `buttonTakesClaudeNote` in `extension/defaults.js`
+**Revisit when:** the extension and the app come to share one normalization of stored inputs
+
+The note joins the stored inputs, and the app chooses the route by the rules above, after its own trim. The extension trims ordinary spaces only while the app's trim is wider, so the extension cannot know which list the app will see; the README and the popover state no route. What the extension does own is the cap: the stored inputs as a click sends them (`executionPayload`) plus the note must fit under `MAX_CLAUDE_INPUTS`, which is why a button with five stored inputs gets no caret.
+
+**Rejected alternative — state the route per button** ("an input-less button hands the note over in argv"). The measurement above is a counterexample, and keeping such a sentence true would take a second copy of the app's trim in the extension.
+
+## A note goes to the page its popover opened on, and a draft stays with that page
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed) a draft typed on PR 86 was back when that button's popover was opened on PR 86 again, after a move to PR 87 had closed it
+**Source:** `openNotePopover` and `submitNote` in `extension/content.js`; `tests/claude-note.test.js` (`a note is for the page its popover opened on, read once, and judged before anything is sent (lint)`)
+**Revisit when:** the popover starts following the page instead of closing when the page moves
+
+The popover reads the page when it opens, and the note is sent for that page — the person wrote it about what they were looking at. If the tab has moved by the time the worker checks, the final gate refuses the request (`PAGE_CHANGED_ERROR`) rather than attaching the note to another PR. The text is read once, at send, and judged before anything leaves. What a closed or failed popover leaves typed is kept in memory under the identity of the page it was opened for, so reopening that button on that page brings it back and another page does not.
+
+**Rejected alternative — read the page when the note is sent.** A page that moved while the note was being written would receive a note about the page before it.
+
+## A split button's run is held by page and button, never by the node on screen
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed. Before the fix, reproduced in a browser: a button drawn on PR 86 survived a move to PR 87 that nothing saw; its body was pressed and the header rebuilt while the request was out, the rebuilt button was free, and a second press sent the same request again. After it, on a live page (the real scripts injected into github.com's main world, `chrome` stubbed, trusted clicks and keys): two Enters sent one message and body and caret stayed busy until the answer; a refused press's reason left the tooltip when a note was sent during its ❌, did not come back when the refused run's timer fired, and the note's run sent exactly one message
+**Source:** `splitButtonRun` and `createSplitButtonRuns` in `extension/defaults.js`; `runSplitButton` and `paintSplitButton` in `extension/content.js`; `tests/claude-note.test.js` (`a drawing that outlived a page change holds and shows the run of the page it now sends for`, `a run refused before it sent keeps its reason for its own marker only: not for the next run, whatever the old timer does`)
+**Revisit when:** buttons gain a persistent id in the stored schema
+
+Every way into a button — its body, its caret, the popover's send button, Enter — goes through one run function, which holds the run before its first await under the identity of the page the request is for plus the button's kind, index and fingerprint. A drawing keeps no identity of its own: it is painted from the run of the page on screen now, and everything it shows comes from that run — the face, whether it can be pressed, the caret, and the tooltip a refused list selection puts up. A list page's identity has no query in it, so filtering or paginating the same list leaves a batch in flight holding its button.
+
+**Rejected alternative — hold the DOM node.** GitHub rebuilds headers while a request is out; the new node was free and sent again.
+
+**Rejected alternative — hold the page the button was drawn on.** A button that outlived a move nothing saw held A while sending B, which is how the rebuilt button came back free.
+
+**The same rule closed a second defect.** A refused selection's reason used to be written into the button's tooltip and put back by the refused run's timer, which stands down once a later run has started — so the reason stayed on the next run's ⏳ and outcome. The reason now lives in the run beside its phase, and the paint draws the tooltip from it.
+
+## The popover lists the stored inputs a note follows from the list that is sent
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed) `pr.review`'s popover listed its two `!` templates above the note in their order, the message sent carried the same inputs in its fingerprint, and four long inputs wrapped inside the popover's width while the list scrolled on its own
+**Source:** `claudeInputsBeforeNote` in `extension/defaults.js`; `noteBeforeList` in `extension/content.js`; `tests/claude-note.test.js` (`a popover lists the inputs a note follows exactly as the click sends them, and the fingerprint vouches for that list`)
+**Revisit when:** the popover has to show inputs the fingerprint does not cover
+
+Above the note's box the popover lists the button's stored inputs in the order they are sent and as stored, with `{branch}` and the rest still unfilled — they are filled in at the click (a maintainer request). The list is `executionPayload(button).claudeInputs`, the normalization a click goes through, made from the same stored button at the same moment as the drawing's fingerprint. If storage changes after the drawing, the worker's fingerprint check refuses the click, so the list is exactly the templates the request carries in front of the note.
+
+**That is where the promise stops.** The app renders and trims each input afterwards and can drop one that trims to nothing: a button storing an input made only of U+200B and then `!echo A` lists two entries and sends two, and the app keeps one. The extension does not copy the app's normalization to predict that, for the same reason it does not predict the note's route above.
+
+**Rejected alternative — a separate copy of the inputs, normalized for display.** A second normalization is a list that can disagree with the one sent, and the popover would then vouch for something the fingerprint does not.
 
 ## Residuals kept rather than closed
 
