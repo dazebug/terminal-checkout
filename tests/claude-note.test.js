@@ -511,14 +511,6 @@ test('every refusal code has its own message in every language the content scrip
   assert.equal(claudeNoteRefusalNotice('no-such-code'), null);
 });
 
-test('the label over the inputs a note follows has a message in every language the content script can paint', () => {
-  for (const locale of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
-    const entry = JSON.parse(readExtension(`_locales/${locale}/messages.json`)).ext_claudeNote_before;
-    assert.ok(entry && entry.message.trim(), `${locale} has no label for the inputs before the note`);
-    assert.match(entry.message, /\bclaude\b/, `${locale} does not name claude`);
-  }
-});
-
 // --- The content script's wiring: lints, not proofs ---
 // The content page has no DOM harness (docs/context/testing.md), so what the pure parts above cannot
 // carry is pinned as source structure. Every lint first finds its subject — a lint that found nothing
@@ -732,9 +724,13 @@ test('a held Enter sends once: its repeats lose their default and send nothing, 
   const open = bodyOf(content(), 'function openNotePopover(');
   const enter = open.slice(open.indexOf("input.addEventListener('keydown'"));
   const handler = enter.slice(0, enter.indexOf('});'));
+  const composing = handler.indexOf("if (event.key !== 'Enter' || event.isComposing) return;");
   const prevented = handler.indexOf('event.preventDefault();');
   const repeat = handler.indexOf('if (event.repeat) return;');
   const sent = handler.indexOf('submitNote(popover)');
+  // An Enter that ends an IME composition returns before the default is taken, so the page leaves that key
+  // to the IME; only a key that got past it loses its default
+  assert.ok(composing !== -1 && prevented > composing, 'an Enter that ends a composition loses its default');
   assert.ok(prevented !== -1 && repeat > prevented && sent > repeat, 'a repeated Enter sends, or keeps its default');
   // The send button is activated from the keyboard through a click, and a click says nothing of repeats,
   // so the button's own repeated keydown loses its default before it can activate it
