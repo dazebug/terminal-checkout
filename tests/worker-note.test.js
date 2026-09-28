@@ -112,6 +112,7 @@ test('a refused note never reaches the native host, and is refused before anythi
   const cases = [
     [42, 'not-string'], [null, 'not-string'], [{}, 'not-string'], [[], 'not-string'], [true, 'not-string'],
     ['', 'empty'], ['    ', 'empty'],
+    [`a${cp(0xD800)}b`, 'unpaired-surrogate'], [`a${cp(0xDC00)}`, 'unpaired-surrogate'],
     [`a${cp(10)}b`, 'control-character'], [`a${cp(0x7F)}b`, 'control-character'],
     ['!rm -rf ~', 'leading-character'], ['/login', 'leading-character'], ['#remember', 'leading-character'],
     [`${cp(0x200B)}!x`, 'leading-character'],

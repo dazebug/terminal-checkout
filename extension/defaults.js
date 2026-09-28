@@ -877,9 +877,16 @@ function normalizeClaudeInputs(inputs) {
   return (inputs || []).map(input => trimOrdinarySpaces(String(input))).filter(Boolean);
 }
 
-// The trim above, and the only one a note gets too: ordinary spaces (U+0020) at either end.
+// The trim above, and the only one a note gets too: ordinary spaces (U+0020) at either end. Two index
+// walks and not `/^ +| +$/g`: that regex retries ` +$` from every space of an inner run, which is
+// quadratic in the run's length, and a note reaches this before anything bounds its length — over a
+// second for a 32768-character note with one inner run (measured).
 function trimOrdinarySpaces(text) {
-  return text.replace(/^ +| +$/g, '');
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) === 0x20) start += 1;
+  while (end > start && text.charCodeAt(end - 1) === 0x20) end -= 1;
+  return text.slice(start, end);
 }
 
 function executionPayload(button) {
@@ -978,14 +985,20 @@ const MAX_CLAUDE_NOTE_BYTES = 4096;
 // Why a note was refused — a code, not a sentence. The content script turns it into a message in the
 // language it draws in, the worker into an English diagnostic.
 const CLAUDE_NOTE_ERRORS = Object.freeze([
-  'not-string', 'empty', 'control-character', 'leading-character', 'braces', 'too-long',
+  'not-string', 'empty', 'unpaired-surrogate', 'control-character', 'leading-character', 'braces',
+  'too-long',
 ]);
 
-// The one verdict on a note: plain text on one line, reaching claude exactly as written.
+// The one verdict on a note: plain text on one line, which the app hands claude unchanged except for
+// trailing whitespace (the end of this comment).
 //
 // On its way the app renders the note as a template, refuses NUL, line breaks and C0/DEL, trims
 // `.whitespacesAndNewlines`, and reads `!` (shell mode) or `/` and `#` (input-box directives) off the
 // front. Each step could turn the note checked here into something else, so each is closed here:
+//  - unpaired surrogates: half of a UTF-16 pair is not text, and UTF-8 cannot encode it — the byte
+//    count saw U+FFFD where the note kept the half, and the app's JSON parser refused a request
+//    carrying it as a JSON escape (measured). Refused wherever it sits and never replaced: a
+//    replacement is text nobody typed. A whole pair, a joiner and a combining mark are text and pass.
 //  - the first character: that trim strips scalars `trim()` and `\p{Z}` both keep — U+0085 and U+200B
 //    among them (measured) — and everything it strips is in Unicode category Z or C, which a Swift
 //    test pins. Refusing all of Z and C at the front, with `!`, `/` and `#`, leaves the app classifying
@@ -993,21 +1006,32 @@ const CLAUDE_NOTE_ERRORS = Object.freeze([
 //  - braces: the app substitutes `{name}` for any name ICU's `\w` accepts — Korean names included,
 //    which JavaScript's `\w` does not reproduce — and it has no escape. A span from `{` to the next
 //    `}` contains every such placeholder, so refusing any closed span refuses them all without
-//    modelling `\w`, and a note with no placeholder renders to itself in every item of a batch.
+//    modelling `\w`, and a note with no placeholder renders to itself in every item of a batch. A
+//    closed span exists exactly when a `}` comes after the first `{`, which two searches answer.
 //    `{}`, `{ a }` and `{"a":1}` are refused along with it.
 //  - control characters: C0, DEL, C1 and the line and paragraph separators, anywhere — refused, not
 //    removed: removing them is how a typed byte used to change on its way.
 //  - length: counted after the trim, so the bytes checked are the bytes sent.
+// Each check is one pass over the note. The length is judged last, so it bounds none of the checks
+// before it, and nothing limits a note's length before it gets here: a check that rescanned — a
+// regex retrying from every `{`, or a trailing-space regex from every space of an inner run — took
+// over a second from 32768 characters (measured).
 // Only ordinary spaces are trimmed, and the trimmed text is the note to send: it comes back with the
-// verdict, so nothing reads the raw value again.
+// verdict, so nothing reads the raw value again. The app's trim is wider at the end too: a trailing
+// U+00A0 or U+200B passes here and is gone when the note arrives (measured). That trim takes
+// whitespace off the end and can go no further than the note's first character, which the check
+// above keeps out of Z and C — so everything before that whitespace, and the way the app reads the
+// note, stay as checked.
 function claudeNoteVerdict(note) {
   const refuse = error => ({ valid: false, error, note: null });
   if (typeof note !== 'string') return refuse('not-string');
   const trimmed = trimOrdinarySpaces(note);
   if (!trimmed) return refuse('empty');
+  if (/\p{Cs}/u.test(trimmed)) return refuse('unpaired-surrogate');
   if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(trimmed)) return refuse('control-character');
   if (/^[\p{Z}\p{C}!\/#]/u.test(trimmed)) return refuse('leading-character');
-  if (/\{[^}]*\}/u.test(trimmed)) return refuse('braces');
+  const open = trimmed.indexOf('{');
+  if (open !== -1 && trimmed.indexOf('}', open + 1) !== -1) return refuse('braces');
   if (new TextEncoder().encode(trimmed).length > MAX_CLAUDE_NOTE_BYTES) return refuse('too-long');
   return { valid: true, error: null, note: trimmed };
 }

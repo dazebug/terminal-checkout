@@ -173,6 +173,7 @@ const LIST_SELECTION_CHANGED_ERROR =
 const CLAUDE_NOTE_REFUSALS = new Map([
   ['not-string', 'The claude note is not text.'],
   ['empty', 'The claude note is empty.'],
+  ['unpaired-surrogate', 'The claude note holds half of a UTF-16 surrogate pair, which is not text.'],
   ['control-character', 'The claude note holds a line break or a control character.'],
   ['leading-character', 'The claude note starts with a space-like or invisible character, or with !, / or #.'],
   ['braces', 'The claude note holds a {…} span, which the app would read as a variable.'],

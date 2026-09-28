@@ -202,6 +202,58 @@ test('control characters and line breaks are refused wherever they sit', () => {
   assert.deepEqual(claudeNoteVerdict(`family ${family}`), { valid: true, error: null, note: `family ${family}` });
 });
 
+test('an unpaired surrogate is refused wherever it sits, and a paired one passes', () => {
+  // Half of a surrogate pair is not text: UTF-8 cannot encode it, so the byte count saw U+FFFD in its
+  // place while the note kept the half, and the app's JSON parser refused a request carrying it as a
+  // JSON escape (measured). It is refused where it sits — never replaced.
+  const { claudeNoteVerdict } = pick('claudeNoteVerdict');
+  const unpaired = [
+    ['high first', `${cp(0xD800)}x`], ['low first', `${cp(0xDC00)}x`],
+    ['high inside', `a${cp(0xD800)}b`], ['low inside', `a${cp(0xDC00)}b`],
+    ['high last', `a${cp(0xDBFF)}`], ['low last', `a${cp(0xDFFF)}`],
+    ['pair reversed', `a${cp(0xDC00)}${cp(0xD800)}b`],
+  ];
+  for (const [label, note] of unpaired) {
+    assert.deepEqual(claudeNoteVerdict(note), { valid: false, error: 'unpaired-surrogate', note: null }, label);
+  }
+  const whole = [
+    `ok ${cp(0x1F600)}`, `${cp(0x1F600)} first`, `family ${cp(0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467)}`,
+    `e${cp(0x301)} and ${cp(0x301)}alone`, cp(0x1F600).repeat(3),
+  ];
+  for (const note of whole) {
+    const verdict = claudeNoteVerdict(note);
+    assert.equal(verdict.valid, true, JSON.stringify(note));
+    // What was judged is what UTF-8 carries
+    assert.equal(new TextDecoder().decode(new TextEncoder().encode(verdict.note)), verdict.note);
+  }
+});
+
+test('a long unfinished brace run or a long inner run of spaces is judged in linear time', () => {
+  // Both were rescanned before the length check could refuse them — each `{` searched ahead for a
+  // `}`, and the trailing-space trim re-matched every inner run of spaces to the end: 95 ms at 8192
+  // characters, over a second from 32768 (measured). The result is `too-long` either way, so the
+  // return value cannot see the cost; the time bound is what fails when either comes back.
+  const n = 131072;
+  // Run inside the VM so that past the bound the call is stopped, and the case that ran over is named
+  const timed = (label, source) => {
+    try {
+      return vm.runInThisContext(source, { timeout: 1500 });
+    } catch (error) {
+      return assert.fail(`${label}: ${error.message}`);
+    }
+  };
+  try {
+    for (const [label, input] of [['open braces', '{'.repeat(n)], ['inner spaces', `x${' '.repeat(n - 2)}x`]]) {
+      globalThis.claudeNoteCostProbe = input;
+      assert.equal(timed(label, 'claudeNoteVerdict(globalThis.claudeNoteCostProbe)').error, 'too-long', label);
+      // The trim is shared with the inputs every click sends
+      assert.equal(timed(label, 'normalizeClaudeInputs([globalThis.claudeNoteCostProbe])').length, 1, label);
+    }
+  } finally {
+    delete globalThis.claudeNoteCostProbe;
+  }
+});
+
 test('the length limit is 4096 UTF-8 bytes of the trimmed note', () => {
   const { claudeNoteVerdict, MAX_CLAUDE_NOTE_BYTES } = pick('claudeNoteVerdict, MAX_CLAUDE_NOTE_BYTES');
   assert.equal(MAX_CLAUDE_NOTE_BYTES, 4096);
@@ -226,7 +278,7 @@ test('a refusal is one code from a closed list, never a sentence', () => {
   const { claudeNoteVerdict, CLAUDE_NOTE_ERRORS } = pick('claudeNoteVerdict, CLAUDE_NOTE_ERRORS');
   assert.ok(Object.isFrozen(CLAUDE_NOTE_ERRORS));
   for (const code of CLAUDE_NOTE_ERRORS) assert.match(code, /^[a-z]+(?:-[a-z]+)*$/);
-  const samples = [undefined, '', `a${cp(0xA)}b`, '!x', '{repo}', 'a'.repeat(4097)];
+  const samples = [undefined, '', `a${cp(0xD800)}b`, `a${cp(0xA)}b`, '!x', '{repo}', 'a'.repeat(4097)];
   const produced = samples.map(sample => claudeNoteVerdict(sample).error);
   assert.deepEqual([...new Set(produced)].sort(), [...CLAUDE_NOTE_ERRORS].sort(), 'a code is never produced, or one is missing from the list');
 });
