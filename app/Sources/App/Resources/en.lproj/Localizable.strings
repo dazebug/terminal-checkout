@@ -125,6 +125,8 @@
 "app.terminal.notInstalled" = "%@ (not installed)";
 "app.terminal.note.common" = "Pressing a GitHub button runs the command in a new tab, and any scheduled claude input is delivered once claude is up. Do not type in that tab until it is done.";
 "app.terminal.note.warp" = " On Warp the delivery only runs while you are looking at that tab — switching away pauses it, and coming back resumes it.";
+"app.terminal.openInBackground" = "Open new tabs in the background";
+"app.terminal.openInBackground.note" = "The screen you are on stays in front, so you can keep typing; scheduled claude input is still delivered. Warp always opens in front.";
 "app.test.failed" = "Failed: %@";
 "app.test.running" = "Running…";
 "app.test.succeeded" = "It worked if a new tab opened in the terminal.";

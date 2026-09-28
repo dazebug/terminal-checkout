@@ -51,21 +51,45 @@ public func escapeForAppleScript(_ text: String) -> String {
 /// The AppleScript that opens a new tab in iTerm2 and runs a command.
 /// It branches to cover the case where there is no window at all (where `create tab` is not possible).
 /// At the end it returns "session id|tty" — claude input delivery uses that handle to find the session again.
-public func iTermScript(for command: String) -> String {
+///
+/// In the background the script neither activates iTerm2 nor leaves the new tab selected: creating
+/// a tab selects it, so the tab the user was on is selected again after the new session has been
+/// captured — otherwise whatever they are typing in that window goes into the new session.
+public func iTermScript(for command: String, activation: TabActivation = .foreground) -> String {
     let escaped = escapeForAppleScript(command)
-    return """
-    tell application id "\(iTermBundleID)"
-        activate
-        if (count of windows) = 0 then
-            create window with default profile
-        else
-            tell current window to create tab with default profile
-        end if
-        set s to current session of current window
-        tell s to write text "\(escaped)"
-        return (id of s) & "|" & (tty of s)
-    end tell
-    """
+    switch activation {
+    case .foreground:
+        return """
+        tell application id "\(iTermBundleID)"
+            activate
+            if (count of windows) = 0 then
+                create window with default profile
+            else
+                tell current window to create tab with default profile
+            end if
+            set s to current session of current window
+            tell s to write text "\(escaped)"
+            return (id of s) & "|" & (tty of s)
+        end tell
+        """
+    case .background:
+        return """
+        tell application id "\(iTermBundleID)"
+            if (count of windows) = 0 then
+                create window with default profile
+                set s to current session of current window
+            else
+                set w to current window
+                set previousTab to current tab of w
+                tell w to create tab with default profile
+                set s to current session of w
+                tell previousTab to select
+            end if
+            tell s to write text "\(escaped)"
+            return (id of s) & "|" & (tty of s)
+        end tell
+        """
+    }
 }
 
 /// The AppleScript that types text into an already-open session (used for claude input delivery).

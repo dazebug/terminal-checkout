@@ -117,6 +117,8 @@
 "app.terminal.notInstalled" = "%@ (미설치)";
 "app.terminal.note.common" = "GitHub 버튼을 누르면 새 탭에서 명령이 돌고, 예약한 claude 입력은 claude가 뜬 뒤에 전달됩니다. 그동안 그 탭에 키를 누르지 말고 기다리세요.";
 "app.terminal.note.warp" = " Warp는 그 탭을 보고 있는 동안에만 전달됩니다 — 다른 탭으로 옮기면 멈췄다가 돌아오면 이어집니다.";
+"app.terminal.openInBackground" = "새 탭을 뒤에서 열기";
+"app.terminal.openInBackground.note" = "보고 있던 화면이 그대로 앞에 있어 계속 입력해도 됩니다. 예약한 claude 입력은 그대로 전달됩니다. Warp는 항상 앞에서 엽니다.";
 "app.test.failed" = "실패: %@";
 "app.test.running" = "실행 중…";
 "app.test.succeeded" = "터미널에 새 탭이 열렸다면 성공입니다.";

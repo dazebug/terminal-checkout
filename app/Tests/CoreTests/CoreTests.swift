@@ -3555,6 +3555,38 @@ final class AppleScriptTests: XCTestCase {
         XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
     }
 
+    /// Foreground is what every existing user has: iTerm2 comes to the front on the new tab
+    func testITermScriptInForegroundActivatesITerm() {
+        let script = iTermScript(for: "echo hi", activation: .foreground)
+        XCTAssertTrue(script.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "activate" })
+    }
+
+    /// Background leaves the user where they were. Without `activate` iTerm2 stays behind, but
+    /// creating a tab still selects it — so the tab they were on is selected again, or whatever
+    /// they are typing in iTerm2 lands in the new session (maintainer's report). The handle names
+    /// the new session, captured before the old tab is selected again
+    func testITermScriptInBackgroundKeepsTheUsersTab() {
+        let script = iTermScript(for: "echo hi", activation: .background)
+        XCTAssertFalse(script.contains("activate"))
+        XCTAssertTrue(script.contains("set previousTab to current tab of w"))
+        XCTAssertTrue(script.contains("tell previousTab to select"))
+        if let capture = script.range(of: "set s to current session of w"),
+           let reselect = script.range(of: "tell previousTab to select") {
+            XCTAssertLessThan(capture.lowerBound, reselect.lowerBound)
+        } else {
+            XCTFail("the new session has to be captured, then the old tab selected again")
+        }
+        XCTAssertTrue(script.contains(#"(id of s) & "|" & (tty of s)"#))
+    }
+
+    /// An unknown or missing stored value means the behaviour everyone had before the setting existed
+    func testTabActivationStoredValues() {
+        XCTAssertEqual(TabActivation(storedValue: "background"), .background)
+        XCTAssertEqual(TabActivation(storedValue: "foreground"), .foreground)
+        XCTAssertEqual(TabActivation(storedValue: nil), .foreground)
+        XCTAssertEqual(TabActivation(storedValue: "sideways"), .foreground)
+    }
+
     // Typing mode: the text alone goes in, with no newline — the submission is sent separately once the screen is confirmed to reflect it
     func testITermWriteToSessionScriptTypingSuppressesNewline() {
         let script = iTermWriteToSessionScript(sessionID: "ABC-123", text: #"say "hi""#, submit: false)
@@ -3688,6 +3720,23 @@ final class WezTermWindowTests: XCTestCase {
      {"window_id":3,"tab_id":81,"pane_id":146,"tty_name":"/dev/ttys000"},
      {"window_id":0,"tab_id":4,"pane_id":5,"tty_name":"/dev/ttys001"}]
     """.utf8)
+
+    /// Background needs the pane as well as its window: spawning selects the new tab, and the pane
+    /// the user was on is what gets activated again
+    func testFocusCarriesThePaneAndItsWindow() {
+        let focus = wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)
+        XCTAssertEqual(focus?.windowID, "3")
+        XCTAssertEqual(focus?.paneID, "146")
+    }
+
+    func testBackgroundRefocusesThePaneTheUserWasOnAndForegroundDoesNot() {
+        XCTAssertEqual(
+            wezTermRefocusArguments(activation: .background, focusedPaneID: "146"),
+            ["cli", "activate-pane", "--pane-id", "146"]
+        )
+        XCTAssertNil(wezTermRefocusArguments(activation: .background, focusedPaneID: nil))
+        XCTAssertNil(wezTermRefocusArguments(activation: .foreground, focusedPaneID: "146"))
+    }
 
     func testFocusedWindowIDFromClientsAndList() {
         XCTAssertEqual(wezTermFocusedWindowID(clientsJSON: clientsJSON, listJSON: listJSON), "3")

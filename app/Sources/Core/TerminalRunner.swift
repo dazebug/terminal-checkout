@@ -319,7 +319,8 @@ public func runProcess(
 /// It replaced a `Bool`: the boolean and the reservation were two values saying the same thing, kept in step by the one call site that set both, and only a reservation can be checked against the gate that says whether a helper may still be created. Nothing outside `ClaudeInjector.swift` can make one, so "this run injects" is now the same fact as "this run has been admitted".
 @discardableResult
 public func runInTerminal(
-    command: String, terminal: Terminal, claudeInput: ClaudeDelivery.Admission? = nil
+    command: String, terminal: Terminal, claudeInput: ClaudeDelivery.Admission? = nil,
+    activation: TabActivation = .foreground
 ) throws -> TerminalSessionHandle {
     let injectsClaudeInput = claudeInput != nil
     // An undeliverable input known **before** any side effect rejects the whole request. Opening
@@ -333,11 +334,13 @@ public func runInTerminal(
         throw claudeInputRejection(blocker)
     }
     switch terminal {
-    case .iterm: return try runInITerm(command)
-    case .wezterm: return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput)
+    case .iterm: return try runInITerm(command, activation: activation)
+    case .wezterm:
+        return try runInWezTerm(command, injectsClaudeInput: injectsClaudeInput, activation: activation)
+    // Always in front: Warp's input delivery can only confirm the screen of the tab being looked at
     case .warp: return try runInWarp(command, claudeInput: claudeInput)
-    case .cmux: return try runInCmux(command, channel: .stable)
-    case .cmuxNightly: return try runInCmux(command, channel: .nightly)
+    case .cmux: return try runInCmux(command, channel: .stable, activation: activation)
+    case .cmuxNightly: return try runInCmux(command, channel: .nightly, activation: activation)
     }
 }
 
@@ -617,7 +620,7 @@ func cmuxCreateWorkspaceWithRecovery(
 /// user's last active window; the command itself owns cwd through its assembled `{cd}` clause.
 @discardableResult
 public func runInCmux(
-    _ command: String, channel: CmuxChannel = .stable
+    _ command: String, channel: CmuxChannel = .stable, activation: TabActivation = .foreground
 ) throws -> TerminalSessionHandle {
     let context = try makeCmuxRuntimeContext(channel: channel)
 
@@ -627,7 +630,7 @@ public func runInCmux(
     // creation after a successful first response.
     let workspace = try cmuxCreateWorkspaceWithRecovery(
         context: context,
-        params: cmuxWorkspaceCreateParameters(),
+        params: cmuxWorkspaceCreateParameters(activation: activation),
         rpc: { method, params, socketPath in
             try cmuxRPC(
                 cli: context.cliPath,
@@ -694,9 +697,9 @@ public func runInCmux(
 /// Opens a new tab in iTerm2 and runs the command.
 /// osascript is a child process of this app, so the TCC automation permission is attributed to this app.
 @discardableResult
-public func runInITerm(_ command: String) throws -> TerminalSessionHandle {
+public func runInITerm(_ command: String, activation: TabActivation = .foreground) throws -> TerminalSessionHandle {
     // Generous timeout: on the first run the automation permission prompt appears and blocks until the user answers
-    let result = try runAppleScript(iTermScript(for: command), timeout: 180)
+    let result = try runAppleScript(iTermScript(for: command, activation: activation), timeout: 180)
     guard result.status == 0 else {
         throw TerminalError.appleScriptFailed(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -870,7 +873,26 @@ public func wezTermSpawnAttempts(windowID: String?) -> [[String]] {
 
 /// Finds the id of the window holding the currently focused pane, out of the mux responses (list-clients + list).
 /// Without --window-id, `wezterm cli spawn` picks the window from the pane in the WEZTERM_PANE environment variable, which a GUI app does not have — so the tab lands in the mux's first (= oldest) window and some other window than the one the user was looking at jumps to the front (measured). Hence the focused window is looked up and named explicitly.
+/// The pane the user is looking at and the window holding it — `wezTermFocusedWindowID` names the
+/// window a new tab goes into, and background mode activates the pane again once the tab exists.
+public struct WezTermFocus: Equatable {
+    public let windowID: String
+    public let paneID: String
+}
+
 public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String? {
+    wezTermFocus(clientsJSON: clientsJSON, listJSON: listJSON)?.windowID
+}
+
+/// `wezterm cli spawn` selects the new tab in its window, so background mode activates the pane the
+/// user was on again; without a known pane there is nothing to go back to. Foreground has no
+/// refocus — it brings WezTerm to the front on the new tab instead.
+public func wezTermRefocusArguments(activation: TabActivation, focusedPaneID: String?) -> [String]? {
+    guard activation == .background, let focusedPaneID else { return nil }
+    return ["cli", "activate-pane", "--pane-id", focusedPaneID]
+}
+
+public func wezTermFocus(clientsJSON: Data, listJSON: Data) -> WezTermFocus? {
     guard let clients = (try? JSONSerialization.jsonObject(with: clientsJSON)) as? [[String: Any]],
           let list = (try? JSONSerialization.jsonObject(with: listJSON)) as? [[String: Any]]
     else { return nil }
@@ -893,20 +915,20 @@ public func wezTermFocusedWindowID(clientsJSON: Data, listJSON: Data) -> String?
 
     for pane in list where (pane["pane_id"] as? Int) == paneID {
         guard let windowID = pane["window_id"] as? Int else { return nil }
-        return String(windowID)
+        return WezTermFocus(windowID: String(windowID), paneID: String(paneID))
     }
     return nil // the focused pane is already closed — do not pick the wrong window
 }
 
 /// Asks the mux for the focused window id (nil on a failed lookup → wezterm's default window choice).
 /// This lookup runs inside the execQueue that holds up the Chrome response (`HostServer`) — today the two calls together take 20∼40ms (measured), which does not show in the button's responsiveness, but every lookup added delays the response by that much.
-public func findWezTermFocusedWindow(cli: String, env: [String: String]) -> String? {
+public func findWezTermFocus(cli: String, env: [String: String]) -> WezTermFocus? {
     guard let clients = try? runProcess(cli, ["cli", "list-clients", "--format", "json"], env: env, timeout: 5),
           clients.status == 0,
           let list = try? runProcess(cli, ["cli", "list", "--format", "json"], env: env, timeout: 5),
           list.status == 0
     else { return nil }
-    return wezTermFocusedWindowID(clientsJSON: Data(clients.stdout.utf8), listJSON: Data(list.stdout.utf8))
+    return wezTermFocus(clientsJSON: Data(clients.stdout.utf8), listJSON: Data(list.stdout.utf8))
 }
 
 /// Spells text as a **bash ANSI-C literal** (`$'…'`) that is itself pure ASCII.
@@ -964,14 +986,14 @@ func wezTermFallbackArguments(command: String) -> [String] {
 /// With `injectsClaudeInput` that fallback is not reachable — the pane cannot be addressed there, so the input would vanish (`wezTermFallbackRejection`).
 @discardableResult
 public func runInWezTerm(
-    _ command: String, injectsClaudeInput: Bool = false
+    _ command: String, injectsClaudeInput: Bool = false, activation: TabActivation = .foreground
 ) throws -> TerminalSessionHandle {
     guard let cli = findWezTermCLI() else { throw TerminalError.wezTermNotFound }
 
     if let sock = findWezTermSocket() {
         let env = wezTermEnvironment(socketPath: sock)
-        let windowID = findWezTermFocusedWindow(cli: cli, env: env)
-        for args in wezTermSpawnAttempts(windowID: windowID) {
+        let focus = findWezTermFocus(cli: cli, env: env)
+        for args in wezTermSpawnAttempts(windowID: focus?.windowID) {
             guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {
                 checkoutLog("wezterm \(args.joined(separator: " ")) failed")
                 continue
@@ -981,7 +1003,11 @@ public func runInWezTerm(
                 cli, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
                 input: command + "\n", env: env, timeout: 5
             )
-            _ = try? runProcess("/usr/bin/open", ["-a", "WezTerm"], timeout: 5)
+            if let refocus = wezTermRefocusArguments(activation: activation, focusedPaneID: focus?.paneID) {
+                _ = try? runProcess(cli, refocus, env: env, timeout: 5)
+            } else if activation == .foreground {
+                _ = try? runProcess("/usr/bin/open", ["-a", "WezTerm"], timeout: 5)
+            }
             return .wezterm(paneID: paneID, cliPath: cli, socketPath: sock)
         }
     }
@@ -1000,3 +1026,4 @@ public func runInWezTerm(
     try process.run()
     return .none
 }
+

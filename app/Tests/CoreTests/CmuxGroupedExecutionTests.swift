@@ -113,6 +113,29 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         )
     }
 
+    /// A list page opens several sessions at once; in background mode none of the creates — the
+    /// layout one or any per-item fallback — may take focus
+    func testBackgroundBatchCreatesDoNotTakeFocus() {
+        let commands = ["echo a", "echo b"]
+        let plan = cmuxPlacementPlan(
+            preset: .defaultPreset,
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var creates: [[String: Any]] = []
+        let dependencies = makeDependencies(
+            rpc: { _, _ in [:] },
+            createWorkspace: { params in
+                creates.append(params)
+                return ["workspace_id": "workspace-1", "surface_id": "leaf"]
+            }
+        )
+        _ = executeCmuxPlacementPlan(plan, commands: commands, activation: .background, using: dependencies)
+        XCTAssertFalse(creates.isEmpty)
+        XCTAssertTrue(creates.allSatisfy { $0["focus"] as? Bool == false })
+    }
+
     func testLayoutExecutionEnumeratesByPaneIndexAndGuardsOnlyOversizeItems() throws {
         let commands = [String(repeating: "x", count: 1024), "echo short"]
         let plan = cmuxPlacementPlan(

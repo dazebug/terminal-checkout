@@ -16,6 +16,7 @@ struct CmuxBatchExecutionRequest {
     let prepared: [PreparedRequest]
     let plan: CmuxPlacementPlan
     let channel: CmuxChannel
+    let activation: TabActivation
     let deadlineExceeded: () -> Bool
 }
 
@@ -45,7 +46,7 @@ final class HostServer {
     private let acceptQueue = DispatchQueue(label: "terminal-checkout.accept")
     private let execQueue = DispatchQueue(label: "terminal-checkout.exec") // serializes terminal launches
     private let runInTerminalFactory: (
-        String, Terminal, ClaudeDelivery.Admission?
+        String, Terminal, ClaudeDelivery.Admission?, TabActivation
     ) throws -> TerminalSessionHandle
     private let runCmuxBatchFactory: (CmuxBatchExecutionRequest) -> CmuxGroupedExecution
     private let timelineFactory: (Date, String?) -> DeliveryTimeline
@@ -62,13 +63,15 @@ final class HostServer {
     init(
         socketPath: String,
         runInTerminal: @escaping (
-            _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?
+            _ command: String, _ terminal: Terminal, _ claudeInput: ClaudeDelivery.Admission?,
+            _ activation: TabActivation
         ) throws -> TerminalSessionHandle = Core.runInTerminal,
         runCmuxBatch: @escaping (CmuxBatchExecutionRequest) -> CmuxGroupedExecution = { request in
             Core.runCmuxBatch(
                 commands: request.prepared.map(\.command),
                 plan: request.plan,
                 channel: request.channel,
+                activation: request.activation,
                 deadlineExceeded: request.deadlineExceeded
             )
         },
@@ -211,6 +214,8 @@ final class HostServer {
             let response = execQueue.sync {
                 // The terminal choice has the app's settings as its single source — the request's `terminal` field is ignored.
                 let terminal = Settings.terminal
+                // Same single source for whether its tab comes to the front
+                let activation = Settings.tabActivation
                 // Like the terminal choice, the base directory has the app's settings as its
                 // single source — hand over the stored string only; validation, normalization,
                 // and `{cd}` assembly belong to Core (no logic here)
@@ -220,6 +225,7 @@ final class HostServer {
                         self.runCmuxBatch(
                             resolvedItems,
                             channel: channel,
+                            activation: activation,
                             requestArrival: requestArrival,
                             requestArrivalMonotonic: requestArrivalMonotonic
                         )
@@ -276,7 +282,7 @@ final class HostServer {
                     // back, including the throwing ones
                     var deliveryStarted = false
                     defer { if let admission, !deliveryStarted { admission.end() } }
-                    let handle = try self.runInTerminalFactory(prepared.command, terminal, admission)
+                    let handle = try self.runInTerminalFactory(prepared.command, terminal, admission, activation)
                     timeline.step("\(terminal.rawValue) tab created")
                     // The reservation **is** "this request has input to deliver" — the same value the
                     // launch was given, so the launch and the watch cannot disagree about it
@@ -316,6 +322,7 @@ final class HostServer {
     private func runCmuxBatch(
         _ resolvedItems: [ResolvedRequest],
         channel: CmuxChannel,
+        activation: TabActivation,
         requestArrival: Date,
         requestArrivalMonotonic: TimeInterval
     ) -> [Result<Void, Error>] {
@@ -367,6 +374,7 @@ final class HostServer {
             prepared: preparedItems,
             plan: plan,
             channel: channel,
+            activation: activation,
             deadlineExceeded: {
                 monotonicClock() - requestArrivalMonotonic >= batchLaunchResponseBudget
             }
