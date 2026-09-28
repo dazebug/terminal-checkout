@@ -122,7 +122,7 @@ The same split applies to a step this work could *not* perform: whether a langua
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed (measured)
-**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed; for the content script, the lints in `tests/claude-note.test.js` those harnesses backed
+**Source:** PR #57 (commit `a24e27a`); `CLAUDE.md`; measured with a disposable out-of-tree jsdom harness that loaded the real `options.html` with only `chrome` stubbed; for the content script, PR #90 and the lints in `tests/claude-note.test.js` those harnesses backed
 **Revisit when:** the suite gains a faithful DOM harness, or browser automation can complete a native `drop`
 
 The options page has no DOM unit-test harness, and this change did not add one. The replacement for the hands-on portion was an out-of-tree jsdom harness that loads the real `options.html` with only `chrome` stubbed. Its geometry is deliberately supplied: jsdom returns all-zero rectangles, so deterministic stacked rectangles can exercise the zone logic, index arithmetic and focus restore, but not real hit-testing or a native drop. CDP cannot carry the latter either.
