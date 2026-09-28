@@ -81,7 +81,7 @@ func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
 /// Every site that emits bytes must pass gate ③ through `send(_:io:)`. cmux was the exception
 /// because one clear operation expands into two RPCs below that call; every operation repeats the
 /// same session-identity check before it can emit its byte. The first check is intentionally
-/// redundant with `send(_:io:)`: one identical question at every byte boundary costs about 9ms
+/// redundant with `send(_:io:)`: one identical question at every byte boundary costs about 6ms
 /// of ps+stty and keeps the rule local to the operation that is about to send.
 func runCmuxOperations(
     _ operations: [CmuxRPCOperation],
@@ -168,10 +168,12 @@ public func cmuxTTYName(debugTerminalsJSON: Data, surfaceID: String) -> String? 
     return "/dev/" + tty
 }
 
-/// The random value used for the pane proof. It can only enter our own tty, so seeing it newly appear on screen is evidence that the screen is our pane. It is alphanumeric so it means nothing special to claude's input box (`/`, `!` and `@` trigger modes and completion), and long enough not to collide by accident.
+/// The throwaway marker typed before every input (`proveOurPaneAndEmptyBox`), which is also Warp's pane-proof nonce. It can only enter our own tty, so seeing it newly appear on screen is evidence that the screen is our pane.
+///
+/// Keep it to characters claude never draws — `screenShowsMarkerErased` counts single characters, which only means "part of our marker is left" while nothing else on the screen uses them; an alphabet claude draws (ASCII, box drawing, dingbats) would need long fragments again. Three Runic letters from 75 give 421,875 markers, so an earlier attempt's marker cannot pass for this one. The measurements behind the choice are in `docs/context/claude-input-delivery.md`.
 public func paneProofToken() -> String {
-    let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
-    return "tc" + String((0..<10).map { _ in alphabet.randomElement()! })
+    let runes = (0x16A0...0x16EA).compactMap(Unicode.Scalar.init).map(Character.init)
+    return String((0..<3).map { _ in runes.randomElement()! })
 }
 
 /// The probe used to confirm the screen reflects an input. A long input is truncated or folded somewhere on screen, so only its front is used.
@@ -207,22 +209,17 @@ private func probeCount(_ probe: String, in screen: String) -> Int {
     return count
 }
 
-/// Returns true only when every six-character window of the marker has the same screen count as
-/// before the marker was typed. Checking the whole marker alone misses a remnant with one
-/// character removed, which is possible when a terminal's key-event path ignores Ctrl+U but still
-/// processes Backspace.
+/// Returns true only when every character of the marker has the same screen count as before the
+/// marker was typed. Checking the whole marker alone misses a remnant with one character removed,
+/// which is possible when a terminal's key-event path ignores Ctrl+U but still processes Backspace.
+/// One character is enough of a fragment to count because the marker is Runic and nothing else on
+/// claude's screen is (`paneProofToken`).
 func screenShowsMarkerErased(before: String, after: String, marker: String) -> Bool {
-    let compactMarker = marker.filter { !$0.isWhitespace }
-    let characters = Array(compactMarker)
-    guard characters.count >= 6 else { return false }
-
-    for start in 0...(characters.count - 6) {
-        let window = String(characters[start..<(start + 6)])
-        guard probeCount(window, in: after) == probeCount(window, in: before) else {
-            return false
-        }
+    let characters = marker.filter { !$0.isWhitespace }
+    guard !characters.isEmpty else { return false }
+    return characters.allSatisfy { character in
+        probeCount(String(character), in: after) == probeCount(String(character), in: before)
     }
-    return true
 }
 
 /// Session I/O — in reality osascript and wezterm cli calls, split out as closures so the delivery order and the failure-recovery verdicts can be exercised without any processes.
@@ -280,7 +277,7 @@ enum SendKind {
 ///
 /// Gate ③ (session identity) applies to **every** kind. The screen-confirmation means (`canConfirmScreen`) applies to `.typing` only — looking once at the start of an attempt lets the marker, the body and the CR keep going out when the permission is revoked during the pane proof or a wait afterwards (which is what happened).
 ///
-/// The window between the check and the send (a `ps` + `stty` round trip ≈ 9ms) cannot be removed on this path — if the session changes inside it, one byte enters the new session. But the CR passes the same gate, so **nothing is executed**, and the fragment left in the input box is erased by that session's user.
+/// The window between the check and the send (a `ps` + `stty` round trip, ≈ 6ms through `runProcess`) cannot be removed on this path — if the session changes inside it, one byte enters the new session. But the CR passes the same gate, so **nothing is executed**, and the fragment left in the input box is erased by that session's user.
 private func send(_ keys: String, io: ClaudeSessionIO, kind: SendKind = .typing) -> Bool {
     if kind == .typing, !io.canConfirmScreen() { return false }
     guard io.sessionIsUnchanged() else { return false }
@@ -591,9 +588,6 @@ func inputBoxAfterSubmit(
 /// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
 /// retypes and submits: the user's command runs **twice**. With a marker, that stray Enter submits
 /// one inert line and the body is still typed exactly once.
-///
-/// The marker is alphanumeric for the same reason `paneProofToken` always was: `/`, `!` and `@`
-/// mean something to the input box.
 private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int) -> Bool {
     guard let before = io.screenText() else {
         checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
@@ -1078,15 +1072,27 @@ public func deliverClaudeInputs(
     }
 }
 
+/// The session gate's limits on `ps` and `stty`. Keep them short: an unanswered probe already reads
+/// "cannot tell" and closes the gate, so a long escalation only delays that same verdict — the
+/// general 5s + 2s + 2s one did, silently (`docs/context/subprocess-execution.md`).
+let claudeGateProbeLimits = (timeout: 1.0, terminationGrace: 0.5, killWait: 0.5)
+
 private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
-    guard let ps = try? runProcess(
-        "/bin/ps", ["-t", ttyName, "-o", "pid=,stat=,comm="], timeout: 5
-    ) else {
-        return nil
+    func probe(_ path: String, _ args: [String]) -> (status: Int32, stdout: String, stderr: String)? {
+        do {
+            return try runProcess(
+                path, args, timeout: claudeGateProbeLimits.timeout,
+                terminationGrace: claudeGateProbeLimits.terminationGrace,
+                killWait: claudeGateProbeLimits.killWait
+            )
+        } catch {
+            checkoutLog("session gate: \(path) did not answer (\(errorMessage(error))) — treated as not ready")
+            return nil
+        }
     }
+    guard let ps = probe("/bin/ps", ["-t", ttyName, "-o", "pid=,stat=,comm="]) else { return nil }
     // A failed stty is treated as "cannot tell" and closes the gate; ps alone cannot prove raw mode.
-    let stty = (try? runProcess("/bin/stty", ["-f", ttyPath, "-a"], timeout: 5))
-        .flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
+    let stty = probe("/bin/stty", ["-f", ttyPath, "-a"]).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
     return acceptingClaudePID(psOutput: ps.stdout, sttyOutput: stty)
 }
 
@@ -1095,8 +1101,8 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
 /// How long the fast phase of the startup poll lasts, and how often it looks.
 ///
 /// claude reaches raw mode 0.1∼0.19s after the shell execs it (measured), so a 1s tick threw away
-/// most of a second before the first input every single time. One probe is `ps` + `stty` ≈ 9ms
-/// (measured, 20 calls each), so 0.15s is ~6% duty — cheap enough to keep up for the first ten
+/// most of a second before the first input every single time. One probe is `ps` + `stty` ≈ 6ms
+/// through `runProcess` (measured), so 0.15s is ~4% duty — cheap enough to keep up for the first ten
 /// seconds, which covers a normal start with room to spare. After that the tab is either slow
 /// (a big repository, a first-run trust prompt) or never coming, and the old 1s tick is right.
 private let claudeStartupFastPhase: TimeInterval = 10

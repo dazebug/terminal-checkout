@@ -119,18 +119,35 @@ cmux exposes `surface.send_key`, and it is unusable here. The clear sequence is 
 ## "The marker is gone" is checked over every 6-character window, not the whole string
 
 **Type:** decision
-**Status:** active
+**Status:** superseded by the next entry — the question it asks is kept, the window size is not
 **Evidence:** confirmed
 **Source:** PR #60; the defect above
-**Revisit when:** the marker stops being random, or its length changes
 
-The erase check counts occurrences of each 6-character window of the marker and requires every one of them back at its pre-typing baseline.
+The erase check counted occurrences of each 6-character window of the 12-character alphanumeric marker and required every one of them back at its pre-typing baseline.
 
-**Reason:** counting the whole 12-character string asks "is the marker intact", and the answer is no as soon as one character is missing — which is exactly the state the incident above produced. A window check asks the question that matters: is any fragment of it still on screen. A random 12-character marker having a 6-character slice appear on screen by coincidence is not a risk worth trading this for.
+**Reason:** counting the whole 12-character string asks "is the marker intact", and the answer is no as soon as one character is missing — which is exactly the state the incident above produced. A window check asks the question that matters: is any fragment of it still on screen. Six characters was the smallest fragment an alphanumeric marker could be counted by without matching ordinary text.
 
 **Rejected alternative — check the prefix only.** It assumes the remnant is eaten from the end, which is true of Backspace and of nothing else.
 
 **Scope:** this is the marker experiment's disappearance poll. Judging the body after CR is a separate contract with its own tail comparison.
+
+## The marker is three Runic letters, and the erase check counts single characters
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed for claude's input box (Claude Code 2.1.283 in a pty); the terminals' own send and read paths are a `docs/new-terminal-checklist.md` item
+**Source:** maintainer request to shorten the marker, and the Codex review that raised dialog key bindings
+**Revisit when:** claude's screen starts drawing Runic, or a supported terminal cannot round-trip it
+
+`paneProofToken` draws three letters from U+16A0–U+16EA, and `screenShowsMarkerErased` requires every single character of the marker back at its pre-typing count.
+
+**Reason:** the six-character window existed only because alphanumerics occur everywhere, so a fragment had to be long to mean anything. Nothing claude draws is Runic — its frame, spinner, prompt and hints are box drawing, dingbats, `❯` and ASCII — so one rune left on screen already means "part of our marker is still there", and the marker can be as short as the uniqueness it needs: 75 letters give 421,875 markers, enough that an earlier attempt's marker cannot pass for this one. Measured in claude's input box: `ᚠᛉᛟ` drew as `❯ ᚠᛉᛟ` one cell each, Ctrl+U then Backspace removed all three, and one Backspace alone left `ᚠᛉ`, which the per-character check rejects. Being non-ASCII, the marker also means nothing to the input box (`/`, `!`, `@`) or to a dialog whose keys are digits or `y`/`n` — the old alphabet carried both.
+
+**Rejected alternative — an invisible marker (zero-width characters).** A terminal need not store them in its grid, so the screen read cannot see them, and one left behind would ride invisibly into the user's next message.
+
+**Rejected alternative — Nerd Font or braille characters.** Prompts and statuslines draw private-use icons, and CLI spinners draw braille, so neither is absent from the screen the check reads.
+
+**Accepted cost:** an earlier marker still visible in the baseline that shares a letter with this one and disappears in the same clear makes the check fail once and retry.
 
 ## Polling reads first and subtracts what the read cost
 

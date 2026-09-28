@@ -2859,7 +2859,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         // The cycle is: type a **marker** → clear it (confirming it disappears) → type the body
         // **once** → CR, and empty once more as delivery ends. The marker is random, so it is pinned by shape
         XCTAssertEqual(session.keystrokes.count, 5)
-        XCTAssertTrue(session.keystrokes[0].hasPrefix("tc"), session.keystrokes[0])
+        XCTAssertTrue(isRuneMarker(session.keystrokes[0]), session.keystrokes[0])
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
             [claudeClearInputKey, inputs[0], claudeSubmitKey, claudeClearInputKey]
@@ -3220,10 +3220,22 @@ final class ClaudeInputDeliveryTests: XCTestCase {
 final class ScreenReflectionTests: XCTestCase {
     private let input = "!gh issue view 1415"
 
-    func testScreenShowsMarkerErasedRejectsAnElevenCharacterRemnant() {
+    /// The cmux key-path remnant shape (Ctrl+U ignored, Backspace processed) on the three-rune marker: one
+    /// character gone and two left, which a check that needs six-character windows cannot even see
+    func testScreenShowsMarkerErasedRejectsATwoRuneRemnant() {
         XCTAssertFalse(
             screenShowsMarkerErased(
-                before: "", after: "tctqr20ckbi", marker: "tctqr20ckbiq"
+                before: "", after: "❯ ᚠᛉ", marker: "ᚠᛉᛟ"
+            )
+        )
+    }
+
+    /// A single leftover rune is a remnant too: runes never appear on claude's screen otherwise, so
+    /// one of them is enough to say part of our marker is still there
+    func testScreenShowsMarkerErasedRejectsAOneRuneRemnant() {
+        XCTAssertFalse(
+            screenShowsMarkerErased(
+                before: "", after: "❯ ᚠ", marker: "ᚠᛉᛟ"
             )
         )
     }
@@ -3231,7 +3243,7 @@ final class ScreenReflectionTests: XCTestCase {
     func testScreenShowsMarkerErasedAcceptsAnEmptyScreen() {
         XCTAssertTrue(
             screenShowsMarkerErased(
-                before: "", after: "", marker: "tctqr20ckbiq"
+                before: "", after: "", marker: "ᚠᛉᛟ"
             )
         )
     }
@@ -3239,13 +3251,13 @@ final class ScreenReflectionTests: XCTestCase {
     func testScreenShowsMarkerErasedIgnoresUnrelatedText() {
         XCTAssertTrue(
             screenShowsMarkerErased(
-                before: "existing screen", after: "existing screen unrelated text", marker: "tctqr20ckbiq"
+                before: "existing screen", after: "existing screen unrelated text", marker: "ᚠᛉᛟ"
             )
         )
     }
 
     func testScreenShowsMarkerErasedAcceptsAnUnchangedExistingOccurrence() {
-        let marker = "tctqr20ckbiq"
+        let marker = "ᚠᛉᛟ"
         XCTAssertTrue(
             screenShowsMarkerErased(
                 before: marker, after: marker, marker: marker
@@ -4068,6 +4080,50 @@ final class RunProcessTimeoutTests: XCTestCase {
         )
         XCTAssertTrue(result.stdout.hasPrefix("ok"), result.stdout)
     }
+
+    /// A fast child has to come back at the speed it exits, not at the speed of a run-loop poll:
+    /// `waitUntilExit()` on a GCD thread added a fixed ∼64ms to every call (measured), so the 25ms
+    /// bound separates the two with room on both sides
+    func testRunProcessReturnsAtTheSpeedAFastChildExits() throws {
+        let runs = 20
+        let started = Date()
+        for _ in 0..<runs { _ = try runProcess("/usr/bin/true", [], timeout: 5) }
+        let average = Date().timeIntervalSince(started) / Double(runs)
+        XCTAssertLessThan(average, 0.025, "average \(Int(average * 1000))ms per call")
+    }
+
+    func testRunProcessReportsANonzeroExitStatus() throws {
+        let result = try runProcess("/bin/sh", ["-c", "exit 3"], timeout: 5)
+        XCTAssertEqual(result.status, 3)
+    }
+
+    /// Both pipes filled past their buffers at once: the readers have to drain while the child runs,
+    /// whichever way the exit is observed
+    func testRunProcessCollectsLargeStdoutAndStderrTogether() throws {
+        let result = try runProcess(
+            "/bin/sh",
+            ["-c", #"i=0; while [ $i -lt 20000 ]; do echo out$i; echo err$i >&2; i=$((i+1)); done"#],
+            timeout: 30
+        )
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(result.stdout.split(separator: "\n").count, 20000)
+        XCTAssertEqual(result.stderr.split(separator: "\n").count, 20000)
+    }
+
+    /// The session gate asks `ps` and `stty` a question that takes milliseconds; a probe that hangs
+    /// must give its answer ("cannot tell") in about a second, not after the 5s + 2s + 2s a general
+    /// caller is allowed. A shell that ignores SIGTERM and runs no child of its own, so the bound
+    /// is the escalation and not a pipe held by a descendant
+    func testRunProcessHonoursAShortEscalationForAChildThatIgnoresTermination() {
+        let started = Date()
+        XCTAssertThrowsError(
+            try runProcess(
+                "/bin/sh", ["-c", #"trap "" TERM; while :; do :; done"#],
+                timeout: 0.3, terminationGrace: 0.2, killWait: 0.2
+            )
+        )
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
+    }
 }
 
 // MARK: - The carriers that were changing the user's bytes
@@ -4602,12 +4658,17 @@ final class PaneProofRoutingTests: XCTestCase {
     /// The marker has to be something only our run can produce, and it must mean nothing special to claude's input box
     func testPaneProofTokenIsPlainAndUnique() {
         let tokens = (0..<50).map { _ in paneProofToken() }
-        // Alphanumerics only — `/`, `!` and `@` trigger modes and completion in claude's input box
-        XCTAssertTrue(tokens.allSatisfy { token in token.allSatisfy { $0.isLetter || $0.isNumber } })
-        // Long enough that the same value cannot appear in another pane by chance, and different on every run
-        XCTAssertTrue(tokens.allSatisfy { $0.count == 12 })
+        // Three Runic letters: no ASCII, so nothing a mode, a completion or a dialog key binding
+        // reacts to, and nothing claude's own screen ever draws
+        XCTAssertTrue(tokens.allSatisfy(isRuneMarker), tokens.joined(separator: " "))
+        // Different on every run, so an earlier attempt's marker cannot pass for this one
         XCTAssertGreaterThan(Set(tokens).count, 45)
     }
+}
+
+/// The marker's shape: exactly three Runic letters (U+16A0–U+16EA), nothing else.
+private func isRuneMarker(_ text: String) -> Bool {
+    text.count == 3 && text.unicodeScalars.allSatisfy { (0x16A0...0x16EA).contains($0.value) }
 }
 
 // MARK: - Warp: reclaiming (what an abnormal exit leaves behind)

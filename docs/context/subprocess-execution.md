@@ -1,6 +1,6 @@
 # Subprocess execution
 
-`runProcess` in `Core/TerminalRunner.swift` is the single door every child process goes through — CLI probes, `open`, `osascript`, `wezterm cli`, `cmux rpc`. Its contract is a bounded wait and a captured output; these are the two places where the obvious version of that contract is not the one shipped.
+`runProcess` in `Core/TerminalRunner.swift` is the single door every child process goes through — CLI probes, `open`, `osascript`, `wezterm cli`, `cmux rpc`. Its contract is a bounded wait and a captured output; these are the places where the obvious version of that contract is not the one shipped.
 
 ## The timeout's bound is closing the pipe readers, not killing a process group
 
@@ -33,3 +33,31 @@ Output is decoded with `String(decoding:as: UTF8.self)`, which substitutes repla
 **Rejected alternative — keep failing the whole read.** It is the stricter option, and strictness here throws away the diagnosis at exactly the moment something has already gone wrong.
 
 **Rejected alternative — decode lossily and say nothing.** Silently substituting characters in a value the app then parses or matches against is the kind of quiet alteration this project refuses elsewhere; logging the invalid original keeps the substitution visible without changing it.
+
+## The exit is observed with `terminationHandler`, not `waitUntilExit()`
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed (measured on this machine, 10–1000 calls per variant)
+**Source:** the delivery-speed investigation that followed the maintainer's question about the marker
+**Revisit when:** a caller needs `NSTaskDidTerminateNotification`, which a handler suppresses
+
+`runProcess` sets `terminationHandler` before `run()` and waits on the semaphore it signals.
+
+**Reason:** `waitUntilExit()` on a GCD thread polls a run loop, and that poll was the cost of every child the app ran: 66.7ms per call whether the child was `ps`, `stty`, `cmux ping` or `cmux rpc surface.read_text`, against 3.2, 2.4, 30.0 and 33.6ms with the handler. One claude input on cmux makes about 33 calls, and the app's delivery log matched the product to the millisecond — the CR step's seven calls took 0.462–0.469s. Nothing about the protocol changed; the same checks run in the same order, only sooner, which also narrows the window between the session gate and the byte it guards.
+
+**Kept as it was:** the two pipe readers and their bounded drain. An exit, however it is observed, is not end-of-file on the pipes, and a descendant can keep them open.
+
+## The session gate's `ps` and `stty` get their own short limits, and a failure is logged
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed for the symptom; the cause is not established
+**Source:** field deliveries on cmux, the app's unified log, and a `sample` of the app during a stall
+**Revisit when:** a stall of the old length shows up again with these limits in place
+
+`probeAcceptingClaudePID` runs `ps` and `stty` with a 1s timeout, 0.5s grace before SIGKILL and 0.5s after it (`claudeGateProbeLimits`), and logs any call that does not answer.
+
+**Reason:** 8 of 12 cmux deliveries measured in one session lost 9.3–9.6s before the first input — before "claude ready", or as "failed to send the marker/typing" with no RPC error — and the length matched the general escalation (5s + 2s + 2s) exactly. A `sample` taken during one of them had the delivery thread inside the gate's `ps` call, in those three timed waits in turn, while the gate conditions measured from outside with the same commands held throughout. Both commands answer in milliseconds, and an unanswered probe is already "cannot tell", which closes the gate — so the long escalation bought nothing but delay, and `try?` kept it out of the log.
+
+**Not established:** whether the child really hung or its exit went unobserved. An isolated 1000-call stress of the old wait did not reproduce it (maximum 81ms), a child watcher saw no long-lived `ps` during one stall, and the `sample` showed four waiter threads blocked in `waitUntilExit` for its whole 11s window. Both explanations end in the same place: the gate answers "cannot tell" within about a second, and the log says so.
