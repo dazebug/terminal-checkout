@@ -172,12 +172,18 @@ public func claudeInputRejection(_ blocker: ClaudeInputBlocker) -> TerminalError
 }
 
 /// Subprocess helper: a timeout, stdin injection, and pipe-deadlock avoidance.
+///
+/// After `timeout` the child gets SIGTERM, `terminationGrace` later SIGKILL, and `killWait` after
+/// that the call gives up waiting for the exit. The defaults suit a general caller; the session
+/// gate's `ps`/`stty`, which answer in milliseconds, pass short ones (`claudeGateProbeLimits`).
 @discardableResult
 public func runProcess(
     _ path: String, _ args: [String],
     input: String? = nil,
     env: [String: String]? = nil,
-    timeout: TimeInterval = 10
+    timeout: TimeInterval = 10,
+    terminationGrace: TimeInterval = 2,
+    killWait: TimeInterval = 2
 ) throws -> (status: Int32, stdout: String, stderr: String) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
@@ -190,6 +196,12 @@ public func runProcess(
     let inPipe = Pipe()
     if input != nil { process.standardInput = inPipe } else { process.standardInput = FileHandle.nullDevice }
 
+    // The exit is observed through `terminationHandler`, not `waitUntilExit()`. Measured on this
+    // machine: `waitUntilExit()` on a GCD thread polls a run loop and added a fixed ∼64ms to every
+    // call (66.7ms for `ps`, 3.2ms with the handler), and one claude input costs ∼33 calls. Set
+    // before `run()` so a child that exits at once is not missed
+    let exited = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in exited.signal() }
     try process.run()
     let processID = process.processIdentifier
     // Keep timeout cleanup from leaving a descendant with the pipes open. Foundation exposes only
@@ -227,23 +239,17 @@ public func runProcess(
         bufferLock.unlock()
     }
 
-    let exited = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
-        process.waitUntilExit()
-        exited.signal()
-    }
     if exited.wait(timeout: .now() + timeout) == .timedOut {
         process.terminate()
         if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGTERM) }
 
-        let termGrace: TimeInterval = 2
-        if exited.wait(timeout: .now() + termGrace) == .timedOut {
+        if exited.wait(timeout: .now() + terminationGrace) == .timedOut {
             // SIGTERM is a cooperative request. A child that ignores it (or a shell that traps it)
             // gets SIGKILL after the grace period, and the group is killed so it cannot keep our
             // pipe readers alive through an unrelated descendant.
             if isolatedProcessGroup { _ = Darwin.kill(-processID, SIGKILL) }
             _ = Darwin.kill(processID, SIGKILL)
-            _ = exited.wait(timeout: .now() + 2)
+            _ = exited.wait(timeout: .now() + killWait)
         }
 
         // A killed process can still have a descendant holding stdout/stderr. Never wait forever
