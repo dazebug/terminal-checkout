@@ -1116,6 +1116,20 @@ final class ClaudeInputPreconditionTests: XCTestCase {
         XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false))
     }
 
+    /// …except in background mode. `wezterm start` shows a new window and WezTerm activates itself
+    /// when it does, so the command would take the keyboard from whatever the user is typing in —
+    /// the one thing the setting promises not to do. Refused before anything is started
+    func testWezTermFallbackIsRefusedInBackgroundMode() throws {
+        let rejection = try XCTUnwrap(
+            wezTermFallbackRejection(injectsClaudeInput: false, activation: .background)
+        )
+        guard case .backgroundNeedsARunningTerminal = rejection else {
+            return XCTFail("unexpected rejection: \(rejection)")
+        }
+        XCTAssertTrue(rejection.description.contains("WezTerm"))
+        XCTAssertNil(wezTermFallbackRejection(injectsClaudeInput: false, activation: .foreground))
+    }
+
     /// Regression: a Warp button with **no tail** still runs without the permission, exactly as
     /// it does today. Every shipped preset is in that case — this gate must not take back what
     /// the argv track won.
@@ -3736,6 +3750,34 @@ final class WezTermWindowTests: XCTestCase {
         )
         XCTAssertNil(wezTermRefocusArguments(activation: .background, focusedPaneID: nil))
         XCTAssertNil(wezTermRefocusArguments(activation: .foreground, focusedPaneID: "146"))
+    }
+
+    private func launchCalls(_ activation: TabActivation) -> (pane: String?, calls: [String]) {
+        var calls: [String] = []
+        let pane = wezTermLaunchInMux(
+            cli: "/wz", env: [:], focus: WezTermFocus(windowID: "3", paneID: "146"),
+            command: "echo hi", activation: activation
+        ) { path, args, _ in
+            calls.append(([path == "/wz" ? "wz" : path] + args.prefix(2)).joined(separator: " "))
+            return args.prefix(2) == ["cli", "spawn"] ? (status: 0, stdout: "200\n") : (status: 0, stdout: "")
+        }
+        return (pane, calls)
+    }
+
+    /// Background: the pane the user was on is active again before a byte of the command goes out.
+    /// `spawn` selects the new tab, so anything typed until the refocus lands in the new shell and
+    /// mixes with the command
+    func testBackgroundRefocusComesBeforeTheCommandIsSent() {
+        let launch = launchCalls(.background)
+        XCTAssertEqual(launch.pane, "200")
+        XCTAssertEqual(launch.calls, ["wz cli spawn", "wz cli activate-pane", "wz cli send-text"])
+    }
+
+    /// Foreground is unchanged: the command goes in, then WezTerm is brought to the front on it
+    func testForegroundSendsTheCommandThenBringsWezTermForward() {
+        let launch = launchCalls(.foreground)
+        XCTAssertEqual(launch.pane, "200")
+        XCTAssertEqual(launch.calls, ["wz cli spawn", "wz cli send-text", "/usr/bin/open -a WezTerm"])
     }
 
     func testFocusedWindowIDFromClientsAndList() {

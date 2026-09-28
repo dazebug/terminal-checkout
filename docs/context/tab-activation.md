@@ -20,4 +20,8 @@ The setup window's **Keep the current screen when you press a button** (`tabActi
 
 **The label names what the user keeps, not where the tab goes.** "Open new tabs in the background" (and Korean "새 탭을 뒤에서 열기") was reported as unintuitive: "behind" is a place, not an outcome, and cmux opens a workspace, not a tab. The label is the user's action and what stays put — "Keep the current screen when you press a button", ticked to stay — and on Warp the box shows unticked and disabled, since a ticked "keep" beside a terminal that always switches would be false.
 
+**WezTerm that is not running is refused, not started.** Its no-mux fallback runs `wezterm start`, whose first window activates the app — nothing from outside can keep it behind — so in background mode the request fails before anything starts, with a message to open a WezTerm window or turn the option off. A visible refusal beats a window that takes the keyboard mid-sentence, which is the one thing the option exists to prevent. Not established for cmux and iTerm2 when they have to be launched first; they are expected to come forward while starting.
+
+**In WezTerm the old pane is active again before the command is sent.** `spawn` selects the new tab, and `send-text` can take up to its timeout; refocusing only afterwards left that whole interval for the user's keystrokes to land in the new shell and mix with the command.
+
 **Rejected alternative — always background.** Foreground stays the default: most presses are made to look at the session they open.

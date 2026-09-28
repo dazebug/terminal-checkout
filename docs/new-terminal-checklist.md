@@ -125,6 +125,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 
 - [ ] Type in another app — and in another tab of this terminal — while pressing a button: the new session opens behind, not a keystroke lands in it, the screen you were on stays selected, and its claude input is still delivered
 - [ ] With the setting off, the new tab comes to the front as before
+- [ ] With the setting on and the terminal not running: WezTerm refuses the press with a message and starts nothing; for a terminal that has to be launched, note whether it comes to the front
 
 **claude input — typed route (everything except a single plain-text input, so: every shipped preset that schedules claude input)**
 

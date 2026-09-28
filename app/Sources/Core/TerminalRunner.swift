@@ -21,6 +21,9 @@ public enum TerminalError: Error, CustomStringConvertible {
     /// type, not by string — it reaches the extension as an `error` string, but inside the app
     /// this value is what tells the reasons apart
     case claudeInputNotDeliverable(ClaudeInputBlocker)
+    /// Background mode was asked of a terminal that is not running: starting it shows a window,
+    /// and the terminal activates itself when it does
+    case backgroundNeedsARunningTerminal(String)
 
     public var description: String {
         switch self {
@@ -36,6 +39,9 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .goingAway:
             return "Terminal Checkout is quitting or restarting — press the button again in a moment."
         case .claudeInputNotDeliverable(let blocker): return blocker.message
+        case .backgroundNeedsARunningTerminal(let terminal):
+            return "\(terminal) is not running, and starting it would bring it to the front — open a \(terminal)"
+                + " window first, or turn off \"Keep the current screen when you press a button\"."
         }
     }
 }
@@ -128,9 +134,14 @@ public func claudeInputBlocker(
 /// failed; a `wezterm cli spawn` that timed out **may** have opened a tab whose id we never read.
 /// Not measured, and it does not change the decision (rejecting is still better than running with
 /// the input dropped), but the claim is narrower than the branch.
-func wezTermFallbackRejection(injectsClaudeInput: Bool) -> TerminalError? {
-    guard injectsClaudeInput else { return nil }
-    return claudeInputRejection(.wezTermSessionUnavailable)
+func wezTermFallbackRejection(
+    injectsClaudeInput: Bool, activation: TabActivation = .foreground
+) -> TerminalError? {
+    if injectsClaudeInput { return claudeInputRejection(.wezTermSessionUnavailable) }
+    // The fallback starts WezTerm, whose first window activates the app — in background mode that
+    // would take the keyboard from whatever the user is typing in, so it is refused instead
+    if activation == .background { return .backgroundNeedsARunningTerminal("WezTerm") }
+    return nil
 }
 
 /// The helper line to put in front of the user's command in the Tab Config, plus the socket the
@@ -989,28 +1000,18 @@ public func runInWezTerm(
     if let sock = findWezTermSocket() {
         let env = wezTermEnvironment(socketPath: sock)
         let focus = findWezTermFocus(cli: cli, env: env)
-        for args in wezTermSpawnAttempts(windowID: focus?.windowID) {
-            guard let spawn = try? runProcess(cli, args, env: env, timeout: 5), spawn.status == 0 else {
-                checkoutLog("wezterm \(args.joined(separator: " ")) failed")
-                continue
-            }
-            let paneID = spawn.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            _ = try? runProcess(
-                cli, ["cli", "send-text", "--pane-id", paneID, "--no-paste"],
-                input: command + "\n", env: env, timeout: 5
-            )
-            if let refocus = wezTermRefocusArguments(activation: activation, focusedPaneID: focus?.paneID) {
-                _ = try? runProcess(cli, refocus, env: env, timeout: 5)
-            } else if activation == .foreground {
-                _ = try? runProcess("/usr/bin/open", ["-a", "WezTerm"], timeout: 5)
-            }
-            return .wezterm(paneID: paneID, cliPath: cli, socketPath: sock)
+        let paneID = wezTermLaunchInMux(
+            cli: cli, env: env, focus: focus, command: command, activation: activation
+        ) { path, args, input in
+            (try? runProcess(path, args, input: input, env: path == cli ? env : nil, timeout: 5))
+                .map { (status: $0.status, stdout: $0.stdout) }
         }
+        if let paneID { return .wezterm(paneID: paneID, cliPath: cli, socketPath: sock) }
     }
 
     // Fallback: a new WezTerm process = a new window (with no mux there is no window to attach to).
     // It does not wait for exit, and since the pane cannot be identified there is no handle either — which is why a run with input to type cannot come here. There is no **fallback-process** side effect to undo at this point; a spawn attempt above that timed out may already have opened a tab we cannot identify, and that one is not undone either
-    if let rejection = wezTermFallbackRejection(injectsClaudeInput: injectsClaudeInput) {
+    if let rejection = wezTermFallbackRejection(injectsClaudeInput: injectsClaudeInput, activation: activation) {
         throw rejection
     }
     let process = Process()
@@ -1023,3 +1024,29 @@ public func runInWezTerm(
     return .none
 }
 
+
+/// Opens the tab through the mux and sends the command; nil when every spawn attempt failed. `run`
+/// is the process runner, a parameter so the order of the calls can be tested.
+func wezTermLaunchInMux(
+    cli: String, env: [String: String], focus: WezTermFocus?, command: String, activation: TabActivation,
+    run: (_ path: String, _ args: [String], _ input: String?) -> (status: Int32, stdout: String)?
+) -> String? {
+    for args in wezTermSpawnAttempts(windowID: focus?.windowID) {
+        guard let spawn = run(cli, args, nil), spawn.status == 0 else {
+            checkoutLog("wezterm \(args.joined(separator: " ")) failed")
+            continue
+        }
+        let paneID = spawn.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Refocus before a byte of the command goes out: `spawn` selected the new tab, and whatever
+        // the user types until the old pane is active again lands in the new shell
+        if let refocus = wezTermRefocusArguments(activation: activation, focusedPaneID: focus?.paneID) {
+            _ = run(cli, refocus, nil)
+        }
+        _ = run(cli, ["cli", "send-text", "--pane-id", paneID, "--no-paste"], command + "\n")
+        if activation == .foreground {
+            _ = run("/usr/bin/open", ["-a", "WezTerm"], nil)
+        }
+        return paneID
+    }
+    return nil
+}
