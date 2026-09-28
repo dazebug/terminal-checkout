@@ -424,9 +424,15 @@ final class SetupWindowRedrawTests: XCTestCase {
         _ = checkbox.target?.perform(checkbox.action, with: checkbox)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "tabActivation"), "background")
 
+        // A ticked "stay" beside a terminal that always comes to the front would say something false
         controller.select(terminal: .warp)
         XCTAssertFalse(checkbox.isEnabled)
-        XCTAssertEqual(checkbox.state, .on, "the stored choice is still shown, only not offered")
+        XCTAssertEqual(checkbox.state, .off)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "tabActivation"), "background", "Warp does not overwrite the choice")
+
+        controller.select(terminal: .cmux)
+        XCTAssertTrue(checkbox.isEnabled)
+        XCTAssertEqual(checkbox.state, .on)
     }
 
     func testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames() throws {

@@ -121,7 +121,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Tab Config / AppleScript / CLI argument quoting survives the appended `command claude -- '<message>'` — the command block shown in the pane must not be split or mangled, and the single-quoted message must arrive as one argument
 - [ ] With a `claude` **function or alias wrapping an executable**, the argv route **bypasses the wrapper**: the append invokes `command claude`, which skips functions and aliases (measured in zsh, bash and dash) but **not builtins**. Confirm the session starts from the executable — and that the append still happens, which needs the startup check to see past the wrapper (it asks a child `/bin/sh`, so the rc's function is not there to hide the file). With `claude` available *only* as a function or alias there must be **no append at all** — appending would end in `command not found` in the pane — and the setup window says why. Residuals to confirm as *documented*, not as bugs: a PATH that resolves `claude` elsewhere, a `command` function or alias in the rc, and a login shell whose answers do not match the shell this terminal opens tabs with. The word list in `commandAcceptsAppendedClaudePrompt` is a second layer over that structure, and its completeness is **not** claimed
 
-**Background tabs (setup window → Open new tabs in the background)**
+**Background tabs (setup window → Keep the current screen when you press a button)**
 
 - [ ] Type in another app — and in another tab of this terminal — while pressing a button: the new session opens behind, not a keystroke lands in it, the screen you were on stays selected, and its claude input is still delivered
 - [ ] With the setting off, the new tab comes to the front as before

@@ -1408,10 +1408,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             note += localized("app.terminal.note.warp")
         }
         terminalNoteLabel.stringValue = note
-        backgroundCheckbox.state = Settings.tabActivation == .background ? .on : .off
         // Warp always opens in front — its delivery can only confirm the tab being looked at — so
-        // the choice is shown but not offered there
-        backgroundCheckbox.isEnabled = Settings.terminal != .warp
+        // there the box is unticked and disabled, and the stored choice waits for the next terminal
+        let offered = Settings.terminal != .warp
+        backgroundCheckbox.isEnabled = offered
+        backgroundCheckbox.state = offered && Settings.tabActivation == .background ? .on : .off
     }
 
     @objc private func tabActivationChanged() {
