@@ -232,7 +232,7 @@ A ▾ caret beside a button that starts claude opens a one-line box, and what is
 **Source:** `variableRegex` and `renderCommand` in `app/Sources/Core/CommandRenderer.swift`; `claudeNoteVerdict` in `extension/defaults.js`; `tests/claude-note.test.js` (`any closed brace span is refused, whatever is inside it`)
 **Revisit when:** the app's renderer gains an escape, or stops rendering claude inputs as templates
 
-The app renders every claude input as a template, the note included, so `{repo}` typed into a note becomes the repository's name and a Korean `{이거}` is refused as an unknown variable. The popover and the worker therefore refuse a note in which any `{` has a `}` after it. With no placeholder left, the rendered note is the typed note: the 4096-byte check is the size delivered, and it is the same for every item of a batch.
+The app renders every claude input as a template, the note included, so `{repo}` typed into a note becomes the repository's name and a Korean `{이거}` is refused as an unknown variable. The popover and the worker therefore refuse a note in which any `{` has a `}` after it. With no placeholder left, rendering cannot grow the note, so the 4096-byte check bounds its UTF-8 size before the app's trim, and the bound is the same for every item of a batch. That trim can only shorten it: a one-byte note with a trailing no-break space arrived as 1 byte instead of 3, and with a trailing zero-width space as 1 instead of 4 (measured).
 
 **Rejected alternative — render the variables the page provides and refuse the rest** (the first decision). A note's size and its fate then depended on the page kind and on each batch item, which is what the measurements above showed.
 
@@ -246,7 +246,7 @@ The app renders every claude input as a template, the note included, so `{repo}`
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed with the app's answers written by hand) a partly failed batch showed ❌ with a ✕ badge on its row and kept the note, and a failed single request kept it too
+**Evidence:** confirmed; on a live page (the real scripts injected into github.com's main world, `chrome` stubbed with the app's answers written by hand) a batch of one selected row, answered as failed, showed ❌ with that row's ✕ badge and kept the note, and a failed single request kept it too. A batch mixing ✓ and ✕ was not seen there: its mapping to one badge of each is pinned by `tests/list-pages.test.js` (`listBatchResultView maps ordered item results without crossing button identities`), and the worker's answer for it by `tests/worker-note.test.js` (`a batch the app ran in part arrives as the app's own result, keyed in the order the worker read`)
 **Source:** `serve(fd:)` in `app/Sources/App/HostServer.swift`; `handleBatchRequest` in `app/Sources/Core/Request.swift`
 **Revisit when:** the app answers a request only after delivery, or keeps the session handle to report on it later
 

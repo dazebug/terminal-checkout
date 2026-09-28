@@ -725,6 +725,22 @@ test('Enter sends only for a person and never mid-composition, and keys stop at 
   assert.match(open, /onUserClick\(send, \(\) => submitNote\(popover\)\)/);
 });
 
+test('a held Enter sends once: its repeats lose their default and send nothing, in the box and on the send button (lint)', () => {
+  // A key held down repeats its keydown, as trusted as the first one. The note and the focus stay after a
+  // failed send and a run in `error` takes a new start, so a repeat that arrived after the answer sent the
+  // same note again — a partly failed batch would have run its successful items a second time.
+  const open = bodyOf(content(), 'function openNotePopover(');
+  const enter = open.slice(open.indexOf("input.addEventListener('keydown'"));
+  const handler = enter.slice(0, enter.indexOf('});'));
+  const prevented = handler.indexOf('event.preventDefault();');
+  const repeat = handler.indexOf('if (event.repeat) return;');
+  const sent = handler.indexOf('submitNote(popover)');
+  assert.ok(prevented !== -1 && repeat > prevented && sent > repeat, 'a repeated Enter sends, or keeps its default');
+  // The send button is activated from the keyboard through a click, and a click says nothing of repeats,
+  // so the button's own repeated keydown loses its default before it can activate it
+  assert.ok(open.includes("send.addEventListener('keydown', event => { if (event.repeat) event.preventDefault(); });"), 'a held key can activate the send button again');
+});
+
 test('every refusal the notice names is drawn through its own literal lookup (lint)', () => {
   const { CLAUDE_NOTE_ERRORS, claudeNoteRefusalNotice } = pick('CLAUDE_NOTE_ERRORS, claudeNoteRefusalNotice');
   const source = content();

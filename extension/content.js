@@ -967,10 +967,14 @@ function openNotePopover(view) {
     event.preventDefault();
     closeNotePopover();
   });
-  // Enter sends only when a person pressed it, and never while it is ending an IME composition
+  // Enter sends only when a person pressed it — a fresh press, not the key's auto-repeat — and never
+  // while it is ending an IME composition. A held key repeats its keydown, trusted like the first, and the
+  // note and the focus stay after a failed send, so a repeat arriving after the answer would send the
+  // same note again. A repeat still loses its default; it just sends nothing.
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.isComposing) return;
     event.preventDefault();
+    if (event.repeat) return;
     if (isUserGesture(event)) submitNote(popover);
   });
   // Text a paste or a drop brings is judged as it arrives, from the original the event carries, before
@@ -982,6 +986,10 @@ function openNotePopover(view) {
     syncNoteSend(popover);
   });
   onUserClick(send, () => submitNote(popover));
+  // A focused send button is activated from the keyboard through a click, and a click carries no word of
+  // a repeat; a held key's repeats lose their default here, before they can activate the button again
+  // once a failure has enabled it
+  send.addEventListener('keydown', event => { if (event.repeat) event.preventDefault(); });
   popover.onPointerDown = (event) => {
     if (!root.contains(event.target) && !popover.caret.contains(event.target)) closeNotePopover();
   };
