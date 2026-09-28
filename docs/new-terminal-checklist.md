@@ -46,7 +46,7 @@ A terminal with no API to address a pane at all (Warp) is covered instead by a h
 | `Socket access mode is a prerequisite (cmux)` | Add the live status enum and setup-window card; the non-destructive button copies the settings fragment and opens the existing file or folder without creating or writing it, and a missing socket cannot distinguish a stopped cmux from a denied mode |
 | `app/Info.plist` | `NSAppleEventsUsageDescription` is the single one for the whole app — update it if the copy hard-codes a terminal name |
 | `install.sh` | The preflight's terminal-detection list and guidance copy. Finding none exits 1 and blocks installation, so missing this makes installation itself fail on machines that have only the new terminal (its detection criteria differ from the app's) |
-| `README.md` | Terminal names are hard-coded in the required-terminals list, the architecture diagram, setup steps, permission notes, fallback limits, and troubleshooting. If the code supports it but this is stale, users read it as unsupported |
+| `README.md` | The **Supported terminals** table is the canonical inventory — add a row with the terminal's required setup and its conditions for typed claude input. Terminal names also appear in the setup steps, Known limits and troubleshooting. If the code supports it but this is stale, users read it as unsupported |
 | `CLAUDE.md` | Record the non-obvious platform and terminal behavior that the code and README do not explain, including channel routing and delivery limits |
 | `docs/context/cmux-integration.md` | Record the channel/socket and command-delivery decisions, including a superseded alternative when a new channel changes the operational contract |
 

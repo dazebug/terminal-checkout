@@ -1,73 +1,54 @@
-# Terminal Checkout
+<div align="center">
+  <p><a href="README.ko.md">🇰🇷 한국어</a> · <a href="README.zh-Hant.md">🇹🇼 繁體中文</a> · <b>🇺🇸 English</b> · <a href="README.ja.md">🇯🇵 日本語</a></p>
+  <img src="docs/assets/icon.png" width="96" height="96" alt="">
+  <h1>Terminal Checkout</h1>
+  <p><strong>One click from GitHub to your repo, branch, or worktree.</strong></p>
+  <p>Start Claude Code and send it PR or issue context, with an optional note for this run.</p>
+  <p>A Chrome extension and native macOS app. Claude Code is optional.</p>
+  <p>
+    <a href="https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml"><img src="https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="#requirements"><img src="https://img.shields.io/badge/macOS-13%2B-333333" alt="macOS 13+"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT license"></a>
+  </p>
+  <p><a href="#installation">Installation</a> · <a href="#usage">Usage</a> · <a href="#supported-terminals">Terminals</a> · <a href="#troubleshooting">Troubleshooting</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
+</div>
 
-[![CI](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/dazebug/terminal-checkout/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-**One click from GitHub to your Mac terminal.**
-
-Terminal Checkout puts configurable buttons on GitHub PR, issue, and repository pages. Press one and your command runs in a new tab of iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY — check out the branch, create a worktree, or launch a [Claude Code](https://claude.com/claude-code) session that has already read the issue. It ships as a Chrome extension plus a native macOS app.
+<!--
+  Hero demo slot. Planned: select two PRs on a PR list page, press "Checkout PR + Claude", and cmux opens
+  one worktree and one Claude Code session per PR. Fallback: "Review PR (claude)" with a ▾ note on a single PR.
+  A real recording with startup waits shortened and disclosed, no account data in frame. Add as
+  docs/assets/demo.gif once it exists; until then nothing renders here.
+-->
 
 ## Features
 
-- **Buttons where you work** — up to 3 buttons each on PR, issue, repository, and their list pages; labels are free-form (emoji or short text). Clicking the extension icon runs the first button for the page you're on.
-- **Any command** — templates with `{repo}`, `{branch}`, `{base}`, `{number}`, … variables, validated against a strict character whitelist before anything runs.
-- **Claude Code hand-off** — if your command runs `claude`, up to 5 scheduled inputs are handed over for you. `!` lines are typed into claude's shell mode so they really run as commands, with a run of them merged into one line; a list holding exactly one plain-text line is handed over as claude's opening message instead, with no typing at all. A ▾ caret beside such a button adds a one-line note for claude to a single click, sent after the stored inputs.
-- **Opens where you are** — new tabs are created in the terminal window you're currently looking at (best effort, with explicit fallbacks when no window can be found).
-- **Minimal permissions by design** — Chrome itself gets no terminal control. Only the app holds a single "Terminal Checkout → iTerm2" Automation permission; WezTerm, cmux, and cmux NIGHTLY need no TCC permission, while both cmux channels require socket control mode = `automation`, and Warp needs the Accessibility permission for buttons whose claude inputs are typed — which is every shipped preset that schedules claude input, since all four use `!`. A note from the ▾ caret is one more input, so a click that carries one can be typed too.
-- **Settings that follow you** — buttons and commands live in Chrome `storage.sync` and follow your Google account across machines.
-- **Five languages** — English, Korean, Japanese, Simplified Chinese and Traditional Chinese. The app follows macOS (or the language you pick in it); the extension follows Chrome. See [Language](#language) for how each side resolves and which translations are a machine-translated first pass.
-
-## How it works
-
-macOS attributes Automation (Apple Events) permission to the "responsible process". If Chrome spawned a native host that drove the terminal directly, the permission would attach to **Chrome**, and you'd have to grant terminal control to the whole browser. Terminal Checkout splits the path so that never happens:
-
-```mermaid
-flowchart LR
-    EXT["Chrome extension<br>(JavaScript)"] -->|stdio| RELAY["relay<br>(forwarding only, ships in the app bundle)"]
-    RELAY -->|unix socket| APP["Terminal Checkout.app<br>(TCC permission attaches here only)"]
-    APP -->|"AppleScript / wezterm cli / cmux rpc / Warp Tab Config"| TERM["iTerm2 / WezTerm / cmux / cmux NIGHTLY / Warp"]
-```
-
-- The relay Chrome spawns contains no terminal or command logic — it forwards bytes to the app's unix socket, and if the app isn't running it launches the app in the background, so you don't need to keep the app open.
-- **Terminal Checkout.app** — launched via LaunchServices, so it is its own responsible process — validates the request, renders the command, and drives the terminal.
-- Turning the scheduled inputs into "what gets typed" and "what rides in argv" happens in the app, before the terminal branch, so it works the same on all supported terminals. A request either types everything or appends everything — never both in one session.
-- Warp has one extra piece: it has no API for sending text to a pane, so a button whose claude inputs are **typed** first launches a small injection helper (`terminal-checkout-warp-helper`, shipped inside the app bundle) in the new tab, and the app hands the inputs to it. The helper writes only into that tab's tty and exits on its own when delivery finishes or the tab closes. Confirming that claude received the input requires reading the screen — that's why typed claude input on Warp needs the Accessibility permission. A button with no claude input, or whose one input is a plain-text line, launches no helper and needs no permission — 9 of the 13 shipped presets are in that shape, because they schedule no claude input at all. A note added from the ▾ caret is one more input, routed by the same rules, so a click that carries one can need the helper where the button alone does not.
-- cmux and cmux NIGHTLY have an addressable surface API: the app creates a workspace with `cmux rpc`, sends the command as text, and reads that surface by UUID. Because the screen read is surface-specific, delivery continues when you switch to another tab; neither cmux channel has Warp's "keep looking at the tab" constraint or needs Accessibility permission.
-
-## Requirements
-
-- macOS 13+
-- Google Chrome
-- One of iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY
-- Swift toolchain, for building (Command Line Tools via `xcode-select --install` is enough)
-- A way for the commands to reach your repository on disk: [zoxide](https://github.com/ajeetdsouza/zoxide), a **base directory** set in the app, or both — see [Getting into the repository](#getting-into-the-repository). The commands run the `zoxide` executable, so z.sh and its ports don't count
-- Optional: [gh](https://cli.github.com) for the issue presets and for cloning a repository you don't have locally yet, `claude` for claude input
-
-On every launch the app checks `zoxide`, `gh`, and `claude` in a login shell and flags only the missing ones in the setup window. With a base directory set, a missing `zoxide` is a note rather than an error — the commands fall back to that folder.
+- **13 presets, custom commands** — choose a workflow or define your own.
+- **A worktree per PR** — open selected PRs in separate worktrees and terminal sessions.
+- **Context for Claude Code** — `!gh …` lines run in claude's shell mode, then a one-off ▾ note for this run.
+- **Chrome needs no terminal-control permission** — the permission attaches to the native app.
+- **Synced buttons and commands** — Chrome sync across machines, with five interface languages.
 
 ## Installation
 
-### 1. Decide how commands find your repositories
+### Requirements
 
-The buttons run a command that starts by moving into the repository. Give it at least one way to get there — the two combine, and zoxide is always tried first:
+- macOS 13+, Google Chrome, and one of the [supported terminals](#supported-terminals)
+- A Swift toolchain for building — the Command Line Tools (`xcode-select --install`) are enough
+- Optional: [gh](https://cli.github.com) for the presets that call it and for cloning a repository you don't have yet, `claude` for Claude Code, and [zoxide](https://github.com/ajeetdsouza/zoxide), which finds your repositories wherever they live ([Getting into the repository](#getting-into-the-repository)). The setup window flags whichever of these your login shell lacks.
 
-**zoxide** — jumps to a repository wherever it lives (skip if you already have it):
+### Supported terminals
 
-```bash
-brew install zoxide
-```
+| Terminal | Required setup | Conditions for typed Claude input |
+|:---|:---|:---|
+| iTerm2 | The Automation permission, granted to Terminal Checkout only | None beyond the permission |
+| WezTerm | No macOS permission | A WezTerm window must already be running |
+| Warp | No Automation permission | The Accessibility permission, and the target tab stays visible while input is delivered |
+| cmux | Socket control mode `automation` (`password` and `allowAll` also work) | Shell integration must expose the surface's tty; delivery can continue in a background tab |
+| cmux NIGHTLY | The same as cmux; a separate selection that never falls back to stable | The same as cmux |
 
-Add this line to `~/.zshrc`, then `source ~/.zshrc`:
+The last column applies only to typed claude input. A button with no claude input, or whose one input rides in the opening message, needs only the required setup — see [claude input](#claude-input).
 
-```bash
-eval "$(zoxide init zsh)"
-```
-
-> zoxide learns the directories you visit, so a repository you have never `cd`'d into isn't in its database yet. Until it is, the jump fails — which is exactly what the base directory covers. The jump only takes a folder named exactly like the repository, so a clone kept under a different folder name isn't found by it either.
-
-**A base directory** — the folder you keep repositories in, e.g. `~/Codes`. You set it in the app's setup window, in installation step 3 below. It is used whenever the zoxide jump fails, and it clones the repository if you don't have it locally yet, so a first click works on a repository you've never opened. Details: [Getting into the repository](#getting-into-the-repository).
-
-### 2. Build and install the app
+### <a name="2-build-and-install-the-app"></a>1. Build and install the app
 
 ```bash
 git clone https://github.com/dazebug/terminal-checkout.git
@@ -77,31 +58,34 @@ cd terminal-checkout
 
 `install.sh` builds the app, installs it to `~/Applications/Terminal Checkout.app`, and launches it. No sudo, non-interactive, idempotent.
 
-### 3. Finish in the setup window
+### <a name="3-finish-in-the-setup-window"></a>2. Finish in the setup window
 
-When the app opens, walk through the setup window in order. Native Host registration and extension-folder preparation finish automatically at launch; the window is state-driven — completed cards disappear, remaining only as the pipeline lights (●) at the top.
+The window walks you through each step and hides it once complete; Native Host registration and the extension folder are prepared automatically.
 
-1. **Extension** — click [Install in Chrome]. The extension folder path is copied to your clipboard, `chrome://extensions` opens, and the window shows a ①→④ guide:
-   - Turn on **Developer mode** (top right)
-   - Click **Load unpacked** (top left)
-   - In the file picker: **⇧⌘G → ⌘V (paste) → Enter → [Select]**
-   - **Keep Developer mode on** — from Chrome 133, turning it off disables unpacked extensions
-   - This step is marked complete when the app first receives a request from the extension. After Chrome loads it, open a GitHub PR, issue, or repository page and press any Terminal Checkout button once
-2. **Language** — English, Korean, Japanese, Simplified Chinese, Traditional Chinese, or [Follow the system language] (the default). This is the **app's** language; the extension follows Chrome. See [Language](#language)
-3. **Terminal** — choose iTerm2, WezTerm, Warp, cmux, or cmux NIGHTLY. cmux NIGHTLY is a separate app bundle and a separate choice; it never falls back to stable.
-   - **cmux socket control** (shown only when cmux or cmux NIGHTLY is selected) — the card shows not installed, not running, denied, or reachable. Automation means every process run by the same macOS user can control cmux. Enable it in cmux Settings → Automation, or use [Open Config File] to copy the setting and open `~/.config/cmux/cmux.json`; both channels share this file, so enabling automation once covers both. cmux applies file changes immediately, so no restart is needed. The app never writes the file.
-4. **iTerm2 control permission** (shown only when iTerm2 is selected and not yet granted) — click [Request iTerm2 Permission] and allow the prompt. The permission goes to this app only; WezTerm, cmux, and cmux NIGHTLY need none, while Warp needs no TCC permission but does need Accessibility for typed claude input.
-   - **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. It's used to confirm on the Warp screen that claude received input that was **typed** into the session — which is every `!` input, and therefore the four shipped presets that schedule claude input. Without it such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input is a plain-text line, avoid this path — and a note from the ▾ caret counts as an input, so a click that carries one can take this path where the button alone would not.
-5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or pick it with [Choose Folder…]. Leave it empty and the commands only use zoxide. Filled in, a button works even on a repository you have never opened locally — see [Getting into the repository](#getting-into-the-repository)
-6. **Run Test** — click [Run in Terminal]; you're done when `echo` runs in a new terminal tab
+1. **Extension** — click [Install in Chrome]. The folder path is copied and `chrome://extensions` opens: turn on **Developer mode**, click **Load unpacked**, then **⇧⌘G → ⌘V → Enter → [Select]**. Keep Developer mode on — from Chrome 133, turning it off disables unpacked extensions.
+2. **Language** — the app's own language, defaulting to [Follow the system language]. The extension follows Chrome ([Language](#language)).
+3. **Terminal** — pick one from the [table above](#supported-terminals).
+4. **Permissions** — shown only when your terminal needs one: [Request iTerm2 Permission] for iTerm2, the cmux socket card for cmux, and Accessibility for typed claude input on Warp.
+5. **Repository base folder** — the folder you keep repositories in (`~/Codes`, say); type it or use [Choose Folder…]. When zoxide doesn't know a repository, the command looks for `<base>/<repo>` and, if it isn't there, clones it with `gh`, which must be installed and authenticated.
+6. **Run Test** — click [Run in Terminal]. You are done when `echo` runs in a new tab.
 
-Once setup completes, the window keeps only the language, the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
+<details>
+<summary>More on the setup steps</summary>
 
-> Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
+- **Extension** — this step is marked complete when the app first receives a request from the extension. After Chrome loads it, open a GitHub PR, issue, or repository page and press any Terminal Checkout button once.
+- **cmux socket control** (shown only when cmux or cmux NIGHTLY is selected) — the card shows not installed, not running, denied, or reachable. Automation means every process run by the same macOS user can control cmux. Enable it in cmux Settings → Automation, or use [Open Config File] to copy the setting and open `~/.config/cmux/cmux.json`; both channels share this file, so enabling automation once covers both. cmux applies file changes immediately, so no restart is needed. The app never writes the file.
+- **iTerm2 control permission** — the permission goes to this app only; WezTerm, cmux, and cmux NIGHTLY need none, while Warp needs no Automation permission but does need Accessibility for typed claude input.
+- **Warp claude input** (shown only when Warp is selected and not granted) — allow the Accessibility permission. The app uses it to verify on the Warp screen that **typed** text appears in the input box before submitting it. Typed input is every `!` input, and therefore the four shipped presets that schedule claude input. Without the permission such a button is **refused outright**: no tab opens, and the button shows ❌ rather than running the command with the input missing. Keep the tab visible during delivery. Only buttons with no claude input, or whose one input rides in the opening message, avoid this path — and a note from the ▾ caret counts as an input, so a click that carries one can take this path where the button alone would not.
+- **Repository base folder** — leave it empty and the commands only use zoxide. Details: [Getting into the repository](#getting-into-the-repository).
+- Once setup completes, the window keeps only the language, the terminal selection, the repository base folder, Run Test, [Open Extension Options Page], and [Show Setup Guide Again].
+- The app is invisible in daily use — no menu-bar icon, and it appears in the Dock only while the setup window is open. Reopen the window any time by launching **Terminal Checkout** from Spotlight (⌘Space) or Launchpad. Pressing an extension button starts the app automatically if it's off.
+- Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
-> Once distribution moves to the Chrome Web Store (unlisted), the unpacked-extension steps above will shrink to a store install; the app install and permission steps stay.
+</details>
 
-The app is invisible in daily use — no menu-bar icon, and it appears in the Dock only while the setup window is open. Reopen the window any time by launching **Terminal Checkout** from Spotlight (⌘Space) or Launchpad. Pressing an extension button starts the app automatically if it's off.
+### 3. Press your first button
+
+Open the GitHub page of a repository whose clone zoxide has recorded under the repository's name, or that sits at `<base>/<repo>` — or can be cloned there with `gh` — and press **📂** next to its name: a new terminal tab opens inside that repository. From there, [Usage](#usage) shows what each page offers.
 
 ## Updating
 
@@ -110,50 +94,75 @@ git pull --ff-only
 ./install.sh
 ```
 
-Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card). Rebuilding changes the ad-hoc signing identity, so macOS may ask for the Automation permission again — allow it once.
+Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkout card) and reload your GitHub tabs. A rebuild whose code changed also changes the app's ad-hoc signing identity, so iTerm2 users allow the Automation prompt once more, and Warp users of typed claude input grant Accessibility again ([Troubleshooting](#troubleshooting)).
 
-> **Presets improved since you last saved?** Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When the presets move on, the options page shows an update notice listing each affected button as `old → new`, saying what the change does, with a checkbox per item. Rewrites of presets we shipped are pre-checked; a command you customized is offered unchecked and marked as a behavior change, because the rest of it will now run wherever the new entry clause lands. Applying only fills the form; the write goes through the same **Save** as any other edit, and declining ("Keep mine") is recorded too, so the notice doesn't come back. If another device changed your settings while this page was open, Save is refused rather than overwriting them — reload to see them, exporting first if you have unsaved edits. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
+<details>
+<summary>Presets improved since you last saved?</summary>
+
+Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When the presets move on, the options page shows an update notice listing each affected button as `old → new`, saying what the change does, with a checkbox per item. Rewrites of presets we shipped are pre-checked; a command you customized is offered unchecked and marked as a behavior change, because the rest of it will now run wherever the new entry clause lands. Applying only fills the form; the write goes through the same **Save** as any other edit, and declining ("Keep mine") is recorded too, so the notice doesn't come back. If another device changed your settings while this page was open, Save is refused rather than overwriting them — reload to see them, exporting first if you have unsaved edits. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
+
+</details>
 
 ## Usage
 
-### PR pages
+<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>Each GitHub page kind gets its own set of up to three buttons, labelled with an emoji or short text. Clicking the extension icon runs the first button for the page you are on.
 
-A button appears next to the branch name in the PR header. The default command checks out the PR branch; if checkout fails (e.g. the branch is checked out in a worktree), it moves to the worktree at the conventional path `../{repo}-{branch_underbar}`:
+| Page | Where the button appears | Default button |
+|:---|:---|:---|
+| Pull request | Next to the branch names in the PR header | ⏏️ **Checkout Branch** — checks out the PR branch, or enters its `../{repo}-{branch_underbar}` worktree if that fails |
+| Issue | Next to the Open/Closed badge | 📋 **Read Issue (claude)** — starts claude with the issue, its comments and its cross-reference numbers, fetched in shell mode |
+| Repository | Next to the repository name | 📂 **Open in Terminal** — moves into the repository |
+| PR list | Above the list | 🤖 **Checkout PR + Claude** — one detached worktree (`../{repo}-pr-{number}`) and claude session per selected PR, via `gh pr checkout` |
+| Issue list | Above the list | 📋 **Triage Issue** — one claude session per selected issue, with its comments |
 
-```bash
-{cd} && git fetch origin && { git checkout {branch} || cd ../{repo}-{branch_underbar}; }
-```
+- **List pages** — select rows with GitHub's checkboxes (Terminal Checkout adds its own where GitHub shows none); each selected row opens its own session, up to 25 per batch. There the extension icon runs the first *repository* button, since it cannot see a selection.
+- **The default PR checkout** expects the branch on `origin`, so it doesn't handle fork PRs; the PR-list preset uses `gh pr checkout`, which does.
+- **Presets that call `gh`** — Review PR (claude), Checkout PR + Claude, Read Issue (claude), Start Work on Issue and Triage Issue — need it installed and logged in (`brew install gh`, then `gh auth login`); the setup window warns you if it's missing.
 
-`{cd}` is the clause that moves into the repository — the app renders it, and what it expands to depends on your base directory ([Getting into the repository](#getting-into-the-repository)).
+<details>
+<summary>All 13 presets</summary>
 
-The default command assumes the PR branch exists on `origin` — i.e. a same-repository PR. It doesn't fetch branches that live on a fork; a fork-safe preset (via `gh pr checkout {number}`) is planned.
+Choose presets in the extension options page, or write your own commands with [variables](#variables).
 
-### Issue pages
+| Page | Face | Preset | What it runs |
+|:---|:---:|:---|:---|
+| Pull request | ⏏️ | Checkout Branch | `{cd} && git fetch origin && { git checkout {branch} \|\| cd ../{repo}-{branch_underbar}; }` |
+| Pull request | 🤖 | Checkout + Claude | the same, then `claude` |
+| Pull request | 🌳 | Worktree + Claude | fetch, create or reuse `../{repo}-{branch_underbar}` as a worktree of `{branch}`, fast-forward it, then `claude` |
+| Pull request | 🪵 | Worktree | the same, without claude |
+| Pull request | 🔍 | Review PR (claude) | `{cd} && claude`, then `!gh pr view {number} --comments` and `!gh pr diff {number}` in claude's shell mode |
+| PR list | 🤖 | Checkout PR + Claude | per selected PR: a detached worktree `../{repo}-pr-{number}`, `gh pr checkout {number} --detach`, then `claude` |
+| Issue | 📋 | Read Issue (claude) | `{cd} && claude`, then the issue, its comments, and the numbers of the issues and PRs that cross-reference it, through shell mode |
+| Issue | 🌳 | Start Work on Issue | creates or reuses a worktree `../{repo}-issue-{number}` (a new branch `issue-{number}` from `origin/{main}` when it creates one), then `claude` with the issue's comments |
+| Issue | 📂 | Open Issue | `{cd}` |
+| Issue list | 📋 | Triage Issue | per selected issue: `{cd} && claude`, then the issue's comments |
+| Repository | 📂 | Open in Terminal | `{cd}` |
+| Repository | 📂🤖 | Open + Claude | `{cd} && claude` |
+| Repository | ⤓ | Update main | `{cd} && git checkout {main} && git pull --ff-only` |
 
-A button appears next to the status badge (Open/Closed), configured separately from PR buttons. The default **Read Issue** button launches claude in the repository directory and then types these lines into it — a claude input starting with `!` runs in claude's shell mode, so `gh` really runs in that session and its output is there as command output. The three of them go in as one merged line:
+Read Issue (claude) schedules these shell-mode lines; Start Work on Issue and Triage Issue schedule only the second:
 
 ```bash
 !gh issue view {number}                       # body and metadata
 !gh issue view {number} --comments            # comments
 !gh api repos/{owner}/{repo}/issues/{number}/timeline \
-  --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'   # issues/PRs that mention this one
+  --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'   # numbers of issues/PRs that cross-reference this one
 ```
 
-This preset needs `gh` (`brew install gh`, then `gh auth login`); the setup window warns you if it's missing.
+</details>
 
-### PR and issue list pages
-
-Select rows with GitHub's checkboxes, or Terminal Checkout's fallback checkboxes when GitHub does not expose them, then click a list button above the list. Each selected row opens its own terminal session; one batch handles up to 25 rows, and clicking with no rows selected is an error.
-The default PR-list preset gives each row its own worktree (`../<repo>-pr-<number>`) and checks the PR out there with a detached HEAD (`gh pr checkout {number} --detach`) — sessions from one batch cannot switch branches under each other, and no local branch is created that could collide with a worktree you already have. It needs `gh`, and fork PRs work too.
-On list pages, clicking the extension icon runs the first repository button for the page, since the icon path cannot see list selections.
-
-### Repository pages
-
-A button appears next to the repository name in the header. The default **Open in Terminal** button moves into the repo directory (`{cd}`). Since this button takes the shape of GitHub's green action button, a text label like `Open in Terminal` suits it better than an emoji. On GitHub pages that are neither PR nor issue, the extension icon runs this set's first button.
+## Claude Code
 
 ### claude input
 
-If the command runs `claude`, the options page lets you schedule up to 5 inputs per button — e.g. `!gh pr diff {number}` followed by `Summarize the risky parts`. Most of them are **typed into the session**, because that is the only way a `!` line becomes a real shell command; a list holding exactly one plain-text line skips the typing and rides along as claude's opening message instead. A note typed into a button's ▾ caret joins these as the last input of that one click — see [A note for claude](#a-note-for-claude).
+If a button's command runs `claude`, the options page lets you schedule up to 5 inputs for it — for example `!gh pr diff {number}` followed by `Summarize the risky parts`. The app supplies an eligible opening message at launch or types inputs into the running session:
+
+- **`!` inputs are typed into claude's shell mode**, so they run as real shell commands and their output stays in the session. Consecutive ones are merged into one line only when the safety checks pass and the line fits within 4 KiB.
+- **Exactly one plain-text input can become the opening message** when the command, shell and executable checks below pass; otherwise it is typed.
+- Slash commands, `#` memory lines, and other input combinations are typed.
+
+<details>
+<summary>How inputs are delivered</summary>
 
 **`!` inputs are typed, and a run of them is typed as one line.** A `!` line only means "run this in the shell" to claude's own input box: passed as an argument at startup it arrives as ordinary text, and claude then decides to run it with its Bash tool — which can stop for a permission prompt and costs a turn (measured). Typed, it runs as a command and stays in the session as one.
 
@@ -164,80 +173,110 @@ If the command runs `claude`, the options page lets you schedule up to 5 inputs 
 - A plain-text input, a slash command and a `#` memory line are each typed on their own; a run of `!` ends at the first input that is not one.
 - An input containing a NUL byte is rejected outright rather than delivered altered — a tty cannot carry it.
 
-**A list holding exactly one plain-text input becomes the opening message instead.** Plain text is just a message, so it is appended to your command as claude's first argument and the session starts with it already in — no typing, no screen reading, no waiting for claude to boot. The rules for that append:
+**A list holding exactly one plain-text input can become the opening message instead.** Plain text is just a message, so it can be appended to your command as claude's first argument and the session starts with it already in — no typing, no screen reading, no waiting for claude to boot. It is appended only when every rule below holds; otherwise it is typed:
 
 - It is handed to **`command claude`**, not to `claude`. `command` is POSIX for "skip functions and aliases, run the executable", so a wrapper of that name cannot receive your text. It does **not** skip shell builtins, which is why a command that loads one (`zmodload`, `enable`) stops the append instead.
 - Because of that, **appending needs a `claude` executable to exist**. The app asks your login shell at startup — in a child shell, so a function or an alias of yours does not hide the file behind it, and it checks the file is actually runnable. If `claude` is *only* a function or an alias, the inputs are typed instead, and the setup window says so.
 - The append only happens when the rendered command is a plain chain (`&&`, `||`, `;`, `|`, groups, subshells) whose **last command is a bare `claude`** — no flags, not on the receiving end of a pipe, no redirect, nothing after it. Flags are out because some of them (`--resume`) swallow the argument as their own value.
 - Beyond that, **every word of the command has to be one that would be safe as a command name**: nothing that can rebind a name in that shell (`function`, `alias`, `eval`, `source`/`.`, `hash`, `trap`, `export`, an assignment like `PATH=…`, a compound keyword such as `if`/`for`/`while`/`case`) and nothing quoted or expanded, which the app cannot read. The price is over-folding — `git add . && claude` and anything with a quoted argument are typed instead, which is what they did before.
 - Your login shell has to be POSIX-family (`sh`, `bash`, `zsh`, `dash`, `ksh`…), and the message must be single-line. In csh/tcsh a `!` anywhere in your text is history-expanded **even inside single quotes** and takes the whole command line with it (measured: `echo START; /bin/echo -- 'do it!x'` prints only `x: Event not found.` — `START` never runs), and a newline would end the command line early in both iTerm2 and WezTerm.
-- **Mixing is not allowed.** If the list has plain text *and* anything else, everything is typed. Sending an opening message and typing into the same session races claude's startup: submitting that message clears the input box 2–3 seconds in, and anything typed before then is wiped (measured).
-- What the app still cannot see, because it needs your shell and filesystem at run time: a **`PATH` that resolves `claude` to a different program**, and a **`command` function or alias in your rc**, which would capture the invocation above.
+- **Mixing is not allowed.** If the list has plain text *and* anything else, everything is typed. Sending an opening message and typing into the same session races claude's startup: submitting that message clears the input box 2∼3 seconds in, and anything typed before then is wiped (measured).
 
-**What typing costs, and what the app will and won't tell you.** Typed delivery is the normal path now, so it is worth knowing what it does to the session:
+**What typing costs, and what the app will and won't tell you.**
 
 - The app waits up to **2 minutes** for claude to be ready in the new tab, then gives up and says so in its log. It never types into the shell: it waits for claude to be the foreground process with the tty in raw mode first.
 - Before each input it types a short random marker, watches it appear, clears the box, and watches it go — that is how it knows the screen it reads is this pane, that what appears is really in the input box, and that the terminal's Ctrl+U was actually acted on. Then it types the input once and submits it.
-- Those clears mean **a draft you start typing while delivery is running is erased**: one Ctrl+U per input, plus one when delivery ends. That is deliberate — the alternative is our line sitting in your box waiting for your Enter, and with a `!` line that Enter runs a command.
 - Delivery holds while claude's trust prompt for a first-time folder is up. Accept within about **15 seconds** and it continues; take longer and it gives up from that input on.
 - The log says **sent**, not delivered. Whether claude turned a submitted line into a message is not something anything outside the TUI can establish, so the app does not claim it. If a return key never took effect, that input is lost and the log still counts it as sent.
-- **On Warp, delivery only runs while you're looking at that tab** (see below).
 - **On cmux and cmux NIGHTLY, delivery is addressed to the created surface and continues in a background tab**; neither channel uses Warp's focus-dependent screen proof or needs Accessibility permission.
 
-Known limits:
-
-- Inputs are single-line only.
-- A button whose inputs are typed — every button with a `!` input — is **refused before anything opens** when the app can already tell it couldn't deliver them: on Warp without the Accessibility permission or without the bundled injection helper, and on WezTerm when no WezTerm window is running (a fresh process gives no addressable pane). The button shows ❌ and no tab is created — better than a claude session sitting there with none of its context. Buttons whose single input rides in argv, and buttons with no claude input, are unaffected — merging `!` lines into one typed line does not avoid this, because the line is still typed. A click that carries a note is judged on the list the note completes.
-- **On Warp, the typed route runs only while you're looking at that tab.** Warp renders only the focused tab, so the app submits input only after confirming its own tab is on screen. Switching away pauses delivery; coming back resumes it. The argv opening message is unaffected — it never touches the screen.
+</details>
 
 ### A note for claude
 
-A button whose command starts claude — the word `claude` in it — and that still has room for another claude input (five per click) gets a ▾ caret beside it: on PR, issue and repository headers, and on the list batch buttons. The caret opens a one-line box. What you type there is sent with that click as the last claude input, after the ones the button stores, so a `!` run that fetches context goes first and claude reads your note with it already there. The note belongs to that one click — nothing is saved to your settings — and the extension icon still runs the first button without one.
+A button whose command has the word `claude` in it and room for another input (five per click) gets a ▾ caret, on page headers and list batch buttons. It opens a one-line box with the inputs the button already sends listed above it. Your note is sent after them, so claude reads it with any fetched context already there; it belongs to that one click and is never saved, and on a list page every session in the batch gets it.
 
-- **What goes first is listed.** Above the box, the popover lists the inputs the button sends before your note, in that order and as the click sends them, with `{number}` and the other variables still unfilled — they are filled in when you send. A button with no stored inputs shows no list. If the button's stored inputs change after the page drew it (you edit it in the options page, or another device syncs), sending is refused rather than sent behind a list that is no longer true; reload the page.
-- **Plain text on one line.** Ordinary spaces at either end are removed. After that the note may not start with `!`, `/`, `#` or another kind of space or invisible character, because the app would read those as a shell command or an input-box command; it may not contain a `{…}` span, because the app would read it as a variable; and line breaks, tabs and other control characters are refused rather than removed. The limit is 4096 bytes of UTF-8. A refused note stays in the box with the reason under it, and nothing is sent. Text with a line break in it is refused as you paste or drop it, instead of being flattened onto one line.
-- **Sending.** Enter or the send button sends, and the button shows ⏳, then ✅ or ❌. Keys an IME is still composing with are left to it: in Korean one Enter commits the last syllable and sends the whole note once, and Esc closes the box with the note kept; in Japanese the Enter that confirms a conversion only confirms it, and the next Enter sends. ✅ means the app accepted the command and opened the terminal; delivery to claude happens after that and is reported in the app's log, not on the page. On ❌ the box stays open with your note and a failure line, and the reason is in the console. A note you close without sending, or one that failed, comes back the next time you open that button's box on that page, until the page reloads.
-- **On list pages** the batch carries the rows selected when you press send, and the note goes to every session the batch opens.
-- **The route it takes** — typed into the session or handed over as the opening message — follows the rules above, and the app decides it after its own trimming, so it is not promised here. A typed note on Warp needs the Accessibility permission like any typed input.
+The note is one line of plain text, at most 4096 bytes of UTF-8. It may not start with `!`, `/`, `#` or another kind of space or invisible character, contain a `{…}` span, or hold line breaks, tabs or other control characters.
+
+Enter or the send button sends; the button shows ⏳, then ✅ or ❌. ✅ means the app accepted the command and opened the terminal; delivery to claude is reported in the app's log. A refused note stays in the box with the reason under it, and after ❌ the box stays open with your note.
+
+<details>
+<summary>More on notes</summary>
+
+- The list above the box shows the stored inputs in order, with `{number}` and the other variables still unfilled — they are filled in when you send. A button with no stored inputs shows no list.
+- Ordinary spaces at either end are removed before the checks. The first-character rule exists because the app would read those characters as a shell command or an input-box command, and a `{…}` span because the app would read it as a variable. Line breaks, tabs and other control characters are refused rather than removed, and text with a line break in it is refused as you paste or drop it, instead of being flattened onto one line.
+- If the button's stored inputs change after the page drew it (you edit it in the options page, or another device syncs), sending is refused rather than sent behind a list that is no longer true; reload the page.
+- Keys an IME is still composing with are left to it: in Korean one Enter commits the last syllable and sends the whole note once, and Esc closes the box with the note kept; in Japanese the Enter that confirms a conversion only confirms it, and the next Enter sends.
+- On ❌ the reason is in the console. A note you close without sending, or one that failed, comes back the next time you open that button's box on that page, until the page reloads.
+- On list pages the batch carries the rows selected when you press send.
+- The route it takes — typed into the session or handed over as the opening message — follows the [claude input](#claude-input) rules, and the app decides it after its own trimming, so it is not promised here. A typed note on Warp needs the Accessibility permission like any typed input.
+- The extension icon still runs the first button without a note.
+
+</details>
+
+### Known limits
+
+- Inputs are single-line only.
+- The app clears the input box before each input and attempts cleanup when delivery ends; this can erase a draft you type during delivery. Cleanup can fail, leaving text that Enter would submit.
+- A button whose inputs are typed is **refused before anything opens** — ❌, no tab — when the app can tell it couldn't deliver them: on Warp without the Accessibility permission or the bundled injection helper, and on WezTerm with no WezTerm window running. A button with no claude input, or whose one input rides in the opening message, is unaffected; a click that carries a note is judged with the note included.
+- **On Warp, typed input is delivered only while its tab is on screen.** Switching away pauses delivery; coming back resumes it.
+- A ✅ means the app accepted the command and opened the terminal. The app's log reports inputs sent and delivery failures; it cannot confirm that claude received each input.
+
+<details>
+<summary>What the app cannot see in your shell</summary>
+
+Two things need your shell and filesystem at run time, so the app cannot check them before appending an opening message: a **`PATH` that resolves `claude` to a different program**, and a **`command` function or alias in your rc**, which would capture the `command claude` invocation.
+
+</details>
 
 ## Configuration
 
-Installation, terminal selection, and permissions live in the app's setup window. Buttons, commands, and the main branch live in the extension options page — [Open Extension Options Page] in the setup window, or `chrome://extensions` → Terminal Checkout → Extension options.
+Installation, the terminal, permissions and the repository base folder live in the app's setup window. Buttons, commands and the main branch live in the extension options page — [Open Extension Options Page] in the setup window, or `chrome://extensions` → Terminal Checkout → Extension options.
 
-- Reorder button cards by dragging the `⠿` handle, or focus the handle and press `↑` `↓`. [Duplicate] creates a copy right after the original (its tooltip gets a `(1)`-style suffix). This order is the order buttons appear on GitHub, and the first button is what the extension icon runs.
-- Settings are stored in Chrome's `storage.sync`. The extension ID is pinned by the manifest `key`, so Chromes signed into the same Google account (with "Extensions" enabled in sync) share settings across machines.
-- The **backup** section's [Export (JSON)] / [Import…] cover account-less migration and reinstall insurance. Import only fills the form — review and press **Save** to apply. The file records which generation of the presets it was written against: an older backup gets the same update notice, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
+- Extension settings are written only when you press **Save**.
+- Reorder button cards by dragging the `⠿` handle, or focus it and press `↑` `↓`; [Duplicate] copies a card right after the original. The order is the order on GitHub, and the first button is what the extension icon runs.
+- Settings live in Chrome's `storage.sync`, so Chromes signed into the same Google account with "Extensions" sync enabled share them.
+- The **backup** section's [Export (JSON)] / [Import…] cover moving without an account and reinstalling. Import only fills the form — review and press **Save** to apply.
 
-### Language
+<details>
+<summary>More on sync and backups</summary>
 
-Terminal Checkout ships **English, Korean, Japanese, Simplified Chinese and Traditional Chinese**, and **each side follows its own platform**. The app's language is the **Language** card in its setup window, defaulting to your macOS language. The extension's language is **Chrome's** — the display language at `chrome://settings/languages` — because that is where a browser extension's language lives, and Chrome has no per-extension setting for it. So there is no language control in the extension, and **the two can differ**: Japanese macOS with English Chrome shows a Japanese app and English buttons. That is what the two platforms answer, not a fault to report.
+Sync works across machines because the extension ID is pinned by the manifest `key`, so it is the same everywhere. A duplicated card's tooltip gets a `(1)`-style suffix.
 
-- **[Follow the system language]** is the default. It follows your macOS language order and picks the first of the five it can answer; a language none of them covers falls back to **English**. Choose an explicit language and it is honoured as chosen — it never falls through to a third language you did not name. The list is written in each language's own script, so you can find your way back out of one you cannot read.
-- **The app's own text changes immediately.** Choosing [Follow the system language] resolves against the system-owned language order, not an `AppleLanguages` value this app wrote earlier. System dialogs drawn by macOS — file pickers, alerts, the menu bar's standard items — follow from the **next launch**, which is why the card offers a restart. Pressing restart while a claude input is still being delivered does nothing except say so: the delivery would be cut off, so it is refused rather than queued, and you press again when it has finished.
-- **The extension does not ask the app anything.** Message ids are resolved from Chrome's display-language catalogue when the extension draws, so changing that language and reloading a page is all it takes — nothing to restart or wait for. Saved button labels are text snapshots from when they were saved, so changing Chrome's language does not rewrite those labels; recreate or edit the button to give it new text. A language Chrome is set to that we do not ship falls back to **English**, and the page says so in its own `lang` attribute.
-- `zh-Hant` covers Hong Kong and Macau as well, which is what macOS itself does with those regions.
-- **[Follow the system language] clears only an override this app recorded and that still has the same value.** A per-app choice made in System Settings, an `-AppleLanguages` argument, or something with higher priority remains in charge; the app does not delete a value it cannot prove it wrote. The macOS permission prompt is a separate case again: it is drawn by macOS itself, and whether it follows your choice here is not known.
+The backup file records which generation of the presets it was written against: an older backup gets the same update notice as saved buttons do, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
 
-> **Translation notice.** English and Korean are written by hand. **Japanese, Simplified Chinese and Traditional Chinese are a machine-translated first pass and have not been reviewed by a speaker.** They are shipped that way on purpose — a rough translation you can read beats a language you cannot — and corrections are welcome as issues or pull requests. Nothing we translate reaches a shell: the test command and the clause the app builds to enter a repository are fixed English by construction — your own command templates are yours and are never touched — so a translation cannot change what runs.
+</details>
 
-### Getting into the repository
+### <a name="1-decide-how-commands-find-your-repositories"></a>Getting into the repository
 
 Every preset opens with `{cd}`, the clause that moves into the repository. The app renders it from the **base directory** in its setup window:
 
 | Base directory | What `{cd}` becomes |
 |:---|:---|
-| not set | the zoxide jump — into the folder zoxide has recorded under exactly the name `{repo}` |
+| not set | the zoxide jump — into the folder zoxide has recorded under exactly the name `{repo}`, ignoring case |
 | `<base>` | the zoxide jump, falling back to `<base>/{repo}` **if that is a git repository**, falling back to `gh repo clone {owner}/{repo} <base>/{repo}` |
 
-The jump is tried first either way, so a jump it makes is never overridden. It asks `zoxide query --list` for the folders zoxide has recorded under the repository's name and enters the highest-ranked one whose name is exactly `{repo}`, ignoring case. That is deliberately not `z {repo}`: zoxide matches `{repo}` anywhere in a folder's name and prefers the more recently used match, so `z` can land in a `{repo}-<branch>` worktree the presets create next to the checkout — and from inside the checkout itself it always goes somewhere else, because `z` skips the current directory.
+The jump is tried first, so a folder it finds is never overridden. With a base directory, a repository found neither way is cloned with `gh repo clone`, using your `gh` protocol and authentication settings. The base directory is stored only on this Mac, never in the synced extension settings.
 
-The jump is also where the base directory comes in. A freshly installed zoxide has an empty database, so the jump prints `zoxide has not recorded a directory named {repo}`, exits non-zero, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and that message in the terminal is the only sign.
+<details>
+<summary>Using zoxide</summary>
 
-With a base directory, that same button falls through to the folder and clones the repository when it isn't there — which also covers not having zoxide at all, since `command not found` fails the same way. Cloning goes through `gh`, so it follows your `gh` protocol and auth settings and works for private repositories.
+[zoxide](https://github.com/ajeetdsouza/zoxide) jumps to a repository wherever it lives. Install it and add its init line to your shell config:
+
+```bash
+brew install zoxide
+echo 'eval "$(zoxide init zsh)"' >> ~/.zshrc && source ~/.zshrc
+```
+
+The commands run the `zoxide` executable, so z.sh and its ports don't count. zoxide learns the directories you visit, so a repository you have never `cd`'d into isn't in its database yet — until it is, the jump fails, which is exactly what the base directory covers. With a base directory set, a missing `zoxide` is a note in the setup window rather than an error.
+
+The jump asks `zoxide query --list` for the folders zoxide has recorded under the repository's name and enters the highest-ranked one whose name is exactly `{repo}`, ignoring case. That is deliberately not `z {repo}`: zoxide matches `{repo}` anywhere in a folder's name and prefers the more recently used match, so `z` can land in a `{repo}-<branch>` worktree the presets create next to the checkout — and from inside the checkout itself it always goes somewhere else, because `z` skips the current directory. A clone kept under a different folder name isn't found by the jump either.
+
+A freshly installed zoxide has an empty database, so the jump prints `zoxide has not recorded a directory named {repo}`, exits non-zero, and nothing after the first `&&` runs. The command *was* delivered and the failure happened inside your shell, so the button still reports success and that message in the terminal is the only sign. A missing zoxide (`command not found`) fails the same way, and the base directory covers both.
 
 The middle step checks that `<base>/{repo}` really is a git repository rather than just entering it. A directory that exists but isn't a checkout — an empty folder left over from an interrupted clone, a scratch directory — would otherwise pass for "found it", and the rest of the command (`git fetch`, `git checkout`) would run there. When the check fails, git says so on screen (`fatal: not a git repository`) and the clone step takes over; if that folder isn't empty, the clone stops with `destination path ... already exists and is not an empty directory` rather than touching what's in it.
 
-The value lives in the app rather than the extension because it is machine-specific: extension settings sync across your Google account, and an absolute path from one machine is wrong on the next. For the same reason the extension can't send it — a request that tries is rejected.
+</details>
 
 ### Variables
 
@@ -246,64 +285,154 @@ The value lives in the app rather than the extension because it is machine-speci
 | `{cd}` | move into the repository — filled in by the app, not the page ([above](#getting-into-the-repository)) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{repo}` | repository name | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `{owner}` | repository owner (for `gh api repos/{owner}/{repo}/…`) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `{main}` | main branch (per-repo override → page detection → global default) | ✓ | — | ✓ | — | ✓ |
+| `{main}` | main branch (see below) | ✓ | — | ✓ | — | ✓ |
 | `{number}` | PR/issue number (digits only; on a list page, from the selected row) | ✓ | ✓ | ✓ | ✓ | — |
 | `{branch}` | the PR's head branch (the side being merged) | ✓ | — | — | — | — |
-| `{base}` | the PR's base branch (the side merged into — exactly as read from the PR page) | ✓ | — | — | — | — |
+| `{base}` | the PR's base branch (the side merged into) | ✓ | — | — | — | — |
 | `{branch_underbar}` | `{branch}` with `/` replaced by `_` (for worktree directory names etc.) | ✓ | — | — | — | — |
 
-Variables work identically in commands and claude inputs. A list page supplies `{repo}`, `{owner}`, and `{number}` per selected row — the same `{number}` as the detail pages, so a detail-page command works on a list unchanged; list pages have no `{branch}`, `{base}`, or `{main}`. Using a variable the page doesn't have gets the run rejected. `{cd}` is the exception to "the page provides it" — the app supplies that one, on every page, and it needs `{repo}` to be available.
+Variables work identically in commands and claude inputs. Page-supplied values are restricted to ASCII letters, digits, and `-_./`. `{cd}` is app-generated shell syntax assembled from validated ingredients, and it requires `{repo}`. A detail-page template works on a list only when every variable it uses is available there; a missing variable gets the run rejected.
 
-**`{main}`** is resolved as per-repo override → page detection → global default. Detection reads a different spot per page: PR pages read the base branch, while repository and issue pages read the repository's **default branch** that GitHub embeds in the page — so repos whose default branch is `master` are right without an override, on any `/tree/...` path. Register an override if you want to cover detection failure too.
+**`{main}`** resolves as per-repo override → page detection → global default. PR pages detect the base branch; repository and issue pages detect the repository's default branch, so a `master` repository needs no override.
 
-**`{base}`** is the branch the PR actually merges into, read from the PR page as-is — no override, no fallback. `{main}` and `{base}` usually match, but they diverge when a per-repo override is set or the PR targets another branch (e.g. `release/2`). Use `{base}` for commands that must operate on the true merge target (`git merge --ff-only origin/{base}`, `git rebase origin/{base}`, …). If it can't be read from the page, it isn't sent and the run is rejected rather than silently substituted.
+**`{base}`** is read from the PR page as-is, with no override or fallback — use it where the true merge target matters (`git rebase origin/{base}`). If it can't be read, the run is rejected rather than substituted.
+
+### Language
+
+Terminal Checkout ships **English, Korean, Japanese, Simplified Chinese and Traditional Chinese**. The app follows the **Language** card in its setup window, your macOS language by default; the extension follows **Chrome's** display language, so the two can differ.
+
+> **Translation notice.** The app's and the extension's English and Korean text is written by hand. **Their Japanese, Simplified Chinese and Traditional Chinese text is a machine-translated first pass and has not been reviewed by a speaker.** Corrections are welcome as issues or pull requests. Nothing we translate reaches a shell.
+
+<details>
+<summary>How each side resolves its language</summary>
+
+- **Nothing that reaches a shell is translated**: the test command and the clause the app builds to enter a repository are fixed English by construction, and your own command templates are never touched.
+- **[Follow the system language]** is the default. It follows your macOS language order and picks the first of the five it can answer; a language none of them covers falls back to **English**. Choose an explicit language and it is honoured as chosen — it never falls through to a third language you did not name. The list is written in each language's own script, so you can find your way back out of one you cannot read.
+- **The app's own text changes immediately.** Choosing [Follow the system language] resolves against the system-owned language order, not an `AppleLanguages` value this app wrote earlier. System dialogs drawn by macOS — file pickers, alerts, the menu bar's standard items — follow from the **next launch**, which is why the card offers a restart. Pressing restart while a claude input is still being delivered does nothing except say so: the delivery would be cut off, so it is refused rather than queued, and you press again when it has finished.
+- **The extension does not ask the app anything.** Message ids are resolved from Chrome's display-language catalogue when the extension draws, so changing that language (at `chrome://settings/languages`) and reloading a page is all it takes — Chrome has no per-extension language setting. Saved button labels are text snapshots from when they were saved, so changing Chrome's language does not rewrite those labels; recreate or edit the button to give it new text. A language Chrome is set to that we do not ship falls back to **English**, and the page says so in its own `lang` attribute.
+- `zh-Hant` covers Hong Kong and Macau as well, which is what macOS itself does with those regions.
+- **[Follow the system language] clears only an override this app recorded and that still has the same value.** A per-app choice made in System Settings, an `-AppleLanguages` argument, or something with higher priority remains in charge; the app does not delete a value it cannot prove it wrote. The macOS permission prompt is a separate case again: it is drawn by macOS itself, and whether it follows your choice here is not known.
+
+</details>
+
+## How it works
+
+```mermaid
+flowchart LR
+    EXT["Chrome extension"] -->|stdio| RELAY["relay<br>(forwarding only)"]
+    RELAY -->|unix socket| APP["Terminal Checkout.app"]
+    APP --> TERM["your terminal"]
+```
+
+macOS attributes Automation permission to the *responsible process*, so a native host that Chrome spawned and that drove the terminal itself would put that permission on Chrome. Here the relay Chrome spawns only forwards bytes to the app's unix socket, launching the app in the background if it isn't running. The app, started through LaunchServices as its own responsible process, validates the request, renders the command, decides how claude input is delivered, and drives the terminal — so the permission attaches to Terminal Checkout, never to the browser. Why each piece is shaped this way is recorded in [`docs/context/`](docs/context/index.md).
+
+## Security
+
+- Command templates are trusted configuration you wrote; values read from GitHub pages pass the [variables](#variables) character whitelist, which prevents command injection.
+- The app socket, cmux automation mode and the Warp injection helper trust every process of the same macOS user.
+- The extension runs only on `https://github.com`.
+- A script running on the GitHub page — an XSS, or another extension with access to the site — can change a note's text before you press send, and claude takes it as yours. It cannot send a note by itself: faked clicks and key presses are ignored.
+
+<details>
+<summary>Mechanics</summary>
+
+- Chrome launches the Native Host relay only for whitelisted extension IDs (`allowed_origins`) — enforced by Chrome, not by the relay itself.
+- The app socket is mode 0600 with peer verification, and the Warp injection helper is killed the moment delivery ends.
+
+</details>
+
+The full trust model and how to report a vulnerability are in [SECURITY.md](SECURITY.md).
+
+## Troubleshooting
+
+<details>
+<summary><b>"Native host has exited", or the extension doesn't respond</b></summary>
+
+Open the setup window (launch Terminal Checkout from Spotlight); problem cards appear automatically. If the Chrome connection card shows, press [Register/Update]. If you moved the repository or reinstalled the app, run `./install.sh` again.
+
+</details>
+
+<details>
+<summary><b>You denied a permission</b></summary>
+
+[Open System Settings] in the setup window → **Privacy & Security → Automation → Terminal Checkout → iTerm2**. Warp's screen reading is the **Accessibility** item on the same screen.
+
+</details>
+
+<details>
+<summary><b>cmux or cmux NIGHTLY socket access is denied</b></summary>
+
+Enable automation in cmux Settings → Automation, or in the setup window click [Open Config File] to copy the JSON fragment and open `~/.config/cmux/cmux.json`, then set `automation.socketControlMode` to `automation`. Both channels share this file, and the app never writes it.
+
+</details>
+
+<details>
+<summary><b>cmux or cmux NIGHTLY is not running</b></summary>
+
+[Run in Terminal] starts the selected channel without arguments; after its socket appears, use [Check Again]. NIGHTLY is a separate bundle and is never silently replaced by stable. [Open Config File] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
+
+</details>
+
+<details>
+<summary><b>The cmux or cmux NIGHTLY command ran but claude input is missing</b></summary>
+
+The pane's shell integration may be off, so `debug.terminals` has no tty for the surface; the command is kept, but claude input is abandoned. Check the app log with `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
+
+</details>
+
+<details>
+<summary><b>claude input isn't delivered on Warp</b></summary>
+
+Typed input (every `!` input, so all four shipped presets that schedule claude input) needs the Accessibility permission; an input that rides in the opening message does not. A note from the ▾ caret is one more input: added to a button that already schedules one, it makes a list of two, which is typed — the app counts after its own trimming, so a stored input made only of characters it trims away does not count. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
+
+</details>
+
+<details>
+<summary><b>A claude input was typed instead of riding in the opening message</b></summary>
+
+That is the normal path for anything with a `!`, a slash command or a `#` line in the list: only a list holding exactly one plain-text input is appended to the command (two plain lines would need a newline between them, so they are typed). A note from the ▾ caret counts as one of the inputs. If a single plain-text input is still being typed, the command has to end in a bare `claude` (no trailing flag, redirect, pipe or comment), every word you wrote has to be readable and safe as a command name (`git add .`, `-m 'msg'`, `export …` and `PATH=…` all stop it; the app's own `{cd}` clause counts as one plain word), the message must be single-line, your login shell has to be POSIX-family, and `claude` has to be a real executable rather than a function or an alias.
+
+</details>
+
+<details>
+<summary><b>Permission prompts again after rebuilding</b></summary>
+
+Ad-hoc signing means a build whose code changed also changes the signing identity; allow the Automation prompt once more. The Accessibility grant fails worse than that: the old entry stays listed in System Settings with its switch on but no longer applies, and toggling it does not revive it. `./install.sh` compares the installed and freshly built code hashes and, only when they differ, resets that entry so you can grant it again — it matters only if you use Warp claude input. If the reset can't run, the script prints the single command to run yourself instead of doing anything interactive.
+
+</details>
+
+<details>
+<summary><b><code>zoxide has not recorded a directory named …</code>, and nothing after it runs</b></summary>
+
+zoxide has no folder of exactly that name: you haven't `cd`'d into the repository since installing zoxide, or your clone's folder is named differently from the repository. The first clause of the command fails and the `&&` chain stops there. The app can't see this: the command was delivered and died inside your shell, so the button still reports success. Set a **repository base folder** in the setup window and the command falls through to `<base>/<repo>`, cloning it when missing — or `cd` into the repository once by hand, which is what teaches zoxide. See [Getting into the repository](#getting-into-the-repository).
+
+</details>
+
+<details>
+<summary><b><code>command not found: zoxide</code></b></summary>
+
+Make sure zoxide is installed, your terminal uses a login shell that has it on its `PATH`, and `eval "$(zoxide init zsh)"` (or your shell's equivalent) is in your shell config — without the init line zoxide never learns new folders. A base folder covers this case too, since a missing zoxide fails the same way an empty database does.
+
+</details>
+
+<details>
+<summary><b>Buttons don't appear</b></summary>
+
+GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
+
+</details>
 
 ## Development
 
 ```bash
-cd app && swift test   # Core unit tests
-node --test            # extension (JS) pure-function unit tests — repo root, no dependencies
-app/build.sh           # build the app bundle (app/build/Terminal Checkout.app)
-app/e2e.sh             # relay ↔ socket ↔ server round-trip regression test (after building)
-
-node tools/check-locales.js            # _locales structure: name parity and argument bindings against en (node --test checks the byte pins too)
+swift test --package-path app   # Core unit tests
+node --test                     # extension (JS) unit tests — no dependencies
+app/build.sh                    # build the app bundle (app/build/Terminal Checkout.app)
+app/e2e.sh                      # relay ↔ socket ↔ server round-trip regression test (after building)
+node tools/check-locales.js     # _locales structure: name parity and argument bindings against en
 ```
 
-Architecture constraints and measured pitfalls are recorded in [`CLAUDE.md`](CLAUDE.md). Adding support for a new terminal? Start from [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md). Why the project is shaped the way it is lives in [`docs/context/`](docs/context/index.md).
-
-**Adding a language.** Add its app tag to `supportedLocales` (`app/Sources/Core/Localization.swift`) and `TC_I18N_LOCALES` (`extension/i18n.js`), add `app/Sources/App/Resources/<tag>.lproj/` with `Localizable.strings` and `InfoPlist.strings`, add `extension/_locales/<chrome-code>/messages.json` with the extension's name and description, and add its `CHROME_LOCALE_DIRECTORIES` and baseline-hash entries in `tools/check-locales.js` — Chrome will not read those from anywhere else, and its directory is named in **Chrome's** locale codes rather than ours (`zh-Hans` is `zh_CN` there, `zh-Hant` is `zh_TW`). The catalogue tests, checker and bundle gate validate consistency once each declaration is present; an independent list cannot infer a tag omitted from another, so run all five gates after adding one. `_locales` is the canonical, hand-edited translation store; `node tools/check-locales.js` checks name parity and argument bindings against `en` and never writes it. A changed `_locales` file must be reviewed as an intentional translation edit or an unintended structural change before its committed baseline pin is updated. One structural rule has no VM gate: an extension-root name may not start with `_` unless Chrome owns it (`_locales`) — Chrome refuses to load the folder otherwise, and only the real loader enforces it, so the test suite pins the rule by listing the root. Values are never translated for anything that reaches a shell — see the `ShellPayload` type and the note in [Language](#language).
-
-## Security
-
-- Chrome launches the Native Host relay only for whitelisted extension IDs (`allowed_origins`) — enforced by Chrome, not by the relay itself
-- Variable values pass an alphanumeric + `-_./` whitelist, preventing command injection
-- The app socket, cmux automation mode, and the Warp injection helper deliberately trust processes of the same user (uid): mode 0600 + peer verification on the app socket, and the helper is killed the moment delivery ends — see [SECURITY.md](SECURITY.md) for the full trust model
-- The extension runs only on `https://github.com`
-- A note for claude is typed into a box on the GitHub page, so a script running there — an XSS, or another extension with access to the site — can change its text before you press send, and claude reads the note as your message. Clicks and key presses a script fakes are ignored, so such a script cannot send a note by itself
-
-## Troubleshooting
-
-**"Native host has exited" / the extension doesn't respond** — Open the setup window (launch Terminal Checkout from Spotlight); problem cards appear automatically. If the Chrome connection card shows, press [Register/Update]. If you moved the repository or reinstalled the app, run `./install.sh` again.
-
-**You denied a permission** — [Open System Settings] in the setup window → **Privacy & Security → Automation → Terminal Checkout → iTerm2**. Warp's screen reading is the **Accessibility** item on the same screen.
-
-**cmux or cmux NIGHTLY socket access is denied** — Enable automation in cmux Settings → Automation, or in the setup window click [Open Config File] to copy the JSON fragment and open `~/.config/cmux/cmux.json`, then set `automation.socketControlMode` to `automation`. Both channels share this file, and the app never writes it.
-
-**cmux or cmux NIGHTLY is not running** — [Run in Terminal] starts the selected channel without arguments; after its socket appears, use [Check Again]. NIGHTLY is a separate bundle and is never silently replaced by stable. [Open Config File] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
-
-**The cmux or cmux NIGHTLY command ran but claude input is missing** — The pane's shell integration may be off, so `debug.terminals` has no tty for the surface; the command is kept, but claude input is abandoned. Check the app log with `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
-
-**claude input isn't delivered on Warp** — Typed input (every `!` input, so all four shipped presets that schedule claude input) needs the Accessibility permission; a lone plain-text input, which rides in the opening message, does not. A note from the ▾ caret is one more input: added to a button that already schedules one, it makes a list of two, which is typed — the app counts after its own trimming, so a stored input made only of characters it trims away does not count. If the button showed ❌ and no tab opened, the app knew up front it couldn't deliver: grant **Accessibility** in the setup window (the window comes forward on its own to show you) or reinstall to restore the bundled helper. If the tab did open and only the input is missing: were you looking at that tab until delivery finished? Switching away makes the app wait (it resumes when you return). Otherwise the reason is in `log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info`.
-
-**A claude input was typed instead of riding in the opening message** — That is the normal path for anything with a `!`, a slash command or a `#` line in the list: only a list holding exactly one plain-text input is appended to the command (two plain lines would need a newline between them, so they are typed). A note from the ▾ caret counts as one of the inputs. If a single plain-text input is still being typed, the command has to end in a bare `claude` (no trailing flag, redirect, pipe or comment), every word you wrote has to be readable and safe as a command name (`git add .`, `-m 'msg'`, `export …` and `PATH=…` all stop it; the app's own `{cd}` clause counts as one plain word), the message must be single-line, your login shell has to be POSIX-family, and `claude` has to be a real executable rather than a function or an alias.
-
-**Permission prompts again after rebuilding** — Ad-hoc signing means a build whose code changed also changes the signing identity; allow the Automation prompt once more. The Accessibility grant fails worse than that: the old entry stays listed in System Settings with its switch on but no longer applies, and toggling it does not revive it. `./install.sh` compares the installed and freshly built code hashes and, only when they differ, resets that entry so you can grant it again — it matters only if you use Warp claude input. If the reset can't run, the script prints the single command to run yourself instead of doing anything interactive.
-
-**`zoxide has not recorded a directory named …`, and nothing after it runs** — zoxide has no folder of exactly that name: you haven't `cd`'d into the repository since installing zoxide, or your clone's folder is named differently from the repository. The first clause of the command fails and the `&&` chain stops there. The app can't see this: the command was delivered and died inside your shell, so the button still reports success. Set a **repository base folder** in the setup window and the command falls through to `<base>/<repo>`, cloning it when missing — or `cd` into the repository once by hand, which is what teaches zoxide. See [Getting into the repository](#getting-into-the-repository).
-
-**`command not found: zoxide`** — Make sure zoxide is installed, your terminal uses a login shell that has it on its `PATH`, and `eval "$(zoxide init zsh)"` (or your shell's equivalent) is in your shell config — without the init line zoxide never learns new folders. A base folder covers this case too, since a missing zoxide fails the same way an empty database does.
-
-**Buttons don't appear** — GitHub UI updates can move button anchors. Clicking the extension icon is an alternative path that doesn't depend on those anchors — it reads the same page data, so it can fail too; failures land in the service-worker console.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Architecture constraints and measured pitfalls are in [`CLAUDE.md`](CLAUDE.md), the touch points for a new terminal in [`docs/new-terminal-checklist.md`](docs/new-terminal-checklist.md), and the reasons behind the design in [`docs/context/`](docs/context/index.md).
 
 ## Uninstall
 
