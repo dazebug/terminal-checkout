@@ -1001,7 +1001,7 @@ public func runInWezTerm(
         let env = wezTermEnvironment(socketPath: sock)
         let focus = findWezTermFocus(cli: cli, env: env)
         let paneID = wezTermLaunchInMux(
-            cli: cli, env: env, focus: focus, command: command, activation: activation
+            cli: cli, focus: focus, command: command, activation: activation
         ) { path, args, input in
             (try? runProcess(path, args, input: input, env: path == cli ? env : nil, timeout: 5))
                 .map { (status: $0.status, stdout: $0.stdout) }
@@ -1026,9 +1026,10 @@ public func runInWezTerm(
 
 
 /// Opens the tab through the mux and sends the command; nil when every spawn attempt failed. `run`
-/// is the process runner, a parameter so the order of the calls can be tested.
+/// is the process runner — it owns the environment each call gets — and is a parameter so the
+/// order of the calls can be tested.
 func wezTermLaunchInMux(
-    cli: String, env: [String: String], focus: WezTermFocus?, command: String, activation: TabActivation,
+    cli: String, focus: WezTermFocus?, command: String, activation: TabActivation,
     run: (_ path: String, _ args: [String], _ input: String?) -> (status: Int32, stdout: String)?
 ) -> String? {
     for args in wezTermSpawnAttempts(windowID: focus?.windowID) {

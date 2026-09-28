@@ -3755,7 +3755,7 @@ final class WezTermWindowTests: XCTestCase {
     private func launchCalls(_ activation: TabActivation) -> (pane: String?, calls: [String]) {
         var calls: [String] = []
         let pane = wezTermLaunchInMux(
-            cli: "/wz", env: [:], focus: WezTermFocus(windowID: "3", paneID: "146"),
+            cli: "/wz", focus: WezTermFocus(windowID: "3", paneID: "146"),
             command: "echo hi", activation: activation
         ) { path, args, _ in
             calls.append(([path == "/wz" ? "wz" : path] + args.prefix(2)).joined(separator: " "))
