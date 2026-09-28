@@ -1,4 +1,4 @@
-<!-- Translated from README.md at commit 0e56484. Keep this file line-for-line with README.md; see CONTRIBUTING.md. -->
+<!-- Translated from README.md at commit 59a640c. Keep this file line-for-line with README.md; see CONTRIBUTING.md. -->
 <div align="center">
   <p><a href="README.ko.md">🇰🇷 한국어</a> · <b>🇹🇼 繁體中文</b> · <a href="README.md">🇺🇸 English</a> · <a href="README.ja.md">🇯🇵 日本語</a></p>
   <img src="docs/assets/icon.png" width="96" height="96" alt="">
@@ -14,12 +14,7 @@
   <p><a href="#安裝">安裝</a> · <a href="#使用方式">使用方式</a> · <a href="#支援的終端機">終端機</a> · <a href="#疑難排解">疑難排解</a> · <a href="CONTRIBUTING.md">貢獻指南</a></p>
 </div>
 
-<!--
-  Hero demo slot. Planned: select two PRs on a PR list page, press "Checkout PR + Claude", and cmux opens
-  one worktree and one Claude Code session per PR. Fallback: "Review PR (claude)" with a ▾ note on a single PR.
-  A real recording with startup waits shortened and disclosed, no account data in frame. Add as
-  docs/assets/demo.gif once it exists; until then nothing renders here.
--->
+![在 GitHub issue 清單選取 8 個一次送出，cmux 立刻開啟 8 個 Claude Code 工作階段，已解決的 issue 會被關閉（錄影已加速）](docs/assets/demo.zh-Hant.gif)
 
 ## 功能
 
