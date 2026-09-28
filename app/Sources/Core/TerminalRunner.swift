@@ -196,10 +196,9 @@ public func runProcess(
     let inPipe = Pipe()
     if input != nil { process.standardInput = inPipe } else { process.standardInput = FileHandle.nullDevice }
 
-    // The exit is observed through `terminationHandler`, not `waitUntilExit()`. Measured on this
-    // machine: `waitUntilExit()` on a GCD thread polls a run loop and added a fixed ∼64ms to every
-    // call (66.7ms for `ps`, 3.2ms with the handler), and one claude input costs ∼33 calls. Set
-    // before `run()` so a child that exits at once is not missed
+    // Do not go back to `waitUntilExit()`: on a GCD thread it polls a run loop and adds a fixed delay
+    // to every call, which claude input delivery pays dozens of times per input (measurements in
+    // docs/context/subprocess-execution.md). Set before `run()` so a child that exits at once is not missed
     let exited = DispatchSemaphore(value: 0)
     process.terminationHandler = { _ in exited.signal() }
     try process.run()

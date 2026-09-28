@@ -170,7 +170,7 @@ public func cmuxTTYName(debugTerminalsJSON: Data, surfaceID: String) -> String? 
 
 /// The throwaway marker typed before every input (`proveOurPaneAndEmptyBox`), which is also Warp's pane-proof nonce. It can only enter our own tty, so seeing it newly appear on screen is evidence that the screen is our pane.
 ///
-/// **Three Runic letters (U+16A0–U+16EA) — measured on Claude Code 2.1.283.** Nothing claude draws is Runic (its frame, spinner, prompt and hints are box drawing, dingbats, `❯` and ASCII), so a single rune left on screen is already a remnant and three are enough where twelve alphanumerics were needed while the erase check had to work in six-character windows (`screenShowsMarkerErased`). Typed into the input box they drew as `❯ ᚠᛉᛟ`, one cell each, and Ctrl+U then Backspace removed all three. Being non-ASCII they mean nothing to the input box (`/`, `!` and `@` trigger modes and completion) nor to a dialog whose keys are digits or `y`/`n`. 75 letters give 421,875 markers, so an earlier attempt's marker cannot pass for this one.
+/// Keep it to characters claude never draws — `screenShowsMarkerErased` counts single characters, which only means "part of our marker is left" while nothing else on the screen uses them; an alphabet claude draws (ASCII, box drawing, dingbats) would need long fragments again. Three Runic letters from 75 give 421,875 markers, so an earlier attempt's marker cannot pass for this one. The measurements behind the choice are in `docs/context/claude-input-delivery.md`.
 public func paneProofToken() -> String {
     let runes = (0x16A0...0x16EA).compactMap(Unicode.Scalar.init).map(Character.init)
     return String((0..<3).map { _ in runes.randomElement()! })
@@ -588,8 +588,6 @@ func inputBoxAfterSubmit(
 /// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
 /// retypes and submits: the user's command runs **twice**. With a marker, that stray Enter submits
 /// one inert line and the body is still typed exactly once.
-///
-/// Why the marker is three Runic letters is on `paneProofToken`.
 private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int) -> Bool {
     guard let before = io.screenText() else {
         checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
@@ -1074,10 +1072,9 @@ public func deliverClaudeInputs(
     }
 }
 
-/// How long the session gate waits on `ps` and `stty`. Both answer in ∼3ms through `runProcess`
-/// (measured), and a probe that has not answered is "cannot tell", which already closes the gate —
-/// so the general 5s + 2s + 2s escalation only delays the same verdict. It did, silently: field
-/// deliveries showed gate waits of 9.3∼9.6s matching that escalation exactly, with nothing logged.
+/// The session gate's limits on `ps` and `stty`. Keep them short: an unanswered probe already reads
+/// "cannot tell" and closes the gate, so a long escalation only delays that same verdict — the
+/// general 5s + 2s + 2s one did, silently (`docs/context/subprocess-execution.md`).
 let claudeGateProbeLimits = (timeout: 1.0, terminationGrace: 0.5, killWait: 0.5)
 
 private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {

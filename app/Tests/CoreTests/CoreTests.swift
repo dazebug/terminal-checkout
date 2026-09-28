@@ -3220,7 +3220,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
 final class ScreenReflectionTests: XCTestCase {
     private let input = "!gh issue view 1415"
 
-    /// The R1-j remnant shape (Ctrl+U ignored, Backspace processed) on the three-rune marker: one
+    /// The cmux key-path remnant shape (Ctrl+U ignored, Backspace processed) on the three-rune marker: one
     /// character gone and two left, which a check that needs six-character windows cannot even see
     func testScreenShowsMarkerErasedRejectsATwoRuneRemnant() {
         XCTAssertFalse(
@@ -4081,9 +4081,9 @@ final class RunProcessTimeoutTests: XCTestCase {
         XCTAssertTrue(result.stdout.hasPrefix("ok"), result.stdout)
     }
 
-    /// Measured: `Process.waitUntilExit()` on a GCD thread added a fixed ∼64ms to every call
-    /// (66.7ms for `ps`, whose own run is ∼3ms), and one claude input takes ∼33 calls. A fast child
-    /// has to come back at the speed it exits, not at the speed of a run-loop poll
+    /// A fast child has to come back at the speed it exits, not at the speed of a run-loop poll:
+    /// `waitUntilExit()` on a GCD thread added a fixed ∼64ms to every call (measured), so the 25ms
+    /// bound separates the two with room on both sides
     func testRunProcessReturnsAtTheSpeedAFastChildExits() throws {
         let runs = 20
         let started = Date()
