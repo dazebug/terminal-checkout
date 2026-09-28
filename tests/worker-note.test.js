@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { loadWorker, PAGES } = require('./worker-harness.js');
+const { loadWorker, PAGES, NATIVE_HOST } = require('./worker-harness.js');
 
 // This realm builds what a content script would send, from the same defaults.js
 const readExtension = name => fs.readFileSync(path.join(__dirname, '../extension', name), 'utf8');
@@ -35,12 +35,14 @@ const ITEMS = {
   'issue-list': [{ variables: { repo: 'r', owner: 'o', number: '3' } }, { variables: { repo: 'r', owner: 'o', number: '4' } }],
 };
 
-// The native message a click on `kind` must produce: a single command, or a batch on a list page
+// The native call a click on `kind` must produce: to the host the app registers, a single command, or
+// a batch on a list page
 function expected(kind, command, inputs) {
   const claude = inputs.length ? { claude_inputs: inputs } : {};
-  return LIST_KINDS.has(kind)
+  const message = LIST_KINDS.has(kind)
     ? { command, items: ITEMS[kind], ...claude }
     : { command_template: command, variables: VARIABLES[kind], ...claude };
+  return { host: NATIVE_HOST, message };
 }
 
 // A worker whose storage holds `button` as the first button of `kind`, on a page of `page`'s kind
@@ -157,27 +159,35 @@ test('a note does not get past a changed button or a click from another page', a
   // Clicked on PR 7, but the tab — and so every value read from it — is on PR 8
   const moved = workerWith('pr', button);
   moved.navigate('https://github.com/o/r/pull/8');
-  const refusedPage = await moved.dispatch(
-    click('pr', button, { note: 'hi' }),
-    { id: 1, url: 'https://github.com/o/r/pull/8' },
-  );
+  const refusedPage = await moved.dispatch(click('pr', button, { note: 'hi' }), { url: 'https://github.com/o/r/pull/8' });
   assert.deepEqual(refusedPage, { success: false, error: moved.get('PAGE_CHANGED_ERROR') });
   assert.equal(moved.calls.native.length, 0);
 });
 
-test('the final gate refuses a note whose page moved after every earlier read passed', async () => {
-  // Another page, not a sub-path: `/pull/7/files` is still PR 7 to the gate
-  const movedTo = { pr: 'https://github.com/o/r/pull/8', 'issue-list': 'https://github.com/o/other/issues' };
-  for (const kind of ['pr', 'issue-list']) {
-    const button = stored(preset(kind === 'pr' ? 'pr.review' : 'issue-list.triageClaude'));
+test('the final gate refuses a note whose page moved after every earlier read had answered', async () => {
+  // The page moves on its own, right after the last read before the gate has answered — not inside the
+  // gate's read — so it moves whether or not a gate is there to see it. Another page, not a sub-path:
+  // `/pull/7/files` is still PR 7 to the gate.
+  const cases = [
+    ['pr', 'pr.review', 'repoMainBranch', 'https://github.com/o/r/pull/8'],
+    ['issue', 'issue.read', 'repoMainBranch', 'https://github.com/o/r/issues/4'],
+    ['repo', 'repo.openClaude', 'repoMainBranch', 'https://github.com/o/other'],
+    ['pr-list', 'pr-list.checkoutClaude', 'readListSelectionFromPage', 'https://github.com/o/other/pulls'],
+    ['issue-list', 'issue-list.triageClaude', 'readListSelectionFromPage', 'https://github.com/o/other/issues'],
+  ];
+  for (const [kind, id, lastRead, movedTo] of cases) {
+    const button = stored(preset(id));
     const worker = workerWith(kind, button);
-    worker.beforeRead('readCurrentHref', () => worker.navigate(movedTo[kind]));
+    let moved = false;
+    worker.afterAnswer(lastRead, () => {
+      worker.navigate(movedTo);
+      moved = true;
+    });
     const response = await worker.dispatch(click(kind, button, { note: 'hi' }));
+    assert.equal(moved, true, `${kind}: the page never moved`);
+    assert.deepEqual(worker.native(), [], `${kind}: sent past a moved page`);
     assert.deepEqual(response, { success: false, error: worker.get('PAGE_CHANGED_ERROR') }, kind);
-    assert.equal(worker.calls.native.length, 0, `${kind}: sent past a moved page`);
-    // The reads before the gate ran and agreed; only the gate saw the move
-    assert.equal(worker.calls.scripting.at(-1), 'readCurrentHref', kind);
-    assert.ok(worker.calls.scripting.length > 1, `${kind}: nothing was read before the gate`);
+    assert.equal(worker.calls.scripting.at(-1), 'readCurrentHref', `${kind}: the gate was not the last read`);
   }
 });
 
@@ -190,6 +200,39 @@ test('a list note does not survive a selection the worker reads differently', as
   const response = await worker.dispatch(click('pr-list', button, { note: 'hi', selected: PAGES['pr-list'].selected }));
   assert.deepEqual(response, { success: false, error: worker.get('LIST_SELECTION_CHANGED_ERROR') });
   assert.equal(worker.calls.native.length, 0);
+});
+
+test('a click the app refused is the click\'s failure, with the app\'s own reason', async () => {
+  // Success on the page means the app took the request; a refusal from the app has to arrive as a
+  // failure, not be read as one more success
+  const refusal = { success: false, error: 'Variable {base} not provided' };
+  for (const [kind, id] of [['pr', 'pr.review'], ['issue', 'issue.read'], ['repo', 'repo.openClaude']]) {
+    const button = stored(preset(id));
+    const worker = loadWorker({ store: { [BUTTON_KINDS[kind].storageKey]: [button] }, page: PAGES[kind], reply: () => refusal });
+    const response = await worker.dispatch(click(kind, button, { note: 'hi' }));
+    assert.deepEqual(response, refusal, kind);
+    assert.deepEqual(worker.native(), [expected(kind, button.command, [...button.claudeInputs, 'hi'])], kind);
+  }
+});
+
+test('a batch the app ran in part arrives as the app\'s own result, keyed in the order the worker read', async () => {
+  // A batch answers per item, so an item that failed does not fail the click: the app's result comes
+  // back whole inside an outer success, and `itemKeys` names the rows in the order the worker read
+  // them from the page — the order of the items it sent — not the order the click's snapshot had
+  const outcome = { success: false, items: [{ success: true }, { success: false, error: 'worktree already exists' }] };
+  for (const [kind, id] of [['pr-list', 'pr-list.checkoutClaude'], ['issue-list', 'issue-list.triageClaude']]) {
+    const button = stored(preset(id));
+    const current = [...PAGES[kind].selected].reverse();
+    const worker = loadWorker({
+      store: { [BUTTON_KINDS[kind].storageKey]: [button] },
+      page: { ...PAGES[kind], selected: current },
+      reply: () => outcome,
+    });
+    const response = await worker.dispatch(click(kind, button, { note: 'hi' }));
+    assert.deepEqual(response, { success: true, batch: outcome, itemKeys: current.map(row => row.key) }, kind);
+    const [{ message }] = worker.native();
+    assert.deepEqual(message.items.map(item => item.variables.number), current.map(row => row.key.split('/').at(-1)), kind);
+  }
 });
 
 test('the extension icon still runs the first button of the page, with no note, on every page kind', async () => {
