@@ -31,6 +31,10 @@ Add its app tag to `supportedLocales` (`app/Sources/Core/Localization.swift`) an
 
 `_locales` is the canonical, hand-edited translation store; `node tools/check-locales.js` checks name parity and argument bindings against `en` and never writes it. A changed `_locales` file must be reviewed as an intentional translation edit or an unintended structural change before its committed baseline pin is updated. One structural rule has no VM gate: an extension-root name may not start with `_` unless Chrome owns it (`_locales`) — Chrome refuses to load the folder otherwise, and only the real loader enforces it, so the test suite pins the rule by listing the root. Values are never translated for anything that reaches a shell — see the `ShellPayload` type and the translation notice in the README's [Language](README.md#language) section.
 
+## README translations
+
+`README.ko.md`, `README.zh-Hant.md` and `README.ja.md` are full translations of `README.md`. When `README.md` changes, update them in the same pull request where you can. Each translation's first line is an HTML comment naming the English commit it was last brought up to, so a translation that has fallen behind can be told from a current one. Keep each translation line-for-line with the English: the same lines, code, links and anchors. Quote on-screen labels the way that language's UI shows them (`Localizable.strings`, `_locales`, and Chrome's and macOS's own wording). Move the commit in the comment when you bring a translation up to date.
+
 ## Pull requests
 
 Keep PRs focused, and describe what you verified — which tests you ran and which hands-on checks you performed.

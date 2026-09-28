@@ -1,4 +1,5 @@
 <div align="center">
+  <p><a href="README.ko.md">🇰🇷 한국어</a> · <a href="README.zh-Hant.md">🇹🇼 繁體中文</a> · <b>🇺🇸 English</b> · <a href="README.ja.md">🇯🇵 日本語</a></p>
   <img src="docs/assets/icon.png" width="96" height="96" alt="">
   <h1>Terminal Checkout</h1>
   <p><strong>One click from GitHub to your repo, branch, or worktree.</strong></p>
@@ -300,7 +301,7 @@ Variables work identically in commands and claude inputs. Page-supplied values a
 
 Terminal Checkout ships **English, Korean, Japanese, Simplified Chinese and Traditional Chinese**. The app follows the **Language** card in its setup window, your macOS language by default; the extension follows **Chrome's** display language, so the two can differ.
 
-> **Translation notice.** English and Korean are written by hand. **Japanese, Simplified Chinese and Traditional Chinese are a machine-translated first pass and have not been reviewed by a speaker.** Corrections are welcome as issues or pull requests. Nothing we translate reaches a shell.
+> **Translation notice.** The app's and the extension's English and Korean text is written by hand. **Their Japanese, Simplified Chinese and Traditional Chinese text is a machine-translated first pass and has not been reviewed by a speaker.** Corrections are welcome as issues or pull requests. Nothing we translate reaches a shell.
 
 <details>
 <summary>How each side resolves its language</summary>
