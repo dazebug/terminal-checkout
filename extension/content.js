@@ -28,7 +28,6 @@ function createRepoButton(buttonConfig, index) {
 
   const button = document.createElement('button');
   button.textContent = face;
-  button.title = buttonConfig.label;
   button.style.cssText = REPO_BUTTON_STYLE;
   button.className = 'terminal-open-btn';
   button.dataset.btnIndex = index;
@@ -490,17 +489,8 @@ function renderListBatchResultView(view, kind, generation) {
   }
 }
 
-// A body click on a selection the batch cannot take shows the error marker (its run's phase) with the
-// reason as the tooltip, until the marker clears and the label comes back
-function showListBatchSelectionError(button, notice) {
-  if (notice?.messageKey === 'ext.list.batch.selection.empty') {
-    button.title = tr('ext.list.batch.selection.empty');
-  } else if (notice?.messageKey === 'ext.list.batch.selection.tooMany') {
-    button.title = tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
-  }
-}
-
-// The same reason, on the popover's line, where the note stays as typed
+// Why a selection cannot be sent: on the popover's line, where the note stays as typed, and as the
+// body's tooltip while the marker of a press it refused is up (`splitButtonTooltip`)
 function listSelectionNoticeText(notice) {
   if (notice.messageKey === 'ext.list.batch.selection.tooMany') {
     return tr('ext.list.batch.selection.tooMany', notice.args[0], notice.args[1]);
@@ -517,7 +507,6 @@ function createListBatchButton(buttonConfig, index, kind) {
   button.type = 'button';
   button.className = LIST_BUTTON_CLASS;
   button.textContent = face;
-  button.title = buttonConfig.label;
   button.dataset.btnIndex = index;
   button.dataset.listKind = kind;
   button.style.cssText = LIST_BUTTON_STYLE;
@@ -533,7 +522,6 @@ function createListBatchButton(buttonConfig, index, kind) {
   return splitButton(button, buttonConfig, index, {
     action: LIST_BATCH_ACTION, kind, face, phases: { busy: '⏳', done: '✅', error: '❌' },
     delays: { done: 2000, error: 2000 }, look: 'pill',
-    restoreTitle: () => { button.title = buttonConfig.label; },
   });
 }
 
@@ -579,7 +567,6 @@ function createCommandIconButton(buttonConfig, index, { action, kind, className 
   const face = buttonFace(buttonConfig);
   const button = document.createElement('button');
   button.className = className;
-  button.title = buttonConfig.label;
   // flex-shrink:0 — when space runs short, what should give is the branch name (GitHub ellipsizes
   // it), not the button. Without this the text pill is squeezed first and you can no longer read
   // which button it is
@@ -763,12 +750,13 @@ let notePopover = null;
 // GitHub can move to another page without anything removing the buttons drawn for the last one, and a
 // button that held the page it was drawn on while sending the page on screen let a rebuilt button send
 // the same request again (measured). A list button also names the badges its results draw
-// (`resultIdentity`) and how its tooltip comes back after a refused selection (`restoreTitle`).
-function splitButton(body, config, index, { action, kind, face, phases, delays, look, restoreTitle }) {
+// (`resultIdentity`). The body's face, its tooltip and whether it can be pressed are the paint's alone
+// (`paintSplitButton`); a drawing keeps only what the paint works from, including the user's label.
+function splitButton(body, config, index, { action, kind, face, phases, delays, look }) {
   const list = action === LIST_BATCH_ACTION;
   const view = {
-    action, kind, index, shown: buttonFingerprint(config), body, face, phases, delays, caret: null,
-    list, resultIdentity: list ? listBatchButtonIdentity(kind, index) : null, restoreTitle,
+    action, kind, index, shown: buttonFingerprint(config), body, face, label: config.label, phases, delays,
+    caret: null, list, resultIdentity: list ? listBatchButtonIdentity(kind, index) : null,
   };
   // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
   // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
@@ -797,13 +785,21 @@ function splitButton(body, config, index, { action, kind, face, phases, delays, 
 // for. The body stays off through the outcome marker as it always has; the caret is off only while the
 // request is in flight.
 function paintSplitButton(view) {
-  const phase = splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)));
+  const onScreen = drawingIdentityOn(view, pageTargetOfUrl(location.href));
+  const phase = splitButtonRuns.phaseOf(onScreen);
   view.body.textContent = phase ? view.phases[phase] : view.face;
+  view.body.title = splitButtonTooltip(view, splitButtonRuns.reasonOf(onScreen));
   view.body.disabled = phase !== null;
   if (view.caret) {
     view.caret.disabled = phase === 'busy';
     view.caret.style.opacity = phase === 'busy' ? '0.5' : '';
   }
+}
+
+// The user's own label, or — while the marker of a run refused before it sent is up — why it was refused.
+// The only refusal a run keeps today is a list selection the batch cannot take.
+function splitButtonTooltip(view, reason) {
+  return reason ? listSelectionNoticeText(reason) : view.label;
 }
 
 // Every drawing on screen, and the open popover's send button, take up whatever the runs hold now
@@ -823,7 +819,8 @@ function repaintSplitButtons() {
 // and never again once it waits — the worker reads the page again for itself and refuses a selection
 // that no longer matches. A selection the batch cannot take (none, or more than the cap) sends nothing:
 // in the popover it becomes the popover's line with the note left as typed; on the body it is the error
-// marker, with the reason as the tooltip.
+// marker, with the reason kept by the run for the tooltip. A run writes nothing to the page itself: what
+// it holds is painted (`paintSplitButton`), so its timer only has to clear it.
 async function runSplitButton(view, { target, note, popover, typed }) {
   const selected = view.list ? readSelectedListRows(document, view.kind === 'pr-list' ? 'pr' : 'issue') : undefined;
   const notice = view.list ? listBatchSelectionNotice(listSelectionStatus(selected)) : null;
@@ -836,9 +833,10 @@ async function runSplitButton(view, { target, note, popover, typed }) {
   if (token === null) return;
   if (view.list) clearListBatchResult(view.resultIdentity);
   let phase = 'done';
+  let reason = null;
   if (notice) {
-    showListBatchSelectionError(view.body, notice);
     phase = 'error';
+    reason = notice;
   } else {
     if (popover) startNoteSend(popover);
     repaintSplitButtons();
@@ -857,13 +855,11 @@ async function runSplitButton(view, { target, note, popover, typed }) {
       phase = 'error';
     }
   }
-  splitButtonRuns.finish(run.identity, token, phase);
+  splitButtonRuns.finish(run.identity, token, phase, reason);
   repaintSplitButtons();
   if (popover) settleNoteSend(popover, phase, typed);
   setTimeout(() => {
-    if (!splitButtonRuns.clear(run.identity, token)) return;
-    view.restoreTitle?.();
-    repaintSplitButtons();
+    if (splitButtonRuns.clear(run.identity, token)) repaintSplitButtons();
   }, view.delays[phase]);
 }
 
@@ -1261,7 +1257,9 @@ async function tryInsertRepoButtons(target, generation) {
 // wrappers below see only moves made from this script's side; GitHub's own navigation goes past them,
 // and a move made through a `pushState` they did not wrap left the previous PR's buttons, and an open
 // popover, on the next PR (measured). The poll, the observer and GitHub's navigation events all run this
-// pass, so such a move reaches the one place that clears the old page within a second.
+// pass, so such a move reaches the one place that clears the old page at the next insert pass. The poll
+// asks for one about every second, and in a foreground tab that is roughly when it comes; it is an
+// interval, not a deadline.
 //
 // The pass then holds the generation of the page it started on, and after every await it asks again
 // (`pageChangedSince`) before it reads or draws anything more: what it read before the await belongs to
@@ -1334,8 +1332,9 @@ function onUrlChange() {
 
 // Whether the page an insert pass started on is gone — asked after each of the pass's awaits, before it
 // reads or draws anything more. It asks `onUrlChange` first, so a move nothing has reported yet counts as
-// well. Only a new target moves the generation: a query change within one list keeps the buttons, and a
-// pass drawing them there is still right.
+// well, while it is still in effect: the generation counts the removals that happened, and a move there
+// and back that nothing saw leaves none. Only a new target moves the generation: a query change within
+// one list keeps the buttons, and a pass drawing them there is still right.
 function pageChangedSince(generation) {
   onUrlChange();
   return generation !== pageGeneration;

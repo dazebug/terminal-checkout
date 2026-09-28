@@ -370,6 +370,28 @@ test('a split button runs once at a time, and a stale answer or timer cannot tou
   assert.equal(runs.phaseOf('a'), null);
 });
 
+test('a run refused before it sent keeps its reason for its own marker only: not for the next run, whatever the old timer does', () => {
+  // The reviewer's sequence: the body pressed with no row selected, the selection fixed while its ❌ is
+  // up, a note sent, the refused run's timer coming due while the note is in flight, and the note failing
+  const { createSplitButtonRuns } = pick('createSplitButtonRuns');
+  const runs = createSplitButtonRuns();
+  const notice = { messageKey: 'ext.list.batch.selection.empty', args: [] };
+  const refused = runs.start('list');
+  assert.equal(runs.finish('list', refused, 'error', notice), true);
+  assert.equal(runs.phaseOf('list'), 'error');
+  assert.deepEqual(runs.reasonOf('list'), notice);
+  const sent = runs.start('list');
+  assert.equal(runs.phaseOf('list'), 'busy');
+  assert.equal(runs.reasonOf('list'), null, "the note's run shows the refusal before it");
+  assert.equal(runs.clear('list', refused), false);
+  assert.equal(runs.reasonOf('list'), null);
+  assert.equal(runs.finish('list', sent, 'error'), true);
+  assert.equal(runs.reasonOf('list'), null, "the note's failure shows the refusal before it");
+  assert.equal(runs.clear('list', sent), true);
+  assert.equal(runs.reasonOf('list'), null);
+  assert.equal(runs.reasonOf('never started'), null);
+});
+
 test('a run holds the page its message goes to, not the page its button was drawn on', () => {
   const { drawingIdentityOn, splitButtonRun, splitButtonIdentity, buildButtonMessage } =
     pick('drawingIdentityOn, splitButtonRun, splitButtonIdentity, buildButtonMessage');
@@ -524,6 +546,31 @@ test('a list button is a split button: its rows are read once as the run starts,
   assert.equal(count(source, 'runListBatchCommand'), 0, 'the old list send path is still there');
 });
 
+test("a run ends in the phase its answer gave, and that one phase is what the body shows and the popover obeys (lint)", () => {
+  // A batch the app answered with a failure arrives inside an outer success, and a list run's phase is
+  // its result view's. With the list branch's assignment gone, a partly failed batch drew its badges
+  // while the body showed ✅ and the popover closed and dropped the note — and every test passed. The
+  // mapping from the answer to the view's phase is `listBatchResultView`'s own tests; this pins that the
+  // run takes that phase and that the one variable ends the run, settles the popover and times the marker.
+  const source = content();
+  const run = bodyOf(source, 'async function runSplitButton(');
+  // Every write of the phase, in order: the default, a refused selection, the list's answer, a failure
+  const writes = [...run.matchAll(/^\s*(?:let )?phase = [^;\n]+;/gm)].map(match => match[0].trim());
+  assert.deepEqual(writes, ["let phase = 'done';", "phase = 'error';", 'phase = result.phase;', "phase = 'error';"], 'the phase is written differently');
+  const view = run.indexOf('const result = listBatchResultView(view.resultIdentity, selected, outcome);');
+  const answer = run.indexOf('        phase = result.phase;\n');
+  const single = run.indexOf('await sendButtonMessage(run.message);');
+  assert.ok(view !== -1 && answer > view && single > answer, "a list run's phase is not its result view's, or is taken outside the list branch");
+  const end = run.slice(run.indexOf("console.error('command error:', failure);"));
+  for (const read of ['splitButtonRuns.finish(run.identity, token, phase, reason);', 'if (popover) settleNoteSend(popover, phase, typed);', '}, view.delays[phase]);']) {
+    assert.ok(end.includes(read), `the run does not end with ${read}`);
+  }
+  // And the popover closes and forgets the note only on `done`; anything else keeps the note, open or not
+  assert.ok(bodyOf(source, 'function settleNoteSend(').includes(
+    "  if (phase === 'done') {\n    if (notePopover === popover) closeNotePopover();\n    noteDrafts.delete(popover.identity);\n    return;\n  }\n  noteDrafts.set(popover.identity, typed);\n",
+  ), 'the popover is settled by something other than whether the run is done');
+});
+
 test('a list selection notice is drawn in the popover through its own literal lookups (lint)', () => {
   const text = bodyOf(content(), 'function listSelectionNoticeText(');
   assert.ok(text.includes("tr('ext.list.batch.selection.empty')"));
@@ -541,13 +588,33 @@ test('a drawing shows, and its caret and send button obey, the run of the page o
   // A drawing keeps no identity of its own: the page it was drawn on can be gone
   assert.equal(count(source, 'view.identity'), 0, 'a drawing carries the identity of the page it was drawn on');
   const onScreen = 'splitButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)))';
-  assert.ok(bodyOf(source, 'function paintSplitButton(').includes(onScreen), 'a drawing is painted from another page');
+  const paint = bodyOf(source, 'function paintSplitButton(');
+  assert.ok(paint.includes('  const onScreen = drawingIdentityOn(view, pageTargetOfUrl(location.href));\n  const phase = splitButtonRuns.phaseOf(onScreen);\n'), 'a drawing is painted from another page');
   assert.ok(bodyOf(source, 'function toggleNotePopover(').includes(`${onScreen} === 'busy'`), 'the caret obeys another page');
   assert.ok(bodyOf(source, 'function syncNoteSend(').includes(
     "splitButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy'",
   ), 'the send button obeys another page');
   // After a run moves, every drawing on screen is painted again, whichever page it was drawn for
   assert.match(bodyOf(source, 'function repaintSplitButtons('), /else paintSplitButton\(view\);/);
+});
+
+test("a split button's tooltip is painted from its run like the rest of it, and nothing else writes it (lint)", () => {
+  // A refused selection's reason was written into the body's tooltip and put back by the refused run's
+  // timer, which stands down once a later run has started — so the reason stayed on the next run's ⏳
+  // and on its outcome. The reason now lives in the run, and the paint derives the tooltip from it.
+  const source = content();
+  const paint = bodyOf(source, 'function paintSplitButton(');
+  assert.ok(paint.includes('view.body.title = splitButtonTooltip(view, splitButtonRuns.reasonOf(onScreen));'), 'the tooltip is not painted from the run on screen');
+  assert.match(bodyOf(source, 'function splitButtonTooltip('), /return reason \? listSelectionNoticeText\(reason\) : view\.label;/);
+  // Every tooltip this script writes, by receiver: a split button body's only in the paint
+  const receivers = [...source.matchAll(/([\w.]+)\.title\s*=(?!=)/g)].map(match => match[1]);
+  assert.deepEqual(receivers.sort(), ['badge', 'caret', 'checkbox', 'view.body'], 'a tooltip is written outside the paint');
+  // A run's end writes nothing to the page itself: it records the refusal with the phase, and its timer
+  // clears the run and paints
+  const run = bodyOf(source, 'async function runSplitButton(');
+  assert.ok(run.includes('splitButtonRuns.finish(run.identity, token, phase, reason);'), 'the refusal is not kept with the run');
+  assert.ok(run.includes('    if (splitButtonRuns.clear(run.identity, token)) repaintSplitButtons();\n  }, view.delays[phase]);'), 'the timer does more than clear and paint');
+  assert.equal(count(source, 'restoreTitle'), 0);
 });
 
 test('a multi-line paste or drop is refused as it arrives by the verdict\'s own rule, never let in changed (lint)', () => {
@@ -612,7 +679,8 @@ test('every insert pass asks whether the page moved before it draws, so a move t
   // and an open popover — on the next PR. The poll, the observer and GitHub's navigation events all run
   // an insert pass, so the pass is where such a move is noticed, through the one function that removes
   // what belonged to the old page. What this pins is the call and its order; it cannot show that GitHub's
-  // navigations reach an insert pass — the one-second poll is what bounds that, and it is pinned here too.
+  // navigations reach an insert pass. The poll is what keeps passes coming — about every second in a
+  // foreground tab, an interval rather than a deadline — and it is pinned here too.
   const source = content();
   const insert = bodyOf(source, 'async function tryInsertButton(');
   const reconcile = insert.indexOf('onUrlChange();');

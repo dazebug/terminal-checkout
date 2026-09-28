@@ -1109,21 +1109,28 @@ function splitButtonRun(drawing, target, note, selected) {
 // caret, the popover's send button or Enter — then the outcome, `done` or `error`, which is only shown:
 // a new run may start while the marker is up. Each run has a token, so the answer or the timer of an
 // earlier run cannot finish or clear a later one.
+//
+// A run refused before it sent also keeps why — a message id and its arguments — for the tooltip while
+// its marker is up. Everything a drawing shows is read from here, so a new run, a cleared one and a
+// drawing made again all agree; a tooltip written into the page and put back by the refused run's timer
+// stayed on the next run, because that timer stands down once a later run has started.
 function createSplitButtonRuns() {
   const runs = new Map();
   let lastToken = 0;
   return {
     phaseOf: identity => runs.get(identity)?.phase ?? null,
+    reasonOf: identity => runs.get(identity)?.reason ?? null,
     start(identity) {
       if (runs.get(identity)?.phase === 'busy') return null;
       lastToken += 1;
-      runs.set(identity, { token: lastToken, phase: 'busy' });
+      runs.set(identity, { token: lastToken, phase: 'busy', reason: null });
       return lastToken;
     },
-    finish(identity, token, phase) {
+    finish(identity, token, phase, reason = null) {
       const run = runs.get(identity);
       if (run?.token !== token || run.phase !== 'busy') return false;
       run.phase = phase;
+      run.reason = reason;
       return true;
     },
     clear(identity, token) {
