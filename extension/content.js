@@ -537,7 +537,7 @@ function createListBatchButton(buttonConfig, index, kind) {
   });
 }
 
-async function tryInsertListButtons(kind) {
+async function tryInsertListButtons(kind, generation) {
   if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
 
   const target = pageTargetOfUrl(location.href);
@@ -548,6 +548,8 @@ async function tryInsertListButtons(kind) {
 
   const buttons = await loadButtonConfigs(kind);
   if (!buttons) return false;
+  // The rows and the mount above were read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   if (document.querySelector(`.${LIST_BUTTON_CLASS}`)) return true;
 
@@ -996,13 +998,14 @@ function placeNotePopover(popover) {
 
 // A paste or a drop brings text in before a verdict can see the value, and a single-line input changes
 // the line breaks in it — to spaces, or to nothing. The events carry the original: the clipboard's plain
-// text on `paste`, the drag's on `drop` (measured: a paste of `one` CRLF `two` was stopped here with the
-// refusal shown, a single-line paste went in). That original is judged by the verdict's own
-// control-character rule; text it refuses is not let in, changed or otherwise, and the refusal is shown.
-// Anything else goes in as the browser would put it. A script can still insert text without either
-// event — `execCommand('insertText')` put `x y` in for `x` LF `y` without raising `beforeinput` at all
-// (measured) — which is script territory, like any other write to the page's DOM: the note is judged
-// again when it is sent, and by the worker after that.
+// text on `paste`, the drag's on `drop`. That original is judged by the verdict's own control-character
+// rule; text it refuses is not let in and the refusal is shown, and anything else is left to the
+// browser. Measured with synthetic events: a paste of `one` CRLF `two` came back `defaultPrevented`
+// with the refusal on the status line, and a single-line paste was not prevented — a synthetic paste
+// inserts no text, so what the browser then puts in was not observed. A script can insert text without
+// either event: `execCommand('insertText')` with `x` LF `y` left `x y` in the input and ran no
+// `beforeinput` listener (measured, in a background tab). That is script territory, like any other
+// write to the page's DOM: the note is judged again when it is sent, and by the worker after that.
 function refuseControlCharacterInsert(popover, event, original) {
   if (typeof original !== 'string' || !claudeNoteHasControlCharacter(original)) return;
   event.preventDefault();
@@ -1131,7 +1134,7 @@ function attachToRepoCrumb(anchor, buttons) {
 }
 
 // Add the custom command buttons to the PR header (returns true on success)
-async function tryInsertPRButtons() {
+async function tryInsertPRButtons(generation) {
   // Skip if the buttons are already there
   if (document.querySelector('.terminal-cmd-btn')) {
     return true;
@@ -1149,6 +1152,8 @@ async function tryInsertPRButtons() {
 
   const buttons = await loadButtonConfigs('pr');
   if (!buttons) return false; // read failed; the poll retries rather than drawing something that would refuse
+  // The branch link above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -1192,7 +1197,7 @@ function issueBadgeRow() {
 }
 
 // Add the issue-specific buttons to the issue header (returns true on success)
-async function tryInsertIssueButtons() {
+async function tryInsertIssueButtons(generation) {
   if (document.querySelector('.terminal-issue-btn')) {
     return true;
   }
@@ -1202,6 +1207,8 @@ async function tryInsertIssueButtons() {
 
   const buttons = await loadButtonConfigs('issue');
   if (!buttons) return false;
+  // The badge row above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting, another trigger (the poll, the MutationObserver, a turbo event) may have
   // inserted them first
@@ -1219,7 +1226,7 @@ async function tryInsertIssueButtons() {
 }
 
 // Add the buttons to the repository header (returns true on success)
-async function tryInsertRepoButtons(target) {
+async function tryInsertRepoButtons(target, generation) {
   if (document.querySelector('.terminal-open-btn')) {
     return true;
   }
@@ -1232,6 +1239,8 @@ async function tryInsertRepoButtons(target) {
 
   const buttons = await loadButtonConfigs('repo');
   if (!buttons) return false;
+  // The crumb above was read from a page that may be gone by now
+  if (pageChangedSince(generation)) return false;
 
   // While awaiting above, another trigger (the 1-second poll, the MutationObserver, a turbo event)
   // may have inserted them first — without re-checking, the buttons show up twice
@@ -1247,7 +1256,21 @@ async function tryInsertRepoButtons(target) {
 //
 // The same reading the click and the service worker use, so a page we would refuse to run anything
 // on is a page we do not draw a button on either — a button that can only fail is worse than none.
+//
+// Every pass first asks whether the page moved (`onUrlChange`, a no-op when it has not). The history
+// wrappers below see only moves made from this script's side; GitHub's own navigation goes past them,
+// and a move made through a `pushState` they did not wrap left the previous PR's buttons, and an open
+// popover, on the next PR (measured). The poll, the observer and GitHub's navigation events all run this
+// pass, so such a move reaches the one place that clears the old page within a second.
+//
+// The pass then holds the generation of the page it started on, and after every await it asks again
+// (`pageChangedSince`) before it reads or draws anything more: what it read before the await belongs to
+// that page. A pass that waited through a move and drew when it resumed put the old page's buttons on
+// the new one, and the pass started on the new page found buttons there and drew nothing — reproduced by
+// running this script in a DOM harness with the storage read held; the window is one storage read wide.
 async function tryInsertButton() {
+  onUrlChange();
+  const generation = pageGeneration;
   forgetDetachedSplitButtons();
   const target = pageTargetOfUrl(location.href);
   if (!target) return false;
@@ -1255,37 +1278,48 @@ async function tryInsertButton() {
   let result = false;
 
   // Repository, PR, and issue pages all get the repository buttons in the header
-  result = await tryInsertRepoButtons(target) || result;
+  result = await tryInsertRepoButtons(target, generation) || result;
+  // `target` was read before that await, and chooses what is drawn next
+  if (pageChangedSince(generation)) return result;
 
   // PR and issue pages also get their own custom command buttons (configured separately)
   if (target.kind === 'pr') {
-    result = await tryInsertPRButtons() || result;
+    result = await tryInsertPRButtons(generation) || result;
   } else if (target.kind === 'issue') {
-    result = await tryInsertIssueButtons() || result;
+    result = await tryInsertIssueButtons(generation) || result;
   } else if (target.kind === 'pr-list' || target.kind === 'issue-list') {
     result = tryInsertListSelection(target.kind) || result;
-    result = await tryInsertListButtons(target.kind) || result;
+    result = await tryInsertListButtons(target.kind, generation) || result;
   }
 
   return result;
 }
 
-// Wrap the History API to detect URL changes
+// The page the buttons on screen were drawn for, as `onUrlChange` last saw it
 let lastUrl = location.href;
 let lastTarget = pageTargetOfUrl(location.href);
+// Moved on by every removal, so an insert pass can tell that the page it started on is gone. Not
+// `listDocumentGeneration`: that one also moves when a list's rows change under the same page, which
+// must not cancel a pass whose buttons are still right there.
+let pageGeneration = 0;
 
 // Our buttons belong to the page they were drawn on. GitHub navigates without a reload, and the
 // insert functions bail out as soon as they see a button already there — so buttons drawn for PR #1
 // could survive onto PR #2, where their position and the header around them mean something else.
 // Removing them makes the next insert redraw for the page that is actually showing. A note popover
-// belongs to its button's page too, and goes with it.
+// belongs to its button's page too, and goes with it; its draft stays, under the page it was opened for.
+// The page generation moves on first, so a pass that read the old page and is still waiting draws
+// nothing when it resumes.
 function removeInsertedButtons() {
+  pageGeneration += 1;
   closeNotePopover({ restoreFocus: false });
   document.querySelectorAll(`.terminal-cmd-btn, .terminal-issue-btn, .terminal-open-btn, .${SPLIT_BUTTON_CLASS}, .terminal-list-btn, .terminal-list-btn-row`)
     .forEach(node => node.remove());
   resetListSelectionState();
 }
 
+// Reached from the history wrappers and `popstate`, and from every insert pass for the moves those miss.
+// A no-op while the URL has not moved, so being asked often costs nothing.
 function onUrlChange() {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
@@ -1298,7 +1332,17 @@ function onUrlChange() {
   setTimeout(tryInsertButton, 300);
 }
 
-// Detect History API events
+// Whether the page an insert pass started on is gone — asked after each of the pass's awaits, before it
+// reads or draws anything more. It asks `onUrlChange` first, so a move nothing has reported yet counts as
+// well. Only a new target moves the generation: a query change within one list keeps the buttons, and a
+// pass drawing them there is still right.
+function pageChangedSince(generation) {
+  onUrlChange();
+  return generation !== pageGeneration;
+}
+
+// History API wrappers. They wrap this script's view of `history` only — GitHub's own navigation
+// happens in the page's world and does not pass through them; the insert passes catch those moves.
 const originalPushState = history.pushState;
 history.pushState = function(...args) {
   originalPushState.apply(this, args);

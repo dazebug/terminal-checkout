@@ -607,6 +607,66 @@ test('every refusal the notice names is drawn through its own literal lookup (li
   }
 });
 
+test('every insert pass asks whether the page moved before it draws, so a move the history wrappers missed is seen (lint)', () => {
+  // A navigation made through a `pushState` the wrappers do not wrap left the previous PR's buttons —
+  // and an open popover — on the next PR. The poll, the observer and GitHub's navigation events all run
+  // an insert pass, so the pass is where such a move is noticed, through the one function that removes
+  // what belonged to the old page. What this pins is the call and its order; it cannot show that GitHub's
+  // navigations reach an insert pass — the one-second poll is what bounds that, and it is pinned here too.
+  const source = content();
+  const insert = bodyOf(source, 'async function tryInsertButton(');
+  const reconcile = insert.indexOf('onUrlChange();');
+  assert.ok(reconcile !== -1, 'an insert pass does not ask whether the page moved');
+  assert.ok(reconcile < insert.indexOf('forgetDetachedSplitButtons();') && reconcile < insert.indexOf('await '), 'the pass draws before it asks');
+  assert.match(source, /setInterval\(tryInsertButton, 1000\);/);
+  // Asked on every pass, it has to stay a no-op for a URL that has not moved, and to remove only on a new target
+  const change = bodyOf(source, 'function onUrlChange(');
+  assert.ok(change.includes('function onUrlChange() {\n  if (location.href === lastUrl) return;\n'), 'onUrlChange does more than nothing for an unmoved URL');
+  assert.match(change, /if \(!sameTarget\(target, lastTarget\)\) removeInsertedButtons\(\);/);
+});
+
+test('a pass that started on a page draws nothing once that page is gone: every await in it is followed by a page check (lint)', () => {
+  // An insert pass reads the page, waits for storage, then draws. A pass that waited on PR A and resumed
+  // after the page had moved to B drew A's buttons onto B, and the pass that started on B then found
+  // buttons there and drew nothing. Every removal moves the page generation on; a pass holds the one it
+  // started with and asks again after every await, before it reads or writes the page. This pins where
+  // the checks sit. The interleavings themselves were played against the real script out of tree; that
+  // GitHub's pages reach these passes at all is outside what either can show.
+  const source = content();
+  // The generation moves in one place: the removal
+  const generationWrites = source.match(/\bpageGeneration\s*(?:[-+*/]?=(?!=)|\+\+|--)|(?:\+\+|--)\s*pageGeneration\b/g) ?? [];
+  assert.deepEqual(generationWrites, ['pageGeneration =', 'pageGeneration +='], 'the page generation is not declared once and moved in exactly one place');
+  assert.ok(bodyOf(source, 'function removeInsertedButtons(').includes('pageGeneration += 1;'), 'a removal leaves the page generation where it was');
+  // The check reconciles first, so a move nothing has reported yet counts as well
+  assert.ok(bodyOf(source, 'function pageChangedSince(').startsWith('function pageChangedSince(generation) {\n  onUrlChange();\n  return generation !== pageGeneration;\n}'), 'the page check does not reconcile, or compares something else');
+  // The pass holds the generation of the page it has just reconciled to, before anything waits
+  const pass = bodyOf(source, 'async function tryInsertButton(');
+  const held = pass.indexOf('  onUrlChange();\n  const generation = pageGeneration;\n');
+  assert.ok(held !== -1 && held < pass.indexOf('await '), 'the pass holds no generation, or holds it before reconciling or after waiting');
+  // After its first await it reads and draws nothing until the page is checked, and what it calls gets its generation
+  assert.ok(pass.includes('result = await tryInsertRepoButtons(target, generation) || result;'));
+  const passCheck = pass.indexOf('if (pageChangedSince(generation)) return result;');
+  assert.ok(passCheck > pass.indexOf('await '), 'the pass does not check the page after its first await');
+  for (const call of ['tryInsertPRButtons(generation)', 'tryInsertIssueButtons(generation)', 'tryInsertListSelection(target.kind)', 'tryInsertListButtons(target.kind, generation)']) {
+    assert.ok(pass.indexOf(call) > passCheck, `${call} is not reached only past the page check`);
+  }
+  assert.equal(count(pass, 'await '), 4, 'the pass waits somewhere new: whatever follows that wait has to check the page first');
+  // Each insert waits once, for storage, and checks the page before its first write
+  const writes = ['attachToRepoCrumb(', 'insertAdjacentElement(', 'appendChild(', 'insertBefore(', 'unclipButtonRow('];
+  for (const signature of ['async function tryInsertRepoButtons(target, generation) {', 'async function tryInsertPRButtons(generation) {', 'async function tryInsertIssueButtons(generation) {', 'async function tryInsertListButtons(kind, generation) {']) {
+    const insert = bodyOf(source, signature);
+    assert.equal(count(insert, 'await '), 1, `${signature} waits on something besides storage`);
+    const check = insert.indexOf('if (pageChangedSince(generation)) return false;');
+    assert.ok(check > insert.indexOf('await loadButtonConfigs('), `${signature} does not check the page after its wait`);
+    assert.equal(count(insert, 'pageChangedSince('), 1);
+    for (const write of writes) {
+      for (let at = insert.indexOf(write); at !== -1; at = insert.indexOf(write, at + 1)) {
+        assert.ok(at > check, `${signature} writes the page (${write}) before the page check`);
+      }
+    }
+  }
+});
+
 test('taking the buttons away takes the popover and the split buttons with them (lint)', () => {
   const source = content();
   const remove = bodyOf(source, 'function removeInsertedButtons(');
