@@ -154,9 +154,10 @@ async function loadButtons(kind) {
 // its own check.
 //
 // `clicked` is a comparison key and never a source: every value still comes from the tab and its
-// DOM, so a message can cause a refusal but cannot name its own repository. The extension-icon path
-// sends no *fingerprint* — nothing was drawn for it to disagree with — but it does send a target,
-// read from the tab when the icon was pressed, so it takes this same gate.
+// DOM, so a message can cause a refusal but cannot name its own repository. (A click's note is the one
+// value taken from the message, and it can only become the last claude input — `noteOfClick` below.)
+// The extension-icon path sends no *fingerprint* — nothing was drawn for it to disagree with — but it
+// does send a target, read from the tab when the icon was pressed, so it takes this same gate.
 //
 // Like `BUTTON_CHANGED_ERROR`, this is **not drawn anywhere**: the content script throws it and its
 // click handler turns it into `❌` plus a `console.error`. English, therefore — and on the
@@ -165,6 +166,31 @@ async function loadButtons(kind) {
 const PAGE_CHANGED_ERROR = 'The page changed while this was running — reload and try again.';
 const LIST_SELECTION_CHANGED_ERROR =
   'The selected list rows changed while this was running — reload and try again.';
+
+// Why a click's note was refused, one sentence per code the verdict can give (`CLAUDE_NOTE_ERRORS`,
+// defaults.js). Console-only like the two above: the content script runs the same verdict before it
+// sends and says it in the page's language, so these fire only when the two disagree.
+const CLAUDE_NOTE_REFUSALS = new Map([
+  ['not-string', 'The claude note is not text.'],
+  ['empty', 'The claude note is empty.'],
+  ['control-character', 'The claude note holds a line break or a control character.'],
+  ['leading-character', 'The claude note starts with a space-like or invisible character, or with !, / or #.'],
+  ['braces', 'The claude note holds a {…} span, which the app would read as a variable.'],
+  ['too-long', `The claude note is longer than ${MAX_CLAUDE_NOTE_BYTES} UTF-8 bytes.`],
+]);
+const CLAUDE_NOTE_NOT_TAKEN_ERROR =
+  'This button takes no claude note — it does not start claude, or it has no room for another input.';
+
+// The note a click carries, judged here and nowhere else in the worker: `{ note }` — `undefined` when
+// the message has no `note` key — or `{ error }`. A key that is present is judged whatever it holds, so
+// an empty or non-string value is refused rather than read as no note. Everything downstream uses the
+// verdict's note, never the message's value.
+function noteOfClick(message) {
+  if (!Object.hasOwn(message, 'note')) return { note: undefined };
+  const verdict = claudeNoteVerdict(message.note);
+  if (verdict.valid) return { note: verdict.note };
+  return { error: CLAUDE_NOTE_REFUSALS.get(verdict.error) ?? 'The claude note was refused.' };
+}
 
 // Internal coherence: the values a single read produced describe one page. This is what the final
 // gate below cannot answer — that the number and the branch belong together — so the two are not
@@ -301,11 +327,14 @@ function readListSelectionFromPage(expected) {
 // identity this check is made of (defaults.js).
 //
 // The command still comes from here, from storage, never from the message: the fingerprint can only
-// cause a refusal, not introduce a command of its own.
-async function clickedButton(kind, index, shown) {
+// cause a refusal, not introduce a command of its own. The one thing a message may add is a note, and
+// only to a button that takes one — asked of the button storage holds now, the same one the
+// fingerprint was just compared against.
+async function clickedButton(kind, index, shown, note) {
   const button = (await loadButtons(kind))[index];
   if (!button) throw new Error(`Button index ${index} not found`);
   if (!clickMatchesWhatWasShown(button, shown)) throw new Error(BUTTON_CHANGED_ERROR);
+  if (note !== undefined && !buttonTakesClaudeNote(button)) throw new Error(CLAUDE_NOTE_NOT_TAKEN_ERROR);
   return button;
 }
 
@@ -351,8 +380,8 @@ async function sendBatchToNativeHost(message) {
 }
 
 // Run a single button — variable substitution and claude input delivery are the app's job, so we
-// only send the raw material
-async function runButton(button, variables, page) {
+// only send the raw material. `note` is the worker's already-judged note, or `undefined`.
+async function runButton(button, variables, page, note) {
   // The one place every command passes through, and therefore the only place this check has to be.
   // Everything from here to the send is synchronous **on purpose**: an await in between would make
   // this one more check with a gap behind it, which is the shape of every defect this loop has been
@@ -365,10 +394,11 @@ async function runButton(button, variables, page) {
   // same reason: closing it would need a compare-and-set the boundary does not offer. The app cannot
   // supply one either; it has no view of the browser's pages to re-check against.
   await assertRequestIsCoherent(page.tab, page);
-  // What this click executes, normalized once, in defaults.js — the same call the fingerprint is
-  // taken of. Trimming the claude inputs and dropping the empty ones used to happen here, so two
-  // buttons that produced the identical message could still fail the fingerprint check.
-  const { command, claudeInputs } = executionPayload(button);
+  // What this click executes, normalized once, in defaults.js — the payload the fingerprint is taken
+  // of, with the note after its inputs when there is one. Trimming the claude inputs and dropping the
+  // empty ones used to happen here, so two buttons that produced the identical message could still
+  // fail the fingerprint check.
+  const { command, claudeInputs } = clickPayload(button, note);
   const message = { command_template: command, variables };
   // Inputs to type, in order, into the claude session the command starts (the app delivers them
   // once it has confirmed claude is up)
@@ -376,12 +406,13 @@ async function runButton(button, variables, page) {
   await sendToNativeHost(message);
 }
 
-// Run a custom command (PR page)
-async function executeCommand(tab, buttonIndex, shown, clicked) {
+// Run a custom command (PR page). The executors take the click's judged note last; the extension-icon
+// path calls them without one.
+async function executeCommand(tab, buttonIndex, shown, clicked, note) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'pr') throw new Error('Not a GitHub PR page');
 
-  const button = await clickedButton('pr', buttonIndex, shown);
+  const button = await clickedButton('pr', buttonIndex, shown, note);
 
   // Extract the branch and the base branch from the DOM
   const results = await chrome.scripting.executeScript({
@@ -414,17 +445,17 @@ async function executeCommand(tab, buttonIndex, shown, clicked) {
   // branch would mean merging or rebasing onto the wrong one)
   if (domResult.detectedMain) variables.base = domResult.detectedMain;
   // `target` is where these variables were read from — the third axis of the gate
-  await runButton(button, variables, { tab, clicked, source: target });
+  await runButton(button, variables, { tab, clicked, source: target }, note);
 }
 
 // Run a custom command (issue page). An issue has no head branch, so the {branch} family of
 // variables isn't passed — if a template uses one, the app rejects it with
 // "Variable {branch} not provided"
-async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
+async function executeIssueCommand(tab, buttonIndex, shown, clicked, note) {
   const target = parseGitHubUrl(tab.url);
   if (target?.kind !== 'issue') throw new Error('Not a GitHub issue page');
 
-  const button = await clickedButton('issue', buttonIndex, shown);
+  const button = await clickedButton('issue', buttonIndex, shown, note);
 
   // detectDefaultBranch checks the page it read from against the click as well — the default branch
   // it finds is embedded in whatever page is showing, which need not be this repository's
@@ -436,22 +467,22 @@ async function executeIssueCommand(tab, buttonIndex, shown, clicked) {
     owner: target.owner,
     number: target.number,
     main,
-  }, { tab, clicked, source: target });
+  }, { tab, clicked, source: target }, note);
 }
 
 // Run a custom command (repository page). Unlike PRs and issues there is neither a branch nor a
 // number, so only {repo}, {owner}, and {main} are passed
-async function executeRepoCommand(tab, buttonIndex, shown, clicked) {
+async function executeRepoCommand(tab, buttonIndex, shown, clicked, note) {
   // Repository buttons are also attached to the header of PR and issue pages, so don't check kind
   const target = parseGitHubUrl(tab.url);
   if (!target) throw new Error('Not a GitHub repo page');
 
-  const button = await clickedButton('repo', buttonIndex, shown);
+  const button = await clickedButton('repo', buttonIndex, shown, note);
 
   const detected = await detectDefaultBranch(tab, target.owner, target.repo, clicked);
   const main = await resolveMainBranch(target.repo, detected);
   console.log(`Executing repo command: repo=${target.repo}, main=${main}`);
-  await runButton(button, { repo: target.repo, owner: target.owner, main }, { tab, clicked, source: target });
+  await runButton(button, { repo: target.repo, owner: target.owner, main }, { tab, clicked, source: target }, note);
 }
 
 const LIST_BATCH_SELECTION_ERRORS = {
@@ -466,7 +497,7 @@ function listBatchSelectionError(verdict) {
   return LIST_BATCH_SELECTION_ERRORS[verdict.error] || 'List selection is invalid.';
 }
 
-async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
+async function executeListBatch(tab, buttonIndex, shown, clicked, selected, note) {
   const target = parseGitHubUrl(tab?.url);
   if (target?.kind !== 'pr-list' && target?.kind !== 'issue-list') {
     throw new Error('Not a GitHub list page');
@@ -475,7 +506,7 @@ async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
   const snapshotVerdict = validateListBatchSelection(selected);
   if (!snapshotVerdict.valid) throw new Error(listBatchSelectionError(snapshotVerdict));
 
-  const button = await clickedButton(target.kind, buttonIndex, shown);
+  const button = await clickedButton(target.kind, buttonIndex, shown, note);
   if (!buttonUsesAllowedVariables(target.kind, button)) {
     throw new Error(LIST_BUTTON_VARIABLE_ERROR);
   }
@@ -502,7 +533,7 @@ async function executeListBatch(tab, buttonIndex, shown, clicked, selected) {
 
   const items = buildListBatchItems(target, current.selected);
   if (!items) throw new Error(LIST_SELECTION_CHANGED_ERROR);
-  const message = buildListBatchRequest(button, items);
+  const message = buildListBatchRequest(button, items, note);
 
   // The final page check is deliberately the last await before the native hand-off.
   await assertRequestIsCoherent(tab, { clicked, source: target });
@@ -600,8 +631,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: false, error: listBatchSelectionError(snapshotVerdict) });
       return;
     }
+    const batchNote = noteOfClick(message);
+    if (batchNote.error) {
+      sendResponse({ success: false, error: batchNote.error });
+      return;
+    }
 
-    executeListBatch(sender.tab, message.buttonIndex, message.shown, message.target, message.selected)
+    executeListBatch(sender.tab, message.buttonIndex, message.shown, message.target, message.selected, batchNote.note)
       .then(({ batch, itemKeys }) => sendResponse({ success: true, batch, itemKeys }))
       .catch((error) => {
         sendResponse({ success: false, error: error.message });
@@ -619,8 +655,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // And which page it was clicked on. A message without one cannot be checked against anything —
   // which is not the same as passing the check, and used to be treated as if it were.
   if (!isPageTarget(message.target)) return;
+  // A note is judged here, before the first await, and refused out loud: the click was a real
+  // request, only its note was not
+  const clickNote = noteOfClick(message);
+  if (clickNote.error) {
+    sendResponse({ success: false, error: clickNote.error });
+    return;
+  }
 
-  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown, message.target).then(() => {
+  RUN_BY_KIND[kind](sender.tab, message.buttonIndex, message.shown, message.target, clickNote.note).then(() => {
     sendResponse({ success: true });
   }).catch((error) => {
     sendResponse({ success: false, error: error.message });

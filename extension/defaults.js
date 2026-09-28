@@ -556,9 +556,10 @@ function buildListBatchItems(target, selected) {
 
 // The batch protocol's command lives at the top level. A single-command request uses
 // `command_template`; putting that key into a batch would make the app reject the otherwise-valid
-// items envelope before it could report per-item results.
-function buildListBatchRequest(button, items) {
-  const { command, claudeInputs } = executionPayload(button);
+// items envelope before it could report per-item results. A note, when the click carried one, is the
+// worker's already-judged note, shared by every item.
+function buildListBatchRequest(button, items, note) {
+  const { command, claudeInputs } = clickPayload(button, note);
   const request = { command, items };
   if (claudeInputs.length) request.claude_inputs = claudeInputs;
   return request;
@@ -581,8 +582,10 @@ function sameListSelectionKeys(expected, actual) {
     [...expectedSet].every(key => actualSet.has(key));
 }
 
-function buildListBatchMessage(buttonIndex, shown, target, selected) {
-  return {
+// `note` is added only when there is one: the worker reads a present key as a note to judge, whatever it
+// holds, so a note-less click must not carry the key at all.
+function buildListBatchMessage(buttonIndex, shown, target, selected, note) {
+  const message = {
     action: LIST_BATCH_ACTION,
     buttonIndex,
     shown,
@@ -590,6 +593,8 @@ function buildListBatchMessage(buttonIndex, shown, target, selected) {
     target,
     selected,
   };
+  if (note !== undefined) message.note = note;
+  return message;
 }
 
 function validateListBatchResultKeyProtocol(message) {
@@ -853,6 +858,10 @@ function readableButtonFields(entry) {
 // a refusal, never introduce a command of its own. That is the same shape as the app owning the
 // terminal choice — the side that executes keeps the single source of truth.
 //
+// One value does come from the message: a click-time note (claudeNoteVerdict, below). The worker
+// judges it itself and it can only become the last claude input — never the command, never a
+// variable, never part of this fingerprint.
+//
 // Everything a click will hand the app, normalized exactly as the send normalizes it: the inputs are
 // trimmed for ordinary spaces only and the empty ones dropped, which is what runButton did on its
 // way out. It builds its message from this now, so the two cannot disagree — a normalization the
@@ -1010,6 +1019,13 @@ function claudeNoteVerdict(note) {
 function executionPayloadWithNote(button, note) {
   const payload = executionPayload(button);
   return { command: payload.command, claudeInputs: [...payload.claudeInputs, note] };
+}
+
+// What a click hands the app: the button's payload, with the click's note when it carried one. The
+// single-command send and the batch builder both take it from here, so a note cannot join one kind of
+// request differently from the other — and a click with no note sends exactly executionPayload.
+function clickPayload(button, note) {
+  return note === undefined ? executionPayload(button) : executionPayloadWithNote(button, note);
 }
 
 // --- The main-branch settings, validated once for every reader ---
