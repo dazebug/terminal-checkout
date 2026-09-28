@@ -370,6 +370,61 @@ test('a split button runs once at a time, and a stale answer or timer cannot tou
   assert.equal(runs.phaseOf('a'), null);
 });
 
+test('a run holds the page its message goes to, not the page its button was drawn on', () => {
+  const { drawingIdentityOn, headerButtonRun, splitButtonIdentity, buildButtonMessage } =
+    pick('drawingIdentityOn, headerButtonRun, splitButtonIdentity, buildButtonMessage');
+  const drawing = { action: 'execute_command', kind: 'pr', index: 0, shown: 'fingerprint' };
+  const PR_8 = { ...PR_7, number: '8' };
+  const run = headerButtonRun(drawing, PR_8, 'look here');
+  assert.deepEqual(run.message, buildButtonMessage('execute_command', 0, 'fingerprint', PR_8, 'look here'));
+  // One target makes both halves: what is held is what is sent
+  assert.equal(run.identity, drawingIdentityOn(drawing, run.message.target));
+  assert.equal(run.identity, splitButtonIdentity(PR_8, 'pr', 0, 'fingerprint'));
+  assert.notEqual(run.identity, drawingIdentityOn(drawing, PR_7));
+  assert.equal(Object.hasOwn(headerButtonRun(drawing, PR_8).message, 'note'), false);
+});
+
+test('a drawing that outlived a page change holds and shows the run of the page it now sends for', () => {
+  // The reviewer's reproduction, measured in a browser: drawn on PR 86, the page moved to PR 87 with
+  // nothing taking the button away, the body pressed, and the header rebuilt mid-request — the rebuilt
+  // button was free, and a second press sent the same PR 87 request again
+  const { createSplitButtonRuns, drawingIdentityOn, headerButtonRun } =
+    pick('createSplitButtonRuns, drawingIdentityOn, headerButtonRun');
+  const runs = createSplitButtonRuns();
+  const PR_8 = { ...PR_7, number: '8' };
+  const drawn = { action: 'execute_command', kind: 'pr', index: 0, shown: 'fingerprint' }; // on PR 7
+  const sent = [];
+  const press = (drawing, onScreen) => {
+    const run = headerButtonRun(drawing, onScreen, undefined);
+    if (runs.start(run.identity) !== null) sent.push(run.message);
+  };
+  press(drawn, PR_8);
+  const rebuilt = { ...drawn }; // GitHub rebuilt the header, now on PR 8
+  assert.equal(runs.phaseOf(drawingIdentityOn(rebuilt, PR_8)), 'busy', 'the rebuilt button is free');
+  assert.equal(runs.phaseOf(drawingIdentityOn(drawn, PR_8)), 'busy', 'the surviving drawing does not show its run');
+  press(rebuilt, PR_8);
+  press(drawn, PR_8);
+  assert.equal(sent.length, 1, 'the same request went out twice');
+  assert.deepEqual(sent[0].target, PR_8);
+  assert.equal(runs.phaseOf(drawingIdentityOn(drawn, PR_7)), null, 'another page was held');
+});
+
+test('the control-character rule is one function, and the verdict refuses with it', () => {
+  const { claudeNoteHasControlCharacter, claudeNoteVerdict } = pick('claudeNoteHasControlCharacter, claudeNoteVerdict');
+  const refused = [[0xA], [0xD, 0xA], [0xD], [0x9], [0x0], [0x1B], [0x7F], [0x85], [0x9B], [0x2028], [0x2029]];
+  for (const points of refused) {
+    const text = `alpha${cp(...points)}beta`;
+    assert.equal(claudeNoteHasControlCharacter(text), true, JSON.stringify(text));
+    assert.equal(claudeNoteVerdict(text).error, 'control-character', JSON.stringify(text));
+  }
+  for (const text of ['alpha beta', `family ${cp(0x1F468, 0x200D, 0x1F469)}`, `e${cp(0x301)}`, `a${cp(0xA0)}b`, `a${cp(0x200B)}b`]) {
+    assert.equal(claudeNoteHasControlCharacter(text), false, JSON.stringify(text));
+  }
+  const defaults = readExtension('defaults.js');
+  const verdict = defaults.slice(defaults.indexOf('function claudeNoteVerdict('));
+  assert.match(verdict.slice(0, verdict.indexOf('\n}\n')), /if \(claudeNoteHasControlCharacter\(trimmed\)\) return refuse\('control-character'\);/);
+});
+
 test('every refusal code has its own message in every language the content script can paint', () => {
   const { CLAUDE_NOTE_ERRORS, MAX_CLAUDE_NOTE_BYTES, claudeNoteRefusalNotice } =
     pick('CLAUDE_NOTE_ERRORS, MAX_CLAUDE_NOTE_BYTES, claudeNoteRefusalNotice');
@@ -407,11 +462,15 @@ const count = (text, needle) => text.split(needle).length - 1;
 test('every header button run goes through one function, held before its first await (lint)', () => {
   const source = content();
   const run = bodyOf(source, 'async function runHeaderButton(');
-  const held = run.indexOf('headerButtonRuns.start(view.identity)');
+  // The identity held and the message sent come out of one call, from the one target the run carries
+  const made = run.indexOf('const run = headerButtonRun(view, target, note);');
+  const held = run.indexOf('headerButtonRuns.start(run.identity)');
   const refused = run.indexOf('if (token === null) return;');
   const firstAwait = run.indexOf('await ');
-  assert.ok(held !== -1 && refused > held && firstAwait > refused, 'the run is held after an await, or not at all');
-  assert.ok(run.includes('sendButtonMessage(buildButtonMessage(view.action, view.index, view.shown, target, note))'));
+  assert.ok(made !== -1 && held > made && refused > held && firstAwait > refused, 'the run is held after an await, or not at all');
+  assert.ok(run.includes('await sendButtonMessage(run.message);'), 'the message sent is not the one the run holds');
+  assert.equal(count(run, 'headerButtonRun('), 1);
+  assert.equal(count(run, 'drawingIdentityOn('), 0, 'the run computes a second identity');
   // Declared once, and entered from the body's click and from a note's send — nothing else runs a header button
   assert.equal(count(source, 'runHeaderButton('), 3);
   assert.match(bodyOf(source, 'function headerButton('), /onUserClick\(body, \(\) => runHeaderButton\(view, /);
@@ -422,17 +481,47 @@ test('every header button run goes through one function, held before its first a
   assert.ok(bodyOf(source, 'async function sendButtonMessage(').includes('chrome.runtime.sendMessage('));
 });
 
-test('a drawing takes its state from the run of its identity, and the caret only from a button that takes a note (lint)', () => {
+test('a drawing shows, and its caret and send button obey, the run of the page on screen now (lint)', () => {
   const source = content();
   const head = bodyOf(source, 'function headerButton(');
-  assert.match(head, /identity: splitButtonIdentity\(pageTargetOfUrl\(location\.href\), kind, index, shown\)/);
   const takes = head.indexOf('if (!buttonTakesClaudeNote(config))');
   const caret = head.indexOf('createNoteCaret(view, look)');
   assert.ok(takes !== -1 && caret > takes, 'the caret is drawn before, or without, asking whether the button takes a note');
   assert.equal(count(source, 'createNoteCaret('), 2, 'the caret is created somewhere else too');
   assert.equal(count(head, 'paintHeaderButton(view)'), 2, 'a drawing does not start from its run');
-  assert.match(bodyOf(source, 'function paintHeaderButton('), /headerButtonRuns\.phaseOf\(view\.identity\)/);
-  assert.match(bodyOf(source, 'function toggleNotePopover('), /headerButtonRuns\.phaseOf\(view\.identity\) === 'busy'/);
+  // A drawing keeps no identity of its own: the page it was drawn on can be gone
+  assert.equal(count(source, 'view.identity'), 0, 'a drawing carries the identity of the page it was drawn on');
+  const onScreen = 'headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)))';
+  assert.ok(bodyOf(source, 'function paintHeaderButton(').includes(onScreen), 'a drawing is painted from another page');
+  assert.ok(bodyOf(source, 'function toggleNotePopover(').includes(`${onScreen} === 'busy'`), 'the caret obeys another page');
+  assert.ok(bodyOf(source, 'function syncNoteSend(').includes(
+    "headerButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy'",
+  ), 'the send button obeys another page');
+  // After a run moves, every drawing on screen is painted again, whichever page it was drawn for
+  assert.match(bodyOf(source, 'function repaintHeaderButtons('), /else paintHeaderButton\(view\);/);
+});
+
+test('a multi-line paste or drop is refused as it arrives by the verdict\'s own rule, never let in changed (lint)', () => {
+  const source = content();
+  const guard = bodyOf(source, 'function refuseControlCharacterInsert(');
+  const tested = guard.indexOf('claudeNoteHasControlCharacter(original)');
+  const stopped = guard.indexOf('event.preventDefault();');
+  assert.ok(tested !== -1 && stopped > tested, 'the insert is not tested with the verdict\'s rule before it is stopped');
+  assert.match(guard, /noteRefusalText\(claudeNoteRefusalNotice\('control-character'\)\)/);
+  assert.doesNotMatch(guard, /\.value\s*=/, 'a changed replacement is written into the input');
+  const open = bodyOf(source, 'function openNotePopover(');
+  assert.ok(open.includes("input.addEventListener('paste', event => refuseControlCharacterInsert(popover, event, event.clipboardData?.getData('text/plain')));"));
+  assert.ok(open.includes("input.addEventListener('drop', event => refuseControlCharacterInsert(popover, event, event.dataTransfer?.getData('text/plain')));"));
+});
+
+test('the popover is placed again whenever its size changes, and never grows past the viewport (lint)', () => {
+  const source = content();
+  const open = bodyOf(source, 'function openNotePopover(');
+  assert.ok(open.includes('popover.onSizeChange = new ResizeObserver(() => placeNotePopover(popover));'));
+  assert.ok(open.includes('popover.onSizeChange.observe(root);'));
+  assert.match(bodyOf(source, 'function closeNotePopover('), /popover\.onSizeChange\.disconnect\(\);/);
+  assert.match(bodyOf(source, 'function placeNotePopover('), /popover\.root\.style\.maxHeight = `\$\{maxHeight\}px`;/);
+  assert.match(source, /const NOTE_POPOVER_STYLE = `[^`]*overflow: auto;/);
 });
 
 test('a note is for the page its popover opened on, read once, and judged before anything is sent (lint)', () => {

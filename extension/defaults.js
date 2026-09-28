@@ -1010,7 +1010,9 @@ const CLAUDE_NOTE_ERRORS = Object.freeze([
 //    closed span exists exactly when a `}` comes after the first `{`, which two searches answer.
 //    `{}`, `{ a }` and `{"a":1}` are refused along with it.
 //  - control characters: C0, DEL, C1 and the line and paragraph separators, anywhere — refused, not
-//    removed: removing them is how a typed byte used to change on its way.
+//    removed: removing them is how a typed byte used to change on its way. The rule is
+//    `claudeNoteHasControlCharacter`, which the content script also asks of pasted and dropped text
+//    before the input can change it.
 //  - length: counted after the trim, so the bytes checked are the bytes sent.
 // Each check is one pass over the note. The length is judged last, so it bounds none of the checks
 // before it, and nothing limits a note's length before it gets here: a check that rescanned — a
@@ -1028,12 +1030,20 @@ function claudeNoteVerdict(note) {
   const trimmed = trimOrdinarySpaces(note);
   if (!trimmed) return refuse('empty');
   if (/\p{Cs}/u.test(trimmed)) return refuse('unpaired-surrogate');
-  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(trimmed)) return refuse('control-character');
+  if (claudeNoteHasControlCharacter(trimmed)) return refuse('control-character');
   if (/^[\p{Z}\p{C}!\/#]/u.test(trimmed)) return refuse('leading-character');
   const open = trimmed.indexOf('{');
   if (open !== -1 && trimmed.indexOf('}', open + 1) !== -1) return refuse('braces');
   if (new TextEncoder().encode(trimmed).length > MAX_CLAUDE_NOTE_BYTES) return refuse('too-long');
   return { valid: true, error: null, note: trimmed };
+}
+
+// The verdict's control-character rule, and the only statement of it: line breaks, C0, DEL, C1 and the
+// line and paragraph separators. A single-line input changes line breaks in pasted or dropped text
+// before any verdict sees the value, so the content script asks this of the original text as it
+// arrives — the same rule, not a second one written to agree with it.
+function claudeNoteHasControlCharacter(text) {
+  return /[\p{Cc}\p{Zl}\p{Zp}]/u.test(text);
 }
 
 // What a click with a note hands the app: the button's own payload, with the note after its inputs,
@@ -1064,13 +1074,30 @@ function buildButtonMessage(action, buttonIndex, shown, target, note) {
   return message;
 }
 
-// Which header button a run belongs to: the page it was drawn for, its kind and index, and the
-// fingerprint of what it runs. Not a DOM node — GitHub rebuilds its header while a request is in
-// flight, and the button it draws again is the same button, which has to come back as busy as it was.
+// Which header button a run belongs to: a page, the button's kind and index, and the fingerprint of
+// what it runs. Not a DOM node — GitHub rebuilds its header while a request is in flight, and the
+// button it draws again is the same button, which has to come back as busy as it was.
 function splitButtonIdentity(target, kind, index, shown) {
   return JSON.stringify([
     target?.kind ?? null, target?.owner ?? null, target?.repo ?? null, target?.number ?? null, kind, index, shown,
   ]);
+}
+
+// A drawing's identity on a page — never on the page it was drawn on. A drawing can outlive a page
+// change nothing saw (GitHub's own navigation is not always visible to the content script), so the
+// page named is the one that matters now: the one a request is for, or the one on screen.
+function drawingIdentityOn(drawing, target) {
+  return splitButtonIdentity(target, drawing.kind, drawing.index, drawing.shown);
+}
+
+// A header button's run: the message it sends and the identity it holds, made from one target, so
+// what is held is what is sent. Holding the page the button was drawn on while sending the page on
+// screen let a rebuilt button send the same request again (measured).
+function headerButtonRun(drawing, target, note) {
+  return {
+    identity: drawingIdentityOn(drawing, target),
+    message: buildButtonMessage(drawing.action, drawing.index, drawing.shown, target, note),
+  };
 }
 
 // The runs of header buttons, one entry per identity. `busy` from the first synchronous step of a run

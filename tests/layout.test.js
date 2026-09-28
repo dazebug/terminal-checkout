@@ -57,20 +57,43 @@ const noScroll = { x: 0, y: 0 };
 const caretAt = (left, top) => ({ left, top, right: left + 20, bottom: top + 24 });
 
 test('notePopoverPosition: under the caret when there is room below', () => {
-  const { notePopoverPosition, NOTE_POPOVER_GAP } = pick('notePopoverPosition, NOTE_POPOVER_GAP');
+  const { notePopoverPosition, NOTE_POPOVER_GAP, NOTE_POPOVER_MARGIN } =
+    pick('notePopoverPosition, NOTE_POPOVER_GAP, NOTE_POPOVER_MARGIN');
   assert.deepEqual(
     notePopoverPosition({ anchor: caretAt(100, 200), size, viewport, scroll: noScroll }),
-    { placement: 'below', left: 100, top: 224 + NOTE_POPOVER_GAP },
+    { placement: 'below', left: 100, top: 224 + NOTE_POPOVER_GAP, maxHeight: viewport.height - 2 * NOTE_POPOVER_MARGIN },
   );
 });
 
 test('notePopoverPosition: above the caret when below cannot hold it and above can', () => {
-  const { notePopoverPosition, NOTE_POPOVER_GAP } = pick('notePopoverPosition, NOTE_POPOVER_GAP');
+  const { notePopoverPosition, NOTE_POPOVER_GAP, NOTE_POPOVER_MARGIN } =
+    pick('notePopoverPosition, NOTE_POPOVER_GAP, NOTE_POPOVER_MARGIN');
   const anchor = caretAt(100, 740);
   assert.deepEqual(
     notePopoverPosition({ anchor, size, viewport, scroll: noScroll }),
-    { placement: 'above', left: 100, top: 740 - NOTE_POPOVER_GAP - size.height },
+    {
+      placement: 'above', left: 100, top: 740 - NOTE_POPOVER_GAP - size.height,
+      maxHeight: viewport.height - 2 * NOTE_POPOVER_MARGIN,
+    },
   );
+});
+
+test('notePopoverPosition: when neither side holds it, it stays inside the viewport and no taller than it', () => {
+  // The reviewer's input: a 120-pixel viewport, a caret at 80–104, a popover 140 tall. Choosing the
+  // roomier side alone put its top at -64, input and all off the screen.
+  const { notePopoverPosition, NOTE_POPOVER_MARGIN } = pick('notePopoverPosition, NOTE_POPOVER_MARGIN');
+  const small = { width: 800, height: 120 };
+  const placed = notePopoverPosition({
+    anchor: { top: 80, bottom: 104, left: 10, right: 30 }, size: { width: 320, height: 140 }, viewport: small, scroll: noScroll,
+  });
+  assert.equal(placed.maxHeight, small.height - 2 * NOTE_POPOVER_MARGIN);
+  assert.ok(placed.top >= NOTE_POPOVER_MARGIN, `top ${placed.top} is above the viewport margin`);
+  assert.ok(placed.top + placed.maxHeight <= small.height - NOTE_POPOVER_MARGIN, 'the capped popover runs past the bottom');
+  // Neither side holding a shorter popover either: it moves in rather than hanging off an edge
+  for (const caretTop of [20, 60, 100]) {
+    const moved = notePopoverPosition({ anchor: caretAt(10, caretTop), size, viewport: { width: 800, height: 150 }, scroll: noScroll });
+    assert.ok(moved.top >= NOTE_POPOVER_MARGIN && moved.top + size.height <= 150 - NOTE_POPOVER_MARGIN, `caret at ${caretTop}`);
+  }
 });
 
 test('notePopoverPosition: when neither side holds it, the side with more room', () => {
@@ -94,5 +117,5 @@ test('notePopoverPosition: page coordinates are the viewport ones plus the scrol
   const { notePopoverPosition } = pick('notePopoverPosition');
   const still = notePopoverPosition({ anchor: caretAt(100, 200), size, viewport, scroll: noScroll });
   const scrolled = notePopoverPosition({ anchor: caretAt(100, 200), size, viewport, scroll: { x: 15, y: 900 } });
-  assert.deepEqual(scrolled, { placement: still.placement, left: still.left + 15, top: still.top + 900 });
+  assert.deepEqual(scrolled, { ...still, left: still.left + 15, top: still.top + 900 });
 });

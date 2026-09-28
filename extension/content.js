@@ -725,6 +725,7 @@ const NOTE_POPOVER_STYLE = `
   box-sizing: border-box;
   width: 320px;
   max-width: calc(100vw - 16px);
+  overflow: auto;
   padding: 8px;
   border: 1px solid var(--borderColor-default, #d0d7de);
   border-radius: 6px;
@@ -771,17 +772,21 @@ const headerButtonRuns = createSplitButtonRuns();
 // Every drawing of a header button, so a run can repaint the ones on screen; detached ones are dropped
 // as they are met
 const drawnHeaderButtons = new Set();
-// What a closed or failed popover leaves typed, by button identity, for the next time it opens
+// What a closed or failed popover leaves typed, by the identity of the page it was opened for, for the
+// next time it opens
 const noteDrafts = new Map();
 let notePopover = null;
 
 // A header button around its body. Returns the node to insert: the body, or the split button.
+//
+// A drawing holds no identity of its own. It names its kind, index and fingerprint, and the page is
+// supplied when it matters (`drawingIdentityOn`, defaults.js): a run holds the page its message goes
+// to, and a drawing is painted, and its caret and send button obey, the run of the page on screen now.
+// GitHub can move to another page without anything removing the buttons drawn for the last one, and a
+// button that held the page it was drawn on while sending the page on screen let a rebuilt button send
+// the same request again (measured).
 function headerButton(body, config, index, { action, kind, face, phases, delays, look }) {
-  const shown = buttonFingerprint(config);
-  const view = {
-    identity: splitButtonIdentity(pageTargetOfUrl(location.href), kind, index, shown),
-    action, index, shown, body, face, phases, delays, caret: null,
-  };
+  const view = { action, kind, index, shown: buttonFingerprint(config), body, face, phases, delays, caret: null };
   // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
   // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
   // the full href rather than the pathname, so it goes through the same origin check the service worker
@@ -805,10 +810,11 @@ function headerButton(body, config, index, { action, kind, face, phases, delays,
   return split;
 }
 
-// A drawing shows the run its identity has now, whichever node it is. The body stays off through the
-// outcome marker as it always has; the caret is off only while the request is in flight.
+// A drawing shows the run of the page on screen, whichever node it is and whichever page it was drawn
+// for. The body stays off through the outcome marker as it always has; the caret is off only while the
+// request is in flight.
 function paintHeaderButton(view) {
-  const phase = headerButtonRuns.phaseOf(view.identity);
+  const phase = headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href)));
   view.body.textContent = phase ? view.phases[phase] : view.face;
   view.body.disabled = phase !== null;
   if (view.caret) {
@@ -817,33 +823,36 @@ function paintHeaderButton(view) {
   }
 }
 
-function repaintHeaderButtons(identity) {
+// Every drawing on screen, and the open popover's send button, take up whatever the runs hold now
+function repaintHeaderButtons() {
   for (const view of drawnHeaderButtons) {
     if (!view.body.isConnected) drawnHeaderButtons.delete(view);
-    else if (view.identity === identity) paintHeaderButton(view);
+    else paintHeaderButton(view);
   }
-  if (notePopover?.view.identity === identity) syncNoteSend(notePopover);
+  if (notePopover) syncNoteSend(notePopover);
 }
 
-// Every header button run starts here, and it is held before the first await — by identity, so the
-// body, the caret, the send button and Enter all stop at the same run.
+// Every header button run starts here — the body's click with the page read when it was pressed, a
+// note with the page its popover opened on — and it is held before the first await, under the identity
+// of the page it sends for, so the body, the caret, the send button and Enter all stop at that run.
 async function runHeaderButton(view, { target, note, popover, typed }) {
-  const token = headerButtonRuns.start(view.identity);
+  const run = headerButtonRun(view, target, note);
+  const token = headerButtonRuns.start(run.identity);
   if (token === null) return;
   if (popover) startNoteSend(popover);
-  repaintHeaderButtons(view.identity);
+  repaintHeaderButtons();
   let phase = 'done';
   try {
-    await sendButtonMessage(buildButtonMessage(view.action, view.index, view.shown, target, note));
+    await sendButtonMessage(run.message);
   } catch (failure) {
     console.error('command error:', failure);
     phase = 'error';
   }
-  headerButtonRuns.finish(view.identity, token, phase);
-  repaintHeaderButtons(view.identity);
+  headerButtonRuns.finish(run.identity, token, phase);
+  repaintHeaderButtons();
   if (popover) settleNoteSend(popover, phase, typed);
   setTimeout(() => {
-    if (headerButtonRuns.clear(view.identity, token)) repaintHeaderButtons(view.identity);
+    if (headerButtonRuns.clear(run.identity, token)) repaintHeaderButtons();
   }, view.delays[phase]);
 }
 
@@ -881,7 +890,7 @@ function noteCaretIcon() {
 }
 
 function toggleNotePopover(view) {
-  if (headerButtonRuns.phaseOf(view.identity) === 'busy') return;
+  if (headerButtonRuns.phaseOf(drawingIdentityOn(view, pageTargetOfUrl(location.href))) === 'busy') return;
   const reopening = notePopover?.caret === view.caret;
   closeNotePopover();
   if (!reopening) openNotePopover(view);
@@ -889,9 +898,10 @@ function toggleNotePopover(view) {
 
 // The note for one button. The page it is for is read as it opens: the note goes with the page the
 // person was looking at when they started writing it, and a page that moves on in the meantime is
-// refused by the worker rather than sent to.
+// refused by the worker rather than sent to. Its draft is kept under that page's identity.
 function openNotePopover(view) {
   const target = pageTargetOfUrl(location.href);
+  const identity = drawingIdentityOn(view, target);
   const root = document.createElement('div');
   root.className = NOTE_POPOVER_CLASS;
   root.setAttribute('role', 'dialog');
@@ -903,7 +913,7 @@ function openNotePopover(view) {
   input.placeholder = tr('ext.claudeNote.placeholder');
   input.setAttribute('aria-label', tr('ext.claudeNote.input'));
   input.style.cssText = NOTE_INPUT_STYLE;
-  input.value = noteDrafts.get(view.identity) ?? '';
+  input.value = noteDrafts.get(identity) ?? '';
   const send = document.createElement('button');
   send.type = 'button';
   send.textContent = tr('ext.claudeNote.send');
@@ -917,7 +927,7 @@ function openNotePopover(view) {
   row.append(input, send);
   root.append(row, status);
 
-  const popover = { view, caret: view.caret, target, root, input, send, status, sending: false };
+  const popover = { view, caret: view.caret, target, identity, root, input, send, status, sending: false };
   // GitHub's shortcuts listen on the document; nothing typed in here is theirs
   for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
   root.addEventListener('keydown', (event) => {
@@ -931,6 +941,10 @@ function openNotePopover(view) {
     event.preventDefault();
     if (isUserGesture(event)) submitNote(popover);
   });
+  // Text a paste or a drop brings is judged as it arrives, from the original the event carries, before
+  // the input changes it
+  input.addEventListener('paste', event => refuseControlCharacterInsert(popover, event, event.clipboardData?.getData('text/plain')));
+  input.addEventListener('drop', event => refuseControlCharacterInsert(popover, event, event.dataTransfer?.getData('text/plain')));
   input.addEventListener('input', () => {
     showNoteStatus(popover, '', false);
     syncNoteSend(popover);
@@ -940,10 +954,14 @@ function openNotePopover(view) {
     if (!root.contains(event.target) && !popover.caret.contains(event.target)) closeNotePopover();
   };
   popover.onResize = () => placeNotePopover(popover);
+  // Anything that changes the popover's size — a status line shown or hidden, the send button's ⏳ —
+  // places it again, rather than each such place remembering to
+  popover.onSizeChange = new ResizeObserver(() => placeNotePopover(popover));
   document.addEventListener('pointerdown', popover.onPointerDown, true);
   window.addEventListener('resize', popover.onResize);
 
   document.body.appendChild(root);
+  popover.onSizeChange.observe(root);
   notePopover = popover;
   view.caret.setAttribute('aria-expanded', 'true');
   syncNoteSend(popover);
@@ -951,17 +969,35 @@ function openNotePopover(view) {
   input.focus();
 }
 
+// Placed from the measured size and capped at the viewport's height (layout.js), so the input and the
+// send button stay reachable, scrolling inside the popover when the viewport is shorter than it
 function placeNotePopover(popover) {
   const box = popover.root.getBoundingClientRect();
-  const { left, top } = notePopoverPosition({
+  const { left, top, maxHeight } = notePopoverPosition({
     anchor: (popover.caret.parentElement ?? popover.caret).getBoundingClientRect(),
     size: { width: box.width, height: box.height },
     viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
     scroll: { x: window.scrollX, y: window.scrollY },
   });
+  popover.root.style.maxHeight = `${maxHeight}px`;
   popover.root.style.left = `${left}px`;
   popover.root.style.top = `${top}px`;
   popover.root.style.visibility = 'visible';
+}
+
+// A paste or a drop brings text in before a verdict can see the value, and a single-line input changes
+// the line breaks in it — to spaces, or to nothing. The events carry the original: the clipboard's plain
+// text on `paste`, the drag's on `drop` (measured: a paste of `one` CRLF `two` was stopped here with the
+// refusal shown, a single-line paste went in). That original is judged by the verdict's own
+// control-character rule; text it refuses is not let in, changed or otherwise, and the refusal is shown.
+// Anything else goes in as the browser would put it. A script can still insert text without either
+// event — `execCommand('insertText')` put `x y` in for `x` LF `y` without raising `beforeinput` at all
+// (measured) — which is script territory, like any other write to the page's DOM: the note is judged
+// again when it is sent, and by the worker after that.
+function refuseControlCharacterInsert(popover, event, original) {
+  if (typeof original !== 'string' || !claudeNoteHasControlCharacter(original)) return;
+  event.preventDefault();
+  showNoteStatus(popover, noteRefusalText(claudeNoteRefusalNotice('control-character')), true);
 }
 
 // A note is read here, once, and judged by the one verdict (defaults.js) before anything is sent: a
@@ -1004,7 +1040,7 @@ function showNoteStatus(popover, message, problem) {
 // this popover's own note is on its way
 function syncNoteSend(popover) {
   const off = popover.sending || popover.input.value === ''
-    || headerButtonRuns.phaseOf(popover.view.identity) === 'busy';
+    || headerButtonRuns.phaseOf(drawingIdentityOn(popover.view, pageTargetOfUrl(location.href))) === 'busy';
   popover.send.disabled = off;
   popover.send.style.opacity = off ? '0.5' : '1';
   popover.send.style.cursor = off ? 'default' : 'pointer';
@@ -1025,13 +1061,12 @@ function startNoteSend(popover) {
 // open now, is left alone.
 function settleNoteSend(popover, phase, typed) {
   popover.sending = false;
-  const identity = popover.view.identity;
   if (phase === 'done') {
     if (notePopover === popover) closeNotePopover();
-    noteDrafts.delete(identity);
+    noteDrafts.delete(popover.identity);
     return;
   }
-  noteDrafts.set(identity, typed);
+  noteDrafts.set(popover.identity, typed);
   if (notePopover !== popover) return;
   popover.input.readOnly = false;
   popover.send.textContent = tr('ext.claudeNote.send');
@@ -1043,8 +1078,9 @@ function closeNotePopover({ restoreFocus = true } = {}) {
   const popover = notePopover;
   if (!popover) return;
   notePopover = null;
-  if (popover.input.value) noteDrafts.set(popover.view.identity, popover.input.value);
-  else noteDrafts.delete(popover.view.identity);
+  if (popover.input.value) noteDrafts.set(popover.identity, popover.input.value);
+  else noteDrafts.delete(popover.identity);
+  popover.onSizeChange.disconnect();
   popover.root.remove();
   document.removeEventListener('pointerdown', popover.onPointerDown, true);
   window.removeEventListener('resize', popover.onResize);

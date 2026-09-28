@@ -28,17 +28,23 @@ function unclipButtonRow(buttonHost, overflowXOf) {
 
 // The note popover opens from a caret inside those clipping rows, so it cannot live there: it hangs in
 // <body>, positioned absolutely from the caret's viewport rectangle. Under the caret when the space
-// below holds it, above when only the space above does, and on the roomier side when neither does;
-// sideways it stays inside the viewport, and when it is wider than that its left edge stays visible.
-// The result is page coordinates (viewport plus scroll), so the popover scrolls with the page.
+// below holds it, above when only the space above does, and on the roomier side when neither does —
+// moved in from the edge then, so its top and bottom stay inside the viewport. It is never taller than
+// the viewport either (`maxHeight`, applied as its max-height, the rest scrolling inside it), so the
+// input and the send button can always be reached. Sideways it stays inside the viewport, and when it
+// is wider than that its left edge stays visible. The result is page coordinates (viewport plus
+// scroll), so the popover scrolls with the page.
 const NOTE_POPOVER_GAP = 4; // between the caret and the popover
 const NOTE_POPOVER_MARGIN = 8; // between the popover and the viewport edge
 
 function notePopoverPosition({ anchor, size, viewport, scroll }) {
+  const maxHeight = Math.max(0, viewport.height - 2 * NOTE_POPOVER_MARGIN);
   const spaceBelow = viewport.height - anchor.bottom - NOTE_POPOVER_GAP - NOTE_POPOVER_MARGIN;
   const spaceAbove = anchor.top - NOTE_POPOVER_GAP - NOTE_POPOVER_MARGIN;
   const below = size.height <= spaceBelow || spaceBelow >= spaceAbove;
-  const top = below ? anchor.bottom + NOTE_POPOVER_GAP : anchor.top - NOTE_POPOVER_GAP - size.height;
+  const wanted = below ? anchor.bottom + NOTE_POPOVER_GAP : anchor.top - NOTE_POPOVER_GAP - size.height;
+  // A popover taller than the viewport lands on the top margin, and its max-height brings it inside
+  const top = Math.max(NOTE_POPOVER_MARGIN, Math.min(wanted, viewport.height - NOTE_POPOVER_MARGIN - size.height));
   const left = Math.max(NOTE_POPOVER_MARGIN, Math.min(anchor.left, viewport.width - NOTE_POPOVER_MARGIN - size.width));
-  return { placement: below ? 'below' : 'above', left: left + scroll.x, top: top + scroll.y };
+  return { placement: below ? 'below' : 'above', left: left + scroll.x, top: top + scroll.y, maxHeight };
 }
