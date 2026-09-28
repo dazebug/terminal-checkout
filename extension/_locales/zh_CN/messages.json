@@ -88,6 +88,9 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "先发送给 claude 的输入"
+  },
   "ext_claudeNote_caret": {
     "message": "给 claude 的一句话"
   },

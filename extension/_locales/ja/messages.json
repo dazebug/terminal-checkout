@@ -88,6 +88,9 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "claude に先に送る入力"
+  },
   "ext_claudeNote_caret": {
     "message": "claude へのひとこと"
   },

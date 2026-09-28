@@ -1062,6 +1062,15 @@ function clickPayload(button, note) {
   return note === undefined ? executionPayload(button) : executionPayloadWithNote(button, note);
 }
 
+// The claude inputs a note follows, in the order they are sent and as they are stored — a template's
+// `{branch}` is filled in at the click, by the worker and the app. It is the button's own payload, so
+// the list a popover shows went through the one normalization a click does. A drawing makes it from the
+// same stored button, at the same moment, as its fingerprint (`buttonFingerprint`): if storage moves on,
+// the click is refused (`clickMatchesWhatWasShown`) rather than sent behind a list that is no longer true.
+function claudeInputsBeforeNote(button) {
+  return executionPayload(button).claudeInputs;
+}
+
 // --- The content script's split buttons and note popover, their pure parts ---
 
 // The message a header button's click sends (a list button's is `buildListBatchMessage`, which treats

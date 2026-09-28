@@ -732,6 +732,26 @@ const NOTE_STATUS_STYLE = `
 `;
 const NOTE_QUIET_COLOR = 'var(--fgColor-muted, #59636e)';
 const NOTE_PROBLEM_COLOR = 'var(--fgColor-danger, #d1242f)';
+// The inputs a note follows: one popover is open at a time, so one id names their label
+const NOTE_BEFORE_LABEL_ID = 'terminal-note-before-label';
+const NOTE_BEFORE_STYLE = `
+  margin: 0 0 6px;
+`;
+const NOTE_BEFORE_LABEL_STYLE = `
+  margin: 0 0 2px;
+  color: ${NOTE_QUIET_COLOR};
+`;
+// A long input wraps inside the popover's fixed width instead of widening it, and a long list scrolls
+// inside itself, so the note's input and the send button stay in reach under it
+const NOTE_BEFORE_LIST_STYLE = `
+  margin: 0;
+  padding: 0 0 0 20px;
+  max-height: 7.5em;
+  overflow-y: auto;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+`;
 
 const splitButtonRuns = createSplitButtonRuns();
 // Every drawing of a split button, so a run can repaint the ones on screen; detached ones are dropped
@@ -755,8 +775,11 @@ let notePopover = null;
 function splitButton(body, config, index, { action, kind, face, phases, delays, look }) {
   const list = action === LIST_BATCH_ACTION;
   const view = {
-    action, kind, index, shown: buttonFingerprint(config), body, face, label: config.label, phases, delays,
+    action, kind, index, body, face, label: config.label, phases, delays,
     caret: null, list, resultIdentity: list ? listBatchButtonIdentity(kind, index) : null,
+    // From the one stored button at the one moment: the inputs its popover lists before a note are the
+    // inputs its fingerprint names
+    shown: buttonFingerprint(config), before: claudeInputsBeforeNote(config),
   };
   // onUserClick refuses anything the browser did not mark as a real click, before the body runs. The
   // page is read when the body is pressed, not when it was drawn: the page moves under a button. From
@@ -932,6 +955,8 @@ function openNotePopover(view) {
   const row = document.createElement('div');
   row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
   row.append(input, send);
+  // What claude gets before the note comes first, and only when there is any
+  if (view.before.length) root.append(noteBeforeList(view.before));
   root.append(row, status);
 
   const popover = { view, caret: view.caret, target, identity, root, input, send, status, sending: false };
@@ -974,6 +999,29 @@ function openNotePopover(view) {
   syncNoteSend(popover);
   placeNotePopover(popover);
   input.focus();
+}
+
+// The stored claude inputs a note follows (`claudeInputsBeforeNote`, defaults.js), under a label that
+// names them: an ordered list, because the order is the order they are sent in. They are the user's
+// strings, shown as stored, so each is written as text and never as markup — something to read and
+// copy, not a field to focus or edit.
+function noteBeforeList(inputs) {
+  const box = document.createElement('div');
+  box.style.cssText = NOTE_BEFORE_STYLE;
+  const label = document.createElement('div');
+  label.id = NOTE_BEFORE_LABEL_ID;
+  label.textContent = tr('ext.claudeNote.before');
+  label.style.cssText = NOTE_BEFORE_LABEL_STYLE;
+  const list = document.createElement('ol');
+  list.setAttribute('aria-labelledby', NOTE_BEFORE_LABEL_ID);
+  list.style.cssText = NOTE_BEFORE_LIST_STYLE;
+  for (const input of inputs) {
+    const item = document.createElement('li');
+    item.textContent = input;
+    list.appendChild(item);
+  }
+  box.append(label, list);
+  return box;
 }
 
 // Placed from the measured size and capped at the viewport's height (layout.js), so the input and the

@@ -311,6 +311,30 @@ test('the note joins the button\'s own inputs once, at the end, and the button i
 
 const PR_7 = { kind: 'pr', owner: 'o', repo: 'r', number: '7' };
 
+test('a popover lists the inputs a note follows exactly as the click sends them, and the fingerprint vouches for that list', () => {
+  const { claudeInputsBeforeNote, executionPayloadWithNote, buttonFingerprint } =
+    pick('claudeInputsBeforeNote, executionPayloadWithNote, buttonFingerprint');
+  const tab = cp(0x9);
+  const buttons = [
+    frozenButton({ command: '{cd} && claude' }),
+    frozenButton({ command: '{cd} && claude', claudeInputs: [] }),
+    frozenButton({ command: 'claude', claudeInputs: ['!gh pr view {number} --comments', '!gh pr diff {number}', '!git log --oneline -5'] }),
+    frozenButton({ command: 'claude', claudeInputs: ['  !echo padded  ', '', '   ', `${tab}!echo tab`, 'review {branch} against {main}'] }),
+    ...allPresets().filter(preset => STARTS_CLAUDE[preset.id]).map(frozenButton),
+  ];
+  for (const button of buttons) {
+    const before = claudeInputsBeforeNote(button);
+    // What goes in front of the note is this list, in this order, and nothing else
+    assert.deepEqual(before, executionPayloadWithNote(button, 'look here').claudeInputs.slice(0, -1));
+    // And it is the list the drawing's fingerprint names, so a click after storage changed is refused
+    assert.deepEqual(before, JSON.parse(buttonFingerprint(button)).claudeInputs);
+  }
+  // As stored: nothing filled in, only ordinary spaces off the ends, and empty inputs are not listed
+  assert.deepEqual(claudeInputsBeforeNote(buttons[3]), ['!echo padded', `${tab}!echo tab`, 'review {branch} against {main}']);
+  assert.deepEqual(claudeInputsBeforeNote(buttons[0]), []);
+  assert.deepEqual(claudeInputsBeforeNote(buttons[1]), []);
+});
+
 test('a click without a note sends the message it sent before notes existed, byte for byte', () => {
   const { buildButtonMessage } = pick('buildButtonMessage');
   const shown = '{"command":"{cd} && claude","claudeInputs":[]}';
@@ -487,6 +511,14 @@ test('every refusal code has its own message in every language the content scrip
   assert.equal(claudeNoteRefusalNotice('no-such-code'), null);
 });
 
+test('the label over the inputs a note follows has a message in every language the content script can paint', () => {
+  for (const locale of ['en', 'ko', 'ja', 'zh_CN', 'zh_TW']) {
+    const entry = JSON.parse(readExtension(`_locales/${locale}/messages.json`)).ext_claudeNote_before;
+    assert.ok(entry && entry.message.trim(), `${locale} has no label for the inputs before the note`);
+    assert.match(entry.message, /\bclaude\b/, `${locale} does not name claude`);
+  }
+});
+
 // --- The content script's wiring: lints, not proofs ---
 // The content page has no DOM harness (docs/context/testing.md), so what the pure parts above cannot
 // carry is pinned as source structure. Every lint first finds its subject — a lint that found nothing
@@ -596,6 +628,35 @@ test('a drawing shows, and its caret and send button obey, the run of the page o
   ), 'the send button obeys another page');
   // After a run moves, every drawing on screen is painted again, whichever page it was drawn for
   assert.match(bodyOf(source, 'function repaintSplitButtons('), /else paintSplitButton\(view\);/);
+});
+
+test('the popover lists the inputs a note follows above it, in order, as text under their label, for header and list buttons alike (lint)', () => {
+  const source = content();
+  // Made from the one stored button at the one moment the fingerprint is, for every split button
+  const head = bodyOf(source, 'function splitButton(');
+  assert.ok(head.includes('shown: buttonFingerprint(config), before: claudeInputsBeforeNote(config),'), 'the list is not made beside the fingerprint, from the same button');
+  assert.equal(count(source, 'claudeInputsBeforeNote('), 1, 'the list is made somewhere else too');
+  // Drawn only when there is something to list, and above the note's own row
+  const open = bodyOf(source, 'function openNotePopover(');
+  const drawn = open.indexOf('  if (view.before.length) root.append(noteBeforeList(view.before));\n');
+  const row = open.indexOf('  root.append(row, status);\n');
+  assert.ok(drawn !== -1 && row > drawn, 'the list is drawn when empty, under the note, or not at all');
+  assert.equal(count(source, 'noteBeforeList('), 2, 'the list is drawn from somewhere else too');
+  // An ordered list named by its label, each input written as text, in the order given
+  const list = bodyOf(source, 'function noteBeforeList(');
+  assert.ok(list.includes("const list = document.createElement('ol');"), 'the order is not an ordered list');
+  assert.ok(list.includes('label.id = NOTE_BEFORE_LABEL_ID;') && list.includes("list.setAttribute('aria-labelledby', NOTE_BEFORE_LABEL_ID);"), 'the list is not named by its label');
+  assert.ok(list.includes("label.textContent = tr('ext.claudeNote.before');"));
+  assert.ok(list.includes('  for (const input of inputs) {\n') && list.includes("    const item = document.createElement('li');\n") && list.includes('    item.textContent = input;\n'), 'an input is not written as a list item of text, in order');
+  // Text to read and copy, not a field: nothing else is created, and nothing is made focusable or editable
+  const created = [...list.matchAll(/document\.createElement\('(\w+)'\)/g)].map(match => match[1]);
+  assert.deepEqual(created, ['div', 'div', 'ol', 'li'], 'the list is drawn with something besides text elements');
+  assert.doesNotMatch(list, /contenteditable|tabindex/i, 'an input shown before the note can be focused or edited');
+  // Nothing this script draws is markup
+  assert.doesNotMatch(source, /\.(?:innerHTML|outerHTML)\s*\+?=|insertAdjacentHTML\s*\(|document\.write\s*\(/, 'something is written as markup');
+  // A long input wraps inside the popover's width, and a long list scrolls on its own
+  assert.match(source, /const NOTE_BEFORE_LIST_STYLE = `[^`]*overflow-wrap: anywhere;/);
+  assert.match(source, /const NOTE_BEFORE_LIST_STYLE = `[^`]*overflow-y: auto;/);
 });
 
 test("a split button's tooltip is painted from its run like the rest of it, and nothing else writes it (lint)", () => {

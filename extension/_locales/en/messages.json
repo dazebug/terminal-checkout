@@ -88,6 +88,9 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "Sent to claude before your note"
+  },
   "ext_claudeNote_caret": {
     "message": "Add a note for claude"
   },

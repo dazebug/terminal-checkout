@@ -88,6 +88,9 @@
       }
     }
   },
+  "ext_claudeNote_before": {
+    "message": "claude에게 먼저 보내는 입력"
+  },
   "ext_claudeNote_caret": {
     "message": "claude에게 한 마디"
   },
