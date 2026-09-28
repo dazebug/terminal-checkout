@@ -4,9 +4,9 @@
 - 대상: terminal-checkout — `extension/`·`tests/`·`tools/check-locales.js`·`README.md`·`CLAUDE.md`·`docs/` (Swift는 `app/Tests/`만)
 - 시작 커밋: `3aa6c98` (`fix: the PR buttons find the header's branch links by document order, not by screen position (#86)`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/claude-note-review` (`worktree-claude-note-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/agent-a7397a9d0ed8f049e` (`worktree-agent-a7397a9d0ed8f049e`)
-- 현재: R0 · 마지막 승격 605fc78 · 리뷰 중 없음 · 게이트 그린(기준선 — 아래 수치)
+- 현재: R1 · 마지막 승격 130e607(항목 1 커밋 승격 대기) · 리뷰 중 없음 · 게이트 그린(node 273/273 · CoreTests 518 skip 1 · AppTests 130)
   - 기준선(작업 트리 `3aa6c98`, 구현자 실행): `node --test` exit 0 · 258/258 · `cd app && swift test` exit 0 · CoreTests 517(skipped 1) + AppTests 130 · `node tools/check-locales.js` exit 0
-- 최근 검증자 판정: R0 no — 반박 7건 · 원문 `/private/tmp/claude-501/-Users-choongjaelee-Codes-terminal-checkout/0fc35e90-1ec3-413c-9d07-cb8929cf4b08/claude-note/R0-review.md`
+- 최근 검증자 판정: R0 재리뷰 yes · 원문 `/private/tmp/claude-501/-Users-choongjaelee-Codes-terminal-checkout/0fc35e90-1ec3-413c-9d07-cb8929cf4b08/claude-note/R0b-review.md`
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
 
@@ -41,10 +41,12 @@
   - 지문이 바뀐 버튼, 또는 팝오버를 연 페이지와 다른 페이지(`PAGE_CHANGED_ERROR`, `background.js:165`)로 가는 노트 → 네이티브 호출 0.
   - 중복 전송 — Enter 연타, Enter와 클릭의 중첩, 전송 직후 닫기·재열기, 본체와 캐럿 교차 조작 → 요청 1건.
   - 배치 부분 실패 → 실패로 보이고 항목 결과(배지)가 남으며 자동 재전송은 없다(D12).
+  - 응답을 보류한 채 헤더를 재생성하고 다시 나타난 같은 버튼으로 전송 → 요청이 추가되지 않는다.
+  - content 스냅샷과 워커 재조회가 다른 목록 선택 → 네이티브 호출 0.
   - IME 조합을 확정하는 Enter가 전송한다, `{success:false}`가 성공으로 보이거나 입력이 지워진다 → 둘 다 일어나지 않는다.
 - acceptance oracle:
   - red를 먼저 확인한 `node --test`(exit 0, 실행 수 기록 — 기준선 258)의 판정 함수 표·속성·조립 테스트, `cd app && swift test`(exit 0 — 기준선 CoreTests 517 + AppTests 130)의 trim 전제 고정과 카탈로그 게이트, `node tools/check-locales.js` exit 0.
-  - 워커 런타임 하네스(항목 2): 실제 `background.js`의 `onMessage` 콜백을 Chrome API 대역(경계당 하나)으로 돌린다. 관측 — 거부 사례의 네이티브 호출 0회; 정상 노트는 저장 명령 그대로·마지막 입력에 노트 정확히 한 번·네이티브 1회; 상세·저장소·목록 분기 전부; 노트 없는 클릭은 변경 전 빌더와 바이트 동일(13개 프리셋 × 해당 페이지 종류, 빈 `claude_inputs` 키 생략 포함); 저장 객체·배열 비변경; 검사·전달을 제거하는 토글에서 실패.
+  - 워커 런타임 하네스(항목 2): 실제 `background.js`의 `onMessage` 콜백을 Chrome API 대역(경계당 하나)으로 돌린다. 관측 — 거부 사례의 네이티브 호출 0회; 정상 노트는 저장 명령 그대로·마지막 입력에 노트 정확히 한 번·네이티브 1회; 상세·저장소·목록 분기 전부; 노트 없는 클릭은 변경 전 빌더와 바이트 동일(13개 프리셋 × 해당 페이지 종류, 빈 `claude_inputs` 키 생략 포함); 저장 객체·배열 비변경; 검사·전달을 제거하는 토글에서 실패. 같은 대역으로 실제 `chrome.action.onClicked` 콜백도 호출해 다섯 페이지 종류에서 기존 첫 버튼이 노트 없이 실행됨을 본다. 페이지 변경 검사는 앞선 조회를 정상 통과시킨 뒤 대기 중 페이지가 바뀌어 **최종 게이트가** 거부하는 사례를 포함하고, 최종 게이트를 제거하는 토글이 그 이유로 실패해야 한다.
   - 실브라우저(드라이버 수행, 절차는 항목 3·4가 체크리스트에 먼저 쓴다): 합성 클릭·합성 Enter 거부, IME 확정 Enter 비전송, 중복 전송, 페이지 이동, 배치 부분 실패, 레이아웃·테마, argv/typed 실제 전달 — node로 검증되지 않는 것들이다(확장 페이지에 DOM 하네스 없음 — `testing.md`).
 - 코퍼스 범위: `extension/defaults.js`의 13개 프리셋(전수 소탕 표에 하나씩), 소탕 표의 사용자 명령 모양, 5개 로케일 카탈로그, 페이지 종류 5개. 저장 fixture는 만들지 않는다.
 - 원자성·부분 실패·롤백 경계: 전송 한 번은 요청 한 건이고 진행 중에는 다시 보낼 수 없다. 워커·앱 검증의 거부는 터미널 실행 전이라(`Request.swift:290-295` — resolve가 run보다 먼저) 다시 보내도 중복이 없다. 앱이 탭을 연 뒤 응답만 유실되면 재전송이 세션을 하나 더 연다 — 기존 버튼과 같은 잔여이고, 요청 idempotency는 이 루프에서 만들지 않는다. 배치는 일부 항목을 실행한 뒤 `success:false`일 수 있어(`Request.swift:385`) 사람이 다시 보내면 성공한 항목도 다시 실행된다 — 자동 재전송은 하지 않는다(D12).
@@ -89,9 +91,9 @@
 - 첫 글자 규칙: 일반 공백(U+0020) trim 뒤 첫 글자가 `\p{Z}`·`\p{C}`·`!`·`/`·`#`이면 거부한다. 앱은 템플릿 렌더 → C0/DEL·개행 거부 → `.whitespacesAndNewlines` trim → `!`/`/`/`#` 분류 순서이고(`Request.swift:170-180`, `ClaudeInputPlan.swift:30-38`), 렌더는 D10으로 노트를 바꾸지 않으며, 이 trim이 벗기는 비-C0 스칼라 21개는 모두 Z∪C다(실측: U+0020 U+0085 U+00A0 U+1680 U+2000∼U+200B U+2028 U+2029 U+202F U+205F U+3000 — 드라이버 프로브가 실제 `resolveRequest`로 재확인, R0). 그러니 이 규칙을 지난 첫 글자는 앱의 어느 단계에서도 바뀌지 않는다. 첫 글자 `{`는 따로 막지 않는다 — 렌더가 첫 글자를 바꿀 길이 D10으로 없어졌다. JS `trim()`·`\p{Z}`로 대체하지 않는다 — 둘 다 U+0085·U+200B를 놓친다(실측).
 - 제어 바이트·개행은 조용히 지우지 않고 보이게 거부한다(`defaults.js:863-866`의 `trim()` 사고).
 - 전송은 사람만 한다. 캐럿·전송 버튼은 `onUserClick`(`defaults.js:350-360`)으로, Enter 키는 같은 `isUserGesture`에 `isComposing` 제외를 더해 한 곳에서 가드한다.
-- 분할 버튼 하나(본체+캐럿)에 진행 중 잠금 하나: 공통 전송 함수가 첫 `await` 전에 잡고, 팝오버 DOM이 사라져도 요청이 끝날 때까지 유지하며, 이전 요청의 늦은 응답은 새 팝오버를 닫거나 입력을 지우지 않는다. 실행 입구(본체 클릭·캐럿 클릭·전송 버튼·Enter)는 모두 이 잠금을 거친다.
+- 분할 버튼 하나(본체+캐럿)에 진행 중 잠금 하나: 공통 전송 함수가 첫 `await` 전에 잡고, 팝오버 DOM이 사라져도 요청이 끝날 때까지 유지하며, 이전 요청의 늦은 응답은 새 팝오버를 닫거나 입력을 지우지 않는다. 실행 입구(본체 클릭·캐럿 클릭·전송 버튼·Enter)는 모두 이 잠금을 거친다. 잠금의 정체성은 DOM 노드가 아니라 **같은 분할 버튼**(같은 페이지 목표·같은 종류·같은 인덱스·같은 지문)이다 — GitHub가 헤더를 교체해 본체·캐럿이 다시 만들어져도(`content.js:829`·`:907`) 진행 중인 요청 동안 다시 나타난 같은 버튼은 잠겨 있고, 이전 요청의 늦은 응답은 새 버튼·새 팝오버를 바꾸지 않는다. 다른 버튼·다른 페이지까지 막는 전역 잠금은 아니다.
 - UI의 성공은 앱이 명령을 받아 터미널을 열었다는 뜻뿐이다(D12) — 전달은 그 뒤 비동기로 일어나고(`HostServer.swift:279`) 그 실패는 로그로만 남는다. `{success:false}`는 실패로 보이고(`content.js:69-71`) 입력은 보존된다; 배치는 바깥 `success:true` 안의 앱 판정(`interpretListBatchResponse`의 `appSuccess`·`itemKeys`)으로 읽고 부분 실패는 실패로 보인다; 자동 재전송은 없다. 오류 원문은 페이지에 그리지 않는다(`buttons.test.js:679-701`) — 로컬 판정은 현지화 문구, 그 밖은 원인을 단정하지 않는 일반 실패 문구와 console 원문.
-- 캡처 시점: 페이지 목표는 팝오버를 **연 순간**, 노트와 목록 선택은 **전송 때** 각각 한 번 읽고, `await` 뒤 DOM에서 다시 읽지 않는다. 전송 직전 비교는 최종 게이트가 한다(`background.js:182-207`). 목표가 바뀌면 팝오버를 캐럿과 함께 치우지만(`content.js:863-883`), 닫기·페이지 이동은 이미 넘긴 실행을 취소하지 않는다(최종 검사 뒤 IPC 구간의 잔여 — `background.js:361`).
+- 캡처 시점(content의 캡처 규칙): 페이지 목표는 팝오버를 **연 순간**, 노트와 목록 선택은 **전송 때** 각각 한 번 읽고, content는 `await` 뒤 DOM에서 다시 읽지 않는다. 워커는 지금처럼 저장 버튼을 읽은 뒤 현재 선택을 DOM에서 독립적으로 다시 읽어 메시지 스냅샷과 대조하고 그 재조회 결과로 항목을 만든다(`background.js:478-503`) — 스냅샷과 재조회가 다르면 네이티브 호출 0. 전송 직전 비교는 최종 게이트가 한다(`background.js:182-207`). 목표가 바뀌면 팝오버를 캐럿과 함께 치우지만(`content.js:863-883`), 닫기·페이지 이동은 이미 넘긴 실행을 취소하지 않는다(최종 검사 뒤 IPC 구간의 잔여 — `background.js:361`).
 - 한 요청의 claude 입력 합계는 `MAX_CLAUDE_INPUTS`(`defaults.js:321`) 이하다 — 정규화된 저장 입력(`executionPayload`가 보내는 것) 수 + 1로 센다(D13). Warp helper 수명 산정의 전제다(`app/Sources/WarpHelper/main.swift:51`).
 - 노트의 전달 경로(argv/typed)를 계획·문서·UI가 약속하지 않는다 — 경로는 앱이 자기 trim 뒤에 정한다(D13).
 - DOM은 경계가 아니다. 팝오버의 격리 방식(shadow root 여부)은 스타일·단축키 문제로만 고르고, 보안은 워커의 판정이 진다.
@@ -122,13 +124,13 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | 판정 계약 — `defaults.js`에서 소유자가 하나씩인 네 함수: claude 판정(options 경고가 공유하는 것은 이것뿐)·노트 수용(정규화된 저장 입력 수 기준)·노트 판정(평문 첫 글자·변수 토큰(D10)·길이·개행/제어, 거부 사유 코드)·조립(저장된 버튼 비변경, 노트는 마지막에 정확히 한 번); 그리고 `resolveRequest` 진입점으로 trim 전제를 고정하는 Swift 테스트 | 판정 계약 | (a) "claude를 띄우는가"가 `options.js:404` 인라인 한 곳뿐이라 content·worker가 공유할 술어가 없다 (b) 노트 판정이 없다 — JS 공백 개념(`trim()`·`\p{Z}`)으로 만든 `!` 검사는 앱이 벗기는 U+0085·U+200B를 놓친다(실측) (c) 앱이 노트를 템플릿으로 렌더해 원문 493B가 8201B가 되고 배치 항목마다 길이가 갈린다(드라이버 프로브) — 변수 토큰 판정이 없다 (d) 합계를 정규화된 수로 세는 함수와, 저장 객체를 바꾸지 않고 노트를 마지막에 한 번 붙이는 조립 함수가 없다 (e) trim 전제를 진입점으로 고정하는 테스트가 없다 | `extension/defaults.js`, `extension/options.js`, 신규 `tests/claude-note.test.js`, `app/Tests/CoreTests/CoreTests.swift` | — | todo | | |
+| 1 | 판정 계약 — `defaults.js`에서 소유자가 하나씩인 네 함수: claude 판정(options 경고가 공유하는 것은 이것뿐)·노트 수용(정규화된 저장 입력 수 기준)·노트 판정(평문 첫 글자·변수 토큰(D10)·길이·개행/제어, 거부 사유 코드)·조립(저장된 버튼 비변경, 노트는 마지막에 정확히 한 번); 그리고 `resolveRequest` 진입점으로 trim 전제를 고정하는 Swift 테스트 | 판정 계약 | (a) "claude를 띄우는가"가 `options.js:404` 인라인 한 곳뿐이라 content·worker가 공유할 술어가 없다 (b) 노트 판정이 없다 — JS 공백 개념(`trim()`·`\p{Z}`)으로 만든 `!` 검사는 앱이 벗기는 U+0085·U+200B를 놓친다(실측) (c) 앱이 노트를 템플릿으로 렌더해 원문 493B가 8201B가 되고 배치 항목마다 길이가 갈린다(드라이버 프로브) — 변수 토큰 판정이 없다 (d) 합계를 정규화된 수로 세는 함수와, 저장 객체를 바꾸지 않고 노트를 마지막에 한 번 붙이는 조립 함수가 없다 (e) trim 전제를 진입점으로 고정하는 테스트가 없다 | `extension/defaults.js`, `extension/options.js`, 신규 `tests/claude-note.test.js`, `app/Tests/CoreTests/CoreTests.swift` | — | verified | red 먼저: `node --test tests/claude-note.test.js` 구현 전 14/14 실패(함수 미정의 13 · lint 1), options 경고 lint 추가 뒤 1 실패 → 구현 후 15/15 통과 · 게이트: `node --test` exit 0 · 273/273(기준선 258, +15) · `cd app && swift test` exit 0 · CoreTests 518(skip 1; 기준선 517, +1) · AppTests 130 · `node tools/check-locales.js` exit 0 · 토글(`git apply -R`): `defaults.js` 변경 제거 → 14 실패/1 통과(options lint만 통과) · `options.js` 변경 제거 → 테스트 3·4 실패 · 고장 주입(스크래치 사본 복원): 첫 글자 규칙을 `trim()`+`[!/#]`로 → 테스트 9·10 실패(U+200B 통과) · 중괄호 규칙을 ASCII `\{\w+\}`로 → 테스트 11 실패(`이거 {이거}`) · `Request.swift` trim에 `q` 추가(패치 역적용으로 복원) → `testEveryLeadingScalarTheTrimStripsIsASeparatorOrOther` 실패(`U+0071`) · 노트 없는 경로: `node /tmp/claude-note-payload-snapshot.js <작업 트리> <out>` 변경 전후 16개 버튼(`executionPayload`·`buttonFingerprint`·`toStoredButton`·`normalizeClaudeInputs`) → `cmp` exit 0 · 기존 테스트 수정 0건 · Swift 테스트 소요 2.9초(요청당 입력 4096개; 입력 하나씩은 9.4초) · 재실행(드라이버): 작업 트리 node --test → exit 0 · 273/273; cd app && swift test → exit 0 · CoreTests 518(skip 1) · AppTests 130; 고장 주입(스크래치 사본, 첫 글자 규칙을 /^[!\/#]/u로) → tests/claude-note.test.js 15 중 2 실패(9·10) | |
 | 2 | 워커 경로 — 상세·저장소·목록 배치 분기 전부에서 `note` 형 검사 → 항목 1 판정 → 조립 → 네이티브 호출; 배치 메시지·요청 빌더의 노트 자리; 실제 `background.js`의 `onMessage`를 Chrome API 대역(경계당 하나)으로 돌리는 런타임 하네스와 토글(「완료의 정의」의 관측 목록); 원천 부정 주석 갱신 | 워커 경로 | (a) `onMessage`가 `note`를 모른다 — 상세·저장소(`background.js:612-623`)와 목록(`background.js:581-610`) (b) `runButton`(`background.js:371-375`)·`buildListBatchRequest`(`defaults.js:560-565`)·`buildListBatchMessage`(`defaults.js:584-593`)에 노트 자리가 없다 (c) 워커 경로를 런타임으로 통과하는 테스트가 없다 — 지금 검사는 소스 lint다(`tests/buttons.test.js:652-661`) (d) 원천 부정 주석(`defaults.js:844-854`, `background.js:156-158`·`303-304`)이 노트 도입 뒤 거짓이 된다 | `extension/background.js`, `extension/defaults.js`, 신규 런타임 하네스 테스트, `tests/list-pages.test.js`, `tests/buttons.test.js` | 1 | todo | | |
 | 3 | 분할 버튼·팝오버 컴포넌트와 PR·이슈·저장소 헤더 장착 — ▾ 캐럿은 claude를 띄우는 버튼에 붙은 분할 버튼의 오른쪽 조각으로, 저장소 헤더의 채운 초록 버튼에서는 버튼과 이어진 조각이고 PR·이슈 행의 아이콘 버튼 옆에서는 작은 캐럿이며 `currentColor` 단색 SVG다(D4·D5); 한 줄 입력·전송·닫기, 전송 잠금·캡처 시점, 키보드·IME·단축키 차단, 접근성(`aria-haspopup`·`aria-expanded`·툴팁/레이블), 진행·성공·실패 표시와 입력 보존, 목표 변경 시 제거, 5개 로케일 문자열과 핀; DOM 격리 방식·스타일 주입의 CSP 통과·라이트/다크 테마는 실브라우저 실측으로 정한다(기존 버튼은 CSSOM `style.cssText`만 쓴다 — `content.js:32`); 위치 계산은 `layout.js` 순수 함수; **이 항목의 실브라우저 점검 절차를 `docs/new-terminal-checklist.md`에 먼저 쓴다** | UI 컴포넌트·카탈로그 | (a) claude 버튼에 붙은 입력 UI가 없다 (b) PR 헤더의 버튼 칸과 메타 행이 overflow:hidden이라 칸 안에 둔 팝오버는 잘린다(`layout.js:6-17`) (c) 실행 입구가 여럿(본체·캐럿·전송 버튼·Enter)인데 진행 중 잠금의 소유자가 없다 — 지금 버튼은 제 `disabled`만 쓴다(`content.js:46-47`·`675-676`) (d) content의 원천 부정 주석(`content.js:77-83`)이 노트 도입 뒤 거짓이 된다 (e) 이 항목의 실브라우저 점검 절차가 체크리스트에 없다 | `extension/content.js`, `extension/layout.js`, `tests/layout.test.js`, `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json`, `tools/check-locales.js`(바이트 핀), `tests/i18n.test.js`(호출 수·속성 목록 핀), `docs/new-terminal-checklist.md` | 1, 2 | todo | | |
 | 4 | 목록 장착 — 항목 3 컴포넌트를 목록 배치 버튼에 붙인다: 선택은 전송 때 한 번 읽고, 선택 오류(0개·25개 초과)는 팝오버에 보이며 입력 보존, 결과는 `interpretListBatchResponse`·`itemKeys`·결과 배지로; 두 번째 검증기·전송 상태를 만들지 않는다; **이 항목의 점검 절차를 체크리스트에 먼저 쓴다** | 목록 장착 | (a) 목록 버튼은 클릭 시점의 선택을 읽는다(`content.js:567`) — 팝오버에서는 전송 때 한 번 (b) 배치의 앱 실패는 바깥 `success:true` 안의 `batch`로 온다(`background.js:604-605`) — 이행을 성공으로 읽으면 실패 표시와 입력 보존이 깨진다 (c) 이 항목의 실브라우저 점검 절차가 체크리스트에 없다 | `extension/content.js`, `tests/list-pages.test.js`, 필요 시 항목 3의 카탈로그·핀 파일, `docs/new-terminal-checklist.md` | 1, 2, 3 | todo | | |
 | 5 | 문서 — README·CLAUDE.md·`docs/context/claude-input-delivery.md`(필요 시 `docs/context/index.md`) | 문서 | (a) README의 claude 입력·Warp 권한 서술이 노트를 모른다(`README.md:14,16,34,94,156,190,285,287`) (b) 평문 전용(D2)·변수 금지(D10)·첫 글자 규칙의 실측 전제·UI 성공의 뜻(D12)·경로 비약속(D13)·열 때 목표 캡처가 CLAUDE.md·`docs/context/`에 없다 | `README.md`, `CLAUDE.md`, `docs/context/claude-input-delivery.md`, 필요 시 `docs/context/index.md` | 2, 3, 4 | todo | | |
 
-- 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶이고, 파일 집합이 겹치지 않는 부류만 따로 승격할 수 있다. 승격 칸에는 커밋 해시를 적는다
+- 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶인다. 독립 승격(다른 항목과 따로·나란히)은 파일 집합과 계약이 모두 겹치지 않을 때만 하고, 파일이 겹치는 항목은 선행 항목의 계약이 승격된 뒤 의존 순서대로 차례로 승격한다. 승격 칸에는 커밋 해시를 적는다
 - `의존`: 다른 항목의 계약(시그니처·불변식·생성물·호출 순서)을 전제하면 그 번호를 적는다. 그 항목에 정정(A′)이 오면 이 항목의 근거를 다시 낸 뒤에야 최종 리뷰에 들어간다
 - `확정 결함`: 설계 리뷰·판정에서 이 항목으로 확정된 결함이 여럿이면 처방 산문과 분리해 `(a) … (b) …`로 열거한다 (하나뿐이면 — 항목 문장이 곧 결함이다). 배정문은 이 라벨을 인용한다 — 「이번 배정은 (a)(b), (c)는 후속」. 열거가 검증자 스레드·스크래치패드에만 있으면 세션과 함께 사라지고, 명세에 열거가 없으면 배정 전 자기 대조를 성실히 해도 빠진 결함이 보이지 않는다(실사고)
 - 판정이 항목을 다시 열면 행을 고치지 말고 개정 항목으로 잇는다 — 같은 항목의 개정은 prime(`6′`), 형제 부류나 prime 소진 뒤는 letter(`6a`), 식별자는 재사용하지 않는다(append-only 표가 모호해진다). **선행 행의 상태는 그 승격에 대한 마지막 판정이지 종결이 아니다 — 부류의 종결은 체인 끝 항목의 상태가 나타낸다.** 이 규약 없이 표를 처음 읽으면(cold review·재개 브리핑) 개정된 행들이 미해결로 보인다
@@ -156,6 +158,7 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | D12 | 드라이버 | 검증자 R0-2: 앱은 탭을 연 뒤 전달을 비동기로 시작하고 응답한다(`HostServer.swift:279`) — 요청 성공은 노트 전달 성공이 아니다; 배치는 일부 실행 뒤 `success:false`일 수 있다(`Request.swift:385`) | 반영 — UI 성공은 "앱이 명령을 받아 터미널을 열었다"만 뜻한다; 배치 결과는 기존 `interpretListBatchResponse`(`appSuccess`·`itemKeys`)와 결과 배지로 보이고 부분 실패는 실패로 보인다; 자동 재전송은 없다. D3의 잔여는 정규식 오탐에 한정되지 않는다 — 정상 프리셋에서도 비동기 전달 실패는 성공 표시 뒤 로그로만 남는다 | R0 | — |
 | D13 | 드라이버 | 검증자 R0-6: 확장의 정규화와 앱의 trim이 달라 경로를 확장이 예측할 수 없다(실측: 저장 `["\u200B"]` + 노트 `hello` → 앱 결과 `["hello"]`, argv 후보) | 반영 — 계획·문서는 노트의 전달 경로(argv/typed)를 약속하지 않는다; 경로는 앱이 자기 trim 뒤에 정한다. 합계 상한은 정규화된 저장 입력(`executionPayload`가 보내는 것) 수 + 1 ≤ `MAX_CLAUDE_INPUTS` | 드라이버 프로브 `stored-whitespace rawBytes: 5 resolvedBytes: [5]` · R0 | — |
 | D14 | 드라이버 | 검증자 R0-7: 항목 1의 네 책임을 한 함수로 합치면 options 경고가 노트 수용 여부에 종속되고, 워커 검증·조립(항목 2·4)과 팝오버 상태·전송 가드(항목 3·4)가 두 벌이 될 수 있으며, 체크리스트(항목 5)와 동작 증거(항목 3·4)가 순환 의존한다 | 반영 — 항목을 계약 기준으로 재분할하고, 실브라우저 점검 절차는 항목 3·4가 각자 체크리스트에 먼저 쓴다 | R0 | — |
+| D15 | 드라이버 | 검증자 R0b: 상위집합이라는 설명만으로는 구현이 증명되지 않는다 — ICU `\w`를 JS로 재현하면 어긋날 수 있다 | D10의 판정은 닫힌 중괄호 구간을 넓게 거부하는 구조적 상위집합으로 한다(예: `/\{[^}]*\}/u` — 앱 패턴 `\{(\w+)\}`의 모든 일치는 `}`를 담지 않는 닫힌 구간이다); `{{repo}}`·`\{repo}`도 예외 없이 거부한다(앱 렌더러에 이스케이프 규칙이 없다 — `CommandRenderer.swift:96`) | R0b | 과잉 거부(`{}`·`{ a }`·`{"a":1}`)는 현지화 문구로 보인다 |
 
 ## 전수 소탕 표
 
@@ -176,17 +179,23 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | 사용자 명령 `echo claude`·`cat ~/.claude/…`·`claude -p …` | 캐럿 ○(오탐) · claude가 뜨지 않아 전달은 120초 대기 뒤 로그로만 남고 UI는 성공 — D3·D12의 잔여 | `ClaudeInjector.swift:1024-1030` |
 | 사용자 alias(`cc` 등)로 claude를 띄우는 명령 | 캐럿 × (미탐) | 명령 텍스트로는 alias를 알 수 없다 |
 | 정규화된 저장 입력이 5개인 버튼 | 캐럿 × (합계 상한, D13) | `defaults.js:321,867-876` |
-| "claude를 띄우는가"를 판정하는 곳 | content 그리기·worker 검증·options `updateClaudeWarn` → 한 함수(항목 1) | `options.js:402-408` |
-| `claude_inputs`를 조립하는 곳 | `runButton`·`buildListBatchRequest` → 항목 1의 조립 함수 경유; 확장 아이콘 경로는 노트 없음 | `background.js:371-375,567` · `defaults.js:560-565` |
+| "claude를 띄우는가"를 판정하는 곳 | `commandStartsClaude` 하나 — options `updateClaudeWarn`이 부른다; content 그리기·worker 검증은 항목 2/3에서 호출 | `defaults.js:952-954` · `options.js:404` |
+| `claude_inputs`를 조립하는 곳 | 노트가 있으면 `executionPayloadWithNote` 하나 — `runButton`·`buildListBatchRequest`가 항목 2에서 호출; 확장 아이콘 경로는 노트 없음 | `defaults.js:1010-1013` · `background.js:371-375,567` · `defaults.js:560-565` |
 | 메시지 필드가 요청 원천이 되는 곳 | 노트 하나(예외); 목록의 `selected`는 비교 키로 남는다 | `defaults.js:512-514` · `background.js:496-503` |
 | "메시지는 원천이 아니다"를 말하는 주석 | 노트 예외로 갱신(항목 2·3) | `defaults.js:844-854` · `content.js:77-83` · `background.js:156-158,303-304` |
-| 입력 첫 글자를 바꿀 수 있는 앱 단계 | 렌더는 D10으로 노트를 바꾸지 않고, trim(Z∪C)·분류(`!/#`)는 첫 글자 규칙이 막는다 | `Request.swift:170-180` · `CommandRenderer.swift:57,96-104` · `ClaudeInputPlan.swift:30-38` |
+| 입력 첫 글자를 바꿀 수 있는 앱 단계 | 렌더는 D10으로 노트를 바꾸지 않고, trim(Z∪C)·분류(`!/#`)는 첫 글자 규칙이 막는다; trim 전제는 진입점 테스트가 고정 | `Request.swift:170-180` · `CommandRenderer.swift:57,96-104` · `ClaudeInputPlan.swift:30-38` · `defaults.js:1000` · `CoreTests.swift:739-778` |
 | 노트 내부 문자(첫 글자 제외) | LF/CR/C0/DEL은 확장이 먼저 거부하고 앱도 거부; 변수 토큰은 확장이 거부(D10); 그 밖은 저장 입력과 같은 앱 규칙 | `Request.swift:197-222` |
-| 노트 안 `{단어}` | 앱 패턴 `\{(\w+)\}`의 상위집합으로 확장이 거부 — 렌더가 노트를 바꾸지 않는다; 과잉 거부(`{"a":1}` 등)는 현지화 문구(D10) | `CommandRenderer.swift:57` |
+| 노트 안 `{단어}` | 닫힌 중괄호 구간을 모두 거부(`/\{[^}]*\}/u`) — 렌더가 노트를 바꾸지 않는다; 과잉 거부(`{"a":1}` 등)는 현지화 문구(D10·D15) | `CommandRenderer.swift:57` · `defaults.js:1001` |
 | 버튼이 붙는 표면 | PR 헤더·이슈 배지 행·저장소 crumb(항목 3), 목록 툴바(항목 4); 확장 아이콘 클릭 제외 | `content.js:589-622,721-831` · `background.js:552-571` |
 | 팝오버를 치우는 곳 | 목표가 바뀔 때 `removeInsertedButtons`가 캐럿·팝오버를 함께 지운다 | `content.js:863-883` |
 | 실행 입구(본체 클릭·캐럿 클릭·전송 버튼·Enter) | 분할 버튼 하나에 진행 중 잠금 하나 — 공통 전송 함수가 첫 `await` 전에 잡는다(항목 3) | `content.js:45-64,560-584,673-693` |
 | 노트·목록 선택을 DOM에서 읽는 곳 | 전송 때 한 번 — `await` 뒤 다시 읽지 않는다(항목 3·4) | `content.js:567` |
+| claude 입력·노트의 정규화(양끝 U+0020 trim) | `trimOrdinarySpaces` 하나 — `normalizeClaudeInputs`와 노트 판정이 같이 쓴다 | `defaults.js:867-874,997` |
+| options 경고의 "입력이 있는가" | 고침 — `trim()` 대신 `normalizeClaudeInputs`로 센다: 탭만 있는 입력은 보내지고 앱이 거부하는데 경고가 숨었다 | `options.js:403` |
+| 편집기의 입력 행 상한 · 저장 버튼 판독의 입력 수 상한 | 안전 — 앞은 편집 행 수, 뒤는 저장 모양 판정이고 전송 판정이 아니다; 저장 때 정규화되고 노트 수용은 정규화 수로 센다 | `options.js:376,1307` · `defaults.js:809,962,1095` |
+| `buttonUsesAllowedVariables`의 입력 순회 · `migrations.js`의 claude 명령·입력 | 안전 — 변수 판정과 옛/새 명령 데이터·미리보기 사본이고 claude 판정이나 정규화가 아니다 | `defaults.js:220-233` · `migrations.js:25-33,258-261,344-353` |
+| `background.js` · `content.js` | 지금은 판정 없음 — 항목 2가 `claudeNoteVerdict`·`buttonTakesClaudeNote`·`executionPayloadWithNote`를, 항목 3이 `buttonTakesClaudeNote`·`claudeNoteVerdict`를 호출 | |
+| 앱의 경로 판정(`commandAcceptsAppendedClaudePrompt`) | 확장이 복제하지 않는다(D13) | `ClaudeInputPlan.swift:453-589` |
 | 앱 setup window의 Warp 문구 | 변경 불필요 — 노트 클릭이 typed로 거부돼도 같은 안내 창이 뜬다; "all three" 불일치는 D6 | `TerminalRunner.swift:169-172` · `app/Sources/App/Resources/en.lproj/Localizable.strings:79,84` |
 | iTerm2/WezTerm argv의 1024바이트 canonical 한계 | 미검사 — 앱은 cmux만 가드한다; 긴 노트로 체크리스트에서 실측(항목 3, D11) | `TerminalRunner.swift:640-672` · `AppleScriptSupport.swift:65` · `TerminalRunner.swift:969-979` |
 | 팝오버 입력 중 GitHub 전역 단축키 | 미검사 — shadow root 안의 입력은 바깥 리스너에 host로 재지정되어 보인다; 실브라우저 실측(항목 3) | |
@@ -204,6 +213,13 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 - 처리: R0-1 반영(D10 — 노트 변수 금지로 렌더=원문) + 후단 기각(D11 — 기존 노출, 종결 때 이슈로) · R0-2 반영(D12) · R0-3 반영(불변 원칙 — 전송 잠금·캡처 시점) · R0-4 반영(완료의 정의 — 실제 `background.js` 런타임 하네스, 실브라우저 항목) · R0-5 반영(D10으로 부류 소멸) · R0-6 반영(D13, 불변 원칙 — 바이트 불변·비변경·빈/비문자열 거부) · R0-7 반영(D14 — 항목 재분할)
 - 실측: 드라이버 프로브(실제 `resolveRequest`) `repo-expansion [8201]` · `item-9 [4096]` · `item-10 [4097]` · `stored-whitespace [5]` · `unicode-variable REJECTED` · `repo-button-on-pr REJECTED` · `stripped` 21개 · `outsideZC: []`; 실행 요청 2(iTerm2/WezTerm 4096B argv)는 미실행(D11)
 - 판정: "이 계획으로 시작하는 데 합의하는가: no." → 반영 후 재리뷰
+
+#### 설계 리뷰 재요청 — 130e607 · 승격 14:42 · 리뷰 14:42∼14:47 · 왕복 1 · 원문 `/private/tmp/claude-501/-Users-choongjaelee-Codes-terminal-checkout/0fc35e90-1ec3-413c-9d07-cb8929cf4b08/claude-note/R0b-review.md`
+
+- 반박: R0b-1 목록 선택 1회 읽기는 content 규칙 — 워커의 재조회·대조는 유지(P2) · R0b-2 하네스가 아이콘 경로(`chrome.action.onClicked`)와 대기 중 페이지 변경을 돌려야 한다(P2) · R0b-3 잠금 수명이 같은 분할 버튼의 DOM 재생성을 덮어야 한다(P2) · R0b-4 파일 겹침 승격 규칙 문구(P3) · D10 구현 권고 — 닫힌 중괄호 구간을 넓게 거부, `{{repo}}`·`\{repo}` 예외 없음
+- 처리: 전부 반영(불변 원칙 캡처 시점·진행 중 잠금, 완료의 정의 하네스·실패 목록, 항목 표 규칙 줄, D15)
+- 실측: 추가 실행 요청 없음; D11 완료 차단 요구는 검증자가 철회("D11의 기각은 수용하며, 이전의 완료 차단 요구를 철회한다")
+- 판정: "이 계획으로 시작하는 데 합의하는가: yes." → R1 시작
 
 ## 열린 질문
 

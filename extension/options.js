@@ -400,8 +400,8 @@ function updateFacePreview(card, face) {
 }
 
 function updateClaudeWarn(card, btn) {
-  const hasInputs = btn.claudeInputs.some(s => s.trim());
-  card.querySelector('.claude-warn').hidden = !hasInputs || /\bclaude\b/.test(btn.command);
+  const hasInputs = normalizeClaudeInputs(btn.claudeInputs).length > 0;
+  card.querySelector('.claude-warn').hidden = !hasInputs || commandStartsClaude(btn.command);
   // The merge rules are only worth reading once there is something to merge — showing them on
   // every empty card would put three paragraphs of prose above every button
   card.querySelector('.claude-hint').hidden = !hasInputs;

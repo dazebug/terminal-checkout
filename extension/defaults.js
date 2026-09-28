@@ -865,7 +865,12 @@ function readableButtonFields(entry) {
 // app and be rejected there as `{success:false}`. `face` and `label` still use `trim()` below because
 // they are display text, not typed bytes.
 function normalizeClaudeInputs(inputs) {
-  return (inputs || []).map(input => String(input).replace(/^ +| +$/g, '')).filter(Boolean);
+  return (inputs || []).map(input => trimOrdinarySpaces(String(input))).filter(Boolean);
+}
+
+// The trim above, and the only one a note gets too: ordinary spaces (U+0020) at either end.
+function trimOrdinarySpaces(text) {
+  return text.replace(/^ +| +$/g, '');
 }
 
 function executionPayload(button) {
@@ -932,6 +937,80 @@ function clickMatchesWhatWasShown(button, shown) {
 // render it. That is a protocol change, and it is the trigger to revisit this.
 const BUTTON_CHANGED_ERROR =
   'This button no longer matches your saved settings — reload the page and try again.';
+
+// --- A note typed at click time ---
+// A button that starts claude can carry a one-line note from the person clicking it, delivered as
+// that click's last claude input. It is the one value a click message carries that storage did not
+// write — the command, the inputs and the fingerprint still come from storage — so what a note may
+// hold is decided here, once, for the content script that offers the note and for the worker that
+// refuses one before anything is sent.
+
+// Whether a command starts claude, as far as its text can tell: the word `claude`. The options page
+// warns on it and the note is offered on it, so the two cannot disagree. It errs towards yes
+// (`echo claude` counts), and a note sent through a false yes is lost the way a scheduled input is:
+// claude never comes up, and only the app's log says so.
+function commandStartsClaude(command) {
+  return typeof command === 'string' && /\bclaude\b/.test(command);
+}
+
+// Whether a button can take a note: it starts claude, and one more input still fits under the cap.
+// The inputs are counted the way a click sends them (executionPayload), not the way they are stored.
+function buttonTakesClaudeNote(button) {
+  if (!button || typeof button !== 'object') return false;
+  if (button.claudeInputs !== undefined && !Array.isArray(button.claudeInputs)) return false;
+  if (!commandStartsClaude(button.command)) return false;
+  return executionPayload(button).claudeInputs.length < MAX_CLAUDE_INPUTS;
+}
+
+// UTF-8 bytes. The same budget the app gives the longest line it merges out of `!` inputs
+// (claudeMergedLineLimit), well inside what the Warp helper accepts in one injection (8 KiB).
+const MAX_CLAUDE_NOTE_BYTES = 4096;
+
+// Why a note was refused — a code, not a sentence. The content script turns it into a message in the
+// language it draws in, the worker into an English diagnostic.
+const CLAUDE_NOTE_ERRORS = Object.freeze([
+  'not-string', 'empty', 'control-character', 'leading-character', 'braces', 'too-long',
+]);
+
+// The one verdict on a note: plain text on one line, reaching claude exactly as written.
+//
+// On its way the app renders the note as a template, refuses NUL, line breaks and C0/DEL, trims
+// `.whitespacesAndNewlines`, and reads `!` (shell mode) or `/` and `#` (input-box directives) off the
+// front. Each step could turn the note checked here into something else, so each is closed here:
+//  - the first character: that trim strips scalars `trim()` and `\p{Z}` both keep — U+0085 and U+200B
+//    among them (measured) — and everything it strips is in Unicode category Z or C, which a Swift
+//    test pins. Refusing all of Z and C at the front, with `!`, `/` and `#`, leaves the app classifying
+//    the very character checked here.
+//  - braces: the app substitutes `{name}` for any name ICU's `\w` accepts — Korean names included,
+//    which JavaScript's `\w` does not reproduce — and it has no escape. A span from `{` to the next
+//    `}` contains every such placeholder, so refusing any closed span refuses them all without
+//    modelling `\w`, and a note with no placeholder renders to itself in every item of a batch.
+//    `{}`, `{ a }` and `{"a":1}` are refused along with it.
+//  - control characters: C0, DEL, C1 and the line and paragraph separators, anywhere — refused, not
+//    removed: removing them is how a typed byte used to change on its way.
+//  - length: counted after the trim, so the bytes checked are the bytes sent.
+// Only ordinary spaces are trimmed, and the trimmed text is the note to send: it comes back with the
+// verdict, so nothing reads the raw value again.
+function claudeNoteVerdict(note) {
+  const refuse = error => ({ valid: false, error, note: null });
+  if (typeof note !== 'string') return refuse('not-string');
+  const trimmed = trimOrdinarySpaces(note);
+  if (!trimmed) return refuse('empty');
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(trimmed)) return refuse('control-character');
+  if (/^[\p{Z}\p{C}!\/#]/u.test(trimmed)) return refuse('leading-character');
+  if (/\{[^}]*\}/u.test(trimmed)) return refuse('braces');
+  if (new TextEncoder().encode(trimmed).length > MAX_CLAUDE_NOTE_BYTES) return refuse('too-long');
+  return { valid: true, error: null, note: trimmed };
+}
+
+// What a click with a note hands the app: the button's own payload, with the note after its inputs,
+// once. Last, so a `!` run that puts context in front of claude goes first. A new object and a new
+// array — the stored button, and with it the fingerprint of what was drawn, are not touched. The note
+// is the verdict's `note`; this does not judge it again.
+function executionPayloadWithNote(button, note) {
+  const payload = executionPayload(button);
+  return { command: payload.command, claudeInputs: [...payload.claudeInputs, note] };
+}
 
 // --- The main-branch settings, validated once for every reader ---
 // The override lookup is keyed by a repository name taken straight out of a page URL, and whatever
