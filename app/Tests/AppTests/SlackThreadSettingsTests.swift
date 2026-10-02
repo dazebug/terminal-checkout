@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Core
 import Foundation
 import TestSupport
@@ -51,7 +52,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         XCTAssertEqual(Settings.slackThreadInstruction, "  keep the user's wording  ")
     }
 
-    func testSettingsAndURLRequestUseTheSameCoreValidator() throws {
+    func testSettingsAndHotKeyRequestUseTheSameCoreValidator() throws {
         let appRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let coreSource = try auditSource(
@@ -70,7 +71,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         let settingsBody = try XCTUnwrap(segment(
             in: windowSource,
             from: "private func updateSlackThreadSettingsCard() {",
-            to: "\n    private func updateSlackShortcutPresentation()"
+            to: "\n    private func revealSlackRequestFailure()"
         ))
 
         XCTAssertTrue(requestBody.contains("validateSlackThreadSettings("))
@@ -81,7 +82,7 @@ final class SlackThreadSettingsTests: XCTestCase {
     func testEverySlackThreadFailureHasLocalizedMessagesInEveryLocale() {
         let underlying = CommandError.invalidBaseDirectory(.notAbsolute, "synthetic")
         let requestErrors: [SlackThreadRequestError] = [
-            .invalidOuterURL,
+            .clipboardEmpty,
             .invalidSlackLink,
             .slackLinkTooLong,
             .workDirectoryNotConfigured,
@@ -92,97 +93,162 @@ final class SlackThreadSettingsTests: XCTestCase {
             .invalidInstruction,
             .appendedPromptUnavailable,
         ]
-        let otherUnderlying = NSError(domain: "synthetic", code: 1)
-        let installerErrors: [Error] = [
-            SlackThreadShortcutInstallerError.createDirectory(otherUnderlying),
-            SlackThreadShortcutInstallerError.writeWorkflow(otherUnderlying),
-            SlackThreadShortcutInstallerError.signProcess(otherUnderlying),
-            SlackThreadShortcutInstallerError.signRejected(status: 1, stderr: "synthetic"),
-            SlackThreadShortcutInstallerError.removePreviousSignedShortcut(otherUnderlying),
-            SlackThreadShortcutInstallerError.signedShortcutMissing,
-            SlackThreadShortcutInstallerError.signedShortcutReadFailed(otherUnderlying),
-            SlackThreadShortcutInstallerError.invalidSignatureMagic,
-            SlackThreadShortcutInstallerError.shortcutsLaunchFailed(otherUnderlying),
-            SlackThreadShortcutInstallerError.shortcutsLaunchTimedOut,
-            SlackThreadShortcutInstallerError.shortcutOpenFailed(otherUnderlying),
-        ]
+        let combination = HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])!
+        let refusal = NSError(domain: "synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: "synthetic refusal"])
 
         for tag in supportedLocales {
             AppLocalization.tagOverrideForTesting = tag
-            for error in requestErrors {
-                let message = slackThreadRequestErrorMessage(error)
-                XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): \(error)")
-                XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved request key")
-                if tag == "en", case .appendedPromptUnavailable = error {
-                    XCTAssertTrue(message.contains("login shell"))
-                    XCTAssertTrue(message.contains("executable"))
-                    XCTAssertTrue(message.contains("PATH"))
-                }
+            var messages = requestErrors.map { ("\($0)", slackThreadRequestErrorMessage($0)) }
+            messages.append(("server unavailable", slackThreadRequestErrorMessage(SlackThreadHotKeyError.serverUnavailable)))
+            messages.append(("registration refused", slackThreadHotKeyStateMessage(.failed(combination, status: -9878))))
+            messages.append(("login item approval", slackLoginItemStatusMessage(.requiresApproval)))
+            messages.append(("login item refused", slackLoginItemFailureMessage(refusal)))
+            for key in [
+                "app.slack.hotKey.label", "app.slack.hotKey.set", "app.slack.hotKey.recording", "app.slack.hotKey.clear",
+                "app.slack.hotKey.needsModifier", "app.slack.hotKey.help",
+                "app.slack.loginItem.title", "app.slack.loginItem.help",
+            ] {
+                messages.append((key, AppLocalization.string(key)))
             }
-            for error in installerErrors {
-                let message = slackThreadShortcutInstallerErrorMessage(error)
-                XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): \(error)")
-                XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved installer key")
+            for (name, message) in messages {
+                XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): \(name)")
+                XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved key for \(name)")
             }
-            let unavailableMessage = slackThreadRequestErrorMessage(SlackThreadURLHandlerError.serverUnavailable)
-            XCTAssertFalse(unavailableMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): server unavailable")
-            XCTAssertFalse(unavailableMessage.hasPrefix("app."), "\(tag): unresolved server unavailable key")
+            XCTAssertTrue(slackLoginItemFailureMessage(refusal).contains("synthetic refusal"), tag)
+            if tag == "en" {
+                let message = slackThreadRequestErrorMessage(SlackThreadRequestError.appendedPromptUnavailable)
+                XCTAssertTrue(message.contains("login shell"))
+                XCTAssertTrue(message.contains("executable"))
+                XCTAssertTrue(message.contains("PATH"))
+            }
         }
     }
 
-    func testShortcutButtonReflectsQueriedStatusNotInstallSuccess() throws {
-        AppLocalization.tagOverrideForTesting = "en"
-        let installedManager = StubSlackThreadShortcutManager(status: .installed)
-        let installedController = SetupWindowController(shortcutInstaller: installedManager)
-        let installedButton = installedController.slackShortcutInstallButtonForTesting
-        pump(until: { installedButton.title == localized("app.slack.button.reinstall") })
-        XCTAssertTrue(installedManager.allCallsWereOffMainThread)
-
-        let notInstalledManager = StubSlackThreadShortcutManager(status: .notInstalled)
-        let controller = SetupWindowController(shortcutInstaller: notInstalledManager)
-        let button = controller.slackShortcutInstallButtonForTesting
-        pump(until: { button.title == localized("app.slack.button.install") && button.isEnabled })
-        button.performClick(nil)
-        pump(until: { notInstalledManager.installCount == 1 && button.isEnabled })
-
-        XCTAssertEqual(notInstalledManager.installCount, 1)
-        XCTAssertEqual(button.title, localized("app.slack.button.install"))
-        XCTAssertTrue(
-            controller.slackShortcutStatusLabelForTesting.stringValue.contains(
-                localized("app.slack.status.notInstalled")
-            )
+    func testHotKeyIsStoredAsItsDictionaryAndAnythingElseReadsAsNone() throws {
+        let defaults = UserDefaults.standard
+        let key = "slackThreadHotKey"
+        let old = defaults.object(forKey: key)
+        defer { if let old { defaults.set(old, forKey: key) } else { defaults.removeObject(forKey: key) } }
+        let combination = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])
         )
-        XCTAssertTrue(notInstalledManager.allCallsWereOffMainThread)
+
+        Settings.slackThreadHotKey = combination
+        XCTAssertEqual(defaults.dictionary(forKey: key) as? [String: Int], ["keyCode": 8, "modifiers": 0x1300])
+        XCTAssertEqual(Settings.slackThreadHotKey, combination)
+
+        defaults.set("⌃⇧⌘C", forKey: key)
+        XCTAssertNil(Settings.slackThreadHotKey)
+        Settings.slackThreadHotKey = nil
+        XCTAssertNil(defaults.object(forKey: key))
     }
 
-    func testSuccessfulInstallShowsAddShortcutGuidanceUntilStatusIsInstalled() {
+    func testRecordingStoresOnlyACombinationWithCommandControlOrOption() throws {
         AppLocalization.tagOverrideForTesting = "en"
-        let manager = StubSlackThreadShortcutManager(status: .notInstalled)
-        let controller = SetupWindowController(shortcutInstaller: manager)
-        let button = controller.slackShortcutInstallButtonForTesting
-        let feedback = controller.slackShortcutFeedbackLabelForTesting
-        pump(until: { button.title == localized("app.slack.button.install") && button.isEnabled })
+        let restore = preserveHotKeySetting()
+        defer { restore() }
+        Settings.slackThreadHotKey = nil
+        let hotKey = StubSlackThreadHotKey()
+        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let button = controller.slackHotKeyButtonForTesting
+        let clear = controller.slackHotKeyClearButtonForTesting
+        let status = controller.slackHotKeyStatusLabelForTesting
+        XCTAssertEqual(button.title, localized("app.slack.hotKey.set"))
+        XCTAssertTrue(clear.isHidden)
 
         button.performClick(nil)
-        pump(until: {
-            manager.installCount == 1
-                && button.isEnabled
-                && feedback.stringValue.contains(localized("app.slack.status.addShortcut"))
-        })
-        XCTAssertTrue(
-            controller.slackShortcutStatusLabelForTesting.stringValue.contains(
-                localized("app.slack.status.notInstalled")
-            )
-        )
+        XCTAssertEqual(hotKey.calls, ["suspend"])
+        XCTAssertEqual(button.title, localized("app.slack.hotKey.recording"))
 
-        manager.setStatus(.installed)
+        XCTAssertNil(controller.handleHotKeyRecordingEvent(keyDown(kVK_ANSI_C, [.shift])))
+        XCTAssertTrue(status.stringValue.contains(localized("app.slack.hotKey.needsModifier")))
+        XCTAssertEqual(hotKey.applied.count, 0)
+
+        XCTAssertNil(controller.handleHotKeyRecordingEvent(keyDown(kVK_ANSI_C, [.control, .shift, .command])))
+        let combination = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])
+        )
+        XCTAssertEqual(hotKey.applied, [combination])
+        XCTAssertEqual(Settings.slackThreadHotKey, combination)
+        XCTAssertEqual(hotKey.calls, ["suspend", "apply", "resume"])
+        XCTAssertEqual(button.title, combination.displayString(keyLabel: hotKeyKeyLabel(combination.keyCode)))
+        XCTAssertFalse(clear.isHidden)
+        XCTAssertTrue(status.isHidden)
+
+        let unrelated = keyDown(kVK_ANSI_K, [.command])
+        XCTAssertTrue(controller.handleHotKeyRecordingEvent(unrelated) === unrelated, "outside recording the window leaves keys alone")
+
+        clear.performClick(nil)
+        XCTAssertNil(Settings.slackThreadHotKey)
+        XCTAssertEqual(hotKey.applied, [combination, nil])
+        XCTAssertEqual(button.title, localized("app.slack.hotKey.set"))
+        XCTAssertTrue(clear.isHidden)
+    }
+
+    func testEscapeCancelsRecordingAndKeepsThePreviousChoice() throws {
+        AppLocalization.tagOverrideForTesting = "en"
+        let restore = preserveHotKeySetting()
+        defer { restore() }
+        let combination = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])
+        )
+        Settings.slackThreadHotKey = combination
+        let hotKey = StubSlackThreadHotKey()
+        hotKey.combination = combination
+        hotKey.state = .active(combination)
+        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let button = controller.slackHotKeyButtonForTesting
+
+        button.performClick(nil)
+        XCTAssertNil(controller.handleHotKeyRecordingEvent(keyDown(kVK_Escape, [])))
+
+        XCTAssertEqual(hotKey.calls, ["suspend", "resume"])
+        XCTAssertEqual(hotKey.applied.count, 0)
+        XCTAssertEqual(Settings.slackThreadHotKey, combination)
+        XCTAssertEqual(button.title, combination.displayString(keyLabel: hotKeyKeyLabel(combination.keyCode)))
+    }
+
+    func testRefusedRegistrationIsShownAndClearsWhenTheStateRecovers() throws {
+        AppLocalization.tagOverrideForTesting = "en"
+        let combination = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])
+        )
+        let hotKey = StubSlackThreadHotKey()
+        hotKey.combination = combination
+        hotKey.state = .failed(combination, status: -9878)
+        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let status = controller.slackHotKeyStatusLabelForTesting
+        XCTAssertFalse(status.isHidden)
+        XCTAssertTrue(status.stringValue.contains("-9878"))
+
+        hotKey.state = .active(combination)
+        hotKey.onStateChange?(hotKey.state)
+        XCTAssertTrue(status.isHidden)
+    }
+
+    func testLoginItemCheckboxShowsTheServiceStateNotTheClick() {
+        AppLocalization.tagOverrideForTesting = "en"
+        let loginItem = StubLoginItem(status: .disabled)
+        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: loginItem)
+        let checkbox = controller.slackLoginItemCheckboxForTesting
+        let status = controller.slackLoginItemStatusLabelForTesting
+        XCTAssertEqual(checkbox.state, .off)
+        XCTAssertTrue(status.isHidden)
+
+        checkbox.performClick(nil)
+        XCTAssertEqual(loginItem.requests, [true])
+        XCTAssertEqual(checkbox.state, .on)
+
+        loginItem.status = .requiresApproval
         controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
-        pump(until: {
-            controller.slackShortcutStatusLabelForTesting.stringValue.contains(
-                localized("app.slack.status.installed")
-            ) && feedback.isHidden
-        })
-        XCTAssertEqual(feedback.stringValue, "")
+        XCTAssertEqual(checkbox.state, .on)
+        XCTAssertTrue(status.stringValue.contains(slackLoginItemStatusMessage(.requiresApproval)))
+
+        loginItem.failure = NSError(domain: "synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: "synthetic refusal"])
+        checkbox.performClick(nil)
+        XCTAssertEqual(loginItem.requests, [true, false])
+        XCTAssertEqual(checkbox.state, .on, "a refused change leaves the box showing what the service reports")
+        XCTAssertTrue(status.stringValue.contains("synthetic refusal"))
     }
 
     func testSlackFieldsSaveRawTextAndShowValidationWhileEditing() throws {
@@ -199,9 +265,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         Settings.slackThreadWorkDirectory = ""
         Settings.slackThreadInstruction = ""
 
-        let controller = SetupWindowController(
-            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
-        )
+        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem())
         let workField = controller.slackWorkDirectoryFieldForTesting
         workField.stringValue = "/tmp/has space"
         controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workField))
@@ -223,12 +287,20 @@ final class SlackThreadSettingsTests: XCTestCase {
         )
     }
 
-    private func pump(until condition: () -> Bool, timeout: TimeInterval = 2) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition(), Date() < deadline {
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+    private func keyDown(_ keyCode: Int, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+            context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+            keyCode: UInt16(keyCode)
+        )!
+    }
+
+    private func preserveHotKeySetting() -> () -> Void {
+        let defaults = UserDefaults.standard
+        let old = defaults.object(forKey: "slackThreadHotKey")
+        return {
+            if let old { defaults.set(old, forKey: "slackThreadHotKey") } else { defaults.removeObject(forKey: "slackThreadHotKey") }
         }
-        XCTAssertTrue(condition(), "asynchronous shortcut status did not settle")
     }
 
     private func segment(in source: String, from start: String, to end: String) -> String? {
@@ -238,46 +310,38 @@ final class SlackThreadSettingsTests: XCTestCase {
     }
 }
 
-final class StubSlackThreadShortcutManager: SlackThreadShortcutManaging {
-    private let lock = NSLock()
-    private var storedStatus: SlackThreadShortcutInstallationStatus
-    private var storedInstallCount = 0
-    private var storedCallsWereOffMainThread = true
+/// Records what the window asks of the app's shortcut, which the window does not own.
+final class StubSlackThreadHotKey: SlackThreadHotKeyManaging {
+    var combination: HotKeyCombination?
+    var state: SlackThreadHotKeyState = .off
+    var onStateChange: ((SlackThreadHotKeyState) -> Void)?
+    private(set) var applied: [HotKeyCombination?] = []
+    private(set) var calls: [String] = []
 
-    init(status: SlackThreadShortcutInstallationStatus) {
-        storedStatus = status
+    func apply(_ combination: HotKeyCombination?) {
+        calls.append("apply")
+        applied.append(combination)
+        self.combination = combination
+        state = combination.map { .active($0) } ?? .off
+        onStateChange?(state)
     }
 
-    var installCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return storedInstallCount
+    func suspend() { calls.append("suspend") }
+    func resume() { calls.append("resume") }
+}
+
+final class StubLoginItem: LoginItemManaging {
+    var status: LoginItemStatus
+    var failure: Error?
+    private(set) var requests: [Bool] = []
+
+    init(status: LoginItemStatus = .disabled) {
+        self.status = status
     }
 
-    var allCallsWereOffMainThread: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return storedCallsWereOffMainThread
-    }
-
-    func setStatus(_ status: SlackThreadShortcutInstallationStatus) {
-        lock.lock()
-        storedStatus = status
-        lock.unlock()
-    }
-
-    func install() throws {
-        lock.lock()
-        storedInstallCount += 1
-        storedCallsWereOffMainThread = storedCallsWereOffMainThread && !Thread.isMainThread
-        lock.unlock()
-    }
-
-    func installationStatus() -> SlackThreadShortcutInstallationStatus {
-        lock.lock()
-        storedCallsWereOffMainThread = storedCallsWereOffMainThread && !Thread.isMainThread
-        let status = storedStatus
-        lock.unlock()
-        return status
+    func setEnabled(_ enabled: Bool) throws {
+        requests.append(enabled)
+        if let failure { throw failure }
+        status = enabled ? .enabled : .disabled
     }
 }

@@ -226,12 +226,12 @@ Two things need your shell and filesystem at run time, so the app cannot check t
 
 ### Open a Slack thread in claude
 
-1. In the Slack section of Terminal Checkout's setup window, set the work folder and instruction, then click **Install**.
-2. In the import window, click **Add Shortcut**.
-3. In Shortcuts, open the details for **Terminal Checkout Slack Thread** and add a keyboard shortcut.
-4. In Slack, use **Copy link** on a message, then press that keyboard shortcut. The first time, Shortcuts asks whether the shortcut may send the link to Terminal Checkout; click **Always Allow**. Terminal Checkout starts claude in the configured folder and passes one opening argument with the link first and the instruction after it if set. claude must be able to use your Slack MCP to read the thread.
+1. In the Slack section of Terminal Checkout's setup window, set the work folder and the instruction.
+2. Click **Set Shortcut** and press the key combination you want, such as ⌃⇧⌘C. It must include ⌘, ⌃ or ⌥.
+3. Tick **Open Terminal Checkout at login**. The shortcut works only while the app is running, and this opens the app when you log in.
+4. In Slack, use **Copy link** on a message, then press the shortcut. Terminal Checkout reads the link from the clipboard, starts claude in the configured folder and passes one opening argument with the link first and the instruction after it if set. claude must be able to use your Slack MCP to read the thread.
 
-A `terminal-checkout://` URL can also be opened by webpages and other apps; your browser asks before opening an external app. The URL chooses only which Slack message claude reads. The work folder, instruction and command come from Terminal Checkout's settings. Uninstalling Terminal Checkout leaves this shortcut in Shortcuts; remove it there if you no longer need it.
+The shortcut works whichever app is in front, Slack included. The clipboard decides only which Slack message claude reads; the work folder, instruction and command come from Terminal Checkout's settings.
 
 ## Configuration
 

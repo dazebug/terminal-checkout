@@ -62,7 +62,7 @@ final class SetupWindowLayoutTests: XCTestCase {
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
         return SetupWindowController(
-            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+            slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem()
         )
     }
 

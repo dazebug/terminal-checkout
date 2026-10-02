@@ -206,8 +206,8 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
 func slackThreadRequestErrorMessage(_ failure: Error) -> String {
     if let error = failure as? SlackThreadRequestError {
         switch error {
-        case .invalidOuterURL:
-            return localized("app.slack.error.invalidOuterURL")
+        case .clipboardEmpty:
+            return localized("app.slack.error.clipboardEmpty")
         case .invalidSlackLink:
             return localized("app.slack.error.invalidSlackLink")
         case .slackLinkTooLong:
@@ -237,7 +237,7 @@ func slackThreadRequestErrorMessage(_ failure: Error) -> String {
             return localized("app.slack.error.appendedPromptUnavailable")
         }
     }
-    if let error = failure as? SlackThreadURLHandlerError {
+    if let error = failure as? SlackThreadHotKeyError {
         switch error {
         case .serverUnavailable:
             return localized("app.slack.error.serverUnavailable")
@@ -246,34 +246,26 @@ func slackThreadRequestErrorMessage(_ failure: Error) -> String {
     return localizedErrorMessage(failure)
 }
 
-func slackThreadShortcutInstallerErrorMessage(_ error: Error) -> String {
-    guard let error = error as? SlackThreadShortcutInstallerError else {
-        return localized("app.slack.error.unexpectedInstallation")
+/// The line under the shortcut button; empty while the shortcut is off or working.
+func slackThreadHotKeyStateMessage(_ state: SlackThreadHotKeyState) -> String {
+    switch state {
+    case .off, .active:
+        return ""
+    case .failed(_, let status):
+        return localized("app.slack.hotKey.registerFailed", status)
     }
-    switch error {
-    case .createDirectory:
-        return localized("app.slack.error.createDirectory")
-    case .writeWorkflow:
-        return localized("app.slack.error.writeWorkflow")
-    case .signProcess:
-        return localized("app.slack.error.signProcess")
-    case .signRejected(let status, _):
-        return localized("app.slack.error.signRejected", status)
-    case .removePreviousSignedShortcut:
-        return localized("app.slack.error.removeSignedShortcut")
-    case .signedShortcutMissing:
-        return localized("app.slack.error.signedShortcutMissing")
-    case .signedShortcutReadFailed:
-        return localized("app.slack.error.signedShortcutReadFailed")
-    case .invalidSignatureMagic:
-        return localized("app.slack.error.invalidSignatureMagic")
-    case .shortcutsLaunchFailed:
-        return localized("app.slack.error.shortcutsLaunchFailed")
-    case .shortcutsLaunchTimedOut:
-        return localized("app.slack.error.shortcutsLaunchTimedOut")
-    case .shortcutOpenFailed:
-        return localized("app.slack.error.shortcutOpenFailed")
+}
+
+func slackLoginItemStatusMessage(_ status: LoginItemStatus) -> String {
+    switch status {
+    case .enabled, .disabled: return ""
+    case .requiresApproval: return localized("app.slack.loginItem.requiresApproval")
     }
+}
+
+/// ServiceManagement's own description is already in the user's language, so it is carried as is.
+func slackLoginItemFailureMessage(_ error: Error) -> String {
+    localized("app.slack.loginItem.failed", (error as NSError).localizedDescription)
 }
 
 /// Core keeps its stable English descriptions for diagnostics and for callers that do not have an

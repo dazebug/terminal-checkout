@@ -73,6 +73,22 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "slackThreadInstruction") }
     }
 
+    /// The global shortcut that opens the copied Slack thread, or nil for none (the default — a
+    /// shortcut every user got would take a key combination away from every other app).
+    static var slackThreadHotKey: HotKeyCombination? {
+        get {
+            guard let stored = UserDefaults.standard.dictionary(forKey: "slackThreadHotKey") else { return nil }
+            return HotKeyCombination(dictionaryRepresentation: stored)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.dictionaryRepresentation, forKey: "slackThreadHotKey")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "slackThreadHotKey")
+            }
+        }
+    }
+
     /// Raw cmux placement values are app-owned machine-local strings. Their meaning, including
     /// defaults and invalid-value handling, belongs to Core's one `CmuxPlacementPreset.parse` seam;
     /// this layer only preserves what UserDefaults contains and gives non-string values a textual
