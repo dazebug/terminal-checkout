@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_PATH="$HOME/Applications/Terminal Checkout.app"
 APP_SUPPORT="$HOME/Library/Application Support/TerminalCheckout"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
 CHROME_MANIFEST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 MANIFEST_PATH="$CHROME_MANIFEST_DIR/com.dazebug.terminal_checkout.json"
 # Left over from the iTerm Checkout days
@@ -83,6 +84,7 @@ for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_c
     fi
 done
 if [ -d "$APP_PATH" ]; then
+    "$LSREGISTER" -u "$APP_PATH" 2>/dev/null || true
     rm -rf "$APP_PATH"
     echo "[1/4] App deleted: $APP_PATH"
 else
@@ -134,4 +136,5 @@ echo "=== Uninstall complete! ==="
 echo ""
 echo "Please remove the Chrome extension yourself from chrome://extensions."
 echo "The Automation permissions you granted can be cleaned up in System Settings → Privacy & Security → Automation."
+echo "The imported “Terminal Checkout Slack Thread” shortcut remains in Shortcuts; remove it there if desired."
 echo ""
