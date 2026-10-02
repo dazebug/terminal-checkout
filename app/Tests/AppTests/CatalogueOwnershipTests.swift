@@ -187,7 +187,7 @@ final class CatalogueOwnershipTests: XCTestCase {
 
     /// Two keys in one catalogue holding the same sentence. Each pair is a judgement — the same
     /// words, deliberately, in two places that mean different things — so each is listed with the
-    /// reason it is not a duplicate to remove. There are three such judgements.
+    /// reason it is not a duplicate to remove. There are five such judgements.
     ///
     /// **Keyed by the pair of keys, not by the sentence.** The first version of this table was keyed
     /// by the English text, and the gate caught it on its first run: the same two pairs share a
@@ -210,6 +210,12 @@ final class CatalogueOwnershipTests: XCTestCase {
         // gate's job here was to make the collapse visible, and it is.
         ["ext_button_remove", "ext_card_delete"]:
             "Japanese uses one word where English has two, and a second one would be worse UI",
+        // The new pane labels temporarily share the old pipeline and card values. The old
+        // setup-window keys are removed when the window is rebuilt, along with these declarations.
+        ["app.pipeline.node.extension", "app.setup.general.connection.chrome"]:
+            "legacy setup-window pipeline label; remove when the window is rebuilt",
+        ["app.card.terminal.title", "app.setup.general.terminal.title"]:
+            "legacy setup-window card label; remove when the window is rebuilt",
     ]
 
     func testDuplicateValuesWithinAStoreAreDeclared() throws {

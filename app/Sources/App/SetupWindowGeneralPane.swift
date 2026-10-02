@@ -364,7 +364,7 @@ final class SetupWindowGeneralPane: NSView {
         optionsButton.title = localized("app.setup.general.editGitHubButton")
         optionsButton.bezelStyle = .rounded
         optionsButton.identifier = setupWindowGeneralPaneRole(selectors[.openOptionsPage]!)
-        guideButton.title = localized("app.setup.general.showGuideAgain")
+        guideButton.title = localized("app.button.showSetupGuide")
         guideButton.bezelStyle = .rounded
         guideButton.identifier = setupWindowGeneralPaneRole(selectors[.reshowInstall]!)
 
@@ -537,7 +537,7 @@ final class SetupWindowGeneralPane: NSView {
         for name in ["zoxide", "gh", "claude"] {
             let status: SetupWindowGeneralIndicator
             guard let tools = state.tools, let available = tools.available[name] else {
-                status = .init(text: localized("app.setup.general.tools.notChecked"), tone: .neutral)
+                status = .init(text: localized("app.setup.severity.unknown"), tone: .neutral)
                 toolDetailRows[name]?.update(status)
                 continue
             }
@@ -609,16 +609,14 @@ private final class SetupWindowGeneralStatusDot: NSView {
 
     func update(tone: SetupWindowGeneralStatusTone) {
         layer?.backgroundColor = tone.color.cgColor
-        setAccessibilityLabel(localized(Self.accessibilityKey(for: tone)))
-    }
-
-    private static func accessibilityKey(for tone: SetupWindowGeneralStatusTone) -> StaticString {
+        let label: String
         switch tone {
-        case .success: return "app.setup.severity.success"
-        case .warning: return "app.setup.severity.warning"
-        case .error: return "app.setup.severity.error"
-        case .neutral: return "app.setup.severity.unknown"
+        case .success: label = localized("app.setup.severity.success")
+        case .warning: label = localized("app.setup.severity.warning")
+        case .error: label = localized("app.setup.severity.error")
+        case .neutral: label = localized("app.setup.severity.unknown")
         }
+        setAccessibilityLabel(label)
     }
 }
 

@@ -263,12 +263,10 @@
 "app.setup.general.hint.warp" = "Warp 一律切換至新分頁 — 只有目前正在檢視的分頁能接收 claude 輸入。";
 "app.setup.general.request.recorded" = "已收到擴充功能要求 — %@";
 "app.setup.general.request.waiting" = "尚未收到擴充功能要求";
-"app.setup.general.showGuideAgain" = "再次顯示安裝指南";
 "app.setup.general.terminal.title" = "終端機";
 "app.setup.general.terminalTest.success" = "已開啟新的 %@。此測試不會驗證 Chrome 擴充功能或 claude 輸入。";
 "app.setup.general.terminalTest.title" = "測試終端機";
 "app.setup.general.tools.found" = "已找到";
-"app.setup.general.tools.notChecked" = "尚未檢查";
 "app.setup.general.tools.notExecutable" = "已找到，但無法執行";
 "app.setup.general.tools.notFound" = "找不到";
 "app.setup.preview.general.accessibility" = "按下一個按鈕會開啟新的 %@。%@ 會顯示在最前面。";
@@ -279,7 +277,6 @@
 "app.setup.preview.general.frontmost.terminal" = "新的終端機工作階段";
 "app.setup.preview.general.mockWindow" = "按下按鈕時";
 "app.setup.preview.general.newTab" = "新分頁";
-"app.setup.preview.general.newWorkspace" = "新 workspace";
 "app.setup.preview.general.originalTab" = "目前分頁";
 "app.setup.preview.general.title" = "範例 — 按下按鈕後";
 "app.setup.severity.success" = "已連線";

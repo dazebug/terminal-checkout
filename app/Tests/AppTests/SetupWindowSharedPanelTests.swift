@@ -4,6 +4,22 @@ import XCTest
 
 final class SetupWindowSharedPanelTests: XCTestCase {
     private static var retainedWindows: [NSWindow] = []
+    private var savedResources: String?
+    private var savedTagOverride: String?
+
+    override func setUp() {
+        super.setUp()
+        savedResources = AppLocalization.resourcesPath
+        savedTagOverride = AppLocalization.tagOverrideForTesting
+        AppLocalization.resourcesPath = SetupWindowLayoutTests.sourceResources
+        AppLocalization.tagOverrideForTesting = "en"
+    }
+
+    override func tearDown() {
+        AppLocalization.resourcesPath = savedResources
+        AppLocalization.tagOverrideForTesting = savedTagOverride
+        super.tearDown()
+    }
 
     private func makePanel(
         presentation: SetupWindowPresentation,
@@ -138,7 +154,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(checklist.steps.count, 3)
         XCTAssertEqual(checklist.steps[0].titleLabel.stringValue, localized("app.setup.install.nativeHost.title"))
         XCTAssertEqual(checklist.steps[0].actionButton?.title, localized("app.setup.action.registerManifest"))
-        XCTAssertEqual(checklist.steps[1].titleLabel.stringValue, localized("app.setup.install.chrome.title"))
+        XCTAssertEqual(checklist.steps[1].titleLabel.stringValue, localized("app.button.installInChrome"))
         XCTAssertEqual(checklist.steps[1].statusLabel.stringValue, localized("app.setup.install.chrome.folderMissing"))
         XCTAssertEqual(checklist.steps[1].actionButton?.title, localized("app.setup.action.chromeInstall"))
         XCTAssertEqual(checklist.steps[1].actionButton?.keyEquivalent, "\r")

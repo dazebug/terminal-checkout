@@ -262,12 +262,10 @@
 "app.setup.general.hint.warp" = "Warp는 항상 새 탭으로 이동합니다 — 보고 있는 탭에만 claude 입력을 전달할 수 있습니다.";
 "app.setup.general.request.recorded" = "확장 요청을 받았습니다 — %@";
 "app.setup.general.request.waiting" = "아직 확장 요청이 없습니다";
-"app.setup.general.showGuideAgain" = "설치 안내 다시 보기";
 "app.setup.general.terminal.title" = "터미널";
 "app.setup.general.terminalTest.success" = "새 %@를 열었습니다. 이 테스트는 Chrome 확장이나 claude 입력을 확인하지 않습니다.";
 "app.setup.general.terminalTest.title" = "터미널 테스트";
 "app.setup.general.tools.found" = "찾음";
-"app.setup.general.tools.notChecked" = "아직 확인하지 않음";
 "app.setup.general.tools.notExecutable" = "찾았지만 실행 파일이 아님";
 "app.setup.general.tools.notFound" = "찾지 못함";
 "app.setup.preview.general.accessibility" = "버튼 하나를 누르면 새 %@가 열립니다. %@ 앞에 옵니다.";
@@ -278,7 +276,6 @@
 "app.setup.preview.general.frontmost.terminal" = "새 터미널 세션이";
 "app.setup.preview.general.mockWindow" = "버튼을 눌렀을 때";
 "app.setup.preview.general.newTab" = "새 탭";
-"app.setup.preview.general.newWorkspace" = "새 workspace";
 "app.setup.preview.general.originalTab" = "원래 탭";
 "app.setup.preview.general.title" = "예시 — 버튼을 누르면";
 "app.setup.severity.success" = "연결됨";

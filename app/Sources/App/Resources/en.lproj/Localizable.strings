@@ -270,12 +270,10 @@
 "app.setup.general.hint.warp" = "Warp always switches to a new tab — claude input can be delivered only to the tab you are viewing.";
 "app.setup.general.request.recorded" = "Extension request received — %@";
 "app.setup.general.request.waiting" = "No extension request yet";
-"app.setup.general.showGuideAgain" = "Show setup guide again";
 "app.setup.general.terminal.title" = "Terminal";
 "app.setup.general.terminalTest.success" = "Opened a new %@. This test does not verify the Chrome extension or claude input.";
 "app.setup.general.terminalTest.title" = "Terminal Test";
 "app.setup.general.tools.found" = "Found";
-"app.setup.general.tools.notChecked" = "Not checked yet";
 "app.setup.general.tools.notExecutable" = "Found, but not executable";
 "app.setup.general.tools.notFound" = "Not found";
 "app.setup.preview.general.accessibility" = "One button opens a new %@. %@ stays in front.";
@@ -286,7 +284,6 @@
 "app.setup.preview.general.frontmost.terminal" = "The new terminal session";
 "app.setup.preview.general.mockWindow" = "WHEN YOU PRESS A BUTTON";
 "app.setup.preview.general.newTab" = "New tab";
-"app.setup.preview.general.newWorkspace" = "New workspace";
 "app.setup.preview.general.originalTab" = "Current tab";
 "app.setup.preview.general.title" = "Example — after pressing a button";
 "app.setup.severity.success" = "Connected";

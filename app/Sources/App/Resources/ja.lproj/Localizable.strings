@@ -262,12 +262,10 @@
 "app.setup.general.hint.warp" = "Warp は常に新しいタブに切り替わります — claude 入力を送れるのは表示中のタブだけです。";
 "app.setup.general.request.recorded" = "拡張機能のリクエストを受信 — %@";
 "app.setup.general.request.waiting" = "拡張機能のリクエストはまだありません";
-"app.setup.general.showGuideAgain" = "セットアップガイドを再表示";
 "app.setup.general.terminal.title" = "ターミナル";
 "app.setup.general.terminalTest.success" = "新しい %@ を開きました。このテストでは Chrome 拡張機能や claude 入力を確認しません。";
 "app.setup.general.terminalTest.title" = "ターミナルをテスト";
 "app.setup.general.tools.found" = "見つかりました";
-"app.setup.general.tools.notChecked" = "未確認";
 "app.setup.general.tools.notExecutable" = "見つかりましたが実行できません";
 "app.setup.general.tools.notFound" = "見つかりません";
 "app.setup.preview.general.accessibility" = "ボタンを押すと新しい %@ が開きます。%@ が手前に表示されます。";
@@ -278,7 +276,6 @@
 "app.setup.preview.general.frontmost.terminal" = "新しいターミナルセッション";
 "app.setup.preview.general.mockWindow" = "ボタンを押したとき";
 "app.setup.preview.general.newTab" = "新しいタブ";
-"app.setup.preview.general.newWorkspace" = "新しいワークスペース";
 "app.setup.preview.general.originalTab" = "現在のタブ";
 "app.setup.preview.general.title" = "例 — ボタンを押すと";
 "app.setup.severity.success" = "接続済み";

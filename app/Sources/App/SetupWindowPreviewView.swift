@@ -148,7 +148,7 @@ final class SetupWindowPreviewView: NSView {
         Theme.border.setFill()
         selected.fill()
         drawText(
-            localized("app.setup.preview.general.newWorkspace"),
+            localized("app.cmux.placement.identity.alwaysNew"),
             in: NSRect(x: content.minX + 6, y: content.minY + 42, width: width - 12, height: 12),
             color: Theme.text
         )

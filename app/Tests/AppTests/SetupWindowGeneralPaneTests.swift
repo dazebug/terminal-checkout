@@ -4,6 +4,23 @@ import XCTest
 @testable import App
 
 final class SetupWindowGeneralPaneTests: XCTestCase {
+    private var savedResources: String?
+    private var savedTagOverride: String?
+
+    override func setUp() {
+        super.setUp()
+        savedResources = AppLocalization.resourcesPath
+        savedTagOverride = AppLocalization.tagOverrideForTesting
+        AppLocalization.resourcesPath = SetupWindowLayoutTests.sourceResources
+        AppLocalization.tagOverrideForTesting = "en"
+    }
+
+    override func tearDown() {
+        AppLocalization.resourcesPath = savedResources
+        AppLocalization.tagOverrideForTesting = savedTagOverride
+        super.tearDown()
+    }
+
     func testRequestRecordControlsStatusSentenceAndGitHubButtonVisibility() throws {
         let waiting = makePane(state: makeState())
         let waitingWindow = makeWindow(for: waiting.pane)
