@@ -436,7 +436,16 @@ private func typeAndSubmit(
         let tailBaseline = probeCount(of: text, in: before)
         let headBaseline = probeCount(headProbe, in: before)
         // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice**. With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
-        guard send(text, io: io) else {
+        let typingSucceeded: Bool
+        if text.hasPrefix("!") {
+            // A long one-shot `!` write can leave the mode prefix in the input too; send it alone before the body.
+            let remainder = String(text.dropFirst())
+            let sentBang = send("!", io: io)
+            typingSucceeded = sentBang && (remainder.isEmpty || send(remainder, io: io))
+        } else {
+            typingSucceeded = send(text, io: io)
+        }
+        guard typingSucceeded else {
             checkoutLog("failed to send the typing — retrying (\(attempt)/\(maxAttempts))")
             continue
         }

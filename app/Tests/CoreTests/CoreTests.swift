@@ -2413,6 +2413,8 @@ private final class FakeClaudeSession {
     /// looking at that tab by design, so this is not exotic: whatever is in the box at that moment
     /// is submitted by them, not by us
     var userPressesEnterAfterSend: Int?
+    /// Models claude switching to shell mode while retaining the leading bang from one long write.
+    var duplicatesLeadingBangInLongWrite = false
     /// The nth `sendKeys` reports failure **although the bytes went in** (1-based). The helper
     /// injecting part of a write and then erroring looks exactly like this from here, and it is
     /// the only shape in which a resend can duplicate a message
@@ -2456,6 +2458,10 @@ private final class FakeClaudeSession {
                 } else if dropTypingAt.contains(sendCallCount) {
                     // claude drew nothing for this send
                 } else {
+                    if duplicatesLeadingBangInLongWrite, box.isEmpty,
+                       keys.hasPrefix("!"), keys.count > 24 {
+                        box.append("!")
+                    }
                     // Byte by byte, the way a terminal sees it — so a change that drops the
                     // Backspace from the clear sequence shows up here rather than passing
                     for character in keys {
@@ -2580,6 +2586,29 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         XCTAssertEqual(session.waits.count, 0, "the visible tail should pass on the first reflection read")
     }
 
+    func testLeadingBangIsSentSeparatelyFromTheLongInputBody() {
+        let input = #"!/bin/echo '==== !gh issue view 95 ===='; gh issue view 95; /bin/echo '==== !gh issue view 95 --comments ===='; gh issue view 95 --comments; /bin/echo '==== !gh api repos/dazebug/terminal-checkout/issues/95/timeline --jq '\''[.[]|select(.event=="cross-referenced")|.source.issue.number]'\'' ===='; gh api repos/dazebug/terminal-checkout/issues/95/timeline --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'"#
+        XCTAssertEqual(input.count, 424)
+        let session = FakeClaudeSession()
+        session.duplicatesLeadingBangInLongWrite = true
+
+        XCTAssertEqual(submitClaudeInputs([input], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [input])
+        XCTAssertEqual(
+            session.keystrokes.filter { $0 == "!" || $0 == String(input.dropFirst()) || $0 == input },
+            ["!", String(input.dropFirst())]
+        )
+        XCTAssertEqual(session.keystrokes.filter { $0 == claudeSubmitKey }.count, 1)
+        XCTAssertEqual(session.gateChecks, session.sendCallCount)
+        XCTAssertTrue(
+            zip(session.events, session.events.dropFirst()).contains {
+                $0.0 == "send" && $0.1 == "send"
+            },
+            "no screen read or wait should intervene between the bang and remainder"
+        )
+        XCTAssertEqual(session.waits.count, 0, "the prefix and remainder should be sent without a mode wait")
+    }
+
     func testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires() {
         let visibleHead = "A long plain note starts here"
         let visibleEnd = "india8"
@@ -2638,7 +2667,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.screenGains = [4: "spinner"] // arrives during the post-CR look, above our input
         XCTAssertEqual(submitClaudeInputs(["/review", "!git status"], io: session.io), 0)
         XCTAssertFalse(
-            session.keystrokes.contains("!git status"),
+            session.keystrokes.contains("!") || session.keystrokes.contains("git status"),
             "typing on would append the two inputs into one submitted line"
         )
     }
@@ -2717,7 +2746,10 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.submitDoesNothing = true
         session.failScreenAt = [4] // 1: snapshot · 2: reflection · 3,4,5…: the post-CR look
         _ = submitClaudeInputs(["/review", "!git status"], io: session.io)
-        XCTAssertFalse(session.keystrokes.contains("!git status"), "it kept typing even after seeing the input stuck there")
+        XCTAssertFalse(
+            session.keystrokes.contains("!") || session.keystrokes.contains("git status"),
+            "it kept typing even after seeing the input stuck there"
+        )
     }
 
     /// **Reproduction:** The reflection check accepted the
@@ -2752,7 +2784,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
     /// **1.70s before, 0.00s after** — the happy path now answers on its first read every time.
     func testTheHappyPathDoesNotSleepBeforeReading() {
         let session = FakeClaudeSession()
-        XCTAssertEqual(submitClaudeInputs(["!git status"], io: session.io), 1)
+        XCTAssertEqual(submitClaudeInputs(["/review"], io: session.io), 1)
         for (index, event) in session.events.enumerated() where event == "send" {
             guard let next = session.events[safe: index + 1] else { continue }         // the cleanup at the end
             XCTAssertEqual(next, "read", "a wait came after the send instead of a read: \(session.events)")
@@ -2825,7 +2857,8 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         session.failScreenAt = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] // the whole first attempt
         _ = submitClaudeInputs(["!git status"], io: session.io)
         XCTAssertEqual(session.submitted, ["!git status"])
-        XCTAssertEqual(session.keystrokes.filter { $0 == "!git status" }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "!" }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "git status" }.count, 1)
     }
 
     /// **Reproduction:** a Ctrl+U whose **write** succeeded is not a
@@ -2838,7 +2871,10 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         // The marker never disappears, so no attempt gets as far as the body and a cleanup goes out at the end — back when a written Ctrl+U was believed to have been processed, this cleanup was skipped entirely
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
         XCTAssertTrue(session.submitted.isEmpty)
-        XCTAssertFalse(session.keystrokes.contains("!git status"), "the body was typed without confirmation")
+        XCTAssertFalse(
+            session.keystrokes.contains("!") || session.keystrokes.contains("git status"),
+            "the body was typed without confirmation"
+        )
     }
 
     /// **R1-j reproduction (cmux 0.64.22, Claude Code 2.1.246):** the app logged
@@ -2855,7 +2891,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs(["!echo tc-r1j-input-ok"], io: session.io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         XCTAssertFalse(
-            session.keystrokes.contains("!echo tc-r1j-input-ok"),
+            session.keystrokes.contains("!") || session.keystrokes.contains("echo tc-r1j-input-ok"),
             "the body was typed on top of a marker remnant"
         )
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
@@ -2866,7 +2902,7 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
     func testCleanupIsRetriedWhenTheSendFails() {
         let session = FakeClaudeSession()
         session.submitDoesNothing = true
-        // 1: the experiment's typing · 2: the experiment's clear · 3: the body · 4: the CR · 5–7: the cleanup attempts on the way out
+        // 1: the experiment's typing · 2: the experiment's clear · 3–4: the body · 5: the CR · 6–8: cleanup attempts on the way out
         session.failSendAt = [5, 6]
         _ = submitClaudeInputs(inputs, io: session.io)
         XCTAssertEqual(session.keystrokes.last, claudeClearInputKey)
@@ -2911,21 +2947,21 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// The Ctrl+U before and after keeps the box empty before typing and on the way out
     func testSubmitsOnlyAfterScreenShowsTypedText() {
         let session = FakeClaudeSession()
-        _ = submitClaudeInputs([inputs[0]], io: session.io)
+        _ = submitClaudeInputs(["/review"], io: session.io)
         // The cycle is: type a **marker** → clear it (confirming it disappears) → type the body
         // **once** → CR, and empty once more as delivery ends. The marker is random, so it is pinned by shape
         XCTAssertEqual(session.keystrokes.count, 5)
         XCTAssertTrue(isRuneMarker(session.keystrokes[0]), session.keystrokes[0])
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
-            [claudeClearInputKey, inputs[0], claudeSubmitKey, claudeClearInputKey]
+            [claudeClearInputKey, "/review", claudeSubmitKey, claudeClearInputKey]
         )
     }
 
     /// Regression guard (measured): right after input #1 was submitted, one wezterm cli call failed and the remaining 2 inputs were thrown away wholesale. A failed terminal CLI call does not mean "the session is over", only that this call failed — so it has to recover by retyping and keep sending the rest.
     func testTransientSendFailureDoesNotDropRemainingInputs() {
         let session = FakeClaudeSession()
-        session.failSendAt = [5]         // after #1's marker, clear and body = #1's CR
+        session.failSendAt = [6]         // after #1's marker, clear, two body writes and CR = #2's marker
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 3)
         XCTAssertEqual(session.submitted, inputs)
     }
@@ -2941,7 +2977,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// Retrying does not hold the remaining inputs forever — if it keeps failing it stops at that input
     func testPersistentFailureStopsAtThatInput() {
         let session = FakeClaudeSession()
-        session.failSendAt = Set(6...100)         // #1 passes (marker, clear, body, CR) and it fails from #2's marker onwards
+        session.failSendAt = Set(6...100)         // #1 passes (marker, clear, two body writes, CR); #2's marker fails onward
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
     }
@@ -2971,7 +3007,10 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
         // No retry typing may go out. The first typing failed as a send, but its bytes may already be in, so a single Ctrl+U follows to erase them on the way out
-        XCTAssertFalse(session.keystrokes.contains(inputs[0]), "retry typing went out: \(session.keystrokes)")
+        XCTAssertFalse(
+            session.keystrokes.contains("!") || session.keystrokes.contains(String(inputs[0].dropFirst())),
+            "retry typing went out: \(session.keystrokes)"
+        )
         XCTAssertEqual(session.keystrokes, [claudeClearInputKey])
     }
 
@@ -2987,7 +3026,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// Resending the CR has to sit inside the session-identity gate too — if the original claude ended after the first CR failed, the CR lands on the shell of that tty or on a new claude and submits and runs whatever the user was typing
     func testCarriageReturnResendStopsWhenSessionChanged() {
         let session = FakeClaudeSession()
-        session.failSendAt = [4] // marker, clear and body succeed; the first CR fails
+        session.failSendAt = [5] // marker, clear and both body writes succeed; the first CR fails
         var confirms = 0
         let io = ClaudeSessionIO(
             sendKeys: { session.io.sendKeys($0) },
@@ -2997,22 +3036,23 @@ final class ClaudeInputDeliveryTests: XCTestCase {
             wait: { _ in }
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
-        // marker 1 + clear 1 + body 1 + CR 1 + cleanup after giving up 1 — there must be no CR resend
-        XCTAssertEqual(session.sendCallCount, 5)
+        // marker + clear + two body writes + failed CR + cleanup — there must be no CR resend
+        XCTAssertEqual(session.sendCallCount, 6)
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
-            [claudeClearInputKey, inputs[0], claudeClearInputKey]
+            [claudeClearInputKey, "!", String(inputs[0].dropFirst()), claudeClearInputKey]
         )
     }
 
     /// When sending the submission (CR) fails it resends the CR rather than retyping — a reported failure may in fact have gone through, and retyping then submits the same input twice
     func testFailedSubmitResendsCarriageReturnWithoutRetyping() {
         let session = FakeClaudeSession()
-        session.failSendAt = [4] // marker, clear and body succeed; #4 = the CR fails
+        session.failSendAt = [5] // marker, clear and both body writes succeed; #5 = the CR fails
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]])
         // The body is typed once (the experiment uses the marker). Not typing again after a CR is the invariant to hold here
-        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "!" }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == String(inputs[0].dropFirst()) }.count, 1)
     }
 
     /// **Reproduction:** a CR whose call reported failure may still have landed —
@@ -3022,22 +3062,24 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     /// command twice
     func testAnInputWhoseCarriageReturnMayHaveLandedIsNeverRetyped() {
         let session = FakeClaudeSession()
-        // 1: the marker · 2: its clear · 3: the body · 4–6: the three CR attempts, each landing
+        // 1: the marker · 2: its clear · 3–4: the body · 5–7: the three CR attempts, each landing
         // but reporting failure
-        session.deliverButReportFailureAt = [4, 5, 6]
+        session.deliverButReportFailureAt = [5, 6, 7]
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 0)
         XCTAssertEqual(session.submitted, [inputs[0]]) // it did go through — exactly once
-        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == "!" }.count, 1)
+        XCTAssertEqual(session.keystrokes.filter { $0 == String(inputs[0].dropFirst()) }.count, 1)
     }
 
     /// Regression guard (measured on Warp): right after claude comes up there is a moment where gates ① and ② pass but the TUI has not drawn the first input yet. The screen reads fine and only the input is missing, so it recovers by retyping
     func testUnreflectedInputRetypesUntilScreenShowsIt() {
         let session = FakeClaudeSession()
-        session.dropTypingAt = [3] // the marker and clear pass, and claude discards the **body**
+        session.dropTypingAt = [4] // marker, clear and bang pass; claude discards the remainder
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
         XCTAssertEqual(session.submitted, [inputs[0]]) // the real input was submitted, not an empty line
-        // the discarded body 1 + the next attempt's body 1
-        XCTAssertEqual(session.keystrokes.filter { $0 == inputs[0] }.count, 2)
+        // Each body part goes out once before the retry and once after it
+        XCTAssertEqual(session.keystrokes.filter { $0 == "!" }.count, 2)
+        XCTAssertEqual(session.keystrokes.filter { $0 == String(inputs[0].dropFirst()) }.count, 2)
     }
 
     /// When the screen can never be read, nothing is submitted. There was a time the "tty input queue is empty" signal (`FIONREAD`=0) stood in for it, but that only means claude called `read()`, not that it drew the input box — so an empty CR was sent on top of input claude had discarded and it was recorded as "delivered"
@@ -3235,7 +3277,7 @@ final class ClaudeInputDeliveryTests: XCTestCase {
     func testEverySendPassesTheSameGate() {
         let session = FakeClaudeSession()
         session.screenNeedsPaneProof = true
-        XCTAssertEqual(submitClaudeInputs([inputs[0]], io: session.io), 1)
+        XCTAssertEqual(submitClaudeInputs(["/review"], io: session.io), 1)
         XCTAssertEqual(session.gateChecks, session.sendCallCount)
         // marker · clear · body · CR · the cleanup on the way out
         XCTAssertEqual(session.sendCallCount, 5)
@@ -3254,10 +3296,10 @@ final class ClaudeInputDeliveryTests: XCTestCase {
         )
         XCTAssertEqual(submitClaudeInputs([inputs[0]], io: io), 0)
         XCTAssertTrue(session.submitted.isEmpty)
-        // Only the typing went out and the CR was blocked. That typing stays in the input box, so it is erased on the way out
+        // Both body writes went out and the CR was blocked. The input stays in the box, so it is erased on the way out
         XCTAssertEqual(
             Array(session.keystrokes.dropFirst()),
-            [claudeClearInputKey, inputs[0], claudeClearInputKey]
+            [claudeClearInputKey, "!", String(inputs[0].dropFirst()), claudeClearInputKey]
         )
     }
 
