@@ -406,6 +406,32 @@ final class CmuxTests: XCTestCase {
                 ),
             ]
         )
+
+        let eightCtrlUs = String(repeating: claudeClearCtrlUKey, count: 8)
+        XCTAssertEqual(
+            cmuxSendOperations(surfaceID: "surface-1", text: eightCtrlUs),
+            [
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": eightCtrlUs]
+                )
+            ]
+        )
+        XCTAssertEqual(
+            cmuxSendOperations(
+                surfaceID: "surface-1", text: eightCtrlUs + claudeClearBackspaceKey
+            ),
+            [
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": eightCtrlUs]
+                ),
+                CmuxRPCOperation(
+                    method: cmuxSurfaceSendTextMethod,
+                    params: ["surface_id": "surface-1", "text": claudeClearBackspaceKey]
+                ),
+            ]
+        )
     }
 
     /// D8 routes the marker, both clear bytes, body, and CR through the same raw text carrier.
