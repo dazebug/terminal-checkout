@@ -206,7 +206,7 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertTrue(SetupWindowPresentationModel.make(from: reopened).showsFirstInstallChecklist)
     }
 
-    func testZoxideIsCriticalOnlyWithoutUsableBaseDirectory() {
+    func testZoxideIsCriticalOnlyWithoutConfiguredBaseDirectory() {
         let noBaseDirectory = snapshot {
             $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
             $0.baseDirectory = .unconfigured
@@ -215,14 +215,8 @@ final class SetupWindowPresentationTests: XCTestCase {
             $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
             $0.baseDirectory = .normalized("/example", directoryExists: true)
         }
-        let missingBaseDirectory = snapshot {
-            $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
-            $0.baseDirectory = .normalized("/example", directoryExists: false)
-        }
-
         let critical = SetupWindowPresentationModel.make(from: noBaseDirectory).problems
         let warning = SetupWindowPresentationModel.make(from: usableBaseDirectory).problems
-        let missing = SetupWindowPresentationModel.make(from: missingBaseDirectory).problems
 
         XCTAssertTrue(critical.contains {
             $0.severity == .error && $0.copy == .criticalToolUnavailable(name: "zoxide")
@@ -230,9 +224,23 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertTrue(warning.contains {
             $0.severity == .warning && $0.copy == .toolUnavailable(name: "zoxide")
         })
-        XCTAssertTrue(missing.contains {
+    }
+
+    func testMissingConfiguredBaseDirectoryKeepsZoxideWarningAndDirectoryNotice() {
+        let state = snapshot {
+            $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
+            $0.baseDirectory = .normalized("/example", directoryExists: false)
+        }
+        let presentation = SetupWindowPresentationModel.make(from: state)
+
+        XCTAssertTrue(presentation.problems.contains {
+            $0.severity == .warning && $0.copy == .toolUnavailable(name: "zoxide")
+        })
+        XCTAssertFalse(presentation.problems.contains {
             $0.severity == .error && $0.copy == .criticalToolUnavailable(name: "zoxide")
         })
+        XCTAssertEqual(presentation.baseDirectoryNotice, .directoryMissing)
+        XCTAssertEqual(presentation.baseDirectoryNotice?.severity, .warning)
     }
 
     func testEmptyBaseDirectoryNeedsNoNoticeWhenZoxideIsAvailable() {

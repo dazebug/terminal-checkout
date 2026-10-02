@@ -25,8 +25,8 @@ enum SetupWindowBaseDirectoryStatus {
     case invalidStoredValue
     case normalized(String, directoryExists: Bool)
 
-    var isUsable: Bool {
-        if case .normalized(_, directoryExists: true) = self { return true }
+    var isConfigured: Bool {
+        if case .normalized = self { return true }
         return false
     }
 }
@@ -434,7 +434,7 @@ enum SetupWindowPresentationModel {
             } else {
                 let critical = toolIsCritical(
                     name,
-                    baseDirectoryConfigured: snapshot.baseDirectory.isUsable
+                    baseDirectoryConfigured: snapshot.baseDirectory.isConfigured
                 )
                 problems.append(.init(
                     severity: critical ? .error : .warning,
