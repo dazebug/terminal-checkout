@@ -246,7 +246,7 @@ A ▾ caret beside a button that starts claude opens a one-line box, and what is
 **Type:** decision
 **Status:** active
 **Evidence:** confirmed — the 2026-10-02 report found no caret on an issue-list button with five stored inputs; its saved value is preserved in `tests/fixtures/saved-issue-list-buttons.json` and exercised by `the saved issue-list button with five claude inputs takes a note` (`tests/claude-note.test.js`) and `a note on the saved issue-list button reaches the worker in its own slot` (`tests/worker-note.test.js`). The stored-input cap of 10 is the user's decision.
-**Source:** `buttonTakesClaudeNote` and `MAX_CLAUDE_INPUTS` in `extension/defaults.js`; the two tests above; `maxLifetime` in `app/Sources/WarpHelper/main.swift`
+**Source:** PR #99; `buttonTakesClaudeNote` and `MAX_CLAUDE_INPUTS` in `extension/defaults.js`; the two tests above; `maxLifetime` in `app/Sources/WarpHelper/main.swift`
 **Revisit when:** the app begins enforcing a `claude_inputs` count limit, the Warp helper lifetime cap changes, or the storage format can block outdated readers
 
 A button stores up to 10 claude inputs. A click-time note uses a separate slot and follows them, so each session request can carry up to 11 inputs. A button whose command contains the word `claude` gets a ▾ caret regardless of its stored-input count. The content script and worker use the same predicate, `buttonTakesClaudeNote`.
