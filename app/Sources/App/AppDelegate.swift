@@ -154,8 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The app's launch-origin policy, kept pure so URL and relay launches cannot open the setup window
-/// just because both start the same process.
+/// The setup window opens on its own only for a default launch without `--background`. A URL cold
+/// launch reports `launchIsDefault` as false (measured); a launch without the key counts as default
+/// so onboarding is never hidden.
 func shouldShowSetupWindowAtLaunch(launchIsDefault: Bool?, hasBackgroundArgument: Bool) -> Bool {
     (launchIsDefault ?? true) && !hasBackgroundArgument
 }
@@ -164,8 +165,9 @@ enum SlackThreadURLHandlerError: Error {
     case serverUnavailable
 }
 
-/// Buffers URL events delivered before app initialization and forwards each accepted event once in
-/// arrival order after the host server and app settings are ready.
+/// Holds URL events until the app has initialized, then forwards each accepted one exactly once, in
+/// arrival order. On a cold launch AppKit delivers `application(_:open:)` before
+/// `applicationDidFinishLaunching` (measured), when the host server does not exist yet.
 final class SlackThreadURLCoordinator {
     typealias Completion = (Result<Void, Error>) -> Void
     typealias Executor = (URL, @escaping Completion) -> Void

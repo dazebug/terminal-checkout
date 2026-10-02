@@ -96,6 +96,8 @@ public func resolveSlackThreadRequest(
         instruction: instruction,
         directoryIsValid: directoryIsValid
     )
+    // The link goes first so the input always starts with `h` — an instruction placed first could
+    // begin with `!`, `/` or `#` and switch claude's input box into a mode.
     let input = settings.instruction.isEmpty
         ? link
         : "\(link) \(settings.instruction)"
@@ -136,6 +138,9 @@ private func parseOuterQuery(_ query: String) -> String? {
 }
 
 private func validateSlackLink(_ link: String) throws {
+    // Check printable ASCII before URLComponents, and judge the host on the raw authority, never on
+    // `components.host` — that host is IDNA-mapped (ignorable characters dropped, compatibility
+    // forms folded to ASCII), so it passes text the original link still carries into claude's argv.
     guard link.unicodeScalars.allSatisfy({ (0x21...0x7E).contains($0.value) }),
           link.hasPrefix("https://"),
           !link.contains("%"),

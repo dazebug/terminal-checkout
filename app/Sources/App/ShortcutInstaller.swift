@@ -127,6 +127,8 @@ struct SlackThreadShortcutInstaller: SlackThreadShortcutManaging {
             throw SlackThreadShortcutInstallerError.invalidSignatureMagic
         }
 
+        // Do not hand the file to a Shortcuts that is still launching — opening it into a cold
+        // Shortcuts left an extra empty shortcut in the library (measured); a plain launch did not.
         let applicationState = application.state()
         if applicationState == .notRunning {
             do {

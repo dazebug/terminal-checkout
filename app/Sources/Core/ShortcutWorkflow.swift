@@ -1,6 +1,8 @@
 import Foundation
 
 public enum SlackThreadShortcutWorkflow {
+    /// Keep this ASCII: Shortcuts names the import after the file name, and that name travels through
+    /// `Process` argv, which Foundation re-encodes to NFD — the listed name would then stop matching.
     public static let name = "Terminal Checkout Slack Thread"
 
     private static let clipboardActionUUID = "11111111-1111-4111-8111-111111111111"
@@ -10,6 +12,8 @@ public enum SlackThreadShortcutWorkflow {
     public static func makePropertyListData() throws -> Data {
         let placeholder = "\u{FFFC}"
         let prefix = SlackThreadURLContract.shortcutURLPrefix
+        // URL Encode's input must be a text token, not a plain output attachment: as an attachment it
+        // imported as an empty field and the shortcut opened `?url=` with nothing after it (measured).
         let clipboardToken: [String: Any] = [
             "Value": [
                 "string": placeholder,
