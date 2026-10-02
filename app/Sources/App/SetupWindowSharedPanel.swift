@@ -136,8 +136,8 @@ final class SetupWindowSharedPanel: NSView {
                 selectors: selectors
             )
             installChecklistView = checklist
-            checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             contentStack.addArrangedSubview(checklist)
+            checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
 
         for block in remainingProblemBlocks {
@@ -158,8 +158,8 @@ final class SetupWindowSharedPanel: NSView {
     }
 
     private func addProblemBlock(_ block: SetupWindowProblemBlockView) {
-        block.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         contentStack.addArrangedSubview(block)
+        block.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
     }
 
     private static func roleQualifier(for copy: SetupWindowProblemCopy) -> String {
@@ -196,10 +196,10 @@ final class SetupWindowSharedPanel: NSView {
         slackFailureDetail: String?
     ) -> SetupWindowSharedPanelBlockCopy {
         func button(
-            _ title: StaticString,
+            _ title: String,
             _ action: SetupWindowSharedPanelAction
         ) -> SetupWindowSharedPanelButtonModel {
-            SetupWindowSharedPanelButtonModel(title: localized(title), action: action)
+            SetupWindowSharedPanelButtonModel(title: title, action: action)
         }
 
         switch problem.copy {
@@ -209,8 +209,8 @@ final class SetupWindowSharedPanel: NSView {
                 paragraphs: [localized("app.setup.problem.warpAccessibility.cause")],
                 effects: [localized("app.setup.problem.warpAccessibility.effect")],
                 buttons: [
-                    button("app.setup.action.requestAccessibility", .requestAccessibility),
-                    button("app.setup.action.openAccessibilitySettings", .openAccessibilitySettings),
+                    button(localized("app.button.requestAccessibility"), .requestAccessibility),
+                    button(localized("app.setup.action.openAccessibilitySettings"), .openAccessibilitySettings),
                 ]
             )
         case .claudeInputRejected(.warpHelperUnavailable):
@@ -218,21 +218,21 @@ final class SetupWindowSharedPanel: NSView {
                 title: localized("app.setup.problem.openedClaude.title"),
                 paragraphs: [localized("app.setup.problem.warpHelperUnavailable.cause")],
                 effects: [localized("app.setup.problem.warpHelperUnavailable.effect")],
-                buttons: [button("app.setup.action.showAppInstallHelp", .showAppInstallHelp)]
+                buttons: [button(localized("app.setup.action.showAppInstallHelp"), .showAppInstallHelp)]
             )
         case .claudeInputRejected(.wezTermSessionUnavailable):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.wezTermInput.title"),
                 paragraphs: [localized("app.setup.problem.wezTermInput.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.openTerminalSettings", .openTerminalSettings)]
+                buttons: [button(localized("app.setup.action.openTerminalSettings"), .openTerminalSettings)]
             )
         case .slackThreadRequestFailed:
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.slack.title"),
                 paragraphs: [slackFailureDetail ?? localized("app.setup.problem.slack.detailUnavailable")],
                 effects: [],
-                buttons: [button("app.setup.action.openSlackSettings", .openSlackSettings)]
+                buttons: [button(localized("app.setup.action.openSlackSettings"), .openSlackSettings)]
             )
         case .manifestNotRegistered, .manifestWrongRelayPath, .manifestWrongExtensionID:
             let cause: String
@@ -248,70 +248,70 @@ final class SetupWindowSharedPanel: NSView {
                 title: localized("app.setup.problem.manifest.title"),
                 paragraphs: [cause],
                 effects: [],
-                buttons: [button("app.setup.action.registerManifest", .registerManifest)]
+                buttons: [button(localized("app.setup.action.registerManifest"), .registerManifest)]
             )
         case .extensionFolderMissingAfterRequest:
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.extensionFolder.title"),
                 paragraphs: [localized("app.setup.problem.extensionFolder.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.chromeInstall", .installInChrome)]
+                buttons: [button(localized("app.setup.action.chromeInstall"), .installInChrome)]
             )
         case .appSocketUnavailable:
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.socket.title"),
                 paragraphs: [localized("app.setup.problem.socket.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.restartApp", .restartApp)]
+                buttons: [button(localized("app.button.restartNow"), .restartApp)]
             )
         case .selectedTerminalNotInstalled(let terminal):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.terminalNotInstalled.title", terminalName(terminal)),
                 paragraphs: [localized("app.setup.problem.terminalNotInstalled.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.openTerminalSettings", .openTerminalSettings)]
+                buttons: [button(localized("app.setup.action.openTerminalSettings"), .openTerminalSettings)]
             )
         case .iTermAutomation(.denied):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.iterm.denied.title"),
                 paragraphs: [localized("app.setup.problem.iterm.denied.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.openAutomationSettings", .openAutomationSettings)]
+                buttons: [button(localized("app.setup.action.openAutomationSettings"), .openAutomationSettings)]
             )
         case .iTermAutomation(.notDetermined):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.iterm.notDetermined.title"),
                 paragraphs: [localized("app.setup.problem.iterm.notDetermined.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.requestItermPermission", .requestPermission)]
+                buttons: [button(localized("app.button.requestItermPermission"), .requestPermission)]
             )
         case .iTermAutomation(.targetNotRunning):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.iterm.targetNotRunning.title"),
                 paragraphs: [localized("app.setup.problem.iterm.targetNotRunning.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.requestItermPermission", .requestPermission)]
+                buttons: [button(localized("app.button.requestItermPermission"), .requestPermission)]
             )
         case .iTermAutomation(.unknown(let code)):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.iterm.unknown.title"),
                 paragraphs: [localized("app.setup.problem.iterm.unknown.cause", String(code))],
                 effects: [],
-                buttons: [button("app.setup.action.openAutomationSettings", .openAutomationSettings)]
+                buttons: [button(localized("app.setup.action.openAutomationSettings"), .openAutomationSettings)]
             )
         case .cmuxNotInstalled(let channel):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.cmux.notInstalled.title", terminalName(channel)),
                 paragraphs: [localized("app.setup.problem.cmux.notInstalled.cause")],
                 effects: [localized("app.setup.problem.cmux.notInstalled.effect")],
-                buttons: [button("app.setup.action.openTerminalSettings", .openTerminalSettings)]
+                buttons: [button(localized("app.setup.action.openTerminalSettings"), .openTerminalSettings)]
             )
         case .cmuxNotRunning(let channel):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.cmux.notRunning.title", terminalName(channel)),
                 paragraphs: [localized("app.setup.problem.cmux.notRunning.cause")],
                 effects: [],
-                buttons: [button("app.setup.action.refreshCmuxStatus", .refreshCmuxStatus)]
+                buttons: [button(localized("app.setup.action.refreshCmuxStatus"), .refreshCmuxStatus)]
             )
         case .cmuxAccessDenied(let channel):
             return SetupWindowSharedPanelBlockCopy(
@@ -319,8 +319,8 @@ final class SetupWindowSharedPanel: NSView {
                 paragraphs: [localized("app.setup.problem.cmux.denied.cause")],
                 effects: [localized("app.setup.problem.cmux.denied.effect")],
                 buttons: [
-                    button("app.setup.action.openCmuxConfig", .openCmuxConfig),
-                    button("app.setup.action.refreshCmuxStatus", .refreshCmuxStatus),
+                    button(localized("app.setup.action.openCmuxConfig"), .openCmuxConfig),
+                    button(localized("app.setup.action.refreshCmuxStatus"), .refreshCmuxStatus),
                 ]
             )
         case .cmuxCheckFailed(let channel, let detail):
@@ -328,7 +328,7 @@ final class SetupWindowSharedPanel: NSView {
                 title: localized("app.setup.problem.cmux.failed.title", terminalName(channel)),
                 paragraphs: [localized("app.setup.problem.cmux.failed.cause", detail)],
                 effects: [],
-                buttons: [button("app.setup.action.refreshCmuxStatus", .refreshCmuxStatus)]
+                buttons: [button(localized("app.setup.action.refreshCmuxStatus"), .refreshCmuxStatus)]
             )
         case .warpAccessibilityRequired:
             return SetupWindowSharedPanelBlockCopy(
@@ -336,8 +336,8 @@ final class SetupWindowSharedPanel: NSView {
                 paragraphs: [localized("app.setup.problem.warpAccessibilityRequired.cause")],
                 effects: [localized("app.setup.problem.warpAccessibilityRequired.effect")],
                 buttons: [
-                    button("app.setup.action.requestAccessibility", .requestAccessibility),
-                    button("app.setup.action.openAccessibilitySettings", .openAccessibilitySettings),
+                    button(localized("app.button.requestAccessibility"), .requestAccessibility),
+                    button(localized("app.setup.action.openAccessibilitySettings"), .openAccessibilitySettings),
                 ]
             )
         case .toolUnavailable(let name):
@@ -347,7 +347,7 @@ final class SetupWindowSharedPanel: NSView {
                     title: localized("app.setup.problem.gh.title"),
                     paragraphs: [localized("app.setup.problem.gh.cause")],
                     effects: [localized("app.setup.problem.gh.effect")],
-                    buttons: [button("app.setup.action.showGhInstallHelp", .showGhInstallHelp)]
+                    buttons: [button(localized("app.setup.action.showGhInstallHelp"), .showGhInstallHelp)]
                 )
             case "claude":
                 return claudeUnavailable(button: button)
@@ -356,14 +356,14 @@ final class SetupWindowSharedPanel: NSView {
                     title: localized("app.setup.problem.zoxide.title"),
                     paragraphs: [localized("app.setup.problem.zoxide.cause")],
                     effects: [localized("app.setup.problem.zoxide.effect")],
-                    buttons: [button("app.setup.action.showZoxideInstallHelp", .showZoxideInstallHelp)]
+                    buttons: [button(localized("app.setup.action.showZoxideInstallHelp"), .showZoxideInstallHelp)]
                 )
             default:
                 return SetupWindowSharedPanelBlockCopy(
                     title: localized("app.setup.problem.toolUnavailable.title", name),
                     paragraphs: [localized("app.setup.problem.toolUnavailable.cause", name)],
                     effects: [],
-                    buttons: [button("app.setup.action.showAppInstallHelp", .showAppInstallHelp)]
+                    buttons: [button(localized("app.setup.action.showAppInstallHelp"), .showAppInstallHelp)]
                 )
             }
         case .criticalToolUnavailable(let name):
@@ -373,8 +373,8 @@ final class SetupWindowSharedPanel: NSView {
                     paragraphs: [localized("app.setup.problem.noEntry.cause")],
                     effects: [],
                     buttons: [
-                        button("app.setup.action.openBaseDirectorySettings", .openBaseDirectorySettings),
-                        button("app.setup.action.showZoxideInstallHelp", .showZoxideInstallHelp),
+                        button(localized("app.setup.action.openBaseDirectorySettings"), .openBaseDirectorySettings),
+                        button(localized("app.setup.action.showZoxideInstallHelp"), .showZoxideInstallHelp),
                     ]
                 )
             }
@@ -382,7 +382,7 @@ final class SetupWindowSharedPanel: NSView {
                 title: localized("app.setup.problem.toolUnavailable.title", name),
                 paragraphs: [localized("app.setup.problem.toolUnavailable.cause", name)],
                 effects: [],
-                buttons: [button("app.setup.action.showAppInstallHelp", .showAppInstallHelp)]
+                buttons: [button(localized("app.setup.action.showAppInstallHelp"), .showAppInstallHelp)]
             )
         case .claudeUnavailable:
             return claudeUnavailable(button: button)
@@ -394,19 +394,19 @@ final class SetupWindowSharedPanel: NSView {
                     localized("app.setup.problem.claudeNotExecutable.slack"),
                 ],
                 effects: [],
-                buttons: [button("app.setup.action.showClaudeInstallHelp", .showClaudeInstallHelp)]
+                buttons: [button(localized("app.setup.action.showClaudeInstallHelp"), .showClaudeInstallHelp)]
             )
         }
     }
 
     private static func claudeUnavailable(
-        button: (StaticString, SetupWindowSharedPanelAction) -> SetupWindowSharedPanelButtonModel
+        button: (String, SetupWindowSharedPanelAction) -> SetupWindowSharedPanelButtonModel
     ) -> SetupWindowSharedPanelBlockCopy {
         SetupWindowSharedPanelBlockCopy(
             title: localized("app.setup.problem.claudeUnavailable.title"),
             paragraphs: [localized("app.setup.problem.claudeUnavailable.cause")],
             effects: [],
-            buttons: [button("app.setup.action.showClaudeInstallHelp", .showClaudeInstallHelp)]
+            buttons: [button(localized("app.setup.action.showClaudeInstallHelp"), .showClaudeInstallHelp)]
         )
     }
 
@@ -507,12 +507,12 @@ final class SetupWindowProblemBlockView: NSView {
         heading.spacing = 8
         contentStack.addArrangedSubview(heading)
         for label in paragraphLabels {
-            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             contentStack.addArrangedSubview(label)
+            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
         for label in effectLabels {
-            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             contentStack.addArrangedSubview(label)
+            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
         if !actionButtons.isEmpty {
             let actions = NSStackView(views: actionButtons)
@@ -667,7 +667,7 @@ final class SetupWindowInstallChecklistView: NSView {
         )
         let step1 = SetupWindowInstallStepView(
             number: 2,
-            title: localized("app.setup.install.chrome.title"),
+            title: localized("app.button.installInChrome"),
             status: chromeStatus,
             isComplete: requestRecorded && !folderIsMissing,
             button: (
@@ -739,8 +739,8 @@ final class SetupWindowInstallChecklistView: NSView {
         ])
 
         for step in steps {
-            step.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             contentStack.addArrangedSubview(step)
+            step.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
 
         guideStepsContainer.orientation = .vertical
@@ -750,27 +750,27 @@ final class SetupWindowInstallChecklistView: NSView {
         guideStepsContainer.setAccessibilityElement(true)
         guideStepsContainer.setAccessibilityRole(.list)
         guideStepsContainer.setAccessibilityLabel(localized("app.setup.install.chrome.steps.accessibilityLabel"))
+        contentStack.addArrangedSubview(guideStepsContainer)
         for label in guideStepLabels {
-            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             guideStepsContainer.addArrangedSubview(label)
+            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
         guideStepsContainer.isHidden = !guideStepsExpanded
-        contentStack.addArrangedSubview(guideStepsContainer)
 
-        feedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         feedbackLabel.isHidden = !guideStepsExpanded
         contentStack.addArrangedSubview(feedbackLabel)
+        feedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         if let closeGuideButton {
             let closeRow = NSStackView(views: [closeGuideButton])
             closeRow.orientation = .horizontal
             closeRow.alignment = .centerY
             closeRow.translatesAutoresizingMaskIntoConstraints = false
-            closeRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
             closeRow.setAccessibilityElement(true)
             closeRow.setAccessibilityRole(.group)
             closeRow.setAccessibilityLabel(localized("app.setup.install.closeGuide.accessibilityLabel"))
             contentStack.addArrangedSubview(closeRow)
+            closeRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
 
         if !requestRecorded {
