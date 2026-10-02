@@ -12,7 +12,7 @@ import XCTest
 ///     record → the gate closes → the farewells go out → the file is written → open → the helper is born
 ///
 /// The helper was born after its own farewell, and nothing was left to dismiss it: it lived to its
-/// own idle cap (180s) and lifetime cap (900s), listening on a socket any same-uid process can
+/// own `idleTimeout` and `maxLifetime` caps, listening on a socket any same-uid process can
 /// reach. Two shapes were already measured and closed — dismissing at attach time reaches a socket
 /// nobody is listening on, and holding the launch inside the farewell phase does not fit the
 /// termination budget — so what is left is that a helper learns **at birth** whether it is wanted.

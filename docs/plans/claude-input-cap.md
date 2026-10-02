@@ -4,8 +4,8 @@
 - 대상: terminal-checkout의 Chrome extension 및 macOS app
 - 시작 커밋: 4c3c722
 - 기준 트리: /Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/claude-input-cap-review (worktree-claude-input-cap-review · 4c3c722) · 작업 트리: /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work (claude-input-cap-work)
-- 현재: R1 · 마지막 승격 3ff67cb · 리뷰 중 없음 · 게이트 그린 (node 323 · check-locales · swift는 드라이버가 종결 SHA에서)
-- 최근 검증자 판정: R0 처리 반영으로 시작하는 데 합의한다 · 원문 /private/tmp/claude-input-cap-loop/r1-assign.md
+- 현재: R2 · 마지막 승격 a93efb9 · 리뷰 중 없음 · 게이트 그린 (node 323 · check-locales · swift 132)
+- 최근 검증자 판정: 막혔다. 우회 없음 → 항목 3″ cleared · 원문 /private/tmp/claude-input-cap-loop/r7-assign.md
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
 
@@ -84,6 +84,7 @@
 | 2 | 사용자 문서·context 결정·issue-list 수동 확인을 새 정책에 맞춘다 | 제품 문서·체크리스트 | (a) README 네 언어의 “최대 5개” (b) README 네 언어의 “입력을 하나 더 넣을 여유(클릭당 다섯)” (c) `docs/context/claude-input-delivery.md`의 상한 문단과 결정 근거·기각 대안 (d) `docs/new-terminal-checklist.md`의 “다섯 입력 버튼에는 캐럿 없음”·“여유 없는 버튼” 항목 (e) 구버전 확장 잔여의 결정 기록 | README.md, README.ko.md, README.zh-Hant.md, README.ja.md, docs/context/index.md, docs/context/claude-input-delivery.md, docs/new-terminal-checklist.md | 1 | cleared | README.md:153,192; README.ko.md:154,193; README.zh-Hant.md:154,193; README.ja.md:154,193 · README 확인 `rg -n -i 'five per click|room for another input|five stored inputs|up to 5 inputs|click.{0,15}(five|5 inputs)|클릭당.{0,12}(다섯|5)|입력.{0,12}(더 넣을 여유|추가할 여유)|여유.{0,12}입력|每次點擊.{0,12}五則|還能再加一則|1 クリックにつき 5 つ|もう 1 つ追加する余地' /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/README.md /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/README.ko.md /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/README.zh-Hant.md /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/README.ja.md` → 0건 (rg exit 1) · docs/context/claude-input-delivery.md:244-262,302; docs/context/index.md:3; docs/new-terminal-checklist.md:149-150,178 · `node --test --test-reporter=tap` exit 0 · 323; `node tools/check-locales.js` exit 0 · 재실행(드라이버): diff 검토 — README 네 언어·context·index·checklist, 정정 R1-a∼d 반영 | |
 | 3 | Warp helper 수명 가정을 입력 11개 기준으로 고친다 | 수명 예산 설명 | (a) `maxLifetime` 주석의 “5 inputs” 전제 | app/Sources/WarpHelper/main.swift | 1 | cleared | 주석 갱신 근거: 12×2+2+2+3.6=31.6초/입력, 120+11×31.6=467.6초; `betweenInputTimeout` 15초를 입력마다 더하면 120+11×46.6=632.6초로 900초 안이다 (ClaudeInjector.swift:333, 399-403, 438-455, 529-555, 601-629, 970-973; `maxLifetime` 900 유지). node --test --test-reporter=tap exit 0 · 323. Swift 게이트는 드라이버 실행. 재실행(드라이버): diff는 `///` 줄뿐 — 코드 변경 없음 | |
 | 3′ | `maxLifetime` 주석을 파일의 문서 주석 형식(문단당 한 줄)으로 | 수명 예산 설명 | (a) 줄마다 다른 폭의 하드랩 | app/Sources/WarpHelper/main.swift | 3 | cleared | diff는 `///` 줄뿐 | |
+| 3″ | `maxLifetime`을 입력 11개의 마감 최악 W에 맞춰 올린다 | 수명 예산 | (a) 실패한 시도의 늦은 단계·재시도 세션 확인을 세지 않아 W가 900초를 넘는다(cold review) (b) 서두·WarpControl·테스트 주석의 900초 숫자 | app/Sources/WarpHelper/main.swift, app/Sources/Core/WarpControl.swift, app/Tests/CoreTests/ClaudeDeliveryLaunchAdmissionTests.swift | 1, 3 | cleared | W = 120 + 11 × [15 + 11 × 2 + 12 × (2 + 2 + about 2) + 3 × 2 + 2 × 0.4 + 3.6] = 1,433.4초 (<1500); `timeout`·`betweenInputTimeout`·`retryConfirmTimeout`·`inputBoxLookDeadline` (ClaudeInjector.swift:331-357, 438-455, 529-570, 591-629, 639-669, 694-702, 970-975); body reflection은 `13 × screenPollInterval` (약 2초, 438-455, 639); `maxAttempts` 12 및 첫 시도 재시도 확인 생략 (394-416); 3.6초는 Warp pane-proof 경로가 `.unknown`으로 즉시 빠져 poll하지 않지만 보수적으로 포함 (ClaudeInjector.swift:537-543); `maxLifetime` 1800으로 변경. 코드 주석 숫자 참조 3곳을 상수 이름으로 교체; `CoreTests.swift:4518-4525`의 순수 함수 테스트 입력 `lifetimeLimit: 900`은 유지. node --test --test-reporter=tap exit 0 · 323; 테스트 추가 없음. 재실행(드라이버): 산식 재합산 120 + 11 × 119.4 = 1,433.4; 숫자 참조 3곳이 상수 이름으로 바뀐 것을 diff로 확인 | |
 
 - 항목 하나는 승격 하나의 크기다. 항목 2와 3은 항목 1의 승인된 계약을 사용한다. 판정으로 범위를 넓혀야 하면 새 항목을 만들고 사용자 결정을 기다린다.
 - `tests/claude-note.test.js` red는 실제 5개 issueListButtons 값에서 `buttonTakesClaudeNote`가 false인 현재 동작을 true 기대와 비교했다. defaults.js 변경을 토글하면 이 assertion이 재실패했다. `tests/buttons.test.js`의 고정 10개 허용·11개 거부와 `tests/worker-note.test.js`의 진입점 payload 경계도 토글에서 실패했다. 기존 코드에서 통과하는 source-audit/context-sources 테스트를 새 근거 없이 늘리지 않았다.
@@ -101,6 +102,10 @@
 | D7 | 드라이버 | 열린 질문 6: `settingsTooLarge` 문구가 “가장 긴 명령을 줄여라”만 말해, 입력이 원인일 때 안내가 좁다 | 범위 밖 — 기록만. 입력 10개는 한 키가 6,144B에 닿을 가능성을 키운다. 후속 이슈 여부는 종결 때 사용자에게 묻는다 | extension/_locales/en/messages.json:185-186 · extension/defaults.js:741 · 사용자 실제 issueListButtons 키 392B · R0 | 트리거: 입력이 대부분인 키가 6,144B를 넘는 저장 |
 | D8 | 드라이버 | 열린 질문: migration.test.js의 adoptStoredSettings 상한 테스트가 adoptStoredButtons 경계 테스트와 중복인가 | 유지 — 설정 단위 reader가 키별 건너뜀 수(skippedByKey)를 보고하는 계약을 고정해 고도가 다르다. 이번 수정은 상한이 바뀐 뒤에도 참이도록 MAX_CLAUDE_INPUTS + 1로 바꾼 것뿐이다 | tests/migration.test.js:1144-1149 · R1 | — |
 | D9 | 드라이버 | 종결 전 테스트 심사 | 유지 7 · 삭제 0 | .git/test-review.md (커밋하지 않음) · R1 | — |
+| D10 | 드라이버 | cold review 지적 2 (B): 입력 11개가 모든 확인을 마감까지 쓰며 재시도하면 900초를 넘는다(가상 시간 모델 — 5개 632.5초, 11개 1247.5초, 900초 제한이면 7개만 제출) | 반영 — D6을 뒤집는다. `maxLifetime` 900→1800, 주석은 마감 최악 W를 이름 붙은 상수로 산정 | /private/tmp/claude-input-cap-loop/cold.json · R2 | 실 Warp에서 관측한 것이 아니라 모델 재현이다 |
+| D11 | 드라이버 | cold review 지적 1 (B): Warp 배치 5세션 이상에서 전달 슬롯(동시 4)을 기다리는 helper가 idle 180초로 먼저 종료된다 | 범위 밖 — 배치 fan-out(#73)부터 있던 결함. 입력이 늘면 전달 점유가 길어져 노출이 커진다. 처분(이슈·기록)은 사용자에게 묻는다 | app/Sources/App/HostServer.swift:276-299 · app/Sources/Core/ClaudeInjector.swift:42-52, 977 · 실 helper 재현(드라이버, 샌드박스 밖, 4개 슬롯 점유 뒤 185초): helper-runtime-repro.py --case queue → helperReply=nil, INVARIANT FAIL (queued helper died before delivery acquired its permit) · R2 | — |
+| D12 | 사용자 | D11의 처분 | 별도 이슈 — #98로 등록했다(드라이버, dazebug) | https://github.com/dazebug/terminal-checkout/issues/98 · R2 | — |
+| D13 | 사용자 | D7의 처분 | 기록만 — 이슈로 만들지 않는다 | R2 | — |
 
 ## 전수 소탕 표
 
@@ -110,7 +115,7 @@
 | 옵션 편집기·import·저장 경고·구버전 reader | 구현 완료 (항목 1), 구버전 처분 잔여 (D4) | extension/options.js:376, 593-669, 1305-1314; extension/migrations.js:176, 189-192, 688-708; extension/defaults.js:801-819, 1237-1244 |
 | content script와 worker의 버튼 판정 및 batch payload | 구현 완료 (항목 1), batch 입력은 세션당 (D3) | extension/content.js:94-101, 775-795; extension/background.js:139-145, 182-183, 334-339, 501-542; extension/defaults.js:557-565 |
 | 앱 입력 개수·batch·프레임 예산 | 개수 상한은 비목표 (D5); batch는 세션당 (D3) | app/Sources/Core/Request.swift:27-29, 84-95, 97-140; app/Sources/Core/Framing.swift:6, 19-27; app/Sources/App/HostServer.swift:199-205, 403-415 |
-| Warp helper per-input 수명 가정과 per-request size budget | 구멍 (항목 3); oversized-settings 안내 범위 밖 잔여 (D7) | app/Sources/WarpHelper/main.swift:20-27, 49-52, 122-127; app/Sources/Core/ClaudeInjector.swift:399-403, 438-455, 970-1024; app/Sources/Core/WarpHelperProtocol.swift:67-72 |
+| Warp helper lifetime 숫자 참조와 per-request size budget | 수명 상한 갱신 (3″); queued helper idle expiry 범위 밖 (D11); oversized-settings 안내 범위 밖 잔여 (D7); stop 판정 테스트 입력의 `lifetimeLimit: 900`은 그대로 둠 | app/Sources/WarpHelper/main.swift:35, 49-52, 94-116, 122-127; app/Sources/Core/WarpControl.swift:602-607; app/Tests/CoreTests/ClaudeDeliveryLaunchAdmissionTests.swift:14-18; app/Tests/CoreTests/CoreTests.swift:4518-4525; app/Sources/Core/ClaudeInjector.swift:331-357, 394-416, 438-455, 529-570, 591-629, 639-669, 694-702, 970-975; app/Sources/Core/WarpHelperProtocol.swift:67-72 |
 | 네 README의 저장 입력·한 마디 설명 | 구멍 (항목 2) | README.md:153, 192; README.ko.md:154, 193; README.zh-Hant.md:154, 193; README.ja.md:154, 193 |
 | context 및 수동 체크리스트 | 구멍 (항목 2) | docs/context/index.md; docs/context/claude-input-delivery.md:228-284; docs/context/options-page-reordering.md:13 (상수 이름 유지); docs/new-terminal-checklist.md:147-185; CLAUDE.md:46 |
 | 로케일 카탈로그 5개 | 상한 숫자 없음; oversized-settings 안내 범위 밖 잔여 (D7) | extension/_locales/en/messages.json:185-198, 222-229; extension/_locales/ko/messages.json:185-198, 222-229; extension/_locales/zh_CN/messages.json:185-198, 222-229; extension/_locales/zh_TW/messages.json:185-198, 222-229; extension/_locales/ja/messages.json:185-198, 222-229; 모두 ext_error_skipConsequence와 ext_error_settingsTooLarge를 보유 |
@@ -153,6 +158,22 @@
 - 수정: 항목 2 (배정 13:50 · 완료 14:02), R1-a∼d
 - 실측: node --test exit 0 · 323 · check-locales exit 0 · 클릭당 다섯·여유 표현 0건
 - 판정: 막혔다. 우회 없음 → 항목 2 cleared
+
+### R2
+
+#### 리뷰 4 — cold · a93efb9 · read_codex 새 스레드 · 리뷰 14:25∼14:41 · 왕복 0 · 원문 /private/tmp/claude-input-cap-loop/cold.json
+
+- 차단: (1) [P2·B] 전달 슬롯을 기다리는 Warp helper가 idle 180초로 먼저 종료 (2) [P2·B] 입력 11개의 마감 최악이 900초를 넘음
+- 수정: (2) 항목 3″ · (1) 범위 밖 D11
+- 실측: 실 helper 재현(드라이버, 샌드박스 밖, 4개 슬롯 점유 뒤 185초): helper-runtime-repro.py --case queue → helperReply=nil, INVARIANT FAIL (queued helper died before delivery acquired its permit)
+- 판정: blocked → 3″ 승격 뒤 같은 cold 스레드에 재검토
+
+#### 리뷰 5 — 증분 · 항목 3″ 커밋 · 드라이버 · 리뷰 14:53∼14:58 · 왕복 0 · 원문 /private/tmp/claude-input-cap-loop/r7-assign.md
+
+- 차단: 주석이 정의 없는 계획 기호 W를 쓰고, 상수가 무엇인지 말하는 첫 구절을 잃었다
+- 수정: 항목 3″ (배정 14:44 · 완료 14:53), 주석 재작성
+- 실측: 산식 재합산 1,433.4 ≤ 1,500 · node --test exit 0 · 323
+- 판정: 막혔다. 우회 없음 → 항목 3″ cleared
 
 ## 열린 질문
 
