@@ -254,10 +254,28 @@ enum SetupWindowSlackPreviewFirstMessage: Equatable {
 }
 
 struct SetupWindowSlackPreview: Equatable {
+    let terminal: Terminal
+    let destination: SetupWindowPreviewDestination
     let usesWorkingFolder: Bool
     let firstMessage: SetupWindowSlackPreviewFirstMessage
     let requiresSlackMCP: Bool
     let effectSentence: SetupWindowEffectSentence
+
+    init(
+        terminal: Terminal = .iterm,
+        destination: SetupWindowPreviewDestination = .newTab,
+        usesWorkingFolder: Bool,
+        firstMessage: SetupWindowSlackPreviewFirstMessage,
+        requiresSlackMCP: Bool,
+        effectSentence: SetupWindowEffectSentence
+    ) {
+        self.terminal = terminal
+        self.destination = destination
+        self.usesWorkingFolder = usesWorkingFolder
+        self.firstMessage = firstMessage
+        self.requiresSlackMCP = requiresSlackMCP
+        self.effectSentence = effectSentence
+    }
 }
 
 enum SetupWindowEffectSentence: Equatable {
@@ -506,6 +524,8 @@ enum SetupWindowPresentationModel {
 
         let firstMessage = SetupWindowSlackPreviewFirstMessage.slackLinkThenInstruction
         let slack = SetupWindowSlackPreview(
+            terminal: snapshot.selectedTerminal,
+            destination: snapshot.selectedTerminal.cmuxChannel == nil ? .newTab : .newWorkspace,
             usesWorkingFolder: true,
             firstMessage: firstMessage,
             requiresSlackMCP: true,

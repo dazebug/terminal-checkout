@@ -312,3 +312,11 @@
 "app.setup.preview.general.title" = "Example — after pressing a button";
 "app.setup.severity.success" = "Connected";
 "app.setup.severity.unknown" = "Not checked";
+"app.setup.slack.workDirectory.label" = "Work folder";
+"app.setup.slack.instruction.label" = "Claude instruction";
+"app.setup.preview.slack.windowCaption" = "SLACK LINK SESSION";
+"app.setup.preview.slack.command" = "claude '<Slack link> <instruction>'";
+"app.setup.preview.slack.title.withHotKey" = "Example — copy a Slack link, then press %@.";
+"app.setup.preview.slack.title.withoutHotKey" = "Example — copy a Slack link, then press the shortcut.";
+"app.setup.preview.slack.caption" = "claude starts in the work folder with the copied link and instruction ready as its first message; Slack MCP lets that session read the thread.";
+"app.setup.preview.slack.accessibility" = "A new %@ opens with Claude's first message already formed; thread contents come through its Slack MCP connection.";

@@ -304,3 +304,11 @@
 "app.setup.preview.general.title" = "示例 — 按下按钮后";
 "app.setup.severity.success" = "已连接";
 "app.setup.severity.unknown" = "尚未检查";
+"app.setup.slack.workDirectory.label" = "工作文件夹";
+"app.setup.slack.instruction.label" = "Claude 指示";
+"app.setup.preview.slack.windowCaption" = "Slack 链接会话";
+"app.setup.preview.slack.command" = "claude '<Slack 链接> <指示>'";
+"app.setup.preview.slack.title.withHotKey" = "示例 — 复制 Slack 链接后按下 %@";
+"app.setup.preview.slack.title.withoutHotKey" = "示例 — 复制 Slack 链接后按下快捷键";
+"app.setup.preview.slack.caption" = "claude 会在工作文件夹中启动，并以复制的链接和指示作为首条消息；此会话需要 Slack MCP 来读取讨论串。";
+"app.setup.preview.slack.accessibility" = "新的%@会打开，claude 的首条消息包含复制的链接和指示；讨论串内容通过 Slack MCP 连接读取。";

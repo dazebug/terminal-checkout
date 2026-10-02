@@ -304,3 +304,11 @@
 "app.setup.preview.general.title" = "例 — ボタンを押すと";
 "app.setup.severity.success" = "接続済み";
 "app.setup.severity.unknown" = "未確認";
+"app.setup.slack.workDirectory.label" = "作業フォルダ";
+"app.setup.slack.instruction.label" = "claude への指示";
+"app.setup.preview.slack.windowCaption" = "Slack リンクのセッション";
+"app.setup.preview.slack.command" = "claude '<Slack のリンク> <指示>'";
+"app.setup.preview.slack.title.withHotKey" = "例 — Slack のリンクをコピーして %@ を押したとき";
+"app.setup.preview.slack.title.withoutHotKey" = "例 — Slack のリンクをコピーしてショートカットを押したとき";
+"app.setup.preview.slack.caption" = "作業フォルダで claude が起動し、コピーしたリンクと指示が最初のメッセージになります。スレッドを読むには、そのセッションで Slack MCP が必要です。";
+"app.setup.preview.slack.accessibility" = "新しい %@ が開き、claude の最初のメッセージにリンクと指示が入ります。スレッドの内容は Slack MCP 接続から取得します。";

@@ -6,11 +6,13 @@ import Core
 final class SetupWindowPreviewView: NSView {
     private var generalModel: SetupWindowGeneralPreview?
     private var githubModel: SetupWindowGitHubPreview?
+    private var slackModel: SetupWindowSlackPreview?
     private(set) var effectDescription: String
 
     init(model: SetupWindowGeneralPreview) {
         generalModel = model
         githubModel = nil
+        slackModel = nil
         effectDescription = Self.description(for: model)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -23,7 +25,21 @@ final class SetupWindowPreviewView: NSView {
     init(githubModel: SetupWindowGitHubPreview) {
         self.generalModel = nil
         self.githubModel = githubModel
+        self.slackModel = nil
         effectDescription = Self.description(for: githubModel)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel(effectDescription)
+        setAccessibilityHelp(effectDescription)
+    }
+
+    init(slackModel: SetupWindowSlackPreview) {
+        generalModel = nil
+        githubModel = nil
+        self.slackModel = slackModel
+        effectDescription = Self.description(for: slackModel)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityElement(true)
@@ -39,6 +55,7 @@ final class SetupWindowPreviewView: NSView {
     func update(_ model: SetupWindowGeneralPreview) {
         generalModel = model
         githubModel = nil
+        slackModel = nil
         effectDescription = Self.description(for: model)
         setAccessibilityLabel(effectDescription)
         setAccessibilityHelp(effectDescription)
@@ -48,7 +65,18 @@ final class SetupWindowPreviewView: NSView {
     func update(githubModel: SetupWindowGitHubPreview) {
         generalModel = nil
         self.githubModel = githubModel
+        slackModel = nil
         effectDescription = Self.description(for: githubModel)
+        setAccessibilityLabel(effectDescription)
+        setAccessibilityHelp(effectDescription)
+        needsDisplay = true
+    }
+
+    func update(slackModel: SetupWindowSlackPreview) {
+        generalModel = nil
+        githubModel = nil
+        self.slackModel = slackModel
+        effectDescription = Self.description(for: slackModel)
         setAccessibilityLabel(effectDescription)
         setAccessibilityHelp(effectDescription)
         needsDisplay = true
@@ -68,9 +96,14 @@ final class SetupWindowPreviewView: NSView {
         frame.fill()
         frame.stroke()
 
-        let label = generalModel == nil
-            ? localized("app.setup.preview.github.windowCaption")
-            : localized("app.setup.preview.general.mockWindow")
+        let label: String
+        if generalModel != nil {
+            label = localized("app.setup.preview.general.mockWindow")
+        } else if githubModel != nil {
+            label = localized("app.setup.preview.github.windowCaption")
+        } else {
+            label = localized("app.setup.preview.slack.windowCaption")
+        }
         (label as NSString).draw(
             in: NSRect(x: 14, y: 10, width: max(0, bounds.width - 28), height: 18),
             withAttributes: [
@@ -93,6 +126,8 @@ final class SetupWindowPreviewView: NSView {
             }
         } else if let githubModel {
             drawGitHubPreview(githubModel)
+        } else if let slackModel {
+            drawSlackPreview(slackModel)
         }
     }
 
@@ -257,6 +292,85 @@ final class SetupWindowPreviewView: NSView {
             "app.setup.preview.github.accessibility",
             setupWindowGitHubEffectSentence(model.effectSentence)
         )
+    }
+
+    private static func description(for model: SetupWindowSlackPreview) -> String {
+        let destination = model.destination == .newWorkspace
+            ? localized("app.setup.preview.general.destination.workspace")
+            : localized("app.setup.preview.general.destination.tab")
+        return localized("app.setup.preview.slack.accessibility", destination)
+    }
+
+    private func drawSlackPreview(_ model: SetupWindowSlackPreview) {
+        let rect = NSRect(
+            x: 18, y: 35, width: max(145, bounds.width - 36), height: max(132, bounds.height - 47)
+        )
+        let window = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+        Theme.bg.setFill()
+        Theme.border.setStroke()
+        window.lineWidth = 1
+        window.fill()
+        window.stroke()
+
+        let barHeight: CGFloat = 22
+        let bar = NSBezierPath(roundedRect: NSRect(
+            x: rect.minX, y: rect.minY, width: rect.width, height: barHeight
+        ), xRadius: 7, yRadius: 7)
+        Theme.chipBg.setFill()
+        bar.fill()
+        drawWindowLights(at: NSPoint(x: rect.minX + 10, y: rect.minY + 8))
+        drawText(
+            terminalName(model.terminal),
+            in: NSRect(x: rect.minX + 42, y: rect.minY + 4, width: rect.width - 50, height: 14),
+            color: Theme.textFaint,
+            font: Theme.ui(8, .medium)
+        )
+
+        var content = NSRect(
+            x: rect.minX + 7, y: rect.minY + barHeight + 5,
+            width: rect.width - 14, height: rect.height - barHeight - 12
+        )
+        if model.destination == .newWorkspace {
+            drawWorkspaceSidebar(in: &content)
+        } else {
+            drawTabStrip(in: &content)
+        }
+
+        let prompt = NSBezierPath(roundedRect: content, xRadius: 4, yRadius: 4)
+        Theme.chipBg.setFill()
+        prompt.fill()
+        drawText(
+            localized("app.setup.slack.workDirectory.label"),
+            in: NSRect(x: content.minX + 8, y: content.minY + 5, width: content.width - 16, height: 13),
+            color: Theme.textFaint,
+            font: Theme.ui(8)
+        )
+        drawText(
+            ">_",
+            in: NSRect(x: content.minX + 8, y: content.minY + 22, width: 22, height: 16),
+            color: Theme.ok,
+            font: Theme.mono(10, .semibold)
+        )
+        let commandStyle = NSMutableParagraphStyle()
+        commandStyle.lineBreakMode = .byWordWrapping
+        (localized("app.setup.preview.slack.command") as NSString).draw(
+            in: NSRect(x: content.minX + 8, y: content.minY + 42, width: content.width - 16, height: 27),
+            withAttributes: [
+                .font: Theme.mono(7),
+                .foregroundColor: Theme.text,
+                .paragraphStyle: commandStyle,
+            ]
+        )
+        for index in 0..<2 {
+            let line = NSBezierPath(roundedRect: NSRect(
+                x: content.minX + 9,
+                y: content.minY + 73 + CGFloat(index) * 9,
+                width: content.width * (index == 0 ? 0.68 : 0.44),
+                height: 2
+            ), xRadius: 1, yRadius: 1)
+            Theme.textFaint.withAlphaComponent(0.42).setFill()
+            line.fill()
+        }
     }
 
     private func drawGitHubPreview(_ model: SetupWindowGitHubPreview) {

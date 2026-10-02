@@ -373,6 +373,7 @@ final class SetupWindowPresentationTests: XCTestCase {
     func testSlackPreviewUsesSymbolicFolderAndSlackLinkThenInstruction() {
         let preview = SetupWindowPresentationModel.make(from: snapshot()).previews.slack
 
+        XCTAssertEqual(preview.destination, .newTab)
         XCTAssertTrue(preview.usesWorkingFolder)
         XCTAssertEqual(preview.firstMessage, .slackLinkThenInstruction)
         XCTAssertTrue(preview.requiresSlackMCP)
@@ -380,6 +381,25 @@ final class SetupWindowPresentationTests: XCTestCase {
             firstMessage: .slackLinkThenInstruction,
             requiresSlackMCP: true
         ))
+    }
+
+    func testSlackPreviewUsesAWorkspaceForCmuxAndATabForOtherTerminals() {
+        for terminal in [Terminal.iterm, .wezterm, .warp] {
+            XCTAssertEqual(
+                SetupWindowPresentationModel.make(from: snapshot(selectedTerminal: terminal))
+                    .previews.slack.destination,
+                .newTab,
+                "\(terminal) opens a new tab"
+            )
+        }
+        for terminal in [Terminal.cmux, .cmuxNightly] {
+            XCTAssertEqual(
+                SetupWindowPresentationModel.make(from: snapshot(selectedTerminal: terminal))
+                    .previews.slack.destination,
+                .newWorkspace,
+                "\(terminal) opens a new workspace"
+            )
+        }
     }
 
     func testSuccessfulSlackRequestClearsOpeningFailureAndToolbarDot() {
