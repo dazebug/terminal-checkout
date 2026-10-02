@@ -4,8 +4,8 @@
 - Target: `terminal-checkout` — Chrome extension and macOS app (`extension/`, `app/`).
 - Starting commit: `a5a9504c8716abd165837bfbe67d9e990a69c082`.
 - Reference tree: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/button-limit-review` (`worktree-button-limit-review`) · work tree: `/Users/choongjaelee/Codes/terminal-checkout-button-limit-work` (`button-limit-work`).
-- Current: R0 · 마지막 승격 a5a9504(스냅샷) · 리뷰 중 없음 · 게이트 JS·로케일 그린, Swift 드라이버 실행 중
-- Latest verifier decision: approved to begin from this plan · driver design review, 2026-10-02.
+- Current: R1 · 마지막 승격 330bf52 · 리뷰 중 cold(새 스레드) · 게이트 그린(node 324, swift 542+132)
+- Latest verifier decision: 드라이버 최종: 합의 · cold review 진행 중
 
 ## 배경 — 확인한 원천
 
@@ -71,9 +71,9 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | Validate the committed five-button snapshot, both requested gates, and the exact cap toggle. | Snapshot verification | — | Existing snapshot `a5a9504` (read-only; no implementation edits). | — | verified | `node --test` → exit 0, 324 tests, 324 pass, 0 fail. `node tools/check-locales.js` → exit 0, all five live catalogues match. `node .git/button-limit-audit.cjs toggle` → expected red, exit 1, one test fails at `tests/buttons.test.js:531` because only `b1`–`b3` remain when the cap is three. 재실행(드라이버): node --test → exit 0, 324 pass · node .git/button-limit-audit.cjs toggle → exit 1, 1 fail | — |
-| 2 | Complete the non-visual cap/value-flow sweep and record the size, guidance, and older-client dispositions. | Stored-cap propagation and sync compatibility | — | `extension/defaults.js`; `extension/options.js`; `extension/background.js`; `extension/migrations.js`; `extension/options.html`; `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json`; `tests/buttons.test.js`; `tests/migration.test.js`; `tests/i18n.test.js`; `README*`; `CLAUDE.md`; `docs/**`; `app/Sources/**/*.swift`. | 1 | claimed | D2·D3·D4 처분, 수정 대상 없음 — 소탕 표 | — |
-| 3 | Read the PR header, issue badge row, repository banner, and list mounts from code; leave actual five-button rendering for post-install verification. | GitHub DOM layout | — | `extension/content.js`; `extension/layout.js`; `tests/layout.test.js`. | 2 | claimed | 코드 판독 — 소탕 표의 네 행, 실제 렌더는 D5 잔여 | — |
+| 1 | Validate the committed five-button snapshot, both requested gates, and the exact cap toggle. | Snapshot verification | — | Existing snapshot `a5a9504` (read-only; no implementation edits). | — | agreed | `node --test` → exit 0, 324 tests, 324 pass, 0 fail. `node tools/check-locales.js` → exit 0, all five live catalogues match. `node .git/button-limit-audit.cjs toggle` → expected red, exit 1, one test fails at `tests/buttons.test.js:531` because only `b1`–`b3` remain when the cap is three. 재실행(드라이버): node --test → exit 0, 324 pass · node .git/button-limit-audit.cjs toggle → exit 1, 1 fail | — |
+| 2 | Complete the non-visual cap/value-flow sweep and record the size, guidance, and older-client dispositions. | Stored-cap propagation and sync compatibility | — | `extension/defaults.js`; `extension/options.js`; `extension/background.js`; `extension/migrations.js`; `extension/options.html`; `extension/_locales/{en,ko,ja,zh_CN,zh_TW}/messages.json`; `tests/buttons.test.js`; `tests/migration.test.js`; `tests/i18n.test.js`; `README*`; `CLAUDE.md`; `docs/**`; `app/Sources/**/*.swift`. | 1 | agreed | D2·D3·D4 처분, 수정 대상 없음 — 소탕 표 | — |
+| 3 | Read the PR header, issue badge row, repository banner, and list mounts from code; leave actual five-button rendering for post-install verification. | GitHub DOM layout | — | `extension/content.js`; `extension/layout.js`; `tests/layout.test.js`. | 2 | agreed | 코드 판독 — 소탕 표의 네 행, 실제 렌더는 D5 잔여 | — |
 
 ## 결정 원장
 
@@ -84,6 +84,7 @@
 | D3 | 드라이버 | 크기 초과 안내가 입력 개수가 원인일 때도 "가장 긴 명령을 줄이라"고만 한다 | 기록만 — 이 루프에서 문구를 바꾸지 않는다 | 같은 문구를 PR #99 때 사용자가 "기록만"으로 처분했다 | 입력 때문에 초과하는 실제 사례가 나오면 문구 개정 |
 | D4 | 드라이버 | 상한 3인 구버전이 5개 저장분을 읽으면 앞의 셋만 남기고, 거기서 저장하면 넷째·다섯째가 지워진다 | 코드 변경 없음 — 옵션 페이지가 건너뛴 개수, 저장 시 삭제, 먼저 내보내기를 이미 안내한다. PR 본문에 "넷째 버튼을 저장하기 전에 모든 기기의 확장을 업데이트하라"를 적는다 | `git show a5a9504^:extension/defaults.js` 의 `MAX_BUTTONS = 3`; `extension/options.js:636-670` | 페이지의 버튼 그리기 경로는 콘솔에만 남긴다 |
 | D5 | 드라이버 | 이슈 배지 줄·저장소 배너·목록 마운트에는 지역 줄바꿈 규칙이 없어 버튼 5개가 좁은 창에서 붐빌 수 있다 | 이 루프에서 CSS를 바꾸지 않는다 — 실제 렌더 측정 없이 고치는 것은 추측 수정이다. 설치 후 실제 GitHub 페이지에서 확인한다 | 소탕 표의 PR 헤더·이슈 배지 줄·저장소 배너·목록 마운트 행 | 다섯 버튼의 실제 렌더 미확인 |
+| D6 | 드라이버 | 테스트 심사 | 둘 다 유지 — (1) `tests/buttons.test.js` "a page kind keeps five buttons and skips the sixth": 항목 1, 입장 (i) — 상한을 3으로 되돌리면 실패한다(토글). (2) `tests/migration.test.js` "entries beyond the button limit are skipped and counted, never silently trimmed": 기존 테스트의 숫자 3을 `MAX_BUTTONS` 기준으로 바꾼 것, 입장 (ii) — 저장 판독기의 건너뜀·개수 계약을 고정한다. (1)은 숫자 5라는 결정을, (2)는 판독 경로의 계약을 고정하므로 같은 계약의 중복이 아니다. 대역 없음 | `git diff a6fd63b..a5a9504 -- tests/` → 2개 파일, 새 테스트 1·수정 1 | 없음 |
 
 ## 전수 소탕 표
 
@@ -117,7 +118,11 @@
 
 ### R1
 
-Not started; the R0 review approves beginning from this plan.
+#### 리뷰 1 — 최종(드라이버) · a6fd63b..330bf52 · 승격 23:13 · 리뷰 23:13∼23:20 · 왕복 0 · 원문 없음(드라이버 직접 리뷰)
+- 차단: 없음
+- 수정: 없음 — 코드 변경은 스냅샷 a5a9504뿐이다
+- 실측: node --test 324 pass(exit 0) · check-locales exit 0 · 상한 3 토글 시 새 테스트 1 fail · swift CoreTests 542(1 skip)·AppTests 132 실패 0(드라이버, clone)
+- 판정: 드라이버 최종 판정: 합의한다 — 스냅샷 a5a9504로 원 요구가 충족되고, D2∼D5는 잔여로 기록됐다 → 항목 1·2·3 `agreed`
 
 ## 열린 질문
 
