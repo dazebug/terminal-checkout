@@ -136,10 +136,11 @@ private func parseOuterQuery(_ query: String) -> String? {
 }
 
 private func validateSlackLink(_ link: String) throws {
-    guard !link.contains("%"),
+    guard link.unicodeScalars.allSatisfy({ (0x21...0x7E).contains($0.value) }),
+          link.hasPrefix("https://"),
+          !link.contains("%"),
           let components = URLComponents(string: link),
-          let scheme = components.scheme,
-          scheme.caseInsensitiveCompare("https") == .orderedSame,
+          components.scheme == "https",
           components.user == nil,
           components.password == nil,
           components.port == nil,
@@ -147,8 +148,7 @@ private func validateSlackLink(_ link: String) throws {
           let authority = rawAuthority(in: link),
           !authority.contains("@"),
           !authority.contains(":"),
-          let host = components.host?.lowercased(),
-          isSlackHost(host),
+          isSlackHost(authority.lowercased()),
           validSlackMessagePath(components.path),
           validSlackQuery(components.percentEncodedQuery) else {
         throw SlackThreadRequestError.invalidSlackLink

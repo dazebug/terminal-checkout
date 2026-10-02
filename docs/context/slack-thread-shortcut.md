@@ -55,4 +55,6 @@ Driver measurements on Darwin 27.0.0 constrain the workflow file and its opening
 
 On a cold URL launch, `application(_:open:)` arrives before `applicationDidFinishLaunching`, and `launchIsDefault` is false. `applicationWillFinishLaunching` has no current Apple Event at that point. A normal launch and a relay launch with `--background` both report a default launch, so automatic setup-window display uses the documented launch flag and the URL callback is buffered until initialization completes. A failure still explicitly opens the setup window; that failure surface is separate from automatic launch-window policy.
 
+A Slack URL still waiting on the serial execution queue can be lost without execution or a visible error if the app exits or restarts for a language change, such as while a long cmux batch is ahead of it; a socket caller instead sees failure when its relay receives no response.
+
 LaunchServices did not send URL events to an app bundle under `/tmp`, despite a registered scheme claim. The URL cold-launch check therefore uses the installed app under `~/Applications`, not a temporary bundle.

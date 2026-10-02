@@ -136,7 +136,7 @@
 "app.slack.error.workDirectoryInvalid" = "작업 폴더가 올바르지 않습니다.";
 "app.slack.error.workDirectoryUnavailable" = "작업 폴더가 없거나 폴더가 아닙니다.";
 "app.slack.error.invalidInstruction" = "지시문은 한 줄이어야 하며 제어 문자를 포함할 수 없습니다.";
-"app.slack.error.appendedPromptUnavailable" = "Slack 링크를 claude 인수로 안전하게 전달할 수 없습니다.";
+"app.slack.error.appendedPromptUnavailable" = "Slack 링크를 claude 인수로 전달하려면 계정이 지원되는 POSIX 계열 로그인 셸을 사용해야 하며 로그인 셸 검사에서 해당 셸의 PATH에 있는 claude 실행 파일을 찾아야 합니다. 지원되는 로그인 셸을 사용하고 그 셸의 PATH에서 claude 실행 파일을 찾을 수 있는지 확인하세요.";
 "app.slack.error.unexpectedRequest" = "Slack 설정을 검증할 수 없습니다.";
 "app.slack.error.serverUnavailable" = "요청 서버를 사용할 수 없어 Slack 링크를 처리할 수 없습니다.";
 "app.slack.error.createDirectory" = "단축어 파일을 저장할 폴더를 준비할 수 없습니다.";

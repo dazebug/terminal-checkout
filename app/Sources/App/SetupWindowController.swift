@@ -1758,6 +1758,26 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
+    private func revealSlackRequestFailure() {
+        guard let window,
+              let scroll = window.contentView as? NSScrollView,
+              let document = scroll.documentView else { return }
+
+        window.contentView?.layoutSubtreeIfNeeded()
+        rootStack.afterNextWindowUpdate { [weak self, weak scroll, weak document] in
+            guard let self, let scroll, let document,
+                  !self.slackRequestFailureLabel.isHidden else { return }
+            let frame = self.slackRequestFailureLabel.convert(
+                self.slackRequestFailureLabel.bounds, to: document
+            )
+            let origin = scrollOrigin(
+                anchorTop: frame.maxY, offset: 0, clip: scroll.contentView.bounds.height
+            )
+            document.scroll(NSPoint(x: 0, y: origin))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+    }
+
     private func updateSlackShortcutPresentation() {
         slackShortcutStatusLabel.stringValue = "● \(slackShortcutStatusMessage(slackShortcutStatus))"
         switch slackShortcutStatus {
@@ -1817,6 +1837,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         let present = { [weak self] in
             self?.lastSlackRequestFailure = error
             self?.updateSlackThreadSettingsCard()
+            self?.revealSlackRequestFailure()
         }
         if Thread.isMainThread {
             present()

@@ -144,7 +144,7 @@
 "app.slack.error.workDirectoryInvalid" = "The work folder is invalid.";
 "app.slack.error.workDirectoryUnavailable" = "The work folder does not exist or is not a folder.";
 "app.slack.error.invalidInstruction" = "The instruction must be one line and contain no control characters.";
-"app.slack.error.appendedPromptUnavailable" = "This command cannot safely pass the Slack link to claude as an argument.";
+"app.slack.error.appendedPromptUnavailable" = "The Slack link can be passed to claude as an argument only when the account uses a supported POSIX-family login shell and the login-shell check finds claude as an executable on that shell's PATH. Use a supported login shell and make sure claude resolves to an executable there.";
 "app.slack.error.unexpectedRequest" = "The Slack settings could not be validated.";
 "app.slack.error.serverUnavailable" = "The app could not accept the Slack link because its request server is unavailable.";
 "app.slack.error.createDirectory" = "The app could not prepare its shortcut files.";

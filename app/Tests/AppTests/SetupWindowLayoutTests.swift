@@ -519,6 +519,29 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.reachable"))
     }
 
+    func testSlackRequestFailureIsVisibleInTheDocumentViewportWhenWindowIsShort() throws {
+        let controller = makeController(.warp)
+        let window = try XCTUnwrap(controller.window)
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let needed = controller.rootStack.fittingSize.height
+        controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: needed / 3)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertGreaterThan(controller.rootStack.frame.height, scroll.contentView.bounds.height)
+
+        controller.presentSlackThreadRequestFailure(SlackThreadRequestError.invalidSlackLink)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let failure = try XCTUnwrap(controller.statusLabelsForTesting.last)
+        XCTAssertFalse(failure.isHidden)
+        let document = try XCTUnwrap(scroll.documentView)
+        let failureFrame = failure.convert(failure.bounds, to: document)
+        let visible = scroll.documentVisibleRect
+        XCTAssertGreaterThanOrEqual(failureFrame.minY, visible.minY - 0.5)
+        XCTAssertLessThanOrEqual(failureFrame.maxY, visible.maxY + 0.5)
+    }
+
 
     /// Whether `text` is a catalogue value, or one with its single `%@` filled in. A frame with
     /// almost nothing around the placeholder would match anything, so those are not counted.

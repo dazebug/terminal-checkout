@@ -4,8 +4,8 @@
 - 대상: `terminal-checkout` / `app`
 - 시작 커밋: `21382f5101555401a3a71263cad2441b9e37981b`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/slack-thread-review` (`worktree-slack-thread-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-slack-thread-work` (`slack-thread`)
-- 현재: R1 · 마지막 승격 4e0eaac · 리뷰 중 없음 · 게이트 그린(드라이버, clone) · cold review 대기
-- 최근 검증자 판정: 없음 (R0 계획 초안) · 원문 없음
+- 현재: R2 · 마지막 승격 3a378cb · 리뷰 중 없음 · 게이트 그린(드라이버, clone 단독) · 두 번째 cold review 대기
+- 최근 검증자 판정: cold review — "Do you agree with this implementation: no" · 원문 없음
 
 이 파일은 실행한 계획과 실행할 계획의 기록이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실을 기록한다. 코드 수정 과정은 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
 
@@ -107,6 +107,9 @@ R0 이후 이 절과 「완료의 정의」에 항목을 더하는 것은 범위
 | 5 | URL scheme 번들 등록과 LaunchServices 설치 수명을 검증한다 | 앱 번들·설치 수명 | — (새 경로) | `app/Info.plist` · `uninstall.sh` · `app/Tests/AppTests/URLSchemeRegistrationTests.swift` (신규) · `app/Tests/CoreTests/CoreTests.swift` | 1, 4 | cleared | `cd app && CLANG_MODULE_CACHE_PATH=../.git/tc-clang-cache swift test --disable-sandbox --scratch-path ../.git/tc-swift-build --cache-path ../.git/tc-swift-cache --config-path ../.git/tc-swift-config --security-path ../.git/tc-swift-security --filter 'URLSchemeRegistrationTests|UninstallScriptSyncTests'` → exit 0, Core 2·App 1 실행·0 실패; `bash -n uninstall.sh` → exit 0; `plutil -lint app/Info.plist` → exit 0; `git diff --check` → exit 0; tests: `URLSchemeRegistrationTests.testInfoPlistRegistersTheSharedURLSchemeUnderItsBundleIdentifier`, `UninstallScriptSyncTests.testUninstallUnregistersBeforeDeletingAndNamesTheShortcutItLeavesBehind`; 재실행(드라이버): `cd app && swift test` → exit 0, CoreTests 553·1 skip·0 실패, AppTests 157·0 실패; 토글 2종(Info.plist 스킴 이름 변경, uninstall 등록 해제 줄 삭제) 각각 이름 있는 테스트 실패, 상태 복원 | |
 | 6 | 사용법·보안·제약을 README 네 언어와 terminal 수동 점검표에 반영한다 | 제품 문서·수동 점검 | — (새 기능) | `README.md` · `README.ko.md` · `README.ja.md` · `README.zh-Hant.md` · `docs/new-terminal-checklist.md` | 1∼5 | cleared | 변경 파일: `README.md`, `README.ko.md`, `README.ja.md`, `README.zh-Hant.md`, `docs/new-terminal-checklist.md`; `git diff --stat -- README.md README.ko.md README.ja.md README.zh-Hant.md docs/new-terminal-checklist.md` → 5 files changed, 44 insertions(+); 드라이버 문서 대조: README 네 언어가 같은 4단계·URL 경계·제거 안내, context 기록 형식(Type 단일), CLAUDE.md 불릿 2개 | |
 | 7 | 선택·거부 이유와 런타임 불변식을 why 문서 및 agent 안내에 남긴다 | 설계 맥락·프로젝트 규칙 | — (새 기능) | `docs/context/slack-thread-shortcut.md` (신규) · `docs/context/index.md` · `CLAUDE.md` | 1∼6 | cleared | 변경 파일: `docs/context/slack-thread-shortcut.md`, `docs/context/index.md`, `CLAUDE.md`; `git diff --stat -- CLAUDE.md docs/context/index.md` → 2 files changed, 3 insertions(+); `wc -l docs/context/slack-thread-shortcut.md` → 60 lines; 드라이버 문서 대조: README 네 언어가 같은 4단계·URL 경계·제거 안내, context 기록 형식(Type 단일), CLAUDE.md 불릿 2개 | |
+| 1′ | Slack permalink 검증에서 원문 스칼라와 authority를 검사하고 https scheme 대소문자를 고정한다 | Core 입력 검증 — 비ASCII 호스트 | (a) IDNA 매핑 host로 판정해 원본의 비ASCII·보이지 않는 문자가 통과 (b) scheme 대소문자 무시 | `app/Sources/Core/SlackThreadRequest.swift` · `app/Tests/CoreTests/SlackThreadRequestTests.swift` | 1 | cleared | `cd app && CLANG_MODULE_CACHE_PATH=../.git/tc-clang-cache swift test --disable-sandbox --scratch-path ../.git/tc-swift-build --cache-path ../.git/tc-swift-cache --config-path ../.git/tc-swift-config --security-path ../.git/tc-swift-security --filter SlackThreadRequestTests/testRejectsNonASCIIAndNonPrintableSlackLinkScalarsBeforeURLParsing` → red, exit 1, 11 assertions; green rerun → 13 tests, 0 failures; `.git/toggle-slack-link-ascii.patch` → reverse patch test red; 재실행(드라이버): 게이트 exit 0(CoreTests 553·AppTests 156); ASCII 검사 토글 red; 원문 authority 판정 토글 green — ASCII 검사 뒤 방어 심층, 독립 재현 입력 없음 | |
+| 3′ | URL 요청 실패 뒤 설정 창의 Slack 실패 줄을 짧은 화면에서도 보이게 한다 | 설정 창 실패 안내 스크롤 | (a) 실패 표시가 Slack 절을 화면 안으로 스크롤하지 않음 | `app/Sources/App/SetupWindowController.swift` · `app/Tests/AppTests/SetupWindowLayoutTests.swift` | 3 | cleared | `cd app && CLANG_MODULE_CACHE_PATH=../.git/tc-clang-cache swift test --disable-sandbox --scratch-path ../.git/tc-swift-build --cache-path ../.git/tc-swift-cache --config-path ../.git/tc-swift-config --security-path ../.git/tc-swift-security --filter SetupWindowLayoutTests/testSlackRequestFailureIsVisibleInTheDocumentViewportWhenWindowIsShort` → red, exit 1; green rerun → 13 tests, 0 failures; `.git/toggle-slack-failure-scroll.patch` → reverse patch test red; 실패 줄 스크롤 토글 red(드라이버) | |
+| 4′ | argv admission 오류의 원인과 사용자가 고칠 수 있는 항목을 다섯 언어로 설명한다 | Slack 입력 전달 오류 메시지 | (a) appended prompt 불가 문구가 원인을 설명하지 않음 | `app/Sources/App/Resources/en.lproj/Localizable.strings` · `app/Sources/App/Resources/ja.lproj/Localizable.strings` · `app/Sources/App/Resources/ko.lproj/Localizable.strings` · `app/Sources/App/Resources/zh-Hans.lproj/Localizable.strings` · `app/Sources/App/Resources/zh-Hant.lproj/Localizable.strings` · `app/Tests/AppTests/SlackThreadSettingsTests.swift` | 1, 3 | cleared | `cd app && CLANG_MODULE_CACHE_PATH=../.git/tc-clang-cache swift test --disable-sandbox --scratch-path ../.git/tc-swift-build --cache-path ../.git/tc-swift-cache --config-path ../.git/tc-swift-config --security-path ../.git/tc-swift-security --filter SlackThreadSettingsTests` → exit 0, App 6 tests; `testEverySlackThreadFailureHasLocalizedMessagesInEveryLocale`에 영어 login shell·executable·PATH 단언 포함; 다섯 로케일 문구가 `prepareRequest`의 두 거절 조건(로그인 셸·claude 실행 파일)을 명시 — 드라이버 대조 | |
 
 - 항목 하나는 승격 하나에 들어갈 크기다. 같은 부류는 한 승격에 묶이고, 파일 집합이 겹치지 않는 부류만 따로 승격할 수 있다. 승격 칸에는 커밋 해시를 적는다.
 - `의존`: 다른 항목의 계약(시그니처·불변식·생성물·호출 순서)을 전제하면 그 번호를 적는다. 그 항목에 정정이 오면 이 항목의 근거를 다시 낸 뒤에 최종 리뷰에 들어간다.
@@ -132,6 +135,7 @@ R0에서는 이번 배정에서 사용자가 확정한 결정과 드라이버가
 | D9 | 드라이버 | 위장된 호스트·경로·query가 Slack link로 승인되는 위험 | 호스트·label·path·ID·query의 Slack permalink 문법은 불변 원칙에 적은 strict allowlist이며, `cid`와 path ID 불일치는 거부 조건이 아니다 | 드라이버 R0 지시, 2026-10-02 | 없음 — parser tests가 확정 계약을 고정 |
 | D10 | 드라이버 | 공백 포함 작업 폴더를 셸에서 안전하지 않게 조립할 위험 | 작업 폴더는 `normalizedBaseDirectory` 단일 검증을 재사용하고 공백 경로는 지원하지 않는다 — 지원하려면 `{cd}` 조립까지 포함한 별도 설계가 필요 | 드라이버 R0 지시, 2026-10-02; 기존 허용 목록과 조립 경계 | 없음 |
 | D11 | 드라이버 | 라운드 증거로 쓰인 테스트가 그대로 산출물이 되는 위험 | 테스트 심사 — 상수 스냅샷 1개 삭제, 서버 없음 로컬라이즈·Slack 카드 레이아웃 2개 병합, 바깥 URL 중복 단언 정리; 유지분은 (i) 토글 또는 (ii) 불변 원칙 계약 | 드라이버: 게이트 exit 0(CoreTests 552·AppTests 155), 심사 후 토글 12종 재실행 red; 심사표 원문은 구현자 `.git/test-audit.md` | 없음 |
+| D12 | 드라이버 | 종료·재시작 시 대기 URL 요청 소실(A) | 잔여로 기록, 고치지 않음 | 실행 큐를 오래 잡는 cmux 배치 + 사용자 종료가 겹쳐야 함; 소켓 경로는 relay 응답 없음으로 실패가 보임 | 없음 |
 
 ## 전수 소탕 표
 
@@ -140,18 +144,18 @@ R0에서는 이번 배정에서 사용자가 확정한 결정과 드라이버가
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 `파일:행` |
 |:--|:--|:--|
 | outer URL scheme·host·path·`url` query cardinality와 unknown/duplicate key | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testRejectsMalformedOuterURLs` · `testRejectsUnknownOuterQueryKeys`; `.git/toggle-outer-unknown-key.patch` |
-| inner Slack host·label·path·ID·`thread_ts`·`cid`·trim·percent escape·512-byte cap | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testAcceptsDriverShortcutURLAndQuerylessPermalinkPreservingOriginalLink` · `testAcceptsEnterpriseHostIDsAndTrimmedOriginalLink` · `testRejectsInvalidSlackLinks` · `testRejectsSlackLinkOver512UTF8BytesBeforeValidation` · `testHostLabelBoundaryAllows63AndRejects64Characters`; `.git/toggle-host-label-boundary.patch` |
+| inner Slack host·label·path·ID·`thread_ts`·`cid`·trim·percent escape·512-byte cap·ASCII 입력 | Core 테스트 추가 · 새 경계 필터 통과 · 드라이버 게이트 미실행 | `SlackThreadRequestTests.testAcceptsDriverShortcutURLAndQuerylessPermalinkPreservingOriginalLink` · `testAcceptsEnterpriseHostIDsAndTrimmedOriginalLink` · `testRejectsInvalidSlackLinks` · `testRejectsNonASCIIAndNonPrintableSlackLinkScalarsBeforeURLParsing` · `testRejectsSlackLinkOver512UTF8BytesBeforeValidation` · `testHostLabelBoundaryAllows63AndRejects64Characters`; `.git/toggle-host-label-boundary.patch` · `.git/toggle-slack-link-ascii.patch` |
 | 설정 작업 폴더·빈 설정·경로 유형·공백 | 공용 Core 검증과 즉시 UI 판정 추가 · 필터 테스트 실행 · 드라이버 게이트 미실행 | `SlackThreadRequestTests.testLiveSettingsValidatorMatchesRequestResolution` · `SlackThreadSettingsTests.testSlackFieldsSaveRawTextAndShowValidationWhileEditing` · `testSlackSettingsAreStoredAsRawAppLocalStrings` |
 | instruction control validation·empty value·input classification | 입력창 분류 원천 제거 (R0-2) · 공용 검증 유지 · 필터 테스트 실행 | `SlackThreadRequestTests.testBuildsLinkFirstCommandFromSettingsAndAllowsEmptyInstruction` · `testRejectsInvalidInstructionsAndInvalidDirectories` · `testLiveSettingsValidatorMatchesRequestResolution` |
 | command append scanner·`prepareRequest` route | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testPreparedSlackRequestUsesArgvOnlyAndFailsClosed`; `.git/toggle-argv-fail-closed.patch` |
 | URL path의 launch serial·terminal·tab activation | 구현·필터 테스트 추가 · 로컬 소켓 게이트는 환경 차단 | `SlackThreadURLHandlingTests.testHostServerResolvesSettingsAndUsesItsInjectedTerminalExecutor` · `testSocketAndSlackURLLaunchesShareOneSerialQueueAndInjectedExecutor`; `.git/toggle-slack-url-buffering.patch` |
-| URL cold launch 자동 창 표시·실패 명시 창 표시 | 구현·필터 테스트 추가 · 드라이버 게이트 대기 | `SlackThreadURLHandlingTests.testAutomaticLaunchWindowRequiresDefaultLaunchWithoutBackgroundArgument` · `testURLCoordinatorRunsSuccessOncePresentsFailuresAndClearsAfterSuccess` · `testServerUnavailableFailureHasLocalizedMessagesInEveryLocale`; `.git/toggle-slack-launch-window-rule.patch` · `.git/toggle-slack-failure-presentation.patch` · `.git/toggle-slack-success-clears-failure.patch` |
+| URL cold launch 자동 창 표시·실패 명시 창 표시·짧은 창에서 실패 줄 가시성 | 구현·필터 테스트 추가 · 드라이버 게이트 미실행 | `SlackThreadURLHandlingTests.testAutomaticLaunchWindowRequiresDefaultLaunchWithoutBackgroundArgument` · `testURLCoordinatorRunsSuccessOncePresentsFailuresAndClearsAfterSuccess` · `SetupWindowLayoutTests.testSlackRequestFailureIsVisibleInTheDocumentViewportWhenWindowIsShort`; `.git/toggle-slack-launch-window-rule.patch` · `.git/toggle-slack-failure-presentation.patch` · `.git/toggle-slack-success-clears-failure.patch` · `.git/toggle-slack-failure-scroll.patch` |
 | typed delivery 결과 및 실패 UI | 범위 밖 (R0-3) | 이 경로는 `appendedPromptCommand` argv 방식만 사용하고 타이핑하지 않는다 |
 | iTerm2·WezTerm·Warp·cmux stable/nightly 및 background 설정 | 미검사 (항목 4, 6) | 단위 테스트와 `app/e2e.sh`는 실제 터미널을 열지 않음. `docs/new-terminal-checklist.md`에 driver 실기기 확인 필요 |
 | shortcut plist action 연결·query 인코딩·sign·import·run | 드라이버 실측 및 구조 테스트 추가 · 게이트 미실행 | `WFTextTokenString` urlencode 입력을 포함한 4-action graph를 import하고 `shortcuts run`으로 정확한 링크 전달; `ShortcutWorkflowTests.testURLencodeUsesTextTokenStringForClipboardAttachment` · `testURLActionUsesSharedPrefixAndCalculatedUTF16AttachmentRange`; `.git/toggle-urlencode-serialization.patch` |
 | shortcut 설치 상태·고정 이름·hotkey 설정 상태 | 드라이버 실측 및 격리 테스트 추가 · 설정 창 조회는 비동기 · 드라이버 게이트 미실행 | `shortcuts list`는 이름 한 줄씩 출력; `ShortcutInstallerTests.testInstallationStatusMatchesOnlyAnExactOutputLine` · `testInstallationStatusIsUnknownWhenListCommandFailsOrThrows` · `testInstallationStatusIsUnknownForMalformedListOutput` · `testInstallLaunchesShortcutsAndWaitsBeforeOpening` · `SlackThreadSettingsTests.testShortcutButtonReflectsQueriedStatusNotInstallSuccess`; 사용자가 hotkey를 직접 지정하고 상태로 표시하지 않음 |
 | `Info.plist` 등록·`install.sh`·`uninstall.sh`의 LaunchServices lifecycle | 구현·필터 테스트 추가 · `install.sh` 기존 `lsregister -f` 유지 · 실기기 cold open 대기 | `URLSchemeRegistrationTests.testInfoPlistRegistersTheSharedURLSchemeUnderItsBundleIdentifier` · `UninstallScriptSyncTests.testUninstallUnregistersBeforeDeletingAndNamesTheShortcutItLeavesBehind`; 제거 테스트는 설치 스크립트와 같은 `LSREGISTER` 경로, 앱 삭제 전 `-u`, 고정 단축어 안내 및 `$APP_SUPPORT` 재귀 삭제를 확인한다. 단축어 `.plist`와 `.shortcut`은 `appSupportDirectory()` 아래 생성됨; `/tmp` 번들은 URL을 받지 못함 |
-| 설정 창 Slack 절·catalogue key·다섯 앱 locale | 구현 및 필터 테스트 추가 · 드라이버 게이트 미실행 | `SetupWindowLayoutTests.testSlackThreadCardFitsInEveryLocale` · `LocalizationCatalogTests` 8 tests · `SlackThreadSettingsTests.testRequestAndInstallerFailuresHaveLocalizedMessagesInEveryLocale` · `.git/toggle-slack-settings-validator.patch` · `.git/toggle-slack-installed-status.patch` |
+| 설정 창 Slack 절·catalogue key·다섯 앱 locale | 구현 및 필터 테스트 추가 · 드라이버 게이트 미실행 | `SetupWindowLayoutTests.testTheWindowFitsItsContentInEveryPopulatedLocale` · `LocalizationCatalogTests` 8 tests · `SlackThreadSettingsTests.testEverySlackThreadFailureHasLocalizedMessagesInEveryLocale` · `.git/toggle-slack-settings-validator.patch` · `.git/toggle-slack-installed-status.patch` |
 | README 네 언어·terminal checklist·why index 일관성 | 문서 갱신 · README 구조 대조 | README 네 언어의 새 절은 각각 8 lines·4 steps; `docs/new-terminal-checklist.md`는 터미널별 URL 확인; `CLAUDE.md`는 불변식 2개와 context 링크; `docs/context/`는 선택 이유와 실측만 기록 |
 | shortcut 삭제 정책 | 안전 경계 (항목 5) | `shortcuts help`에 delete 명령 없음; 사용자 shortcut library는 편집하지 않음 |
 | Slack thread 작성자 prompt injection | 범위 밖 | MCP가 읽는 원격 텍스트이며 GitHub issue 본문과 같은 모델 입력 위험; 앱이 읽거나 filter하지 않음 |
@@ -219,6 +223,22 @@ R0에서는 이번 배정에서 사용자가 확정한 결정과 드라이버가
 - 수정: 테스트 심사만
 - 실측: 게이트 exit 0(CoreTests 552·AppTests 155) · 토글 12종 red
 - 판정: 드라이버 최종 판정: 이 구현에 합의한다 — 맥락 없는 cold review 대기
+
+### R2
+
+#### 리뷰 1 — cold · 21382f5..4f0db44 · 리뷰 21:28∼21:53 · 왕복 1
+
+- 차단: C1(B) 비ASCII 호스트 문자 통과(재현 `https://ac%C2%ADme.slack.com/archives/C12345678/p1234567890123456` 수락) · (A) 종료 시 대기 URL 소실
+- 수정: 1′·3′·4′, (A)는 잔여 문서화
+- 실측: 드라이버 재현 확인
+- 판정: cold: Do you agree with this implementation: no
+
+#### 리뷰 2 — 증분 · R2 수정 커밋 · 배정 21:58 · 완료 22:05 · 리뷰 22:06∼22:14 · 왕복 1
+
+- 차단: 없음 — C1 재현 입력(`https://ac%C2%ADme.slack.com/…`)이 이제 거부됨, 새 표면(ASCII 검사·원문 authority 판정·실패 줄 스크롤) 우회 없음
+- 수정: 1′·3′·4′
+- 실측: 게이트 exit 0 · 토글: ASCII red, 스크롤 red, authority 되돌리기 green(방어 심층)
+- 판정: R2 수정 범위 내 확인 → `1′`·`3′`·`4′` `cleared`
 
 ## 열린 질문
 

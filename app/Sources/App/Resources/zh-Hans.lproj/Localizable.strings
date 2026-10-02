@@ -136,7 +136,7 @@
 "app.slack.error.workDirectoryInvalid" = "工作文件夹无效。";
 "app.slack.error.workDirectoryUnavailable" = "工作文件夹不存在或不是文件夹。";
 "app.slack.error.invalidInstruction" = "指示必须为单行，且不能包含控制字符。";
-"app.slack.error.appendedPromptUnavailable" = "无法安全地将 Slack 链接作为参数传给 claude。";
+"app.slack.error.appendedPromptUnavailable" = "只有账户使用受支持的 POSIX 系登录 shell，且登录 shell 检查能在该 shell 的 PATH 中找到 claude 可执行文件时，才能将 Slack 链接作为 claude 参数传递。请使用受支持的登录 shell，并确保该 shell 的 PATH 能找到 claude 可执行文件。";
 "app.slack.error.unexpectedRequest" = "无法验证 Slack 设置。";
 "app.slack.error.serverUnavailable" = "请求服务器不可用，无法处理 Slack 链接。";
 "app.slack.error.createDirectory" = "无法准备快捷指令文件夹。";

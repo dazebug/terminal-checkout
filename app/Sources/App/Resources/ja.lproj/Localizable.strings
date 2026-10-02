@@ -136,7 +136,7 @@
 "app.slack.error.workDirectoryInvalid" = "作業フォルダが無効です。";
 "app.slack.error.workDirectoryUnavailable" = "作業フォルダが存在しないか、フォルダではありません。";
 "app.slack.error.invalidInstruction" = "指示は 1 行で入力し、制御文字を含めないでください。";
-"app.slack.error.appendedPromptUnavailable" = "Slack リンクを安全に claude の引数へ渡せません。";
+"app.slack.error.appendedPromptUnavailable" = "Slack リンクを claude の引数で渡すには、アカウントで対応する POSIX 系ログインシェルを使い、ログインシェルの検査でその PATH 上の claude 実行ファイルが見つかる必要があります。対応するログインシェルを使い、その PATH から claude の実行ファイルが見つかることを確認してください。";
 "app.slack.error.unexpectedRequest" = "Slack 設定を検証できませんでした。";
 "app.slack.error.serverUnavailable" = "リクエストサーバーを利用できないため、Slackリンクを受け付けられませんでした。";
 "app.slack.error.createDirectory" = "ショートカット用ファイルを準備できませんでした。";

@@ -137,6 +137,42 @@ final class SlackThreadRequestTests: XCTestCase {
         }
     }
 
+    func testRejectsNonASCIIAndNonPrintableSlackLinkScalarsBeforeURLParsing() {
+        let path = "/archives/C0123ABCD/p1700000000123456"
+        let invalidLinks = [
+            "https://ac\u{00AD}me.slack.com\(path)",
+            "https://ac\u{200B}me.slack.com\(path)",
+            "https://ac\u{FEFF}me.slack.com\(path)",
+            "https://ac\u{FE00}me.slack.com\(path)",
+            "https://ac\u{E0100}me.slack.com\(path)",
+            "https://ac\u{007F}me.slack.com\(path)",
+            "https://ａｃｍｅ.slack.com\(path)",
+            "https://acme。slack.com\(path)",
+            "https://𝐚𝐜𝐦𝐞.slack.com\(path)",
+            "HTTPS://example.slack.com\(path)",
+            "https://example.slack.com/archives/C0123ABCD/p170000000012345é",
+            "https://example.slack.com\(path)?thread_ts=1700000000.00010é",
+        ]
+
+        for link in invalidLinks {
+            assertSlackLinkRejected(link)
+        }
+
+        let driverReproduction = "terminal-checkout://slack-thread?url=https://ac%C2%ADme.slack.com/archives/C12345678/p1234567890123456"
+        XCTAssertThrowsError(try parseSlackThreadLink(from: driverReproduction)) { error in
+            guard let requestError = error as? SlackThreadRequestError,
+                  case .invalidSlackLink = requestError else {
+                XCTFail("Expected invalidSlackLink, got \(error)")
+                return
+            }
+        }
+
+        let variationSelectors = String(repeating: "\u{FE00}", count: 100)
+        let hiddenPayload = "https://ac\(variationSelectors)me.slack.com\(path)"
+        XCTAssertLessThanOrEqual(hiddenPayload.utf8.count, 512)
+        assertSlackLinkRejected(hiddenPayload)
+    }
+
     func testRejectsSlackLinkOver512UTF8BytesBeforeValidation() {
         // Valid Slack links cannot approach this size under the allowlist grammar.
         let overLimit = validLink + String(repeating: "é", count: 300)

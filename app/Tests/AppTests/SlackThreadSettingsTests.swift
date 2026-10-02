@@ -113,6 +113,11 @@ final class SlackThreadSettingsTests: XCTestCase {
                 let message = slackThreadRequestErrorMessage(error)
                 XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): \(error)")
                 XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved request key")
+                if tag == "en", case .appendedPromptUnavailable = error {
+                    XCTAssertTrue(message.contains("login shell"))
+                    XCTAssertTrue(message.contains("executable"))
+                    XCTAssertTrue(message.contains("PATH"))
+                }
             }
             for error in installerErrors {
                 let message = slackThreadShortcutInstallerErrorMessage(error)
