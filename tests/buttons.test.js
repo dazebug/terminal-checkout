@@ -511,7 +511,7 @@ test('appendButton: leaves the original array alone and stops at the cap', () =>
 });
 
 // --- The limits are part of the shape verdict, not an import-only afterthought ---
-// They used to live on the import path alone, so a stored fourth button reached the app while the
+// They used to live on the import path alone, so a stored surplus button reached the app while the
 // same array arriving as a file lost it silently. Every reader shares this decision now — the
 // content script and the service worker included, which is why it is here and not in migrations.js.
 

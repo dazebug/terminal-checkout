@@ -1130,7 +1130,7 @@ test('a key that lost entries is not refilled with our defaults', () => {
 });
 
 test('entries beyond the button limit are skipped and counted, never silently trimmed', () => {
-  // The limits used to be enforced only on the import path, so storage readers passed a fourth
+  // The limits used to be enforced only on the import path, so storage readers passed a surplus
   // button through to the app while import quietly dropped it — and a quiet drop is the same defect
   // because the next Save records the trimmed list.
   const { adoptStoredSettings, MAX_BUTTONS } = vm.runInThisContext('({ adoptStoredSettings, MAX_BUTTONS })');

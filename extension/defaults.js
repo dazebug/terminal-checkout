@@ -317,10 +317,10 @@ const PR_BRANCH_LINK_SELECTOR =
   'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
 
 const DEFAULT_MAIN = 'main';
-// Maximum buttons per page kind. Every reader enforces it (adoptStoredButtons), so an older extension
-// on another synced device — capped at 3 before this was 5 — keeps the first three, skips the rest,
-// and removes them if it saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this
-// count, is what stops a kind whose commands are long.
+// Maximum buttons per page kind. A synced device running a version with a lower cap keeps only the
+// first entries — every reader enforces it through adoptStoredButtons — and removes the rest if it
+// saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this count, is what stops a
+// kind whose commands are long.
 const MAX_BUTTONS = 5;
 // Maximum claude inputs stored on a button. A click-time note takes its own slot, so one session
 // request carries at most MAX_CLAUDE_INPUTS + 1 claude inputs. Do not raise this without rechecking
@@ -802,7 +802,7 @@ function reshapeButton(button, uid) {
 // not load migrations.js, and surviving a stored value must not depend on which files you loaded.
 //
 // The limits belong here for the same reason the shape rules do. They used to be applied on the
-// import path alone, so a stored fourth button reached the app while the same file arriving through
+// import path alone, so a stored surplus button reached the app while the same file arriving through
 // import lost it without a word — two readers, two verdicts. And a limit applied quietly inside a
 // reader is the same defect as inventing a default: the next Save records the trimmed list. Over the
 // limit is therefore not "trim to fit" but "cannot be used", counted and reported like any other skip.
