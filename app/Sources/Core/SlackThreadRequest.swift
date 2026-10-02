@@ -2,7 +2,7 @@ import Foundation
 
 /// Failure categories the app can present in its localized Slack settings section.
 public enum SlackThreadRequestError: Error {
-    case invalidOuterURL
+    case clipboardEmpty
     case invalidSlackLink
     case slackLinkTooLong
     case workDirectoryNotConfigured
@@ -58,39 +58,24 @@ public func validateSlackThreadSettings(
     )
 }
 
-/// Parses the URL opened by Shortcuts and returns the original Slack link after boundary trimming.
-public func parseSlackThreadLink(from outerURL: String) throws -> String {
-    guard let components = URLComponents(string: outerURL),
-          let scheme = components.scheme,
-          scheme.caseInsensitiveCompare(SlackThreadURLContract.scheme) == .orderedSame,
-          components.path.isEmpty,
-          components.user == nil,
-          components.password == nil,
-          components.port == nil,
-          components.fragment == nil,
-          rawAuthority(in: outerURL) == SlackThreadURLContract.host,
-          let query = components.percentEncodedQuery,
-          let encodedLink = parseOuterQuery(query),
-          let decodedLink = encodedLink.removingPercentEncoding,
-          !decodedLink.isEmpty else {
-        throw SlackThreadRequestError.invalidOuterURL
-    }
-
-    let link = decodedLink.trimmingCharacters(in: CharacterSet(charactersIn: " \t\r\n"))
-    guard !link.isEmpty else { throw SlackThreadRequestError.invalidOuterURL }
+/// Reads the Slack message link the user copied. The whole clipboard text, without surrounding
+/// ASCII whitespace, must be one supported Slack message link; nothing is extracted from prose.
+public func slackThreadLink(fromClipboard text: String?) throws -> String {
+    let link = (text ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " \t\r\n"))
+    guard !link.isEmpty else { throw SlackThreadRequestError.clipboardEmpty }
     guard link.utf8.count <= 512 else { throw SlackThreadRequestError.slackLinkTooLong }
     try validateSlackLink(link)
     return link
 }
 
-/// Resolves app-owned settings and the parsed link into the request consumed by `prepareRequest`.
+/// Resolves app-owned settings and the copied link into the request consumed by `prepareRequest`.
 public func resolveSlackThreadRequest(
-    outerURL: String,
+    clipboardText: String?,
     workDirectory: String?,
     instruction: String,
     directoryIsValid: (String) -> Bool = slackThreadWorkDirectoryIsValid
 ) throws -> ResolvedRequest {
-    let link = try parseSlackThreadLink(from: outerURL)
+    let link = try slackThreadLink(fromClipboard: clipboardText)
     let settings = try validateSlackThreadSettings(
         workDirectory: workDirectory,
         instruction: instruction,
@@ -108,7 +93,7 @@ public func resolveSlackThreadRequest(
     )
 }
 
-/// Uses the existing request planner but refuses its typed-input fallback for this URL path.
+/// Uses the existing request planner but refuses its typed-input fallback for this path.
 public func prepareSlackThreadRequest(
     _ request: ResolvedRequest,
     loginShell: String = loginShellPath(),
@@ -123,18 +108,6 @@ public func prepareSlackThreadRequest(
         throw SlackThreadRequestError.appendedPromptUnavailable
     }
     return prepared
-}
-
-private func parseOuterQuery(_ query: String) -> String? {
-    let fields = query.split(separator: "&", omittingEmptySubsequences: false)
-    guard fields.count == 1,
-          let equals = fields[0].firstIndex(of: "="),
-          String(fields[0][..<equals]) == SlackThreadURLContract.queryKey else {
-        return nil
-    }
-    let valueStart = fields[0].index(after: equals)
-    let value = String(fields[0][valueStart...])
-    return value.isEmpty ? nil : value
 }
 
 private func validateSlackLink(_ link: String) throws {

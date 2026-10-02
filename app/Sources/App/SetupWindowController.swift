@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Core
 
 /// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
@@ -267,17 +268,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     private let cmuxFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let slackThreadValidationLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let slackShortcutStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let slackShortcutFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
+    private let slackHotKeyStatusLabel = makeStatusLabel(font: Theme.ui(11.5))
+    private let slackLoginItemStatusLabel = makeStatusLabel(font: Theme.ui(11.5))
     private let slackRequestFailureLabel = makeStatusLabel(font: Theme.ui(11.5))
-    private let slackShortcutInstallButton = NSButton(title: "", target: nil, action: nil)
-    private var slackShortcutStatus: SlackThreadShortcutInstallationStatus = .unknown
-    private var slackShortcutInstaller: any SlackThreadShortcutManaging = SlackThreadShortcutInstaller()
-    private let slackShortcutQueue = DispatchQueue(label: "com.dazebug.terminal-checkout.slack-shortcut", qos: .userInitiated)
-    private var slackShortcutStatusRevision = 0
-    private var slackShortcutInstallInProgress = false
-    private var slackShortcutAddConfirmationPending = false
-    private var lastSlackShortcutFailure: Error?
+    /// Kept across rebuilds like the other re-parented controls; titles are set where they redraw.
+    private let slackHotKeyButton = NSButton(title: "", target: nil, action: nil)
+    private let slackHotKeyClearButton = NSButton(title: "", target: nil, action: nil)
+    private let slackLoginItemCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    /// Owned by `AppDelegate` — the shortcut works with this window closed.
+    private var slackHotKey: SlackThreadHotKeyManaging!
+    private var slackLoginItem: LoginItemManaging!
+    private var hotKeyRecordingMonitor: Any?
+    private var isRecordingHotKey = false
+    private var hotKeyRecordingHint: String?
+    private var lastSlackLoginItemFailure: Error?
     private var lastSlackRequestFailure: Error?
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
@@ -300,12 +304,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
             permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, cmuxFeedbackLabel,
             cmuxPlacementInterpretationLabel, testResultLabel, slackThreadValidationLabel,
-            slackShortcutStatusLabel, slackShortcutFeedbackLabel, slackRequestFailureLabel,
+            slackHotKeyStatusLabel, slackLoginItemStatusLabel, slackRequestFailureLabel,
         ]
     }
-    var slackShortcutStatusLabelForTesting: NSTextField { slackShortcutStatusLabel }
-    var slackShortcutFeedbackLabelForTesting: NSTextField { slackShortcutFeedbackLabel }
-    var slackShortcutInstallButtonForTesting: NSButton { slackShortcutInstallButton }
+    var slackHotKeyButtonForTesting: NSButton { slackHotKeyButton }
+    var slackHotKeyClearButtonForTesting: NSButton { slackHotKeyClearButton }
+    var slackHotKeyStatusLabelForTesting: NSTextField { slackHotKeyStatusLabel }
+    var slackLoginItemCheckboxForTesting: NSButton { slackLoginItemCheckbox }
+    var slackLoginItemStatusLabelForTesting: NSTextField { slackLoginItemStatusLabel }
     var slackThreadValidationLabelForTesting: NSTextField { slackThreadValidationLabel }
     var slackWorkDirectoryFieldForTesting: NSTextField { slackWorkDirectoryField }
     var slackInstructionFieldForTesting: NSTextField { slackInstructionField }
@@ -429,11 +435,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     /// Called when the window closes — `AppDelegate` uses it to hide the app from the Dock again
     var onClose: (() -> Void)?
 
-    convenience init() {
-        self.init(shortcutInstaller: SlackThreadShortcutInstaller())
-    }
-
-    convenience init(shortcutInstaller: any SlackThreadShortcutManaging) {
+    convenience init(slackHotKey: SlackThreadHotKeyManaging, loginItem: LoginItemManaging) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -454,7 +456,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         window.backgroundColor = Theme.bg
         window.isMovableByWindowBackground = true
         self.init(window: window)
-        self.slackShortcutInstaller = shortcutInstaller
+        self.slackHotKey = slackHotKey
+        self.slackLoginItem = loginItem
+        slackHotKey.onStateChange = { [weak self] _ in self?.updateSlackHotKeyPresentation() }
         window.delegate = self
         if let launchVisibleFrame {
             FittedContentStackView.centerInside(launchVisibleFrame, window)
@@ -463,7 +467,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
-        refreshSlackShortcutStatus()
         observeScreenParameters()
         // Let the stack measure once so the deferred update has a target.
         window.contentView?.layoutSubtreeIfNeeded()
@@ -515,10 +518,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         }
         cursor.start()
         refresh()
-        refreshSlackShortcutStatus()
+    }
+
+    /// Recording ends when the window stops taking keys — the app's shortcut stays suspended for as
+    /// long as recording lasts, and the user may have gone to Slack to use it.
+    func windowDidResignKey(_ notification: Notification) {
+        if isRecordingHotKey { endHotKeyRecording() }
     }
 
     func windowWillClose(_ notification: Notification) {
+        if isRecordingHotKey { endHotKeyRecording() }
         windowHasClosed = true
         stopObservingScreenParameters()
         rootStack?.suspendDeferredWindowUpdates()
@@ -846,11 +855,29 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         slackInstructionField.cell?.sendsActionOnEndEditing = true
         slackInstructionField.widthAnchor.constraint(equalToConstant: setupTextWidth).isActive = true
 
-        slackShortcutInstallButton.title = slackShortcutInstallTitle
-        slackShortcutInstallButton.target = self
-        slackShortcutInstallButton.action = #selector(installSlackShortcut)
-        slackShortcutInstallButton.identifier = role(#selector(installSlackShortcut))
-        slackShortcutInstallButton.bezelStyle = .rounded
+        slackHotKeyButton.target = self
+        slackHotKeyButton.action = #selector(recordSlackHotKey)
+        slackHotKeyButton.identifier = role(#selector(recordSlackHotKey))
+        slackHotKeyButton.bezelStyle = .rounded
+        slackHotKeyClearButton.title = localized("app.slack.hotKey.clear")
+        slackHotKeyClearButton.target = self
+        slackHotKeyClearButton.action = #selector(clearSlackHotKey)
+        slackHotKeyClearButton.identifier = role(#selector(clearSlackHotKey))
+        slackHotKeyClearButton.bezelStyle = .rounded
+        slackLoginItemCheckbox.title = localized("app.slack.loginItem.title")
+        slackLoginItemCheckbox.target = self
+        slackLoginItemCheckbox.action = #selector(slackLoginItemToggled)
+        slackLoginItemCheckbox.identifier = role(#selector(slackLoginItemToggled))
+        updateSlackHotKeyPresentation()
+        updateSlackLoginItemPresentation()
+
+        let hotKeyLabel = NSTextField(labelWithString: localized("app.slack.hotKey.label"))
+        hotKeyLabel.font = Theme.ui(12)
+        hotKeyLabel.textColor = Theme.text
+        let hotKeyRow = NSStackView(views: [hotKeyLabel, slackHotKeyButton, slackHotKeyClearButton])
+        hotKeyRow.orientation = .horizontal
+        hotKeyRow.alignment = .centerY
+        hotKeyRow.spacing = 8
 
         return card(localized("app.card.slack.title"), [
             helpLabel(localized("app.card.slack.help")),
@@ -858,16 +885,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
             slackThreadValidationLabel,
             slackInstructionField,
             helpLabel(localized("app.slack.instruction.help")),
-            buttonRow([slackShortcutInstallButton]),
-            slackShortcutStatusLabel,
-            slackShortcutFeedbackLabel,
-            helpLabel(localized("app.slack.keyboardShortcut.help")),
+            hotKeyRow,
+            slackHotKeyStatusLabel,
+            helpLabel(localized("app.slack.hotKey.help")),
+            slackLoginItemCheckbox,
+            helpLabel(localized("app.slack.loginItem.help")),
+            slackLoginItemStatusLabel,
             slackRequestFailureLabel,
         ])
-    }
-
-    private var slackShortcutInstallTitle: String {
-        localized(slackShortcutStatus == .installed ? "app.slack.button.reinstall" : "app.slack.button.install")
     }
 
     /// The check on the tools a command calls. The login shell has to be asked rather than the
@@ -1747,7 +1772,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
             apply(.error(localized("app.slack.error.unexpectedRequest")), to: slackThreadValidationLabel)
         }
 
-        updateSlackShortcutPresentation()
+        updateSlackHotKeyPresentation()
+        updateSlackLoginItemPresentation()
         if let lastSlackRequestFailure {
             slackRequestFailureLabel.stringValue = "● \(slackThreadRequestErrorMessage(lastSlackRequestFailure))"
             slackRequestFailureLabel.textColor = Theme.err
@@ -1778,61 +1804,51 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
-    private func updateSlackShortcutPresentation() {
-        slackShortcutStatusLabel.stringValue = "● \(slackShortcutStatusMessage(slackShortcutStatus))"
-        switch slackShortcutStatus {
-        case .installed: slackShortcutStatusLabel.textColor = Theme.ok
-        case .notInstalled: slackShortcutStatusLabel.textColor = Theme.warn
-        case .unknown: slackShortcutStatusLabel.textColor = Theme.textDim
-        }
-        slackShortcutInstallButton.title = slackShortcutInstallTitle
-        slackShortcutInstallButton.isEnabled = !slackShortcutInstallInProgress
-        if slackShortcutInstallInProgress {
-            slackShortcutFeedbackLabel.stringValue = "● \(localized("app.slack.status.installing"))"
-            slackShortcutFeedbackLabel.textColor = Theme.textDim
-            slackShortcutFeedbackLabel.isHidden = false
-        } else if let lastSlackShortcutFailure {
-            slackShortcutFeedbackLabel.stringValue = "● \(slackThreadShortcutInstallerErrorMessage(lastSlackShortcutFailure))"
-            slackShortcutFeedbackLabel.textColor = Theme.err
-            slackShortcutFeedbackLabel.isHidden = false
-        } else if slackShortcutAddConfirmationPending && slackShortcutStatus != .installed {
-            slackShortcutFeedbackLabel.stringValue = "● \(localized("app.slack.status.addShortcut"))"
-            slackShortcutFeedbackLabel.textColor = Theme.textDim
-            slackShortcutFeedbackLabel.isHidden = false
+    private func updateSlackHotKeyPresentation() {
+        guard let slackHotKey else { return }
+        if isRecordingHotKey {
+            slackHotKeyButton.title = localized("app.slack.hotKey.recording")
+        } else if let combination = slackHotKey.combination {
+            slackHotKeyButton.title = combination.displayString(keyLabel: hotKeyKeyLabel(combination.keyCode))
         } else {
-            slackShortcutFeedbackLabel.stringValue = ""
-            slackShortcutFeedbackLabel.isHidden = true
+            slackHotKeyButton.title = localized("app.slack.hotKey.set")
+        }
+        slackHotKeyClearButton.isHidden = isRecordingHotKey || slackHotKey.combination == nil
+        let hint = isRecordingHotKey ? hotKeyRecordingHint : nil
+        let failure = isRecordingHotKey ? "" : slackThreadHotKeyStateMessage(slackHotKey.state)
+        if let hint {
+            slackHotKeyStatusLabel.stringValue = "● \(hint)"
+            slackHotKeyStatusLabel.textColor = Theme.warn
+            slackHotKeyStatusLabel.isHidden = false
+        } else if !failure.isEmpty {
+            slackHotKeyStatusLabel.stringValue = "● \(failure)"
+            slackHotKeyStatusLabel.textColor = Theme.err
+            slackHotKeyStatusLabel.isHidden = false
+        } else {
+            slackHotKeyStatusLabel.stringValue = ""
+            slackHotKeyStatusLabel.isHidden = true
         }
     }
 
-    private func slackShortcutStatusMessage(_ status: SlackThreadShortcutInstallationStatus) -> String {
-        switch status {
-        case .installed: return localized("app.slack.status.installed")
-        case .notInstalled: return localized("app.slack.status.notInstalled")
-        case .unknown: return localized("app.slack.status.unknown")
+    /// The box shows what ServiceManagement reports, never just the click: a refused change leaves
+    /// it where the service still is, with the reason underneath.
+    private func updateSlackLoginItemPresentation() {
+        guard let slackLoginItem else { return }
+        let status = slackLoginItem.status
+        slackLoginItemCheckbox.state = status == .disabled ? .off : .on
+        let message: String
+        if let lastSlackLoginItemFailure {
+            message = slackLoginItemFailureMessage(lastSlackLoginItemFailure)
+            slackLoginItemStatusLabel.textColor = Theme.err
+        } else {
+            message = slackLoginItemStatusMessage(status)
+            slackLoginItemStatusLabel.textColor = Theme.warn
         }
+        slackLoginItemStatusLabel.stringValue = message.isEmpty ? "" : "● \(message)"
+        slackLoginItemStatusLabel.isHidden = message.isEmpty
     }
 
-    private func refreshSlackShortcutStatus() {
-        guard !slackShortcutInstallInProgress else { return }
-        slackShortcutStatusRevision += 1
-        let revision = slackShortcutStatusRevision
-        let installer = slackShortcutInstaller
-        slackShortcutQueue.async { [weak self] in
-            let status = installer.installationStatus()
-            DispatchQueue.main.async {
-                guard let self, revision == self.slackShortcutStatusRevision,
-                      !self.slackShortcutInstallInProgress else { return }
-                self.slackShortcutStatus = status
-                if status == .installed {
-                    self.slackShortcutAddConfirmationPending = false
-                }
-                self.updateSlackShortcutPresentation()
-            }
-        }
-    }
-
-    /// Presents a failure delivered by the URL handler; URL launches have no response channel.
+    /// Presents a failure from the Slack shortcut, which has no other place to report one.
     func presentSlackThreadRequestFailure(_ error: Error) {
         let present = { [weak self] in
             self?.lastSlackRequestFailure = error
@@ -2075,35 +2091,67 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         }
     }
 
-    @objc private func installSlackShortcut() {
-        guard !slackShortcutInstallInProgress else { return }
-        slackShortcutInstallInProgress = true
-        slackShortcutStatusRevision += 1
-        let revision = slackShortcutStatusRevision
-        let installer = slackShortcutInstaller
-        lastSlackShortcutFailure = nil
-        slackShortcutAddConfirmationPending = false
-        slackShortcutFeedbackLabel.stringValue = ""
-        slackShortcutFeedbackLabel.isHidden = true
-        updateSlackShortcutPresentation()
-
-        slackShortcutQueue.async { [weak self] in
-            var failure: Error?
-            do {
-                try installer.install()
-            } catch {
-                failure = error
-            }
-            let status = installer.installationStatus()
-            DispatchQueue.main.async {
-                guard let self, revision == self.slackShortcutStatusRevision else { return }
-                self.slackShortcutInstallInProgress = false
-                self.slackShortcutStatus = status
-                self.lastSlackShortcutFailure = failure
-                self.slackShortcutAddConfirmationPending = failure == nil && status != .installed
-                self.updateSlackShortcutPresentation()
-            }
+    @objc private func recordSlackHotKey() {
+        guard !isRecordingHotKey else {
+            endHotKeyRecording()
+            return
         }
+        isRecordingHotKey = true
+        hotKeyRecordingHint = nil
+        slackHotKey.suspend()
+        hotKeyRecordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleHotKeyRecordingEvent(event)
+        }
+        updateSlackHotKeyPresentation()
+    }
+
+    /// While recording, a key press becomes the shortcut instead of reaching the window; outside
+    /// recording every event passes through untouched. Esc alone cancels.
+    func handleHotKeyRecordingEvent(_ event: NSEvent) -> NSEvent? {
+        guard isRecordingHotKey else { return event }
+        let modifiers = hotKeyModifiers(from: event.modifierFlags)
+        if Int(event.keyCode) == kVK_Escape && modifiers.isEmpty {
+            endHotKeyRecording()
+            return nil
+        }
+        guard let combination = HotKeyCombination(keyCode: UInt32(event.keyCode), modifiers: modifiers) else {
+            hotKeyRecordingHint = localized("app.slack.hotKey.needsModifier")
+            updateSlackHotKeyPresentation()
+            return nil
+        }
+        Settings.slackThreadHotKey = combination
+        slackHotKey.apply(combination)
+        endHotKeyRecording()
+        return nil
+    }
+
+    private func endHotKeyRecording() {
+        if let hotKeyRecordingMonitor {
+            NSEvent.removeMonitor(hotKeyRecordingMonitor)
+        }
+        hotKeyRecordingMonitor = nil
+        isRecordingHotKey = false
+        hotKeyRecordingHint = nil
+        slackHotKey.resume()
+        updateSlackHotKeyPresentation()
+    }
+
+    @objc private func clearSlackHotKey() {
+        Settings.slackThreadHotKey = nil
+        slackHotKey.apply(nil)
+        updateSlackHotKeyPresentation()
+    }
+
+    @objc private func slackLoginItemToggled() {
+        do {
+            try slackLoginItem.setEnabled(slackLoginItemCheckbox.state == .on)
+            lastSlackLoginItemFailure = nil
+        } catch {
+            lastSlackLoginItemFailure = error
+            checkoutLog("login item change failed — \((error as NSError).localizedDescription)")
+        }
+        updateSlackLoginItemPresentation()
     }
 
     /// Saves what was typed. An unusable path is **not** stored — the text stays in the field so it

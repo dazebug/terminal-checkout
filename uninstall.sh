@@ -84,6 +84,8 @@ for toml in "$HOME"/.warp/tab_configs/terminal-checkout.toml "$HOME"/.warp/tab_c
     fi
 done
 if [ -d "$APP_PATH" ]; then
+    # Only the app can withdraw the login item it registered for the Slack shortcut
+    "$APP_PATH/Contents/MacOS/TerminalCheckout" --unregister-login-item 2>/dev/null || true
     "$LSREGISTER" -u "$APP_PATH" 2>/dev/null || true
     rm -rf "$APP_PATH"
     echo "[1/4] App deleted: $APP_PATH"
@@ -136,5 +138,4 @@ echo "=== Uninstall complete! ==="
 echo ""
 echo "Please remove the Chrome extension yourself from chrome://extensions."
 echo "The Automation permissions you granted can be cleaned up in System Settings → Privacy & Security → Automation."
-echo "The imported “Terminal Checkout Slack Thread” shortcut remains in Shortcuts; remove it there if desired."
 echo ""

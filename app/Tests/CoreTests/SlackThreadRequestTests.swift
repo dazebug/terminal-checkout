@@ -6,14 +6,6 @@ final class SlackThreadRequestTests: XCTestCase {
     private let validLink = "https://example.slack.com/archives/C0123ABCD/p1700000000123456"
     private let validWorkDirectory = "/tmp/terminal-checkout-tests"
 
-    private func outerURL(for link: String) -> String {
-        let allowed = CharacterSet(
-            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/"
-        )
-        let encoded = link.addingPercentEncoding(withAllowedCharacters: allowed)!
-        return "\(SlackThreadURLContract.shortcutURLPrefix)\(encoded)"
-    }
-
     private func resolve(
         _ link: String = "https://example.slack.com/archives/C0123ABCD/p1700000000123456",
         instruction: String = "",
@@ -21,20 +13,20 @@ final class SlackThreadRequestTests: XCTestCase {
         directoryIsValid: (String) -> Bool = { _ in true }
     ) throws -> ResolvedRequest {
         try resolveSlackThreadRequest(
-            outerURL: outerURL(for: link),
+            clipboardText: link,
             workDirectory: workDirectory,
             instruction: instruction,
             directoryIsValid: directoryIsValid
         )
     }
 
-    private func assertOuterURLRejected(
-        _ outerURL: String, file: StaticString = #filePath, line: UInt = #line
+    private func assertClipboardEmpty(
+        _ text: String?, file: StaticString = #filePath, line: UInt = #line
     ) {
-        XCTAssertThrowsError(try parseSlackThreadLink(from: outerURL), file: file, line: line) { error in
+        XCTAssertThrowsError(try slackThreadLink(fromClipboard: text), file: file, line: line) { error in
             guard let requestError = error as? SlackThreadRequestError,
-                  case .invalidOuterURL = requestError else {
-                XCTFail("Expected invalidOuterURL, got \(error)", file: file, line: line)
+                  case .clipboardEmpty = requestError else {
+                XCTFail("Expected clipboardEmpty, got \(error)", file: file, line: line)
                 return
             }
         }
@@ -43,7 +35,7 @@ final class SlackThreadRequestTests: XCTestCase {
     private func assertSlackLinkRejected(
         _ link: String, file: StaticString = #filePath, line: UInt = #line
     ) {
-        XCTAssertThrowsError(try parseSlackThreadLink(from: outerURL(for: link)), file: file, line: line) { error in
+        XCTAssertThrowsError(try slackThreadLink(fromClipboard: link), file: file, line: line) { error in
             guard let requestError = error as? SlackThreadRequestError,
                   case .invalidSlackLink = requestError else {
                 XCTFail("Expected invalidSlackLink, got \(error)", file: file, line: line)
@@ -52,24 +44,11 @@ final class SlackThreadRequestTests: XCTestCase {
         }
     }
 
-    func testAcceptsDriverShortcutURLAndQuerylessPermalinkPreservingOriginalLink() throws {
-        let driverLink = "https://example.slack.com/archives/C0123ABCD/p1700000000123456?thread_ts=1700000000.000100&cid=C0123ABCD"
-        let driverURL = "terminal-checkout://slack-thread?url=https://example.slack.com/archives/C0123ABCD/p1700000000123456%3Fthread_ts%3D1700000000.000100%26cid%3DC0123ABCD"
+    func testAcceptsCopiedThreadLinkAndQuerylessPermalinkPreservingOriginalLink() throws {
+        let copiedReply = "https://example.slack.com/archives/C0123ABCD/p1700000000123456?thread_ts=1700000000.000100&cid=C0123ABCD"
 
-        XCTAssertEqual(try parseSlackThreadLink(from: driverURL), driverLink)
-        XCTAssertEqual(
-            try parseSlackThreadLink(from: outerURL(for: validLink)),
-            validLink
-        )
-        XCTAssertEqual(
-            try parseSlackThreadLink(
-                from: outerURL(for: validLink).replacingOccurrences(
-                    of: SlackThreadURLContract.scheme,
-                    with: SlackThreadURLContract.scheme.uppercased()
-                )
-            ),
-            validLink
-        )
+        XCTAssertEqual(try slackThreadLink(fromClipboard: copiedReply), copiedReply)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: validLink), validLink)
     }
 
     func testAcceptsEnterpriseHostIDsAndTrimmedOriginalLink() throws {
@@ -80,29 +59,25 @@ final class SlackThreadRequestTests: XCTestCase {
         let uppercaseHost = "https://EXAMPLE.slack.com/archives/C0123ABCD/p1700000000123456"
         let padded = " \t\r\n\(validLink)\n\r\t "
 
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: enterprise)), enterprise)
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: group)), group)
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: direct)), direct)
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: replyWithoutChannelID)), replyWithoutChannelID)
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: uppercaseHost)), uppercaseHost)
-        XCTAssertEqual(try parseSlackThreadLink(from: outerURL(for: padded)), validLink)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: enterprise), enterprise)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: group), group)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: direct), direct)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: replyWithoutChannelID), replyWithoutChannelID)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: uppercaseHost), uppercaseHost)
+        XCTAssertEqual(try slackThreadLink(fromClipboard: padded), validLink)
     }
 
-    func testRejectsMalformedOuterURLs() {
-        let validOuter = outerURL(for: validLink)
-        let encodedLink = validOuter.dropFirst(SlackThreadURLContract.shortcutURLPrefix.count)
+    func testEmptyClipboardIsReportedApartFromAnInvalidLink() {
+        assertClipboardEmpty(nil)
+        assertClipboardEmpty("")
+        assertClipboardEmpty(" \t\r\n ")
+    }
 
-        assertOuterURLRejected("https://slack-thread?url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://other-host?url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://SLACK-THREAD?url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://slack-thread/path?url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)#fragment")
-        assertOuterURLRejected("terminal-checkout://slack-thread")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://user:password@slack-thread?url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://slack-thread:443?url=\(encodedLink)")
+    func testClipboardMustHoldOnlyTheLink() {
+        assertSlackLinkRejected("see \(validLink)")
+        assertSlackLinkRejected("\(validLink) please")
+        assertSlackLinkRejected("\(validLink)\n\(validLink)")
+        assertSlackLinkRejected("<\(validLink)>")
     }
 
     func testRejectsInvalidSlackLinks() {
@@ -158,15 +133,6 @@ final class SlackThreadRequestTests: XCTestCase {
             assertSlackLinkRejected(link)
         }
 
-        let driverReproduction = "terminal-checkout://slack-thread?url=https://ac%C2%ADme.slack.com/archives/C12345678/p1234567890123456"
-        XCTAssertThrowsError(try parseSlackThreadLink(from: driverReproduction)) { error in
-            guard let requestError = error as? SlackThreadRequestError,
-                  case .invalidSlackLink = requestError else {
-                XCTFail("Expected invalidSlackLink, got \(error)")
-                return
-            }
-        }
-
         let variationSelectors = String(repeating: "\u{FE00}", count: 100)
         let hiddenPayload = "https://ac\(variationSelectors)me.slack.com\(path)"
         XCTAssertLessThanOrEqual(hiddenPayload.utf8.count, 512)
@@ -177,7 +143,7 @@ final class SlackThreadRequestTests: XCTestCase {
         // Valid Slack links cannot approach this size under the allowlist grammar.
         let overLimit = validLink + String(repeating: "é", count: 300)
         XCTAssertGreaterThan(overLimit.utf8.count, 512)
-        XCTAssertThrowsError(try parseSlackThreadLink(from: outerURL(for: overLimit))) { error in
+        XCTAssertThrowsError(try slackThreadLink(fromClipboard: overLimit)) { error in
             guard let requestError = error as? SlackThreadRequestError,
                   case .slackLinkTooLong = requestError else {
                 XCTFail("Expected slackLinkTooLong, got \(error)")
@@ -192,16 +158,10 @@ final class SlackThreadRequestTests: XCTestCase {
         let path = "/archives/C0123ABCD/p1700000000123456"
 
         XCTAssertEqual(
-            try parseSlackThreadLink(from: outerURL(for: "https://\(label63).slack.com\(path)")),
+            try slackThreadLink(fromClipboard: "https://\(label63).slack.com\(path)"),
             "https://\(label63).slack.com\(path)"
         )
         assertSlackLinkRejected("https://\(label64).slack.com\(path)")
-    }
-
-    func testRejectsUnknownOuterQueryKeys() {
-        let encodedLink = outerURL(for: validLink).dropFirst(SlackThreadURLContract.shortcutURLPrefix.count)
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&command=claude")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&folder=%2Ftmp")
     }
 
     func testBuildsLinkFirstCommandFromSettingsAndAllowsEmptyInstruction() throws {
@@ -238,7 +198,7 @@ final class SlackThreadRequestTests: XCTestCase {
                     return "workDirectoryUnavailable"
                 case .invalidInstruction:
                     return "invalidInstruction"
-                case .invalidOuterURL, .invalidSlackLink, .slackLinkTooLong,
+                case .clipboardEmpty, .invalidSlackLink, .slackLinkTooLong,
                      .appendedPromptUnavailable:
                     return "unrelatedRequestError"
                 }
@@ -268,7 +228,7 @@ final class SlackThreadRequestTests: XCTestCase {
             }
             let requestVerdict = verdict {
                 try resolveSlackThreadRequest(
-                    outerURL: outerURL(for: validLink),
+                    clipboardText: validLink,
                     workDirectory: workDirectory,
                     instruction: instruction,
                     directoryIsValid: isValid

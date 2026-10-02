@@ -5243,7 +5243,7 @@ final class UninstallScriptSyncTests: XCTestCase {
         }
     }
 
-    func testUninstallUnregistersBeforeDeletingAndNamesTheShortcutItLeavesBehind() throws {
+    func testUninstallWithdrawsRegistrationsBeforeDeletingTheApp() throws {
         let script = try repoFileContents("uninstall.sh")
         let installScript = try repoFileContents("install.sh")
         let registrationPath = try XCTUnwrap(
@@ -5258,13 +5258,14 @@ final class UninstallScriptSyncTests: XCTestCase {
         let appRemoval = try XCTUnwrap(script.range(of: #"rm -rf "$APP_PATH""#))
         XCTAssertLessThan(unregister.lowerBound, appRemoval.lowerBound)
 
+        // Only the app can withdraw its own login item, so it is asked before the bundle is gone
+        let loginItem = try XCTUnwrap(
+            script.range(of: #""$APP_PATH/Contents/MacOS/TerminalCheckout" --unregister-login-item"#)
+        )
+        XCTAssertLessThan(loginItem.lowerBound, appRemoval.lowerBound)
+
         XCTAssertTrue(script.contains(#"APP_SUPPORT="$HOME/Library/Application Support/TerminalCheckout""#))
         XCTAssertTrue(script.contains(#"rm -rf "$APP_SUPPORT""#))
-        XCTAssertTrue(
-            script.contains(
-                #"echo "The imported “Terminal Checkout Slack Thread” shortcut remains in Shortcuts; remove it there if desired.""#
-            )
-        )
     }
 }
 

@@ -296,7 +296,7 @@ final class LocaleRestartTests: XCTestCase {
         LocaleRestartGate.admitRestart = { asked += 1; return false }
 
         let controller = SetupWindowController(
-            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+            slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem()
         )
         _ = controller.window
         controller.perform(NSSelectorFromString("restartForLanguage"))

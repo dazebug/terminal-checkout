@@ -5,14 +5,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: HostServer?
     private var setupWindow: SetupWindowController?
     private var languageObserver: NSObjectProtocol?
-    private lazy var slackThreadURLCoordinator = SlackThreadURLCoordinator(
-        execute: { [weak self] url, completion in
-            guard let self else { return }
-            guard let server = self.server else {
-                completion(.failure(SlackThreadURLHandlerError.serverUnavailable))
+    private let loginItem: LoginItemManaging = MainAppLoginItem()
+    private lazy var slackThreadHotKey = SlackThreadHotKeyController(
+        registrar: CarbonHotKeyRegistrar(),
+        readClipboard: { NSPasteboard.general.string(forType: .string) },
+        execute: { [weak self] text, completion in
+            guard let server = self?.server else {
+                completion(.failure(SlackThreadHotKeyError.serverUnavailable))
                 return
             }
-            server.enqueueSlackThreadURL(url, completion: completion)
+            server.enqueueSlackThread(clipboardText: text, completion: completion)
         },
         presentFailure: { [weak self] error in
             DispatchQueue.main.async {
@@ -48,18 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.setupMainMenu() }
-        slackThreadURLCoordinator.finishInitialization()
-        let launchIsDefault = (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber)?.boolValue
+        slackThreadHotKey.apply(Settings.slackThreadHotKey)
         if shouldShowSetupWindowAtLaunch(
-            launchIsDefault: launchIsDefault,
+            launchedAsLoginItem: launchedAsLoginItem(),
             hasBackgroundArgument: CommandLine.arguments.contains("--background")
         ) {
             showSetupWindow()
         }
-    }
-
-    func application(_ application: NSApplication, open urls: [URL]) {
-        slackThreadURLCoordinator.receive(urls)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -141,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// which is what brings the window back.
     private func showSetupWindow() {
         if setupWindow == nil {
-            let controller = SetupWindowController()
+            let controller = SetupWindowController(slackHotKey: slackThreadHotKey, loginItem: loginItem)
             // Closing the window hides it from the Dock and ⌘Tab again — back to the invisible background
             controller.onClose = { NSApp.setActivationPolicy(.accessory) }
             setupWindow = controller
@@ -154,76 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The setup window opens on its own only for a default launch without `--background`. A URL cold
-/// launch reports `launchIsDefault` as false (measured); a launch without the key counts as default
-/// so onboarding is never hidden.
-func shouldShowSetupWindowAtLaunch(launchIsDefault: Bool?, hasBackgroundArgument: Bool) -> Bool {
-    (launchIsDefault ?? true) && !hasBackgroundArgument
-}
-
-enum SlackThreadURLHandlerError: Error {
-    case serverUnavailable
-}
-
-/// Holds URL events until the app has initialized, then forwards each accepted one exactly once, in
-/// arrival order. On a cold launch AppKit delivers `application(_:open:)` before
-/// `applicationDidFinishLaunching` (measured), when the host server does not exist yet.
-final class SlackThreadURLCoordinator {
-    typealias Completion = (Result<Void, Error>) -> Void
-    typealias Executor = (URL, @escaping Completion) -> Void
-
-    private let execute: Executor
-    private let presentFailure: (Error) -> Void
-    private let clearFailure: () -> Void
-    private let log: (String) -> Void
-    private var initializationFinished = false
-    private var pending: [URL] = []
-
-    init(
-        execute: @escaping Executor,
-        presentFailure: @escaping (Error) -> Void,
-        clearFailure: @escaping () -> Void,
-        log: @escaping (String) -> Void
-    ) {
-        self.execute = execute
-        self.presentFailure = presentFailure
-        self.clearFailure = clearFailure
-        self.log = log
-    }
-
-    func receive(_ urls: [URL]) {
-        for url in urls {
-            guard let scheme = url.scheme,
-                  scheme.caseInsensitiveCompare(SlackThreadURLContract.scheme) == .orderedSame else {
-                log("ignored URL with unsupported scheme: \(url.scheme ?? "(none)")")
-                continue
-            }
-            if initializationFinished {
-                submit(url)
-            } else {
-                pending.append(url)
-            }
-        }
-    }
-
-    func finishInitialization() {
-        guard !initializationFinished else { return }
-        initializationFinished = true
-        let queued = pending
-        pending.removeAll()
-        queued.forEach(submit)
-    }
-
-    private func submit(_ url: URL) {
-        execute(url) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success:
-                self.clearFailure()
-            case .failure(let error):
-                self.log("Slack thread URL request failed — \(errorMessage(error))")
-                self.presentFailure(error)
-            }
-        }
-    }
+/// The setup window opens on its own only when the user opened the app — not for a relay launch
+/// (`--background`) and not at login, where the app starts only so its Slack shortcut works.
+func shouldShowSetupWindowAtLaunch(launchedAsLoginItem: Bool, hasBackgroundArgument: Bool) -> Bool {
+    !launchedAsLoginItem && !hasBackgroundArgument
 }

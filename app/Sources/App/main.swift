@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import Foundation
+import ServiceManagement
 
 // Headless mode for tests: the socket server only, with no UI (this is what `e2e.sh` drives)
 if CommandLine.arguments.contains("--headless-server") {
@@ -13,6 +14,12 @@ if CommandLine.arguments.contains("--headless-server") {
     }
     FileHandle.standardOutput.write(Data("listening \(defaultSocketPath())\n".utf8))
     RunLoop.main.run()
+    exit(0)
+}
+
+// Run by uninstall.sh before it deletes the bundle — only the app can withdraw its own login item.
+if CommandLine.arguments.contains("--unregister-login-item") {
+    try? SMAppService.mainApp.unregister()
     exit(0)
 }
 

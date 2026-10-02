@@ -304,10 +304,11 @@ final class HostServer {
         }
     }
 
-    /// Sends a validated Slack URL through the same serial queue and terminal launch function as
-    /// socket requests. Completion runs on the execution queue and reports failures to the caller.
-    func enqueueSlackThreadURL(
-        _ url: URL,
+    /// Sends the Slack link the shortcut read from the clipboard through the same serial queue and
+    /// terminal launch function as socket requests. Completion runs on the execution queue and
+    /// reports failures to the caller.
+    func enqueueSlackThread(
+        clipboardText: String?,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         let requestArrival = now()
@@ -316,7 +317,7 @@ final class HostServer {
             do {
                 let settings = self.slackThreadSettings()
                 let resolved = try resolveSlackThreadRequest(
-                    outerURL: url.absoluteString,
+                    clipboardText: clipboardText,
                     workDirectory: settings.workDirectory,
                     instruction: settings.instruction
                 )
@@ -346,7 +347,7 @@ final class HostServer {
         }
     }
 
-    /// The socket and Slack URL paths share the terminal launch, input admission, and delivery
+    /// The socket and Slack shortcut paths share the terminal launch, input admission, and delivery
     /// lifetime through this function.
     private func executePreparedRequest(
         resolved: ResolvedRequest,
