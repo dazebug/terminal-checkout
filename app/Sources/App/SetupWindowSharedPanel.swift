@@ -166,22 +166,17 @@ final class SetupWindowSharedPanel: NSView {
         switch copy {
         case .claudeInputRejected(let blocker): return "problem.claude-input-\(blocker)"
         case .slackThreadRequestFailed: return "problem.slack-request"
-        case .manifestNotRegistered: return "problem.manifest-not-registered"
-        case .manifestWrongRelayPath: return "problem.manifest-wrong-path"
-        case .manifestWrongExtensionID: return "problem.manifest-wrong-id"
+        case .manifestNotRegistered, .manifestWrongRelayPath, .manifestWrongExtensionID:
+            return "problem.manifest"
         case .extensionFolderMissingAfterRequest: return "problem.extension-folder"
         case .appSocketUnavailable: return "problem.app-socket"
         case .selectedTerminalNotInstalled: return "problem.terminal-not-installed"
-        case .iTermAutomation(let issue): return "problem.iterm-\(issue)"
-        case .cmuxNotInstalled: return "problem.cmux-not-installed"
-        case .cmuxNotRunning: return "problem.cmux-not-running"
-        case .cmuxAccessDenied: return "problem.cmux-access-denied"
-        case .cmuxCheckFailed: return "problem.cmux-check-failed"
+        case .iTermAutomation: return "problem.iterm-automation"
+        case .cmuxNotInstalled, .cmuxNotRunning, .cmuxAccessDenied, .cmuxCheckFailed:
+            return "problem.cmux"
         case .warpAccessibilityRequired: return "problem.warp-accessibility"
-        case .toolUnavailable(let name): return "problem.tool-\(name)"
-        case .criticalToolUnavailable(let name): return "problem.critical-tool-\(name)"
-        case .claudeUnavailable: return "problem.claude-unavailable"
-        case .claudeNotExecutable: return "problem.claude-not-executable"
+        case .toolUnavailable(let name), .criticalToolUnavailable(let name): return "problem.tool-\(name)"
+        case .claudeUnavailable, .claudeNotExecutable: return "problem.tool-claude"
         }
     }
 

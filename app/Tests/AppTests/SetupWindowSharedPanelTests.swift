@@ -141,6 +141,73 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertTrue(block.voiceOverLabel.contains(localized("app.setup.severity.error")))
     }
 
+    func testActionRolesStayStableAsBlockStateChanges() throws {
+        let manifestStates: [(SetupWindowProblemCopy, SetupWindowManifestStatus)] = [
+            (.manifestNotRegistered, .notRegistered),
+            (.manifestWrongRelayPath, .wrongRelayPath),
+            (.manifestWrongExtensionID, .wrongExtensionID),
+        ]
+        let manifestRoles = try manifestStates.map { state in
+            try actionRoles(
+                for: SetupWindowProblem(severity: .error, copy: state.0),
+                manifest: state.1
+            )
+        }
+        XCTAssertEqual(Set(manifestRoles.compactMap { $0["registerManifest"] }).count, 1)
+
+        let deniedAutomation = try actionRoles(
+            for: SetupWindowProblem(severity: .error, copy: .iTermAutomation(.denied))
+        )
+        let unknownAutomation = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .iTermAutomation(.unknown(1)))
+        )
+        XCTAssertEqual(deniedAutomation["openAutomationSettings"], unknownAutomation["openAutomationSettings"])
+
+        let notDeterminedAutomation = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .iTermAutomation(.notDetermined))
+        )
+        let stoppedAutomation = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .iTermAutomation(.targetNotRunning))
+        )
+        XCTAssertEqual(notDeterminedAutomation["requestPermission"], stoppedAutomation["requestPermission"])
+
+        let cmuxNotRunning = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .cmuxNotRunning(.stable))
+        )
+        let cmuxCheckFailed = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .cmuxCheckFailed(.stable, detail: "offline"))
+        )
+        XCTAssertEqual(cmuxNotRunning["refreshCmuxStatus"], cmuxCheckFailed["refreshCmuxStatus"])
+
+        let unavailableZoxide = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .toolUnavailable(name: "zoxide"))
+        )
+        let criticalZoxide = try actionRoles(
+            for: SetupWindowProblem(severity: .error, copy: .criticalToolUnavailable(name: "zoxide"))
+        )
+        XCTAssertEqual(unavailableZoxide["showZoxideInstallHelp"], criticalZoxide["showZoxideInstallHelp"])
+
+        let claudeUnavailable = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .claudeUnavailable)
+        )
+        let claudeNotExecutable = try actionRoles(
+            for: SetupWindowProblem(severity: .warning, copy: .claudeNotExecutable)
+        )
+        XCTAssertEqual(claudeUnavailable["showClaudeInstallHelp"], claudeNotExecutable["showClaudeInstallHelp"])
+    }
+
+    private func actionRoles(
+        for problem: SetupWindowProblem,
+        manifest: SetupWindowManifestStatus = .registered
+    ) throws -> [String: String] {
+        let panel = try makePanel(presentation: presentation(problems: [problem]), manifest: manifest)
+        let block = try XCTUnwrap(panel.problemBlockViews.first)
+        return try Dictionary(uniqueKeysWithValues: block.actionButtons.map { button in
+            let action = try XCTUnwrap(button.action)
+            return (NSStringFromSelector(action), try XCTUnwrap(button.identifier?.rawValue))
+        })
+    }
+
     func testFirstInstallChecklistShowsMissingFolderAndUnregisteredHost() throws {
         let issue = SetupWindowProblem(severity: .error, copy: .manifestNotRegistered)
         let panel = try makePanel(
