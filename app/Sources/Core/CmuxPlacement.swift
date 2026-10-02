@@ -189,8 +189,8 @@ public struct CmuxFoundWorkspacePanePlan: Equatable {
     public let rootPaneIndex: Int
     public let rootSurfaceIndex: Int
     public let splitOperations: [CmuxSurfaceSplitOperation]
-    /// The runtime maps items to surfaces in recursive depth-first leaf order. New surfaces are
-    /// represented by the IDs returned from the corresponding split responses.
+    /// The existing root is depth-first leaf zero and is deliberately omitted; items map to new
+    /// split surfaces in leaf order, represented by IDs returned from the split responses.
     public let itemSurfaceOrder: [CmuxSplitSurfaceReference]
     public let itemRoutes: [CmuxPlacementCommandRoute]
 
@@ -328,16 +328,17 @@ private func makeBalancedLayoutPlan(
 }
 
 /// Builds the target-addressed split sequence for an already-existing fixed-name workspace.
-/// The root is the first surface in pane.index 0. Splits start at depth 1 because that pane is
-/// already half-width; the original branch receives ceil(n/2) leaves and the response receives
-/// floor(n/2) leaves. Response indices stand for the surface IDs returned by cmux.
+/// The existing root surface is depth-first leaf zero and stays unassigned; N items are balanced
+/// across N+1 leaves. Splits start at depth 1 because the root pane is already half-width; the
+/// original branch receives ceil(n/2) leaves and the response receives floor(n/2) leaves.
+/// Response indices stand for the surface IDs returned by cmux.
 public func cmuxFoundWorkspacePanePlan(itemCount: Int) -> CmuxFoundWorkspacePanePlan {
     precondition(itemCount > 0)
     precondition(itemCount <= cmuxPanePlacementItemLimit)
 
     var splitOperations: [CmuxSurfaceSplitOperation] = []
     var nextResponseIndex = 0
-    var itemSurfaceOrder: [CmuxSplitSurfaceReference] = []
+    var leafSurfaceOrder: [CmuxSplitSurfaceReference] = []
 
     func visit(
         source: CmuxSplitSurfaceReference,
@@ -345,7 +346,7 @@ public func cmuxFoundWorkspacePanePlan(itemCount: Int) -> CmuxFoundWorkspacePane
         depth: Int
     ) {
         guard leafCount > 1 else {
-            itemSurfaceOrder.append(source)
+            leafSurfaceOrder.append(source)
             return
         }
 
@@ -368,7 +369,9 @@ public func cmuxFoundWorkspacePanePlan(itemCount: Int) -> CmuxFoundWorkspacePane
         visit(source: response, leafCount: newLeafCount, depth: depth + 1)
     }
 
-    visit(source: .root, leafCount: itemCount, depth: 1)
+    visit(source: .root, leafCount: itemCount + 1, depth: 1)
+    precondition(leafSurfaceOrder.first == Optional(CmuxSplitSurfaceReference.root))
+    let itemSurfaceOrder = Array(leafSurfaceOrder.dropFirst())
     return CmuxFoundWorkspacePanePlan(
         rootPaneIndex: 0,
         rootSurfaceIndex: 0,

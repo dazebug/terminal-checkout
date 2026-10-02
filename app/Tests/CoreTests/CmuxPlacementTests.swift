@@ -127,8 +127,9 @@ final class CmuxPlacementTests: XCTestCase {
             XCTAssertEqual(pane.target, identity)
             XCTAssertEqual(pane.createIfMissing?.layout.leafItemOrder, Array(0..<9))
             if case .fixedName = identity {
-                XCTAssertEqual(pane.found?.splitOperations.count, 8)
+                XCTAssertEqual(pane.found?.splitOperations.count, 9)
                 XCTAssertEqual(pane.found?.itemSurfaceOrder.count, 9)
+                XCTAssertFalse(pane.found?.itemSurfaceOrder.contains(.root) ?? true)
             } else {
                 XCTAssertNil(pane.found)
             }
@@ -159,28 +160,31 @@ final class CmuxPlacementTests: XCTestCase {
         XCTAssertEqual(leafIndices(in: second), Array(13..<25))
     }
 
-    func testFoundPanePlanUsesTheMeasuredBalancedSplitSequence() {
+    func testFoundPanePlanBalancesTheExistingRootAsUnassignedLeafZero() {
         let expected: [(Int, [CmuxSurfaceSplitDirection], [Int], [CmuxSplitSurfaceReference])] = [
-            (3, [.down, .right], [1, 2], [.root, .splitResponse(1), .splitResponse(0)]),
+            (
+                3,
+                [.down, .right, .right],
+                [1, 2, 2],
+                [.splitResponse(1), .splitResponse(0), .splitResponse(2)]
+            ),
             (
                 5,
-                [.down, .right, .down, .right],
-                [1, 2, 3, 2],
-                [.root, .splitResponse(2), .splitResponse(1), .splitResponse(0), .splitResponse(3)]
+                [.down, .right, .down, .right, .down],
+                [1, 2, 3, 2, 3],
+                [
+                    .splitResponse(2), .splitResponse(1), .splitResponse(0),
+                    .splitResponse(4), .splitResponse(3),
+                ]
             ),
             (
                 8,
-                [.down, .right, .down, .down, .right, .down, .down],
-                [1, 2, 3, 3, 2, 3, 3],
+                [.down, .right, .down, .right, .down, .right, .down, .down],
+                [1, 2, 3, 4, 3, 2, 3, 3],
                 [
-                    .root,
-                    .splitResponse(2),
-                    .splitResponse(1),
-                    .splitResponse(3),
-                    .splitResponse(0),
-                    .splitResponse(5),
-                    .splitResponse(4),
-                    .splitResponse(6),
+                    .splitResponse(3), .splitResponse(2), .splitResponse(1),
+                    .splitResponse(4), .splitResponse(0), .splitResponse(6),
+                    .splitResponse(5), .splitResponse(7),
                 ]
             )
         ]
@@ -192,16 +196,17 @@ final class CmuxPlacementTests: XCTestCase {
             XCTAssertEqual(found.rootSurfaceIndex, 0)
             XCTAssertEqual(found.splitOperations.map(\.direction), directions)
             XCTAssertEqual(found.splitOperations.map(\.depth), depths)
-            XCTAssertEqual(found.splitOperations.map(\.responseIndex), Array(0..<(count - 1)))
+            XCTAssertEqual(found.splitOperations.count, count)
+            XCTAssertEqual(found.splitOperations.map(\.responseIndex), Array(0..<count))
             XCTAssertEqual(found.itemSurfaceOrder.count, count)
-            XCTAssertEqual(found.itemSurfaceOrder.first, Optional(CmuxSplitSurfaceReference.root))
+            XCTAssertFalse(found.itemSurfaceOrder.contains(.root))
             XCTAssertEqual(found.itemSurfaceOrder, surfaceOrder)
 
             let responseIndices = found.itemSurfaceOrder.compactMap { reference -> Int? in
                 guard case .splitResponse(let index) = reference else { return nil }
                 return index
             }
-            XCTAssertEqual(Set(responseIndices), Set(0..<(count - 1)))
+            XCTAssertEqual(Set(responseIndices), Set(0..<count))
         }
     }
 
@@ -221,7 +226,7 @@ final class CmuxPlacementTests: XCTestCase {
         XCTAssertEqual(pane.createIfMissing?.title, "work")
         XCTAssertEqual(pane.found?.rootPaneIndex, 0)
         XCTAssertEqual(pane.found?.rootSurfaceIndex, 0)
-        XCTAssertEqual(pane.found?.splitOperations.count, 4)
+        XCTAssertEqual(pane.found?.splitOperations.count, 5)
         XCTAssertEqual(
             pane.found?.itemRoutes,
             Array(repeating: .guardedSurfaceSend, count: 5)
