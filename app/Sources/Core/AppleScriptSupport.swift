@@ -119,28 +119,28 @@ public func iTermWriteToSessionScript(sessionID: String, text: String, submit: B
 }
 
 /// Control characters cannot be written into an AppleScript string literal, so they are spelled as
-/// `character id` and concatenated. **Derived from the key string, never transcribed**: iTerm2 is
-/// the one terminal that does not receive `claudeClearInputKey` as bytes, and while the numbers
-/// were written out by hand, changing that constant left iTerm2 on the old sequence in silence.
+/// `character id` and concatenated from each clear batch. The values must come from the key string:
+/// manually spelling the old Ctrl+U and Backspace values left iTerm2 out of sync when the clear
+/// sequence changed.
 func appleScriptCharacters(of keys: String) -> String {
     keys.unicodeScalars.map { "(character id \($0.value))" }.joined(separator: " & ")
 }
 
-/// The AppleScript that clears the input box — `claudeClearInputKey`, i.e. Ctrl+U (0x15) **then**
-/// Backspace (0x7F), in a single `write text` (a newline between the two would submit).
+/// The AppleScript that writes one Ctrl+U batch, optionally followed by Backspace, in one
+/// `write text` (a newline between the keys would submit).
 ///
 /// Why Backspace follows is recorded at `claudeClearInputKey`: Ctrl+U alone leaves claude's `!`
 /// shell mode behind, and the plain input typed after it runs as a shell command (measured).
-public func iTermClearInputScript(sessionID: String) -> String {
+public func iTermClearInputScript(sessionID: String, keys: String) -> String {
     let escapedID = escapeForAppleScript(sessionID)
-    let keys = appleScriptCharacters(of: claudeClearInputKey)
+    let characters = appleScriptCharacters(of: keys)
     return """
     tell application id "\(iTermBundleID)"
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if (id of s) is "\(escapedID)" then
-                        tell s to write text (\(keys)) newline NO
+                        tell s to write text (\(characters)) newline NO
                         return "ok"
                     end if
                 end repeat

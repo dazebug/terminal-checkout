@@ -28,15 +28,20 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 
 /// The key that submits an input. Why it has to be CR rather than LF is in `submitClaudeInputs`.
 let claudeSubmitKey = "\r"
-/// The **sequence** that empties the input box: Ctrl+U (0x15) followed by Backspace (0x7F). Erasing the marker, clearing before an input, and the end-of-delivery cleanup all use this one constant, so changing it here applies everywhere. In cmux, each byte is sent in a separate `surface.send_text` call.
-/// iTerm2 receives AppleScript rather than bytes, but that script is derived from this constant too (`appleScriptCharacters(of:)`) — while 21 and 127 were written out separately, this sentence was false, and changing the constant silently left iTerm2 on the old sequence.
+let claudeClearCtrlUKey = "\u{15}"
+let claudeClearBackspaceKey = "\u{7F}"
+/// Do not raise this without measuring: one write of 64 or 128 Ctrl+U was dropped whole, while
+/// writes of eight were processed (Claude Code 2.1.287 in cmux).
+let claudeClearCtrlUWriteLimit = 8
+/// The smallest clear: one Ctrl+U (0x15), then Backspace (0x7F). A longer clear
+/// (`claudeClearBatches`) keeps this order — every Ctrl+U first, the Backspace last.
 ///
 /// **Why the Backspace is there — measured (2.1.238, pty).** Ctrl+U does not leave claude's `!` shell mode: sending it on `!text` erases the text and **leaves the `!`**. On screen that looks like an empty input box and even passes the disappearance check, while the plain text typed afterwards was **submitted and executed as a shell command** (`command not found: tcq3hello`). One Backspace after the Ctrl+U removes that `!`, and the plain text after it is submitted as an ordinary message (same measurement). Sending several Backspaces to an already-empty box had no side effect.
 ///
 /// **The order matters**: on a box that still holds text, Backspace erases only its last character, so it must come **after** Ctrl+U has emptied it.
 ///
 /// Only `!` was measured. The `/` and `#` prefixes are one character too and should be erased by the same sequence, but that is inference, not measurement.
-let claudeClearInputKey = "\u{15}\u{7F}"
+let claudeClearInputKey = claudeClearCtrlUKey + claudeClearBackspaceKey
 
 /// Batch fan-out and future parallel callers must stay bounded at the same app-wide level.
 let claudeDeliveryConcurrencyLimit = 4
@@ -57,16 +62,16 @@ struct CmuxRPCOperation: Equatable {
 }
 
 func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
-    if text == claudeClearInputKey {
+    if let clear = claudeClearParts(text), let backspace = clear.backspace {
         // Measured with cmux 0.64.22 under Claude Code 2.1.246: its Kitty keyboard protocol flag 1 makes the key-event ctrl+u path ineffective. One text call carrying both bytes leaves `!`, while two calls in order empty the box.
         return [
             CmuxRPCOperation(
                 method: cmuxSurfaceSendTextMethod,
-                params: ["surface_id": surfaceID, "text": "\u{15}"]
+                params: ["surface_id": surfaceID, "text": clear.ctrlU]
             ),
             CmuxRPCOperation(
                 method: cmuxSurfaceSendTextMethod,
-                params: ["surface_id": surfaceID, "text": "\u{7F}"]
+                params: ["surface_id": surfaceID, "text": backspace]
             ),
         ]
     }
@@ -76,6 +81,55 @@ func cmuxSendOperations(surfaceID: String, text: String) -> [CmuxRPCOperation] {
             params: ["surface_id": surfaceID, "text": text]
         )
     ]
+}
+
+func claudeClearParts(_ text: String) -> (ctrlU: String, backspace: String?)? {
+    var scalars = Array(text.unicodeScalars)
+    guard !scalars.isEmpty else { return nil }
+    let backspace: String?
+    if scalars.last?.value == claudeClearBackspaceKey.unicodeScalars.first?.value {
+        backspace = claudeClearBackspaceKey
+        scalars.removeLast()
+    } else {
+        backspace = nil
+    }
+    guard (1...claudeClearCtrlUWriteLimit).contains(scalars.count),
+          scalars.allSatisfy({ $0.value == claudeClearCtrlUKey.unicodeScalars.first?.value }) else {
+        return nil
+    }
+    return (String(repeating: claudeClearCtrlUKey, count: scalars.count), backspace)
+}
+
+/// Conservative terminal-cell width for clear sizing: printable ASCII uses one cell and every
+/// other non-control Character uses two. This is a terminal-width bound, not a Claude-specific measurement.
+private func terminalCellWidthUpperBound(of character: Character) -> Int {
+    let scalars = character.unicodeScalars
+    guard scalars.contains(where: { !CharacterSet.controlCharacters.contains($0) }) else { return 0 }
+    return scalars.allSatisfy { (0x20...0x7E).contains($0.value) } ? 1 : 2
+}
+
+private func terminalCellCountUpperBound(of text: String) -> Int {
+    text.reduce(into: 0) { count, character in
+        count += terminalCellWidthUpperBound(of: character)
+    }
+}
+
+/// One Ctrl+U clears one visual line, so a clear sends one for every line our typed cells can
+/// occupy, plus two. An unknown width falls back to 20 columns: overcounting lines only sends
+/// Ctrl+U to an already-empty box, which changes nothing.
+private func claudeClearBatches(cellCountUpperBound: Int, terminalColumns: Int?) -> [String] {
+    let columns = terminalColumns.flatMap { $0 > 0 ? $0 : nil } ?? 20
+    let lineCapacity = max(columns - 4, 8)
+    let typedLines = cellCountUpperBound / lineCapacity + (cellCountUpperBound % lineCapacity == 0 ? 0 : 1)
+    var remaining = max(typedLines + 2, 2)
+    var batches: [String] = []
+    while remaining > 0 {
+        let count = min(remaining, claudeClearCtrlUWriteLimit)
+        batches.append(String(repeating: claudeClearCtrlUKey, count: count))
+        remaining -= count
+    }
+    batches[batches.count - 1].append(claudeClearBackspaceKey)
+    return batches
 }
 
 /// Every site that emits bytes must pass gate ③ through `send(_:io:)`. cmux was the exception
@@ -176,15 +230,21 @@ public func paneProofToken() -> String {
     return String((0..<3).map { _ in runes.randomElement()! })
 }
 
-/// The probe used to confirm the screen reflects an input. A long input is truncated or folded somewhere on screen, so only its front is used.
-///
-/// **Are the first 24 characters enough — measured (2.1.238, pty).** Even a single 4,000-character line put into the input box makes the composer grow vertically and show all of it, with the first 24 characters staying on screen. A merged `!` line (∼300 characters for the shipped presets) is far shorter than that. So there is no reason to move the probe to a later slice or to lower the merge cap.
+/// The primary reflection fragment: the input's last 24 non-whitespace characters. In a short
+/// pane claude's composer scrolls the head of a long input off screen (#95), so the tail is what
+/// stays visible; the head (`claudeInputHeadProbe`) counts only once the reflection window ends
+/// without the tail, for a long paste folded into `[Pasted text #N]`. The measurements are in
+/// `docs/context/claude-input-delivery.md`.
 public func claudeInputProbe(_ input: String) -> String {
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    return String(trimmed.prefix(24))
+    String(input.filter { !$0.isWhitespace }.suffix(24))
 }
 
-/// Decides whether the typed input appeared on screen **this time round**. The probe has to be visible one more time than in the screen taken immediately before typing (`before`) for it to count as reflected.
+/// The first 24 non-whitespace characters are the fallback fragment when Claude folds a long paste and never draws its tail.
+func claudeInputHeadProbe(_ input: String) -> String {
+    String(input.filter { !$0.isWhitespace }.prefix(24))
+}
+
+/// Decides whether the input's primary tail fragment appeared at least one more time than in the screen taken immediately before typing (`before`). The delayed head fallback is handled by `typeAndSubmit` after its reflection window expires.
 ///
 /// Why "is it on screen" is not enough: on Warp the screen read through Accessibility belongs to the focused pane, with no guarantee it is ours. If another pane happens to show the same text, a plain substring match passes even before we type, and the CR that follows submits — leaving our input unsubmitted while whatever the user was typing in that pane goes in instead.
 /// A nil `before` (a failed screen read) is a failed check — treating what could not be sampled as "it was not there" leaves exactly the same hole open.
@@ -192,11 +252,15 @@ public func claudeInputProbe(_ input: String) -> String {
 /// All whitespace is removed before comparing because the claude TUI does not draw the input verbatim: shell mode (`!`) inserts a space after the `!`, as in "! gh …", and a long input wraps at the terminal width (both measured). Compared whole, such inputs would fail the reflection check forever and hang in the input box.
 /// It counts occurrences rather than presence so that scheduling the same input twice still submits the second one while the first is still in the transcript.
 public func screenReflectsNewInput(before: String?, after: String, input: String) -> Bool {
+    screenReflectsNewProbe(before: before, after: after, probe: claudeInputProbe(input))
+}
+
+private func screenReflectsNewProbe(before: String?, after: String, probe: String) -> Bool {
     guard let before else { return false }
-    let probe = claudeInputProbe(input).filter { !$0.isWhitespace }
+    let normalizedProbe = probe.filter { !$0.isWhitespace }
     // An empty probe matches any screen at all and would approve a submission that should not happen
-    guard !probe.isEmpty else { return false }
-    return probeCount(probe, in: after) > probeCount(probe, in: before)
+    guard !normalizedProbe.isEmpty else { return false }
+    return probeCount(normalizedProbe, in: after) > probeCount(normalizedProbe, in: before)
 }
 
 private func probeCount(_ probe: String, in screen: String) -> Int {
@@ -245,6 +309,8 @@ public struct ClaudeSessionIO {
     public var screenNeedsPaneProof: Bool
     /// The wait — removed in tests so the loops run immediately.
     public var wait: (TimeInterval) -> Void
+    /// Columns in the pane tty, when its size can be read.
+    public var terminalColumns: () -> Int?
 
     public init(
         sendKeys: @escaping (String) -> Bool,
@@ -253,6 +319,7 @@ public struct ClaudeSessionIO {
         sessionIsUnchanged: @escaping () -> Bool = { true },
         screenConfirmation: @escaping () -> ClaudeInputBlocker? = { nil },
         screenNeedsPaneProof: Bool = false,
+        terminalColumns: @escaping () -> Int? = { nil },
         wait: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.sendKeys = sendKeys
@@ -261,6 +328,7 @@ public struct ClaudeSessionIO {
         self.sessionIsUnchanged = sessionIsUnchanged
         self.screenConfirmation = screenConfirmation
         self.screenNeedsPaneProof = screenNeedsPaneProof
+        self.terminalColumns = terminalColumns
         self.wait = wait
     }
 }
@@ -269,7 +337,7 @@ public struct ClaudeSessionIO {
 enum SendKind {
     /// Something newly typed (the marker, the body, the CR, a retype after clearing). It requires a way to confirm through the screen
     case typing
-    /// Undoing what was already typed (the cleanup Ctrl+U). It has to go out regardless of whether the screen can be confirmed — blocking it too leaves our text in the box, to be run by an Enter the user presses
+    /// Undoing what was already typed (the cleanup Ctrl+U batch and Backspace). It has to go out regardless of whether the screen can be confirmed — blocking it too leaves our text in the box, to be run by an Enter the user presses
     case cleanup
 }
 
@@ -290,10 +358,23 @@ private func send(_ keys: String, io: ClaudeSessionIO, kind: SendKind = .typing)
 ///
 /// One failure is not a reason to give up — terminal CLI calls really do fail every so often (the same measurement is what justifies the retype retries), and residue is left silently when they do. Sending Ctrl+U several times gives the same result.
 @discardableResult
-func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: Int = 3) -> Bool {
+func clearAbandonedInput(
+    io: ClaudeSessionIO, weSentSomething: Bool, cellCountUpperBound: Int = 0, attempts: Int = 3
+) -> Bool {
     guard weSentSomething else { return false }
-    for _ in 0..<attempts where send(claudeClearInputKey, io: io, kind: .cleanup) { return true }
+    for _ in 0..<attempts {
+        if clearInputBox(io: io, cellCountUpperBound: cellCountUpperBound, kind: .cleanup) { return true }
+    }
     return false
+}
+
+private func clearInputBox(io: ClaudeSessionIO, cellCountUpperBound: Int, kind: SendKind) -> Bool {
+    for batch in claudeClearBatches(
+        cellCountUpperBound: cellCountUpperBound, terminalColumns: io.terminalColumns()
+    ) {
+        guard send(batch, io: io, kind: kind) else { return false }
+    }
+    return true
 }
 
 /// **Might a fragment of ours be in claude's input box right now** — the state that decides whether a cleanup (Ctrl+U) is sent.
@@ -308,14 +389,20 @@ func clearAbandonedInput(io: ClaudeSessionIO, weSentSomething: Bool, attempts: I
 ///  - Only **evidence** lowers it: the screen showed our marker disappear after a clear (Ctrl+U), or the screen showed that ours is not there. Writing the Ctrl+U is not itself evidence — see `recordSendAttempt`.
 struct InputBoxOwnership {
     private(set) var mayHoldOurs = false
+    /// Upper-bound terminal cells attempted since the last observation that the box is free of ours.
+    private(set) var typedCellCountUpperBound = 0
 
     /// We **attempted** to put bytes out. Neither the result nor the kind is looked at: the bytes of a send that returned failure may already be in (the helper can inject part of a write and then error), and a CR or Ctrl+U having been written does not mean the TUI processed it. Only an observation lowers it (`recordInputBoxIsFreeOfOurs`).
-    mutating func recordSendAttempt() {
+    mutating func recordSendAttempt(_ keys: String) {
         mayHoldOurs = true
+        typedCellCountUpperBound += terminalCellCountUpperBound(of: keys)
     }
 
     /// The screen showed that **our input is nowhere** — so the input box is not holding it.
-    mutating func recordInputBoxIsFreeOfOurs() { mayHoldOurs = false }
+    mutating func recordInputBoxIsFreeOfOurs() {
+        mayHoldOurs = false
+        typedCellCountUpperBound = 0
+    }
 }
 
 /// Sends the inputs to a prepared claude session in order and returns **how many got as far as a CR** — it does not count whether claude turned them into messages, which cannot be confirmed from outside. That is why the log says "sent" rather than "delivered".
@@ -342,7 +429,7 @@ public func submitClaudeInputs(
     var tracked = io
     tracked.sendKeys = { keys in
         let sent = io.sendKeys(keys)
-        ownership.recordSendAttempt()
+        ownership.recordSendAttempt(keys)
         return sent
     }
 
@@ -357,6 +444,7 @@ public func submitClaudeInputs(
             input, io: tracked, retryConfirmTimeout: retryConfirmTimeout,
             // Lowered by observation only — a successful write is not evidence
             boxObservedEmpty: { ownership.recordInputBoxIsFreeOfOurs() },
+            typedCellCountUpperBound: { ownership.typedCellCountUpperBound },
             timeline: timeline, label: "input \(index + 1)/\(inputs.count)"
         )
         switch outcome {
@@ -376,7 +464,10 @@ public func submitClaudeInputs(
     }
     // **The other half of the rule**: after the last input there is no "clear before the next input", so it is cleared here. The bytes are already in our tty even though we could not confirm it on screen (injection is independent of focus), and leaving them means an Enter the user presses later submits them (with `!…`, it even runs a shell command). It goes out on a delivery that ended normally too, because (i) and (ii) are never mixed — a CR having been written is not evidence that the input box is empty.
     // **The price** (accepted, issue #16): a draft the user started typing during or just after delivery may be erased. The loss on the other side is our `!` line staying in the box and being **executed** by the user's Enter, so the two are not symmetric. Leaving it in place would require proving "the input box is empty", which is (ii), and our signals cannot establish it
-    if clearAbandonedInput(io: tracked, weSentSomething: ownership.mayHoldOurs) {
+    if clearAbandonedInput(
+        io: tracked, weSentSomething: ownership.mayHoldOurs,
+        cellCountUpperBound: ownership.typedCellCountUpperBound
+    ) {
         checkoutLog("wrote the input-box clear for a fragment of ours that may have been left — whether the TUI processed it is not observed here")
     } else if ownership.mayHoldOurs {
         checkoutLog("failed to clean up claude's input box — a fragment of our input may remain (pressing Enter submits it as is)")
@@ -394,6 +485,7 @@ public func submitClaudeInputs(
 private func typeAndSubmit(
     _ text: String, io: ClaudeSessionIO, retryConfirmTimeout: TimeInterval,
     boxObservedEmpty: () -> Void = {},
+    typedCellCountUpperBound: () -> Int = { 0 },
     timeline: DeliveryTimeline? = nil, label: String = ""
 ) -> SubmitOutcome {
     // Attempts, not the deadline, are what wait out "the user has not looked at the tab yet":
@@ -413,23 +505,44 @@ private func typeAndSubmit(
             guard io.confirmSession(retryConfirmTimeout) else { return .gaveUp }
         }
         // **One marker buys three things** (see `proveOurPaneAndEmptyBox`): ① proof that the screen being read is our pane ② attribution that the place our typing appears is the **input box** ③ confirmation that the TUI actually **processed** that Ctrl+U
-        guard proveOurPaneAndEmptyBox(io: io, attempt: attempt, of: maxAttempts) else { continue }
+        guard proveOurPaneAndEmptyBox(
+            io: io, attempt: attempt, of: maxAttempts,
+            typedCellCountUpperBound: typedCellCountUpperBound
+        ) else { continue }
         // The gap on this line is the one the app does not control: on Warp the proof only passes
         // while the user is looking at that tab, so a large number here is the answer "you were
         // on another tab", not a bug to fix
         timeline?.step("\(label) pane proof passed (attempt \(attempt)/\(maxAttempts))")
         // At this point the input box has been **observed** empty — an observation, not a successful write
         boxObservedEmpty()
-        guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
+        guard let before = io.screenText() else {
             checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
             continue
         }
+        let tailProbe = claudeInputProbe(text)
+        let headProbe = claudeInputHeadProbe(text)
+        guard !tailProbe.isEmpty, !headProbe.isEmpty else { continue }
+        let tailBaseline = probeCount(of: text, in: before)
+        let headBaseline = probeCount(headProbe, in: before)
         // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice**. With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
-        guard send(text, io: io) else {
+        let typingSucceeded: Bool
+        if text.hasPrefix("!") {
+            // Send a leading `!` in its own write: a long line written at once can switch claude to
+            // shell mode and still keep the `!` as text, so the shell runs `!/bin/echo …`
+            // (Claude Code 2.1.287).
+            let remainder = String(text.dropFirst())
+            let sentBang = send("!", io: io)
+            typingSucceeded = sentBang && (remainder.isEmpty || send(remainder, io: io))
+        } else {
+            typingSucceeded = send(text, io: io)
+        }
+        guard typingSucceeded else {
             checkoutLog("failed to send the typing — retrying (\(attempt)/\(maxAttempts))")
             continue
         }
         var reflected: String?
+        var reflectedProbe: String?
+        var headFallback: (screen: String, probe: String)?
         var failure = "the input is not reflected on screen"
         // Same read-cost compensation as `poll` — a 137ms Warp read on top of a full interval
         // sleep stretched this "2 second" window to ~3.8s of wall clock. The wait comes before
@@ -440,20 +553,34 @@ private func typeAndSubmit(
             let readStarted = Date()
             guard let screen = io.screenText() else {
                 failure = "screen read failed"
+                headFallback = nil
                 break
             }
             lastReadCost = Date().timeIntervalSince(readStarted)
-            // **At least** one more, not exactly one more: claude may draw our line a second time
-            // (the hint-line behaviour the attribution experiment exists for), and demanding an
-            // exact count made the button do nothing at all — five typings, no CR, no message
-            // Only the *disappearance* check needs an exact count, where
-            // "some of it is still there" has to fail
-            if probeCount(of: text, in: screen) >= baseline + 1 {
+            // **At least** one more, not exactly one more: claude may draw our line a second time (the
+            // hint-line behaviour the attribution experiment exists for), and demanding an exact
+            // count made the button do nothing at all — five typings, no CR, no message. Only the
+            // *disappearance* check needs an exact count, where 'some of it is still there' has to
+            // fail. This applies to both the tail and head fragment comparisons.
+            // The tail proves the end of the typed input is on screen, so use it as soon as its
+            // count grows. A head-only reflection can be a folded paste; remember its first
+            // increased screen, but do not submit until the full window has had a chance to show
+            // the tail.
+            if probeCount(of: text, in: screen) > tailBaseline {
                 reflected = screen
+                reflectedProbe = tailProbe
                 break
             }
+            if tailProbe != headProbe, headFallback == nil,
+               probeCount(headProbe, in: screen) > headBaseline {
+                headFallback = (screen, headProbe)
+            }
         }
-        if let reflected {
+        if reflected == nil, let headFallback {
+            reflected = headFallback.screen
+            reflectedProbe = headFallback.probe
+        }
+        if let reflected, let reflectedProbe {
             timeline?.step("\(label) body reflection confirmed")
             guard submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) else {
                 // **A CR that went out may have landed even when the call reports failure** — the
@@ -467,7 +594,7 @@ private func typeAndSubmit(
             }
             // The "total" printed on this line for the first input is the number the user actually feels — from the button click to the first submission
             timeline?.step("\(label) submission (CR) sent")
-            switch inputBoxAfterSubmit(io: io, whenTyped: reflected, text: text) {
+            switch inputBoxAfterSubmit(io: io, whenTyped: reflected, probe: reflectedProbe) {
             case .stillHoldsOurInput:
                 timeline?.step("\(label) post-check: the input is still in the input box")
                 return .leftInTheInputBox
@@ -535,28 +662,28 @@ enum InputBoxAfterSubmit: Equatable {
 private let inputBoxLookDeadline: TimeInterval = 3.6
 
 func inputBoxAfterSubmit(
-    io: ClaudeSessionIO, whenTyped: String, text: String
+    io: ClaudeSessionIO, whenTyped: String, probe: String
 ) -> InputBoxAfterSubmit {
     // Warp's screen is whichever pane has focus, so "unchanged" there is not about our box. The
     // pane proof is only valid up to the moment the body is typed, and re-proving here would mean
     // typing bytes into a box a submission may have just emptied
     guard !io.screenNeedsPaneProof else { return .unknown }
-    let probe = claudeInputProbe(text).filter { !$0.isWhitespace }
-    guard !probe.isEmpty else { return .unknown }
+    let selectedProbe = probe.filter { !$0.isWhitespace }
+    guard !selectedProbe.isEmpty else { return .unknown }
     // **The probe has to identify our copy, and only ours.** claude draws hint lines, a permission
     // indicator and a context meter *below* the box, and `screenTail` takes the last occurrence —
     // so a probe that also appears down there pins the tail forever and a submission that went
     // through reads as "still in the box" (reproduced: input `y` against "bypass permissions on",
     // and `/review` against a "try /review" hint; both dropped every later input). When the probe
     // is not unique we cannot tell the copies apart, so we do not judge
-    guard probeOccurrences(of: probe, in: whenTyped) == 1,
-          let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
+    guard probeOccurrences(of: selectedProbe, in: whenTyped) == 1,
+          let typedTail = screenTail(from: selectedProbe, in: whenTyped) else { return .unknown }
     var last = InputBoxAfterSubmit.unknown
     _ = poll(io: io, within: inputBoxLookDeadline) {
         // A read we could not make says nothing; keep the look open so earlier readable samples
         // remain useful.
         guard let screen = io.screenText() else { return false }
-        guard let tail = screenTail(from: probe, in: screen) else {
+        guard let tail = screenTail(from: selectedProbe, in: screen) else {
             last = .ourInputIsGone
             return false
         }
@@ -588,7 +715,10 @@ func inputBoxAfterSubmit(
 /// there, a `!` line runs, and the app, which can only count the CRs it sent itself, clears and
 /// retypes and submits: the user's command runs **twice**. With a marker, that stray Enter submits
 /// one inert line and the body is still typed exactly once.
-private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int) -> Bool {
+private func proveOurPaneAndEmptyBox(
+    io: ClaudeSessionIO, attempt: Int, of maxAttempts: Int,
+    typedCellCountUpperBound: () -> Int
+) -> Bool {
     guard let before = io.screenText() else {
         checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
         return false
@@ -617,7 +747,9 @@ private func proveOurPaneAndEmptyBox(io: ClaudeSessionIO, attempt: Int, of maxAt
         checkoutLog("could not confirm that the screen is our pane — retrying (\(attempt)/\(maxAttempts))")
         return false
     }
-    guard send(claudeClearInputKey, io: io) else {
+    guard clearInputBox(
+        io: io, cellCountUpperBound: typedCellCountUpperBound(), kind: .typing
+    ) else {
         checkoutLog("failed to clear the input box — retrying (\(attempt)/\(maxAttempts))")
         return false
     }
@@ -672,10 +804,10 @@ private func waitUntilMarkerErased(
     }
 }
 
-/// How many times the input's probe appears on the screen, whitespace removed on both sides —
+/// How many times the input's tail probe appears on the screen, whitespace removed on both sides —
 /// the TUI reflows and pads what it draws (`screenReflectsNewInput` normalises the same way).
 func probeCount(of input: String, in screen: String) -> Int {
-    probeCount(claudeInputProbe(input).filter { !$0.isWhitespace }, in: screen)
+    probeCount(claudeInputProbe(input), in: screen)
 }
 
 private func probeOccurrences(of probe: String, in screen: String) -> Int {
@@ -1049,7 +1181,8 @@ public func deliverClaudeInputs(
                 handle.screenNeedsPaneProof && !accessibilityIsTrusted() ? .warpAccessibility : nil
             },
             // True for Warp alone — what Accessibility reads is "the focused pane", with no guarantee it is ours
-            screenNeedsPaneProof: handle.screenNeedsPaneProof
+            screenNeedsPaneProof: handle.screenNeedsPaneProof,
+            terminalColumns: { claudeTTYColumns(ttyPath: ttyPath) }
         )
         let sent = submitClaudeInputs(
             inputs, io: io, betweenInputTimeout: betweenInputTimeout, timeline: timeline,
@@ -1094,6 +1227,18 @@ private func probeAcceptingClaudePID(ttyName: String, ttyPath: String) -> Int? {
     // A failed stty is treated as "cannot tell" and closes the gate; ps alone cannot prove raw mode.
     let stty = probe("/bin/stty", ["-f", ttyPath, "-a"]).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
     return acceptingClaudePID(psOutput: ps.stdout, sttyOutput: stty)
+}
+
+private func claudeTTYColumns(ttyPath: String) -> Int? {
+    guard let result = try? runProcess(
+        "/bin/stty", ["-f", ttyPath, "size"],
+        timeout: claudeGateProbeLimits.timeout,
+        terminationGrace: claudeGateProbeLimits.terminationGrace,
+        killWait: claudeGateProbeLimits.killWait
+    ), result.status == 0 else { return nil }
+    let dimensions = result.stdout.split(whereSeparator: \.isWhitespace)
+    guard dimensions.count == 2, let columns = Int(dimensions[1]), columns > 0 else { return nil }
+    return columns
 }
 
 /// Waits until claude can accept input and returns its PID. nil on timeout.
@@ -1224,7 +1369,7 @@ enum CmuxRPCFailureLog {
     }
 }
 
-/// Sends keystrokes as they are, without appending a newline (`claudeSubmitKey` and `claudeClearInputKey` included).
+/// Sends keystrokes as they are, without appending a newline (`claudeSubmitKey` and clear batches included).
 private func sendKeys(
     _ text: String, to handle: TerminalSessionHandle, expectedPID: Int,
     sessionIsUnchanged: @escaping () -> Bool
@@ -1236,8 +1381,12 @@ private func sendKeys(
         switch text {
         case claudeSubmitKey:
             script = iTermWriteToSessionScript(sessionID: sessionID, text: "", submit: true)
-        case claudeClearInputKey: script = iTermClearInputScript(sessionID: sessionID)
-        default: script = iTermWriteToSessionScript(sessionID: sessionID, text: text, submit: false)
+        default:
+            if claudeClearParts(text) != nil {
+                script = iTermClearInputScript(sessionID: sessionID, keys: text)
+            } else {
+                script = iTermWriteToSessionScript(sessionID: sessionID, text: text, submit: false)
+            }
         }
         guard let result = try? runAppleScript(script, timeout: 10),
               result.status == 0 else { return false }

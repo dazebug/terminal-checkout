@@ -206,15 +206,15 @@ private func rejectLineBreaks(in text: String, what: String) throws {
 }
 
 /// Typed claude input must not carry control bytes: they are typed into the terminal, DEL acts as
-/// Backspace, and reflection checks only the first 24 characters before the app sends CR. This
-/// guard is not used for `command_template`, whose shell execution treats an embedded line break
-/// as the user's intentional second command.
+/// Backspace, and the reflection fragments (`claudeInputProbe`) sample only parts of the input
+/// before CR. This guard is not used for `command_template`, whose shell execution treats an
+/// embedded line break as the user's intentional second command.
 private func rejectControlCharacters(in text: String, what: String) throws {
     guard !text.unicodeScalars.contains(where: { scalar in
         scalar.value <= 0x1F || scalar.value == 0x7F
     }) else {
         throw CommandError.badRequest(
-            "\(what) must not contain control characters: typed bytes can act as keys (DEL is Backspace), and reflection checks only the first 24 characters before CR"
+            "\(what) must not contain control characters: typed bytes can act as keys (DEL is Backspace), and screen reflection samples only 24-character boundary fragments before CR"
         )
     }
 }

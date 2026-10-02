@@ -20,6 +20,24 @@ An input starting with `!` is typed into the running TUI so that claude's own sh
 
 **Consequence, accepted:** every shipped preset that schedules claude input is `!`-only, so all of them are typed. On Warp that makes the Accessibility permission a hard requirement for those four buttons, where the paste route had needed nothing.
 
+## A leading `!` is sent in its own write before a long input
+
+**Type:** decision
+**Status:** active
+**Evidence:** Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02: a 424-character merged line doubled its leading `!` in 6 of 8 one-write attempts, while sending `!` first and the rest immediately produced 0 of 8; a 24-character input doubled in 0 of 20 one-write attempts. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent all four typed inputs (424, 45, 21 and 105 characters) in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived, `/rename` took effect, and no doubled `!!` or `no such file` error appeared.
+**Source:** `typeAndSubmit` in `app/Sources/Core/ClaudeInjector.swift`; `testLeadingBangIsSentSeparatelyFromTheLongInputBody` in `app/Tests/CoreTests/CoreTests.swift`; a live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane
+**Revisit when:** Claude Code changes shell-mode entry or how it handles a long typed chunk
+
+A typed input that starts with `!` sends the prefix in one write and the rest immediately after it in a second. Both writes use the existing session gate, and reflection still checks the complete input.
+
+**Reason:** the measured screen showed the shell-mode prompt and a second, literal `!` at the start of the typed command (`! !/bin/echo …`). The shell received `!/bin/echo …` and failed with `no such file or directory: !/bin/echo`. Treating the long write as a paste is an inference from the measurements, not an isolated cause.
+
+**Rejected alternative — send the whole long input in one write.** This was the measured failure path, with doubled `!` in 6 of 8 attempts.
+
+**Rejected alternative — wait for the shell-mode prompt before sending the rest.** Waiting produced 0 of 8 doubled prefixes, the same result as sending the two writes immediately, and added a screen-read dependency.
+
+**Cost, accepted:** a leading-`!` input takes one additional write; the carrier boundary on iTerm2, WezTerm and Warp has not been measured.
+
 ## Consecutive `!` inputs merge into one typed line, joined with `;`
 
 **Type:** decision
@@ -83,28 +101,52 @@ Before each input, the app types a throwaway marker, watches it appear, clears t
 
 **Rejected alternative — trust the write.** Rejected for the clear for the same reason it was rejected for the CR: an accepted write is not a processed keystroke.
 
-## The input box is cleared with Ctrl+U **then** Backspace
+## Reflection checks the tail first and accepts the head only at the window's end
 
-**Type:** workaround
+**Type:** decision
 **Status:** active
-**Evidence:** confirmed
-**Source:** measured in a pty on claude 2.1.238; only `!` was measured
-**Revisit when:** claude changes how its `!` shell mode is entered or exited
+**Evidence:** Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02 showed only the last five composer lines in 38×20 and 76×20 panes: for the 424-character merged line the head fragment stayed at 0→0 while the tail rose 0→2. A 2,000-character paste appeared as `[Pasted text #N]` with the head rising 0→1 and the tail staying at 0→0, though the cause of folding was not isolated. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent four typed inputs in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived and `/rename` took effect.
+**Source:** `claudeInputProbe`, `screenReflectsNewInput` and `inputBoxAfterSubmit` in `app/Sources/Core/ClaudeInjector.swift`; `testShortPaneTailReflectionSubmitsThe424CharacterMergedInputOnce` and `testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires` in `app/Tests/CoreTests/CoreTests.swift`; a live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane
+**Revisit when:** Claude Code changes its composer scrolling or pasted-text rendering
 
-**Reason:** Ctrl+U alone does not leave claude's `!` shell mode. It clears the text and leaves the `!`, so the box looks empty and the disappearance check passes — and the next plain input is submitted as a shell command (`command not found: …`). One Backspace removes the prefix; extra Backspaces on an empty box do nothing. The order matters: on a box that still holds text, Backspace alone would take only its last character.
+The reflection check accepts a newly visible increase in the final 24 non-whitespace characters immediately. If that tail never increases but the first 24 characters do, it accepts the head only after the reflection window ends. The fragment that passes is also the one used for the post-submit input-box check; if it is not unique on that screen, the result remains unknown.
 
-**Known limit:** only `!` was measured. `/` and `#` are also one character and should be covered by the same sequence, but that is inference, not measurement.
+**Reason:** in a short pane, the composer shows only the last lines of a long input and scrolls its head off screen, while a long paste can fold into a placeholder that exposes the head but hides the tail. The tail gives an end-of-input signal when visible; waiting through the full window before using the head covers the measured folded form without sending CR early.
 
-## On cmux those two bytes are two separate one-byte text calls, because the key path is dead under claude
+**Rejected alternative — parse the composer border or cursor position.** Those are Claude screen details that can change between versions; the measured fragments work without reading that structure.
+
+**Cost, accepted:** a head-only folded input waits for the full reflection window, and the measurement did not identify which length, timing or box state triggers folding.
+
+## The input box is cleared by counted visual lines, then Backspace
+
+**Type:** decision
+**Status:** active
+**Evidence:** measured in a pty with Claude Code 2.1.238: Ctrl+U cleared text but left the `!` shell-mode prefix, and one Backspace removed it. Measured in cmux 0.64.25 with Claude Code 2.1.287 on 2026-10-02: one Ctrl+U removed one visual line; writes of 64 or 128 Ctrl+U bytes were each dropped whole in two trials, while bursts of at most eight were processed. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent 4 of 4 typed inputs in 9.4 seconds.
+**Source:** `claudeClearBatches`, `InputBoxOwnership` and `clearAbandonedInput` in `app/Sources/Core/ClaudeInjector.swift`; `testRetryClearsWrappedRemainderBeforeRetypingInputAgain`, `testAbandonedWrappedInputIsFullyClearedAfterRetriesExhausted` and `testRetryClears120KoreanCharactersByCellWidthBeforeSubmittingOnce` in `app/Tests/CoreTests/CoreTests.swift`; `testItem10CmuxClearInputIsTwoSendTextCallsCtrlUThenBackspace` in `app/Tests/CoreTests/CmuxTests.swift`
+**Revisit when:** Claude Code changes how Ctrl+U clears wrapped or collapsed input, or a terminal changes how it groups writes
+
+The app estimates how many terminal cells its own writes may occupy since the input box was last observed free, then uses the tty width to choose the Ctrl+U count. It sends the keys in writes of at most eight and sends one Backspace last; cmux sends that Backspace separately.
+
+**Reason:** Ctrl+U removes only the current visual line, leaving earlier wrapped lines; a retry could then append a new body behind an old one and submit both. Ctrl+U alone does not leave Claude's `!` shell mode: the box looks empty while the prefix remains, and the next plain input is run as a shell command (`command not found: …`). One Backspace removes that prefix, and additional Backspace on an empty box does nothing. The order matters: on a box that still holds text, Backspace would only take its last character.
+
+**Rejected alternative — clear until the screen stops changing.** Screen output can continue while the clear is being processed, so no stable point identifies an empty input box. Esc did not clear it.
+
+**Rejected alternative — put every Ctrl+U in one write.** Claude Code 2.1.287 dropped writes of 64 and 128 whole; the small burst size avoids those measured drops.
+
+**Cost, accepted:** a user draft longer than the count of our possible input may remain, the same residual class as issue #16.
+
+**Known limit:** only `!` was measured for the shell-mode prefix. `/` and `#` are also one character and should be covered by the same sequence, but that is inference, not measurement.
+
+## cmux sends Ctrl+U bursts as text and Backspace in a separate call
 
 **Type:** incident
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed
-**Source:** PR #60; reproduced on an installed build against cmux 0.64.22 and Claude Code 2.1.246
-**Revisit when:** cmux's key encoder learns the kitty keyboard protocol state of the surface it is writing to
+**Evidence:** cmux 0.64.22 and Claude Code 2.1.246: `surface.send_key` did not send Ctrl+U as Claude expected and a combined Ctrl+U plus Backspace write did not preserve their order. Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02 processed Ctrl+U bursts of eight bytes per `surface.send_text` call.
+**Source:** PR #60; `cmuxSendOperations` in `app/Sources/Core/ClaudeInjector.swift`; `testItem10CmuxClearInputIsTwoSendTextCallsCtrlUThenBackspace` in `app/Tests/CoreTests/CmuxTests.swift`
+**Revisit when:** cmux changes key encoding or the ordering of bytes and key events sent through `surface.send_text`
 
-cmux exposes `surface.send_key`, and it is unusable here. The clear sequence is sent as two `surface.send_text` calls carrying one byte each — `0x15`, then `0x7F` — and `send_key` was removed from the app's method list entirely.
+cmux exposes `surface.send_key`, and it is unusable under Claude's kitty keyboard protocol. The current clear sends each burst of up to eight Ctrl+U bytes as one `surface.send_text` call, then sends Backspace (`0x7F`) in a separate call; `send_key` remains absent from the app's method list.
 
 **What happened:** on an installed build, claude received the message `tctqr20ckbi!echo tc-r1j-input-ok` — the throwaway marker glued to the body, submitted as one line — while the app's own log recorded a clean success. It only surfaced by reading the transcript.
 
@@ -112,7 +154,7 @@ cmux exposes `surface.send_key`, and it is unusable here. The clear sequence is 
 
 **The earlier measurement did not transfer, and that is the lesson.** An earlier round had confirmed `^U` arriving correctly by running `cat -v` in a raw shell — with the protocol *off*, because nothing had turned it on. A clear key has to be measured inside a running claude TUI, not in the shell next to it; `docs/new-terminal-checklist.md` carries that as an item now.
 
-**Rejected alternative — one call carrying both bytes.** Measured: `0x15 0x7F` in a single `send_text` cleared the text and left the `!`. cmux converts `0x7F` (and `0x08`, `0x09`) into a key event, and a key event is not guaranteed to stay ordered behind text buffered in the same call. Two consecutive calls are ordered; only that much is established.
+**Rejected alternative — put Backspace in the Ctrl+U burst.** Measured: `0x15 0x7F` in one `send_text` cleared text but left the shell-mode `!`; cmux converts `0x7F` (and `0x08`, `0x09`) into a key event, and a key event is not guaranteed to stay ordered behind text buffered in the same call. Two consecutive calls are ordered; only that much is established. A burst of up to eight Ctrl+U bytes is handled as one write, and Backspace stays separate.
 
 **Rejected alternative — keep `send_key` because cmux uses it itself.** cmux does drive its own agent input box that way, which reads as authority until you notice the box in question is not running a program that has switched the keyboard protocol.
 
