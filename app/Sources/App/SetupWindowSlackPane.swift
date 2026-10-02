@@ -161,11 +161,16 @@ final class SetupWindowSlackPane: NSView {
     private func updateDraft(_ field: NSTextField, storedValue: String, drawnValue: inout String?) {
         if field.stringValue == storedValue {
             drawnValue = storedValue
-        } else if window?.firstResponder !== field.currentEditor(),
+        } else if !isEditing(field),
                   drawnValue == nil || field.stringValue == drawnValue {
             field.stringValue = storedValue
             drawnValue = storedValue
         }
+    }
+
+    private func isEditing(_ field: NSTextField) -> Bool {
+        guard let window, let editor = field.currentEditor() else { return false }
+        return window.firstResponder === editor
     }
 
     private func updateHotKey(_ state: SetupWindowSlackPaneState) {

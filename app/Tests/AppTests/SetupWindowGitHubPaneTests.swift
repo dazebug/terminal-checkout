@@ -27,6 +27,8 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             identityMode: "fixed-name",
             fixedName: "saved-workspace"
         ))
+        XCTAssertEqual(fixture.pane.baseDirectoryField.stringValue, "/saved/base")
+        XCTAssertEqual(fixture.pane.workspaceNameField.stringValue, "saved-workspace")
         let window = makeWindow(for: fixture.pane)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let baseField = fixture.pane.baseDirectoryField

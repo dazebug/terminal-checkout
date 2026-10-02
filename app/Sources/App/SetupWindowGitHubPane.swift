@@ -143,7 +143,7 @@ final class SetupWindowGitHubPane: NSView {
         if baseDirectoryField.stringValue == storedBaseDirectory {
             // A successful edit may have normalized and saved a new value since the previous draw.
             drawnBaseDirectory = storedBaseDirectory
-        } else if window?.firstResponder !== baseDirectoryField.currentEditor(),
+        } else if !isEditing(baseDirectoryField),
                   drawnBaseDirectory == nil || baseDirectoryField.stringValue == drawnBaseDirectory {
             baseDirectoryField.stringValue = storedBaseDirectory
             drawnBaseDirectory = storedBaseDirectory
@@ -152,7 +152,7 @@ final class SetupWindowGitHubPane: NSView {
         let storedName = state.cmuxFixedName ?? ""
         if workspaceNameField.stringValue == storedName {
             drawnCmuxPlacementName = storedName
-        } else if window?.firstResponder !== workspaceNameField.currentEditor(),
+        } else if !isEditing(workspaceNameField),
                   drawnCmuxPlacementName == nil || workspaceNameField.stringValue == drawnCmuxPlacementName {
             workspaceNameField.stringValue = storedName
             drawnCmuxPlacementName = storedName
@@ -213,6 +213,11 @@ final class SetupWindowGitHubPane: NSView {
         folderSection.addArrangedSubview(title)
         folderSection.addArrangedSubview(row)
         folderSection.addArrangedSubview(baseDirectoryNoticeRow)
+    }
+
+    private func isEditing(_ field: NSTextField) -> Bool {
+        guard let window, let editor = field.currentEditor() else { return false }
+        return window.firstResponder === editor
     }
 
     private let folderSection = NSStackView()

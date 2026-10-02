@@ -24,6 +24,8 @@ final class SetupWindowSlackPaneTests: XCTestCase {
 
     func testRefreshKeepsBothFieldDraftsAndTheSameControls() throws {
         let fixture = makePane(state: makeState(workDirectory: "/saved/work", instruction: "saved instruction"))
+        XCTAssertEqual(fixture.pane.workDirectoryField.stringValue, "/saved/work")
+        XCTAssertEqual(fixture.pane.instructionField.stringValue, "saved instruction")
         let window = makeWindow(for: fixture.pane)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let identities = fixture.pane.actionControlsForTesting.map { ObjectIdentifier($0.0) }
