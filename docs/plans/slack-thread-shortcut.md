@@ -4,7 +4,7 @@
 - 대상: `terminal-checkout` / `app`
 - 시작 커밋: `21382f5101555401a3a71263cad2441b9e37981b`
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/slack-thread-review` (`worktree-slack-thread-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-slack-thread-work` (`slack-thread`)
-- 현재: R0 · 마지막 승격 없음 · 리뷰 중 없음 · 게이트 미실행
+- 현재: R1 · 마지막 승격 76f3d50 · 리뷰 중 없음 · 게이트 그린(드라이버, clone)
 - 최근 검증자 판정: 없음 (R0 계획 초안) · 원문 없음
 
 이 파일은 실행한 계획과 실행할 계획의 기록이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실을 기록한다. 코드 수정 과정은 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
@@ -100,7 +100,7 @@ R0 이후 이 절과 「완료의 정의」에 항목을 더하는 것은 범위
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | strict outer URL과 확정 Slack permalink를 파싱하고, 앱 설정으로 작업 명령과 link-first 평문 입력 하나를 조립한다 | Core 입력 계약 | — (새 경로) | `app/Sources/Core/SlackThreadURLContract.swift` (신규) · `app/Sources/Core/SlackThreadRequest.swift` (신규) · `app/Sources/Core/Request.swift` · `app/Sources/Core/BaseDirectory.swift` · `app/Sources/Core/ClaudeInputPlan.swift` · `app/Tests/CoreTests/SlackThreadRequestTests.swift` (신규) | — | todo | | |
+| 1 | strict outer URL과 확정 Slack permalink를 파싱하고, 앱 설정으로 작업 명령과 link-first 평문 입력 하나를 조립한다 | Core 입력 계약 | — (새 경로) | `app/Sources/Core/SlackThreadURLContract.swift` (신규) · `app/Sources/Core/SlackThreadRequest.swift` (신규) · `app/Sources/Core/Request.swift` · `app/Sources/Core/BaseDirectory.swift` · `app/Sources/Core/ClaudeInputPlan.swift` · `app/Tests/CoreTests/SlackThreadRequestTests.swift` (신규) | — | cleared | `cd app && swift test --filter SlackThreadRequestTests` → `sandbox-exec: sandbox_apply: Operation not permitted` (게이트 미실행); `git diff --check` → exit 0; 12 tests: `testURLContractConstantsDescribeTheSharedShortcutURL`, `testAcceptsDriverShortcutURLAndQuerylessPermalinkPreservingOriginalLink`, `testAcceptsEnterpriseHostIDsAndTrimmedOriginalLink`, `testRejectsMalformedOuterURLs`, `testRejectsInvalidSlackLinks`, `testRejectsSlackLinkOver512UTF8BytesBeforeValidation`, `testHostLabelBoundaryAllows63AndRejects64Characters`, `testRejectsUnknownOuterQueryKeys`, `testBuildsLinkFirstCommandFromSettingsAndAllowsEmptyInstruction`, `testRejectsInvalidInstructionsAndInvalidDirectories`, `testFileManagerDefaultAcceptsAnExistingTemporaryDirectory`, `testPreparedSlackRequestUsesArgvOnlyAndFailsClosed`; `.git/toggle-host-label-boundary.patch` · `.git/toggle-outer-unknown-key.patch` · `.git/toggle-argv-fail-closed.patch`; 재실행(드라이버): `cd app && swift test` → exit 0, CoreTests 545 실행·1 skip·0 실패, AppTests 132 실행·0 실패; 토글 5종(host label 63자 상한·바깥 알 수 없는 키·argv fail-closed·호스트 앞 점 경계·`%` 거부) 각각 SlackThreadRequestTests의 이름 있는 테스트 실패(exit 1), 작업 상태 복원 확인 | |
 | 2 | 고정 ASCII 이름의 Shortcuts plist를 생성·서명·열고 설치 상태를 판별한다 | 앱 Shortcuts 연동 | — (새 경로) | `app/Sources/App/ShortcutInstaller.swift` (신규) · `app/Tests/AppTests/ShortcutInstallerTests.swift` (신규) | 1 | todo | | |
 | 3 | 앱 로컬 Slack 설정 절, 오류 줄, 단축어 상태·단축키 안내를 다섯 언어로 제공한다 | 설정 UI·로컬라이제이션 | — (새 설정) | `app/Sources/App/Settings.swift` · `app/Sources/App/SetupWindowController.swift` · `app/Sources/App/Resources/en.lproj/Localizable.strings` · `app/Sources/App/Resources/ja.lproj/Localizable.strings` · `app/Sources/App/Resources/ko.lproj/Localizable.strings` · `app/Sources/App/Resources/zh-Hans.lproj/Localizable.strings` · `app/Sources/App/Resources/zh-Hant.lproj/Localizable.strings` · `app/Tests/AppTests/SetupWindowLayoutTests.swift` · `app/Tests/AppTests/LocalizationCatalogTests.swift` · `app/Tests/AppTests/AppMessageTests.swift` | 1, 2 | todo | | |
 | 4 | URL event를 didFinish 초기화 순서에 안전하게 연결하고 기존 직렬 launch 경로, launch 자동 표시 규칙, 명시 실패 훅을 구현한다 | 앱 URL 수신·실행 | — (새 경로) | `app/Sources/App/AppDelegate.swift` · `app/Sources/App/HostServer.swift` · `app/Tests/AppTests/SlackThreadURLHandlingTests.swift` (신규) | 1, 3 | todo | | |
@@ -138,11 +138,11 @@ R0에서는 이번 배정에서 사용자가 확정한 결정과 드라이버가
 
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 `파일:행` |
 |:--|:--|:--|
-| outer URL scheme·host·path·`url` query cardinality와 unknown/duplicate key | 계획 구멍 (항목 1, 2, 5) | `SlackThreadURLContract`를 parser·shortcut generator가 공유하고 `Info.plist`의 scheme 일치 테스트 필요 |
-| inner Slack host·label·path·ID·`thread_ts`·`cid`·trim·percent escape·512-byte cap | 계약 확정 (D9) | 합성 링크 Core 수락·거부 테스트로 고정 |
-| 설정 작업 폴더·빈 설정·경로 유형·공백 | 계획 구멍 + R0 결정 (항목 1, 3; D10) | `normalizedBaseDirectory`를 재사용하고 공백 거부 사유를 설정 UI에서 보임 |
-| instruction control validation·empty value·input classification | 원천 제거 (R0-2) | 링크 첫 글자 `h`; instruction은 빈 값만 허용하고 LF·CR·C0·DEL을 공유 검증 |
-| command append scanner·`prepareRequest` route | 계획 구멍 (항목 1) | representative normalized path가 `commandAcceptsAppendedClaudePrompt`를 통과하고 typed list가 비는 Core test 필요 |
+| outer URL scheme·host·path·`url` query cardinality와 unknown/duplicate key | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testRejectsMalformedOuterURLs` · `testRejectsUnknownOuterQueryKeys`; `.git/toggle-outer-unknown-key.patch` |
+| inner Slack host·label·path·ID·`thread_ts`·`cid`·trim·percent escape·512-byte cap | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testAcceptsDriverShortcutURLAndQuerylessPermalinkPreservingOriginalLink` · `testAcceptsEnterpriseHostIDsAndTrimmedOriginalLink` · `testRejectsInvalidSlackLinks` · `testRejectsSlackLinkOver512UTF8BytesBeforeValidation` · `testHostLabelBoundaryAllows63AndRejects64Characters`; `.git/toggle-host-label-boundary.patch` |
+| 설정 작업 폴더·빈 설정·경로 유형·공백 | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testBuildsLinkFirstCommandFromSettingsAndAllowsEmptyInstruction` · `testRejectsInvalidInstructionsAndInvalidDirectories` · `testFileManagerDefaultAcceptsAnExistingTemporaryDirectory` |
+| instruction control validation·empty value·input classification | 입력창 분류 원천 제거 (R0-2) · Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testBuildsLinkFirstCommandFromSettingsAndAllowsEmptyInstruction` · `testRejectsInvalidInstructionsAndInvalidDirectories` |
+| command append scanner·`prepareRequest` route | Core 테스트 추가 · 게이트 미실행 | `SlackThreadRequestTests.testPreparedSlackRequestUsesArgvOnlyAndFailsClosed`; `.git/toggle-argv-fail-closed.patch` |
 | URL path의 launch serial·terminal·tab activation | 계획 구멍 (항목 4) | `HostServer.execQueue` 및 현재 app 설정을 주입한 URL handler 테스트 필요 |
 | URL cold launch 자동 창 표시·실패 명시 창 표시 | 실측 (R0-1) · 요구 확정 (R0-8) | installed app probe 결과: willFinish event nil, URL open callback 먼저, `launchIsDefault` false; 실패 표시는 별도 hook |
 | typed delivery 결과 및 실패 UI | 범위 밖 (R0-3) | 이 경로는 `appendedPromptCommand` argv 방식만 사용하고 타이핑하지 않는다 |
@@ -167,6 +167,15 @@ R0에서는 이번 배정에서 사용자가 확정한 결정과 드라이버가
 - 처리: 전부 반영(D5∼) — 항목 4에서 ClaudeInjector 변경 제외
 - 실측: 드라이버 프로브: URL 콜드 런치 launchIsDefault=0·willFinish currentAppleEvent=nil, 일반·relay 런치 launchIsDefault=1, /tmp 번들은 URL 미수신
 - 판정: "반박 반영 조건으로 이 계획으로 시작하는 데 합의한다"
+
+### R1
+
+#### 리뷰 1 — 증분 · 항목 1 커밋 · 배정 18:48 · 완료 19:09 · 리뷰 19:03∼19:14 · 왕복 1
+
+- 차단: 512바이트 상한 테스트 픽스처가 462바이트(게이트 실패 2건, 테스트 결함) · Slack 작업 폴더를 base directory로 부름(기존 base directory 설정과 혼동) · argv 성공 테스트가 기계의 로그인 셸에 의존
+- 수정: 세 건 모두 커밋 전에 반영 — 픽스처 확대, workDirectory 계열로 개명, loginShell 명시
+- 실측: 게이트 exit 0(CoreTests 545·1 skip·0 실패, AppTests 132) · 토글 5종 red · 상태 복원
+- 판정: 항목 1 범위 내 확인 — 새 표면(바깥 쿼리 파서·안쪽 링크 문법·argv fail-closed)에서 우회 없음 → 항목 1 `cleared`
 
 ## 열린 질문
 

@@ -173,9 +173,7 @@ private func resolveRequestItem(
         // The order is contractual: inspect the rendered source before trimming, because trimming
         // first removes edge TAB/CR/LF and lets them pass; a TAB-only input then disappears with a
         // success response.
-        try rejectNUL(in: renderedSource, what: "claude_inputs")
-        try rejectLineBreaks(in: renderedSource, what: "claude_inputs")
-        try rejectControlCharacters(in: renderedSource, what: "claude_inputs")
+        try validateClaudeInputBoundary(renderedSource, what: "claude_inputs")
         let rendered = renderedSource.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rendered.isEmpty else { continue }
         claudeInputs.append(rendered)
@@ -219,6 +217,13 @@ private func rejectControlCharacters(in text: String, what: String) throws {
             "\(what) must not contain control characters: typed bytes can act as keys (DEL is Backspace), and reflection checks only the first 24 characters before CR"
         )
     }
+}
+
+/// Applies the typed-input boundary checks in their contractual order for every Claude input path.
+func validateClaudeInputBoundary(_ text: String, what: String) throws {
+    try rejectNUL(in: text, what: what)
+    try rejectLineBreaks(in: text, what: what)
+    try rejectControlCharacters(in: text, what: what)
 }
 
 /// The variables only the app knows the value of. Today that is `{cd}` (the repository entry
