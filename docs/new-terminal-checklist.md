@@ -142,7 +142,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Submission is held while the trust prompt for a first-time folder is up
 - [ ] With cmux visible in a 38×20 pane, send the long merged `!` line and a one-line note; confirm the tail reflection precedes CR, the inputs run once, and there is no doubled `!!` or `no such file or directory: !/bin/echo`
 - [ ] Cause a body reflection to fail once and then exhaust retries in a 38-column pane; confirm the retry submits only the body once and the abandoned input box is fully empty
-- [ ] On iTerm2, WezTerm and Warp, verify whether the carrier preserves Ctrl+U batches of at most eight followed by a separate Backspace and keeps the leading-`!` writes separate at Claude; these carrier results are not measured yet
+- [ ] On iTerm2, WezTerm and Warp, verify that each write of at most eight Ctrl+U bytes is processed, with the Backspace carried at the end of the last write (only cmux sends it in a call of its own), and that the leading `!` and the rest of the input stay two writes at Claude; these carrier results are not measured yet
 - [ ] Buttons with no scheduled claude input do no input-delivery preparation (helper etc.) — no clutter commands appear in the tab
 - [ ] Same for a button whose only input is **plain text**: it rides in argv, so no helper, no permission check, no clutter command. Note this is **no longer** what shipped presets with scheduled inputs do — they are all `!`, hence typed
 

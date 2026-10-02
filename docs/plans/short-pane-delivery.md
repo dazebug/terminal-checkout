@@ -4,8 +4,8 @@
 - 대상: terminal-checkout · app Claude input delivery 및 cmux grouped placement
 - 시작 커밋: 21382f5
 - 기준 트리: (worktree-short-pane-delivery-review · 21382f5) · 작업 트리: /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work (short-pane-delivery-work)
-- 현재: R2 · 마지막 승격 9502d61 · 리뷰 중 없음 · 게이트 Node 323 · Swift CoreTests 542 / AppTests 132
-- 최근 검증자 판정: 미요청 · 원문 없음
+- 현재: R2 · 마지막 승격 b712e9e · 리뷰 중 없음 · 게이트 Node 323 · Swift CoreTests 542 / AppTests 132
+- 최근 검증자 판정: cold review 2 · b712e9e · no — P2(B)·P3(B) 이 루프 전부터의 결함 → #101(사용자 결정), P3(B) 체크리스트 문장 → 이번 커밋 · 원문 /private/tmp/short-pane-loop/cold2-response.md
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 파일:행으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
 
@@ -97,6 +97,7 @@
 | 2′ | found split이 기존 첫 surface를 항목에 보내지 않는다: N+1 leaf 균형 split, leaf 0(기존 surface)은 그대로, 항목은 leaf 1∼N | cmux placement | 항목 0의 명령·Claude 입력이 기존 첫 surface로 가며, 재사용 workspace에서는 이전 배치의 claude에 전달된다 (D10) | app/Sources/Core/CmuxPlacement.swift, app/Tests/CoreTests/CmuxPlacementTests.swift, app/Tests/CoreTests/CmuxGroupedExecutionTests.swift | 2 | cleared | 새 통합 테스트 `testFoundPaneExecutionNeverSendsItemsToExistingRoot`가 N=1, 9, 25에서 기존 root 미전송·미반환, split N회, N개 고유 새 surface와 depth-first 응답 순서를 고정한다. 기존 5개 테스트 갱신: `testFoundPaneExecutionUsesExplicitSplitTargetsAndMeasuredItemOrder`, `testFoundPaneExecutionRoutesAll25ItemsInPlannedSurfaceOrder`, `testPanePlacementKeepsNineItemsInPanesForBothIdentityModes`, `testFoundPanePlanBalancesTheExistingRootAsUnassignedLeafZero`, `testFixedPanePlanCarriesFoundAndCreateBranches`. cold review 재현은 기존 코드에서 N=25 `foundSplit`, 첫 수신자가 existing Claude surface라 exit 1. 구현 전 로컬 red 확인 시도(`swift test --package-path /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work/app --filter CmuxGroupedExecutionTests/testFoundPaneExecutionLeavesExistingRootUntouchedForEveryItemCount`)는 manifest 검증 전에 `sandbox-exec: sandbox_apply: Operation not permitted`로 중단되어 새 테스트의 로컬 red/green은 확인하지 못했다. `node --test --test-reporter=tap` → exit 0·323; Swift 게이트는 드라이버 확인 필요. 재실행(드라이버): clone `swift test` exit 0, CoreTests 542(1 skipped)·AppTests 132 · 토글(옛 계획기) → 새 테스트 red(N=1·9·25) · 라이브 P2: 옛 계획 N=9 기존 surface 22바이트 수신, 새 계획 N=9·25 0바이트·surface 10·26 | — |
 | 3 | 실측으로 확정된 입력 전달·pane placement 이유와 지원 체크리스트를 갱신한다; 새 carrier 측정 게이트는 추가하지 않는다. | 근거·체크리스트 | active context와 hands-on checklist가 first-24 probe, Ctrl+U clear, N>8 tab fallback을 현재 계약처럼 남긴다. | CLAUDE.md, docs/context/claude-input-delivery.md, docs/context/cmux-integration.md, docs/context/testing.md, docs/new-terminal-checklist.md | 1a·1b·1c·2 및 cmux 실측 | claimed | CLAUDE.md 반사·개수 기반 비우기·선행 `!` 기록; context 결정 3개 추가 및 cmux geometry/B1·Swift 병렬 게이트 근거 반영; 체크리스트 갱신. 드라이버 리뷰 1회: 사라진 사실 복원·범위 밖 편집 되돌림·없는 테스트 이름 교정. README 4개 검색 `rg -ni '(pane|panel|split|분할|패널|ペイン|窗格|分屏).{0,45}(8|８|eight|八|여덟)|(8|８|eight|八|여덟).{0,45}(pane|panel|split|분할|패널|ペイン|窗格|分屏)' /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work/README.md /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work/README.ko.md /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work/README.ja.md /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work/README.zh-Hant.md` → exit 1·0건; `node --test --test-reporter=tap` → exit 0·323; 보정 커밋: 2.1.238 문장·typed bytes·cmux 0.64.25 출처·체크리스트 기본 프리셋 복원 | — |
 | 3′ | 2′의 결정·측정을 문서에 반영하고 pane proof 문장을 정정한다 (D11) | 근거·체크리스트 | found split 설명이 항목 0 = 기존 첫 surface를 전제하고, cmux가 pane proof를 생략한다고 잘못 쓴다 | CLAUDE.md, docs/context/cmux-integration.md, docs/new-terminal-checklist.md | 2′ | cleared | found workspace의 N+1 leaf 결정과 cmux 0.64.25 P2 결과, 모든 터미널의 marker experiment와 `screenNeedsPaneProof`의 실제 쓰임을 CLAUDE.md·context·체크리스트에 반영했다; 문서 함수·테스트 이름은 `rg`로 확인; `node --test --test-reporter=tap` exit 0·323. 드라이버 리뷰: 문구 네 곳 정정(옛 계획 시제·대역 재현 표시·pane proof 출처 복원·체크리스트 손 검사) | — |
+| 3″ | 체크리스트의 iTerm2·WezTerm·Warp Backspace 서술을 코드대로 | 근거·체크리스트 | (a) Backspace를 별도 쓰기라고 적음 — 코드는 마지막 Ctrl+U 쓰기에 붙인다(cold review 2) | docs/new-terminal-checklist.md | 3′ | cleared | 드라이버 지정 문장 그대로 · rg -F 일치 | — |
 
 - 승격 순서: 1a → 1b → 1c → 1c′ → 2 → 3 → 2′ → 3′. 1a·1b·1c·1c′는 같은 `ClaudeInjector.swift`를 건드려 순서로 분리했고, 새 found-workspace 리뷰 작업은 2 뒤에 2′, 문서 반영은 3′로 둔다.
 - 1a tests: `testShortPaneTailReflectionSubmitsThe424CharacterMergedInputOnce` feeds the M1 five-row tail-only screen through `submitClaudeInputs`; `testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires` models the M2 head-only folded-paste screen and pins deadline fallback. The existing long-probe test now checks both tail-primary and head-fallback candidates; `inputBoxAfterSubmit` uses the selected fragment and still returns `.unknown` when it is not unique.
@@ -127,6 +128,7 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | D10 | 사용자 | cold review P1: found split이 기존 첫 surface를 항목 0에 쓴다 — 같은 workspace에 다시 보내면 이전 배치의 claude에 명령·예약 입력이 들어간다(8개 이하는 PR #80부터, 상한 25로 9∼25까지) | 고친다: 기존 첫 surface는 내용 그대로 한 leaf로 남기고 항목은 모두 새 split surface에(N+1 leaf, 모든 N). PR #80 U4의 "root가 항목 0을 맡는다"를 대체한다 | 2026-10-02 사용자 선택 · cold review 원문 /private/tmp/short-pane-loop/cold-response.md · 재현 /private/tmp/short-pane-independent-review.1TDz2w/root-probe.swift | found workspace의 첫 pane은 배치마다 한 몫씩 더 작아진다 |
 | D11 | 사용자 | cold review P3: 문서가 "cmux는 nonce pane 증명을 생략"이라 쓰지만 모든 입력이 마커 실험을 거친다(이 PR 이전부터) | 이번 PR에서 해당 문장만 정정, 코드 변경 없음 | 2026-10-02 사용자 선택 | — |
 | D12 | 드라이버 | 테스트 심사 보충 — 2′ | 새 테스트 testFoundPaneExecutionNeverSendsItemsToExistingRoot 유지(토글 red: 옛 계획기에서 N=1·9·25 모두 실패), 기대값만 고친 기존 테스트 5개 유지 | 드라이버 토글 /private/tmp/short-pane-loop/2p-toggle.log | 그 테스트의 기대 surface 순서 일부는 실행 함수 cmuxResolveFoundSurfaceIDs로 계산한다 — 순서의 독립 고정은 N=25 테스트의 리터럴 목록이 맡는다 |
+| D13 | 사용자 | cold review 2: CR 뒤 판정이 유일성을 타이핑 화면에서만 봐 힌트 줄의 같은 글자에 속는다(P2), 겹치는 출현을 하나로 센다(P3) — 둘 다 이 루프 전부터 | 별도 이슈 #101 — 사용자가 제안한 룬 고정 제출 순서(본문 끝 룬 → 보이면 지우고 CR, 안 보이면 제출 안 함, CR 처리 여부는 다음 마커 앞 글자로)를 해법 후보로 | 2026-10-02 사용자 선택 · 재현 /private/tmp/short-pane-independent-review.hNsxnx/regression_probe.swift · https://github.com/dazebug/terminal-checkout/issues/101 | 실물 claude에서 미재현; 룬 방식은 붙여넣기 접힘·슬래시 팔레트·룬이 떠 있는 사이의 사용자 Enter를 먼저 측정해야 한다 |
 
 ## 전수 소탕 표
 
@@ -244,6 +246,11 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 - 수정: 항목 3′ (배정 20:38 · 완료 20:46), 문구 네 곳
 - 실측: 없음(문서)
 - 판정: 막혔다. 우회 없음 → 항목 3′ cleared
+
+#### cold review 2 — b712e9e · read_codex 새 스레드 01a0fc7a · 21:05∼21:25 · 원문 /private/tmp/short-pane-loop/cold2-response.md
+
+- 판정: no — P2(B) CR 뒤 유일성, P3(B) 겹침 → #101(D13); P3(B) 체크리스트 Backspace 서술 → 3″
+- 안전 확인(검증자 실행): found pane·탭 N=1∼25 대응 유지, 부분 split·탭 생성 실패 325곳 모두 항목 바이트 없음, `!` 뒤 세션 교체 시 본문·CR·정리 차단
 
 ## 열린 질문
 
