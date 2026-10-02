@@ -257,7 +257,7 @@ func makeStatusLabel(font: NSFont) -> NSTextField {
     return label
 }
 
-final class SetupWindowController: NSWindowController, NSWindowDelegate {
+final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
@@ -266,6 +266,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let cmuxStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
     private let cmuxFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
     private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let slackThreadValidationLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let slackShortcutStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private let slackShortcutFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
+    private let slackRequestFailureLabel = makeStatusLabel(font: Theme.ui(11.5))
+    private let slackShortcutInstallButton = NSButton(title: "", target: nil, action: nil)
+    private var slackShortcutStatus: SlackThreadShortcutInstallationStatus = .unknown
+    private var slackShortcutInstaller: any SlackThreadShortcutManaging = SlackThreadShortcutInstaller()
+    private let slackShortcutQueue = DispatchQueue(label: "com.dazebug.terminal-checkout.slack-shortcut", qos: .userInitiated)
+    private var slackShortcutStatusRevision = 0
+    private var slackShortcutInstallInProgress = false
+    private var slackShortcutAddConfirmationPending = false
+    private var lastSlackShortcutFailure: Error?
+    private var lastSlackRequestFailure: SlackThreadRequestError?
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
     /// The three stacks that are **filled** rather than created — a rebuild appends to them unless
@@ -286,9 +299,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         [
             manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
             permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, cmuxFeedbackLabel,
-            cmuxPlacementInterpretationLabel, testResultLabel,
+            cmuxPlacementInterpretationLabel, testResultLabel, slackThreadValidationLabel,
+            slackShortcutStatusLabel, slackShortcutFeedbackLabel, slackRequestFailureLabel,
         ]
     }
+    var slackShortcutStatusLabelForTesting: NSTextField { slackShortcutStatusLabel }
+    var slackShortcutFeedbackLabelForTesting: NSTextField { slackShortcutFeedbackLabel }
+    var slackShortcutInstallButtonForTesting: NSButton { slackShortcutInstallButton }
+    var slackThreadValidationLabelForTesting: NSTextField { slackThreadValidationLabel }
+    var slackWorkDirectoryFieldForTesting: NSTextField { slackWorkDirectoryField }
+    var slackInstructionFieldForTesting: NSTextField { slackInstructionField }
     /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
     /// a title set here would be the one string in this window that kept its old language. The
     /// title is set in the builder instead, where a rebuild reads it again — and it lives in
@@ -349,6 +369,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     /// the first draw, so the first one happens.
     private var drawnBaseDirectory: String?
     private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
+    private var slackThreadCard: NSView!
+    private let slackWorkDirectoryField = NSTextField(string: "")
+    private let slackInstructionField = NSTextField(string: "")
+    private var drawnSlackWorkDirectory: String?
+    private var drawnSlackInstruction: String?
     private var guideBlock: NSView!
     private var utilityRow: NSView!
     private var languagePopUp: NSPopUpButton!
@@ -405,6 +430,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
 
     convenience init() {
+        self.init(shortcutInstaller: SlackThreadShortcutInstaller())
+    }
+
+    convenience init(shortcutInstaller: any SlackThreadShortcutManaging) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -425,6 +454,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = Theme.bg
         window.isMovableByWindowBackground = true
         self.init(window: window)
+        self.slackShortcutInstaller = shortcutInstaller
         window.delegate = self
         if let launchVisibleFrame {
             FittedContentStackView.centerInside(launchVisibleFrame, window)
@@ -433,6 +463,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = buildContent()
         updateTerminalControls()
         refresh()
+        refreshSlackShortcutStatus()
         observeScreenParameters()
         // Let the stack measure once so the deferred update has a target.
         window.contentView?.layoutSubtreeIfNeeded()
@@ -484,6 +515,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         cursor.start()
         refresh()
+        refreshSlackShortcutStatus()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -655,6 +687,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         chromeCard = buildChromeCard()
         extensionCard = buildExtensionCard()
         baseDirCard = buildBaseDirCard()
+        slackThreadCard = buildSlackThreadCard()
         toolsCard = buildToolsCard()
         utilityRow = buildUtilityRow()
 
@@ -665,7 +698,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         for (name, card) in [
             ("header", header()), ("pipeline", pipeline), ("chrome", chromeCard!),
             ("extension", extensionCard!), ("language", languageCard()), ("terminal", terminalCard()),
-            ("baseDir", baseDirCard!), ("tools", toolsCard!), ("test", testCard()),
+            ("baseDir", baseDirCard!), ("slackThread", slackThreadCard!),
+            ("tools", toolsCard!), ("test", testCard()),
             ("utility", utilityRow!),
         ] {
             card.identifier = NSUserInterfaceItemIdentifier("card.\(name)")
@@ -791,6 +825,49 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 localized("app.card.baseDir.legacyNote")
             ),
         ])
+    }
+
+    private func buildSlackThreadCard() -> NSView {
+        slackWorkDirectoryField.placeholderString = localized("app.slack.workDirectory.placeholder")
+        slackWorkDirectoryField.font = Theme.mono(11.5)
+        slackWorkDirectoryField.target = self
+        slackWorkDirectoryField.action = #selector(slackThreadSettingsEdited)
+        slackWorkDirectoryField.delegate = self
+        slackWorkDirectoryField.identifier = role(#selector(slackThreadSettingsEdited), "workDirectory")
+        slackWorkDirectoryField.cell?.sendsActionOnEndEditing = true
+        slackWorkDirectoryField.widthAnchor.constraint(equalToConstant: setupTextWidth).isActive = true
+
+        slackInstructionField.placeholderString = localized("app.slack.instruction.placeholder")
+        slackInstructionField.font = Theme.mono(11.5)
+        slackInstructionField.target = self
+        slackInstructionField.action = #selector(slackThreadSettingsEdited)
+        slackInstructionField.delegate = self
+        slackInstructionField.identifier = role(#selector(slackThreadSettingsEdited), "instruction")
+        slackInstructionField.cell?.sendsActionOnEndEditing = true
+        slackInstructionField.widthAnchor.constraint(equalToConstant: setupTextWidth).isActive = true
+
+        slackShortcutInstallButton.title = slackShortcutInstallTitle
+        slackShortcutInstallButton.target = self
+        slackShortcutInstallButton.action = #selector(installSlackShortcut)
+        slackShortcutInstallButton.identifier = role(#selector(installSlackShortcut))
+        slackShortcutInstallButton.bezelStyle = .rounded
+
+        return card(localized("app.card.slack.title"), [
+            helpLabel(localized("app.card.slack.help")),
+            slackWorkDirectoryField,
+            slackThreadValidationLabel,
+            slackInstructionField,
+            helpLabel(localized("app.slack.instruction.help")),
+            buttonRow([slackShortcutInstallButton]),
+            slackShortcutStatusLabel,
+            slackShortcutFeedbackLabel,
+            helpLabel(localized("app.slack.keyboardShortcut.help")),
+            slackRequestFailureLabel,
+        ])
+    }
+
+    private var slackShortcutInstallTitle: String {
+        localized(slackShortcutStatus == .installed ? "app.slack.button.reinstall" : "app.slack.button.install")
     }
 
     /// The check on the tools a command calls. The login shell has to be asked rather than the
@@ -1461,6 +1538,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         utilityRow.isHidden = !extensionCard.isHidden
 
         updateBaseDirCard()
+        updateSlackThreadSettingsCard()
         updateToolsCard()
 
         let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
@@ -1638,6 +1716,124 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             // clone creates the leading directories (measured), so a missing folder still works —
             // this only says so out loud, which is how a typo gets noticed
             apply(.warning(localized("app.baseDir.missingFolder", normalized)), to: baseDirStatusLabel)
+        }
+    }
+
+    private func updateSlackThreadSettingsCard() {
+        let storedWorkDirectory = Settings.slackThreadWorkDirectory
+        let storedInstruction = Settings.slackThreadInstruction
+        let isEditingWorkDirectory = window?.firstResponder === slackWorkDirectoryField.currentEditor()
+        let isEditingInstruction = window?.firstResponder === slackInstructionField.currentEditor()
+        if !isEditingWorkDirectory,
+           drawnSlackWorkDirectory == nil || slackWorkDirectoryField.stringValue == drawnSlackWorkDirectory {
+            slackWorkDirectoryField.stringValue = storedWorkDirectory
+            drawnSlackWorkDirectory = storedWorkDirectory
+        }
+        if !isEditingInstruction,
+           drawnSlackInstruction == nil || slackInstructionField.stringValue == drawnSlackInstruction {
+            slackInstructionField.stringValue = storedInstruction
+            drawnSlackInstruction = storedInstruction
+        }
+
+        do {
+            _ = try validateSlackThreadSettings(
+                workDirectory: slackWorkDirectoryField.stringValue,
+                instruction: slackInstructionField.stringValue
+            )
+            apply(.ok(localized("app.slack.validation.ready")), to: slackThreadValidationLabel)
+        } catch let error as SlackThreadRequestError {
+            apply(.error(slackThreadRequestErrorMessage(error)), to: slackThreadValidationLabel)
+        } catch {
+            apply(.error(localized("app.slack.error.unexpectedRequest")), to: slackThreadValidationLabel)
+        }
+
+        updateSlackShortcutPresentation()
+        if let lastSlackRequestFailure {
+            slackRequestFailureLabel.stringValue = "● \(slackThreadRequestErrorMessage(lastSlackRequestFailure))"
+            slackRequestFailureLabel.textColor = Theme.err
+            slackRequestFailureLabel.isHidden = false
+        } else {
+            slackRequestFailureLabel.stringValue = ""
+            slackRequestFailureLabel.isHidden = true
+        }
+    }
+
+    private func updateSlackShortcutPresentation() {
+        slackShortcutStatusLabel.stringValue = "● \(slackShortcutStatusMessage(slackShortcutStatus))"
+        switch slackShortcutStatus {
+        case .installed: slackShortcutStatusLabel.textColor = Theme.ok
+        case .notInstalled: slackShortcutStatusLabel.textColor = Theme.warn
+        case .unknown: slackShortcutStatusLabel.textColor = Theme.textDim
+        }
+        slackShortcutInstallButton.title = slackShortcutInstallTitle
+        slackShortcutInstallButton.isEnabled = !slackShortcutInstallInProgress
+        if slackShortcutInstallInProgress {
+            slackShortcutFeedbackLabel.stringValue = "● \(localized("app.slack.status.installing"))"
+            slackShortcutFeedbackLabel.textColor = Theme.textDim
+            slackShortcutFeedbackLabel.isHidden = false
+        } else if let lastSlackShortcutFailure {
+            slackShortcutFeedbackLabel.stringValue = "● \(slackThreadShortcutInstallerErrorMessage(lastSlackShortcutFailure))"
+            slackShortcutFeedbackLabel.textColor = Theme.err
+            slackShortcutFeedbackLabel.isHidden = false
+        } else if slackShortcutAddConfirmationPending && slackShortcutStatus != .installed {
+            slackShortcutFeedbackLabel.stringValue = "● \(localized("app.slack.status.addShortcut"))"
+            slackShortcutFeedbackLabel.textColor = Theme.textDim
+            slackShortcutFeedbackLabel.isHidden = false
+        } else {
+            slackShortcutFeedbackLabel.stringValue = ""
+            slackShortcutFeedbackLabel.isHidden = true
+        }
+    }
+
+    private func slackShortcutStatusMessage(_ status: SlackThreadShortcutInstallationStatus) -> String {
+        switch status {
+        case .installed: return localized("app.slack.status.installed")
+        case .notInstalled: return localized("app.slack.status.notInstalled")
+        case .unknown: return localized("app.slack.status.unknown")
+        }
+    }
+
+    private func refreshSlackShortcutStatus() {
+        guard !slackShortcutInstallInProgress else { return }
+        slackShortcutStatusRevision += 1
+        let revision = slackShortcutStatusRevision
+        let installer = slackShortcutInstaller
+        slackShortcutQueue.async { [weak self] in
+            let status = installer.installationStatus()
+            DispatchQueue.main.async {
+                guard let self, revision == self.slackShortcutStatusRevision,
+                      !self.slackShortcutInstallInProgress else { return }
+                self.slackShortcutStatus = status
+                if status == .installed {
+                    self.slackShortcutAddConfirmationPending = false
+                }
+                self.updateSlackShortcutPresentation()
+            }
+        }
+    }
+
+    /// Presents a failure delivered by the URL handler; URL launches have no response channel.
+    func presentSlackThreadRequestFailure(_ error: SlackThreadRequestError) {
+        let present = { [weak self] in
+            self?.lastSlackRequestFailure = error
+            self?.updateSlackThreadSettingsCard()
+        }
+        if Thread.isMainThread {
+            present()
+        } else {
+            DispatchQueue.main.async(execute: present)
+        }
+    }
+
+    func clearSlackThreadRequestFailure() {
+        let clear = { [weak self] in
+            self?.lastSlackRequestFailure = nil
+            self?.updateSlackThreadSettingsCard()
+        }
+        if Thread.isMainThread {
+            clear()
+        } else {
+            DispatchQueue.main.async(execute: clear)
         }
     }
 
@@ -1834,6 +2030,58 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         switch problem {
         case .notAbsolute: return localized("app.baseDir.reason.notAbsolute")
         case .invalidCharacters: return localized("app.baseDir.reason.invalidCharacters")
+        }
+    }
+
+    @objc private func slackThreadSettingsEdited() {
+        Settings.slackThreadWorkDirectory = slackWorkDirectoryField.stringValue
+        Settings.slackThreadInstruction = slackInstructionField.stringValue
+        drawnSlackWorkDirectory = slackWorkDirectoryField.stringValue
+        drawnSlackInstruction = slackInstructionField.stringValue
+        updateSlackThreadSettingsCard()
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        if field === slackWorkDirectoryField {
+            Settings.slackThreadWorkDirectory = field.stringValue
+            drawnSlackWorkDirectory = field.stringValue
+            updateSlackThreadSettingsCard()
+        } else if field === slackInstructionField {
+            Settings.slackThreadInstruction = field.stringValue
+            drawnSlackInstruction = field.stringValue
+            updateSlackThreadSettingsCard()
+        }
+    }
+
+    @objc private func installSlackShortcut() {
+        guard !slackShortcutInstallInProgress else { return }
+        slackShortcutInstallInProgress = true
+        slackShortcutStatusRevision += 1
+        let revision = slackShortcutStatusRevision
+        let installer = slackShortcutInstaller
+        lastSlackShortcutFailure = nil
+        slackShortcutAddConfirmationPending = false
+        slackShortcutFeedbackLabel.stringValue = ""
+        slackShortcutFeedbackLabel.isHidden = true
+        updateSlackShortcutPresentation()
+
+        slackShortcutQueue.async { [weak self] in
+            var failure: Error?
+            do {
+                try installer.install()
+            } catch {
+                failure = error
+            }
+            let status = installer.installationStatus()
+            DispatchQueue.main.async {
+                guard let self, revision == self.slackShortcutStatusRevision else { return }
+                self.slackShortcutInstallInProgress = false
+                self.slackShortcutStatus = status
+                self.lastSlackShortcutFailure = failure
+                self.slackShortcutAddConfirmationPending = failure == nil && status != .installed
+                self.updateSlackShortcutPresentation()
+            }
         }
     }
 

@@ -271,7 +271,9 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
 
     private func makeController(terminal: Terminal) throws -> SetupWindowController {
         Settings.terminal = terminal
-        let controller = SetupWindowController()
+        let controller = SetupWindowController(
+            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+        )
         _ = try XCTUnwrap(controller.window)
         return controller
     }

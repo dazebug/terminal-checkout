@@ -51,7 +51,9 @@ final class SetupWindowRedrawTests: XCTestCase {
     }
 
     private func makeController() -> SetupWindowController {
-        let controller = SetupWindowController()
+        let controller = SetupWindowController(
+            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+        )
         _ = controller.window
         return controller
     }

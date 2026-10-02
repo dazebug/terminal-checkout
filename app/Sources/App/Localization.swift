@@ -203,6 +203,70 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
     String(format: AppLocalization.string(key.description), arguments: arguments)
 }
 
+func slackThreadRequestErrorMessage(_ error: SlackThreadRequestError) -> String {
+    switch error {
+    case .invalidOuterURL:
+        return localized("app.slack.error.invalidOuterURL")
+    case .invalidSlackLink:
+        return localized("app.slack.error.invalidSlackLink")
+    case .slackLinkTooLong:
+        return localized("app.slack.error.slackLinkTooLong")
+    case .workDirectoryNotConfigured:
+        return localized("app.slack.error.workDirectoryNotConfigured")
+    case .invalidWorkDirectory(let underlying):
+        guard let commandError = underlying as? CommandError else {
+            return localized("app.slack.error.workDirectoryInvalid")
+        }
+        switch commandError {
+        case .invalidBaseDirectory(let problem, _):
+            switch problem {
+            case .notAbsolute:
+                return localized("app.slack.error.workDirectoryNotAbsolute")
+            case .invalidCharacters:
+                return localized("app.slack.error.workDirectoryInvalidCharacters")
+            }
+        case .invalidCharacters, .unknownVariable, .variableNotProvided, .badRequest:
+            return localized("app.slack.error.workDirectoryInvalid")
+        }
+    case .workDirectoryUnavailable:
+        return localized("app.slack.error.workDirectoryUnavailable")
+    case .invalidInstruction:
+        return localized("app.slack.error.invalidInstruction")
+    case .appendedPromptUnavailable:
+        return localized("app.slack.error.appendedPromptUnavailable")
+    }
+}
+
+func slackThreadShortcutInstallerErrorMessage(_ error: Error) -> String {
+    guard let error = error as? SlackThreadShortcutInstallerError else {
+        return localized("app.slack.error.unexpectedInstallation")
+    }
+    switch error {
+    case .createDirectory:
+        return localized("app.slack.error.createDirectory")
+    case .writeWorkflow:
+        return localized("app.slack.error.writeWorkflow")
+    case .signProcess:
+        return localized("app.slack.error.signProcess")
+    case .signRejected(let status, _):
+        return localized("app.slack.error.signRejected", status)
+    case .removePreviousSignedShortcut:
+        return localized("app.slack.error.removeSignedShortcut")
+    case .signedShortcutMissing:
+        return localized("app.slack.error.signedShortcutMissing")
+    case .signedShortcutReadFailed:
+        return localized("app.slack.error.signedShortcutReadFailed")
+    case .invalidSignatureMagic:
+        return localized("app.slack.error.invalidSignatureMagic")
+    case .shortcutsLaunchFailed:
+        return localized("app.slack.error.shortcutsLaunchFailed")
+    case .shortcutsLaunchTimedOut:
+        return localized("app.slack.error.shortcutsLaunchTimedOut")
+    case .shortcutOpenFailed:
+        return localized("app.slack.error.shortcutOpenFailed")
+    }
+}
+
 /// Core keeps its stable English descriptions for diagnostics and for callers that do not have an
 /// app bundle. The socket response and config action are user-facing, so the App boundary localizes
 /// cmux failures while leaving every existing terminal message byte-for-byte unchanged.

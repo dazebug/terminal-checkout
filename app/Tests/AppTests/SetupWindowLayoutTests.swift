@@ -11,12 +11,18 @@ import XCTest
 /// that impossible rather than the one call site that happened to get it wrong.
 final class SetupWindowLayoutTests: XCTestCase {
     private var savedTerminal: Terminal!
+    private var savedSlackWorkDirectory: String!
+    private var savedSlackInstruction: String!
 
     private var savedResources: String?
 
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
+        savedSlackWorkDirectory = Settings.slackThreadWorkDirectory
+        savedSlackInstruction = Settings.slackThreadInstruction
+        Settings.slackThreadWorkDirectory = ""
+        Settings.slackThreadInstruction = ""
         PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         // Without this the window draws **raw keys**, and a key is shorter than every sentence it
         // stands for — a layout test that passed on keys would be silent about the case it exists
@@ -27,6 +33,8 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     override func tearDown() {
         Settings.terminal = savedTerminal
+        Settings.slackThreadWorkDirectory = savedSlackWorkDirectory
+        Settings.slackThreadInstruction = savedSlackInstruction
         PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         AppLocalization.resourcesPath = savedResources
         super.tearDown()
@@ -53,7 +61,9 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
-        return SetupWindowController()
+        return SetupWindowController(
+            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+        )
     }
 
     private func contentHeight(_ window: NSWindow) -> CGFloat {
@@ -199,6 +209,26 @@ final class SetupWindowLayoutTests: XCTestCase {
             let title = localized("app.card.baseDir.title")
             XCTAssertFalse(title.hasPrefix("app."), "\(tag) drew a raw key")
             XCTAssertEqual(title, try loadCatalogue(tag)["app.card.baseDir.title"], "\(tag) drew another locale")
+        }
+    }
+
+    func testSlackThreadCardFitsInEveryLocale() throws {
+        for tag in Self.populatedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            let controller = makeController(.warp)
+            let window = try XCTUnwrap(controller.window)
+            controller.rootStack.visibleFrameOverride = roomyScreen
+
+            let snapshot = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+            let card = try XCTUnwrap(
+                controller.rootStack.arrangedSubviews.first {
+                    $0.identifier?.rawValue == "card.slackThread"
+                },
+                "\(tag) is missing the Slack thread card"
+            )
+            XCTAssertGreaterThan(card.frame.height, 0, "\(tag) hid the Slack thread card")
+            try assertFittedPlacement(controller, in: window, label: "slack-thread-\(tag)")
+            XCTAssertGreaterThan(snapshot.fittingSize.height, 0, "\(tag) did not measure the card")
         }
     }
 

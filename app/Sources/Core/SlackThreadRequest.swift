@@ -12,6 +12,52 @@ public enum SlackThreadRequestError: Error {
     case appendedPromptUnavailable
 }
 
+/// The validated settings shared by the request path and the setup window's live feedback.
+public struct SlackThreadSettingsValidation {
+    public let workDirectory: String
+    public let instruction: String
+}
+
+/// Checks whether a normalized Slack work directory currently exists as a directory.
+public func slackThreadWorkDirectoryIsValid(_ path: String) -> Bool {
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+    return exists && isDirectory.boolValue
+}
+
+/// Applies the one validation path used both before a Slack request is launched and while the
+/// app's Slack settings are edited. The returned values are safe to use when assembling the
+/// command and claude input.
+public func validateSlackThreadSettings(
+    workDirectory: String?,
+    instruction: String,
+    directoryIsValid: (String) -> Bool = slackThreadWorkDirectoryIsValid
+) throws -> SlackThreadSettingsValidation {
+    let normalizedWorkDirectory: String?
+    do {
+        normalizedWorkDirectory = try normalizedBaseDirectory(workDirectory ?? "")
+    } catch {
+        throw SlackThreadRequestError.invalidWorkDirectory(underlying: error)
+    }
+    guard let normalizedWorkDirectory else {
+        throw SlackThreadRequestError.workDirectoryNotConfigured
+    }
+    guard directoryIsValid(normalizedWorkDirectory) else {
+        throw SlackThreadRequestError.workDirectoryUnavailable
+    }
+
+    do {
+        try validateClaudeInputBoundary(instruction, what: "slack instruction")
+    } catch {
+        throw SlackThreadRequestError.invalidInstruction
+    }
+
+    return SlackThreadSettingsValidation(
+        workDirectory: normalizedWorkDirectory,
+        instruction: instruction.trimmingCharacters(in: .whitespaces)
+    )
+}
+
 /// Parses the URL opened by Shortcuts and returns the original Slack link after boundary trimming.
 public func parseSlackThreadLink(from outerURL: String) throws -> String {
     guard let components = URLComponents(string: outerURL),
@@ -42,37 +88,20 @@ public func resolveSlackThreadRequest(
     outerURL: String,
     workDirectory: String?,
     instruction: String,
-    directoryIsValid: (String) -> Bool = { path in
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
-    }
+    directoryIsValid: (String) -> Bool = slackThreadWorkDirectoryIsValid
 ) throws -> ResolvedRequest {
     let link = try parseSlackThreadLink(from: outerURL)
-
-    let normalizedWorkDirectory: String?
-    do {
-        normalizedWorkDirectory = try normalizedBaseDirectory(workDirectory ?? "")
-    } catch {
-        throw SlackThreadRequestError.invalidWorkDirectory(underlying: error)
-    }
-    guard let normalizedWorkDirectory else {
-        throw SlackThreadRequestError.workDirectoryNotConfigured
-    }
-    guard directoryIsValid(normalizedWorkDirectory) else {
-        throw SlackThreadRequestError.workDirectoryUnavailable
-    }
-
-    do {
-        try validateClaudeInputBoundary(instruction, what: "slack instruction")
-    } catch {
-        throw SlackThreadRequestError.invalidInstruction
-    }
-    let trimmedInstruction = instruction.trimmingCharacters(in: .whitespaces)
-    let input = trimmedInstruction.isEmpty ? link : "\(link) \(trimmedInstruction)"
+    let settings = try validateSlackThreadSettings(
+        workDirectory: workDirectory,
+        instruction: instruction,
+        directoryIsValid: directoryIsValid
+    )
+    let input = settings.instruction.isEmpty
+        ? link
+        : "\(link) \(settings.instruction)"
 
     return ResolvedRequest(
-        command: "cd \(normalizedWorkDirectory) && claude",
+        command: "cd \(settings.workDirectory) && claude",
         claudeInputs: [input]
     )
 }

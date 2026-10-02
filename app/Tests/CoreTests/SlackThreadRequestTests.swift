@@ -192,6 +192,79 @@ final class SlackThreadRequestTests: XCTestCase {
         XCTAssertEqual(whitespaceOnlyInstruction.claudeInputs, [validLink])
     }
 
+    func testLiveSettingsValidatorMatchesRequestResolution() throws {
+        func verdict<T>(_ operation: () throws -> T) -> String {
+            do {
+                _ = try operation()
+                return "valid"
+            } catch let error as SlackThreadRequestError {
+                switch error {
+                case .workDirectoryNotConfigured:
+                    return "workDirectoryNotConfigured"
+                case .invalidWorkDirectory(let underlying):
+                    guard let commandError = underlying as? CommandError,
+                          case .invalidBaseDirectory(let problem, _) = commandError else {
+                        return "invalidWorkDirectory"
+                    }
+                    switch problem {
+                    case .notAbsolute: return "workDirectoryNotAbsolute"
+                    case .invalidCharacters: return "workDirectoryInvalidCharacters"
+                    }
+                case .workDirectoryUnavailable:
+                    return "workDirectoryUnavailable"
+                case .invalidInstruction:
+                    return "invalidInstruction"
+                case .invalidOuterURL, .invalidSlackLink, .slackLinkTooLong,
+                     .appendedPromptUnavailable:
+                    return "unrelatedRequestError"
+                }
+            } catch {
+                return "unexpectedError"
+            }
+        }
+
+        let cases: [(String?, String, Bool)] = [
+            (nil, "review", true),
+            ("", "review", true),
+            ("relative/path", "review", true),
+            ("/tmp/has space", "review", true),
+            (validWorkDirectory, "review", false),
+            (validWorkDirectory, "line\nbreak", true),
+            (validWorkDirectory, "review", true),
+        ]
+
+        for (workDirectory, instruction, directoryExists) in cases {
+            let isValid: (String) -> Bool = { _ in directoryExists }
+            let liveVerdict = verdict {
+                try validateSlackThreadSettings(
+                    workDirectory: workDirectory,
+                    instruction: instruction,
+                    directoryIsValid: isValid
+                )
+            }
+            let requestVerdict = verdict {
+                try resolveSlackThreadRequest(
+                    outerURL: outerURL(for: validLink),
+                    workDirectory: workDirectory,
+                    instruction: instruction,
+                    directoryIsValid: isValid
+                )
+            }
+            XCTAssertEqual(liveVerdict, requestVerdict, "settings: \(workDirectory ?? "nil") / \(instruction)")
+        }
+
+        let settings = try validateSlackThreadSettings(
+            workDirectory: " /tmp/terminal-checkout-tests/ ",
+            instruction: "  review this thread  ",
+            directoryIsValid: { _ in true }
+        )
+        let request = try resolve(instruction: "  review this thread  ")
+        XCTAssertEqual(settings.workDirectory, "/tmp/terminal-checkout-tests")
+        XCTAssertEqual(settings.instruction, "review this thread")
+        XCTAssertEqual(request.command, "cd \(settings.workDirectory) && claude")
+        XCTAssertEqual(request.claudeInputs, ["\(validLink) \(settings.instruction)"])
+    }
+
     func testRejectsInvalidInstructionsAndInvalidDirectories() throws {
         let c0Instructions = (0...0x1F).compactMap { value in
             UnicodeScalar(UInt32(value)).map { "control\($0)byte" }

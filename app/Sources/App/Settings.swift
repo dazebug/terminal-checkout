@@ -61,6 +61,18 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "baseDirectory") }
     }
 
+    /// Slack thread settings stay on this Mac. The raw text is preserved so the Core validator
+    /// can give live feedback without a second normalization path.
+    static var slackThreadWorkDirectory: String {
+        get { rawString(forKey: "slackThreadWorkDirectory") }
+        set { UserDefaults.standard.set(newValue, forKey: "slackThreadWorkDirectory") }
+    }
+
+    static var slackThreadInstruction: String {
+        get { rawString(forKey: "slackThreadInstruction") }
+        set { UserDefaults.standard.set(newValue, forKey: "slackThreadInstruction") }
+    }
+
     /// Raw cmux placement values are app-owned machine-local strings. Their meaning, including
     /// defaults and invalid-value handling, belongs to Core's one `CmuxPlacementPreset.parse` seam;
     /// this layer only preserves what UserDefaults contains and gives non-string values a textual

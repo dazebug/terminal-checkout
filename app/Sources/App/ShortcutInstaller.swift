@@ -27,6 +27,11 @@ enum SlackThreadShortcutInstallerError: Error {
     case shortcutOpenFailed(Error)
 }
 
+protocol SlackThreadShortcutManaging {
+    func install() throws
+    func installationStatus() -> SlackThreadShortcutInstallationStatus
+}
+
 enum ShortcutsApplicationState: Equatable {
     case notRunning
     case launching
@@ -40,7 +45,7 @@ protocol ShortcutsApplication {
     func openShortcut(at path: String) throws
 }
 
-struct SlackThreadShortcutInstaller {
+struct SlackThreadShortcutInstaller: SlackThreadShortcutManaging {
     private static let shortcutsExecutable = "/usr/bin/shortcuts"
     private static let operationTimeout: TimeInterval = 30
     private static let applicationLaunchTimeout: TimeInterval = 10
