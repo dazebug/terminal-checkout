@@ -308,6 +308,83 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         )
     }
 
+    func testFoundPaneExecutionRoutesAll25ItemsInPlannedSurfaceOrder() throws {
+        let commands = (0..<25).map { "item-\($0)" }
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(
+                identityMode: .fixedName("work"),
+                arrangement: .panePerItem
+            ),
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var splitTargets: [String] = []
+        var splitResponseSurfaceIDs: [String] = []
+        var sentSurfaceIDs: [String] = []
+        var sentPayloads: [String] = []
+        let dependencies = makeDependencies(
+            rpc: { method, params in
+                switch method {
+                case cmuxWorkspaceListMethod:
+                    return [
+                        "workspaces": [[
+                            "id": "workspace-found",
+                            "index": 0,
+                            "has_custom_title": true,
+                            "custom_title": "work",
+                        ]]
+                    ]
+                case cmuxPaneListMethod:
+                    return ["panes": [["id": "pane-0", "index": 0]]]
+                case cmuxSurfaceListMethod:
+                    return [
+                        "surfaces": [[
+                            "id": "root-surface",
+                            "index_in_pane": 0,
+                            "pane_id": "pane-0",
+                        ]]
+                    ]
+                case cmuxSurfaceSplitMethod:
+                    splitTargets.append(params["surface_id"] as? String ?? "")
+                    let surfaceID = "split-\(splitResponseSurfaceIDs.count)"
+                    splitResponseSurfaceIDs.append(surfaceID)
+                    return ["surface_id": surfaceID]
+                case cmuxSurfaceSendTextMethod:
+                    sentSurfaceIDs.append(params["surface_id"] as? String ?? "")
+                    sentPayloads.append(params["text"] as? String ?? "")
+                    return ["queued": true]
+                default:
+                    return [:]
+                }
+            },
+            createWorkspace: { _ in
+                XCTFail("found workspace must not be created")
+                return [:]
+            }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        let expectedSurfaceIDs = [
+            "root-surface", "split-4", "split-3", "split-5", "split-2", "split-7",
+            "split-6", "split-1", "split-10", "split-9", "split-8", "split-12",
+            "split-11", "split-0", "split-16", "split-15", "split-14", "split-18",
+            "split-17", "split-13", "split-21", "split-20", "split-19", "split-23",
+            "split-22",
+        ]
+        XCTAssertEqual(splitTargets.count, 24)
+        XCTAssertEqual(splitResponseSurfaceIDs.count, 24)
+        XCTAssertEqual(sentSurfaceIDs, expectedSurfaceIDs)
+        XCTAssertEqual(sentPayloads, commands.map { $0 + claudeSubmitKey })
+        XCTAssertEqual(execution.path, .foundSplit)
+        XCTAssertEqual(try successfulHandles(from: execution.results).map(surfaceID), expectedSurfaceIDs)
+    }
+
     func testFoundPaneFailureUsesConservativeAllItemFailureWithoutRollback() throws {
         let plan = cmuxPlacementPlan(
             preset: CmuxPlacementPreset(

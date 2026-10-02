@@ -87,7 +87,7 @@ public struct CmuxPlacementPreset: Equatable {
 }
 
 public let cmuxLayoutLeafCommandByteLimit = 1023
-public let cmuxPanePlacementItemLimit = 8
+public let cmuxPanePlacementItemLimit = 25
 
 public enum CmuxPlacementCommandRoute: Equatable {
     case inlineLeaf
@@ -394,6 +394,8 @@ public func cmuxPlacementPlan(
     let operationID = batchOperationID.uuidString
     switch preset.arrangement {
     case .panePerItem:
+        // The batch limit is also 25 today, so this guard is unreachable; keep it if the batch
+        // limit grows before geometry is measured for larger pane counts.
         if itemCount > cmuxPanePlacementItemLimit {
             return CmuxPlacementPlan(
                 batchOperationID: batchOperationID,

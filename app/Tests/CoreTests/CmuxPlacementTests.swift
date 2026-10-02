@@ -107,33 +107,56 @@ final class CmuxPlacementTests: XCTestCase {
         XCTAssertEqual(pane.createIfMissing?.layout.itemRoutes, [.inlineLeaf, .guardedSurfaceSend, .guardedSurfaceSend])
     }
 
-    func testPanePlacementFallsBackToTabsAfterEightItems() {
+    func testPanePlacementKeepsNineItemsInPanesForBothIdentityModes() {
         let identities: [CmuxPlacementIdentityMode] = [.alwaysNew, .fixedName("work")]
-        for count in [9, 25] {
-            for identity in identities {
-                let plan = cmuxPlacementPlan(
-                    preset: CmuxPlacementPreset(identityMode: identity, arrangement: .panePerItem),
-                    commandByteCounts: Array(repeating: 10, count: count),
-                    batchOperationID: cmuxPlacementTestBatchID,
-                    itemOperationIDs: cmuxPlacementTestItemIDs(count: count)
-                )
+        for identity in identities {
+            let plan = cmuxPlacementPlan(
+                preset: CmuxPlacementPreset(identityMode: identity, arrangement: .panePerItem),
+                commandByteCounts: Array(repeating: 10, count: 9),
+                batchOperationID: cmuxPlacementTestBatchID,
+                itemOperationIDs: cmuxPlacementTestItemIDs(count: 9)
+            )
 
-                XCTAssertTrue(plan.didFallbackToTabs)
-                XCTAssertEqual(plan.itemCount, count)
-                XCTAssertEqual(plan.requestedArrangement, .panePerItem)
-                XCTAssertEqual(plan.effectiveArrangement, .tabPerItem)
-                guard case .tab(let tabs) = plan.route else {
-                    return XCTFail("expected a tab fallback route")
-                }
-                XCTAssertEqual(tabs.target, identity)
-                XCTAssertEqual(tabs.itemRoutes, Array(repeating: .guardedSurfaceSend, count: count))
-                if case .fixedName = identity {
-                    XCTAssertEqual(tabs.foundPaneIndex, 0)
-                } else {
-                    XCTAssertNil(tabs.foundPaneIndex)
-                }
+            XCTAssertFalse(plan.didFallbackToTabs)
+            XCTAssertEqual(plan.itemCount, 9)
+            XCTAssertEqual(plan.requestedArrangement, .panePerItem)
+            XCTAssertEqual(plan.effectiveArrangement, .panePerItem)
+            guard case .pane(let pane) = plan.route else {
+                return XCTFail("expected a pane placement route")
+            }
+            XCTAssertEqual(pane.target, identity)
+            XCTAssertEqual(pane.createIfMissing?.layout.leafItemOrder, Array(0..<9))
+            if case .fixedName = identity {
+                XCTAssertEqual(pane.found?.splitOperations.count, 8)
+                XCTAssertEqual(pane.found?.itemSurfaceOrder.count, 9)
+            } else {
+                XCTAssertNil(pane.found)
             }
         }
+    }
+
+    func testAlwaysNewPanePlacementKeeps25ItemsInBalancedLayout() {
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(identityMode: .alwaysNew, arrangement: .panePerItem),
+            commandByteCounts: Array(repeating: 10, count: 25),
+            batchOperationID: cmuxPlacementTestBatchID,
+            itemOperationIDs: cmuxPlacementTestItemIDs(count: 25)
+        )
+
+        XCTAssertFalse(plan.didFallbackToTabs)
+        guard case .pane(let pane) = plan.route,
+              let layout = pane.createIfMissing?.layout else {
+            return XCTFail("expected a balanced pane layout")
+        }
+        XCTAssertEqual(layout.leafItemOrder, Array(0..<25))
+        XCTAssertEqual(leafIndices(in: layout.tree), Array(0..<25))
+
+        guard case .branch(let direction, let first, let second) = layout.tree else {
+            return XCTFail("expected the root split")
+        }
+        XCTAssertEqual(direction, .horizontal)
+        XCTAssertEqual(leafIndices(in: first), Array(0..<13))
+        XCTAssertEqual(leafIndices(in: second), Array(13..<25))
     }
 
     func testFoundPanePlanUsesTheMeasuredBalancedSplitSequence() {
@@ -293,6 +316,15 @@ final class CmuxPlacementTests: XCTestCase {
             return []
         case .branch(let direction, let first, let second):
             return [direction] + branchDirections(in: first) + branchDirections(in: second)
+        }
+    }
+
+    private func leafIndices(in node: CmuxLayoutNode) -> [Int] {
+        switch node {
+        case .leaf(let itemIndex, _):
+            return [itemIndex]
+        case .branch(_, let first, let second):
+            return leafIndices(in: first) + leafIndices(in: second)
         }
     }
 }

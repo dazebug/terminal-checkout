@@ -1314,6 +1314,7 @@ final class HostProtocolTests: XCTestCase {
                 return CmuxGroupedExecution(
                     results: results,
                     path: .tabCreate,
+                    // Exercise HostServer's diagnostic branch independently of the current plan cap.
                     didFallbackToTabs: true
                 )
             },
@@ -1359,9 +1360,9 @@ final class HostProtocolTests: XCTestCase {
         )
         XCTAssertEqual(
             receivedPlan?.effectiveArrangement,
-            Optional(CmuxPlacementArrangement.tabPerItem)
+            Optional(CmuxPlacementArrangement.panePerItem)
         )
-        XCTAssertEqual(receivedPlan?.didFallbackToTabs, true)
+        XCTAssertEqual(receivedPlan?.didFallbackToTabs, false)
         let placement = "cmux grouped placement: tabCreate (pane fallback to tabs, N=9)"
         timelineLock.lock()
         let itemOneLines = linesByItem["item 1/9"] ?? []
