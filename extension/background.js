@@ -180,7 +180,7 @@ const CLAUDE_NOTE_REFUSALS = new Map([
   ['too-long', `The claude note is longer than ${MAX_CLAUDE_NOTE_BYTES} UTF-8 bytes.`],
 ]);
 const CLAUDE_NOTE_NOT_TAKEN_ERROR =
-  'This button takes no claude note — it does not start claude, or it has no room for another input.';
+  'This button takes no claude note — it does not start claude, or it holds more claude inputs than a button can store.';
 
 // The note a click carries, judged here and nowhere else in the worker: `{ note }` — `undefined` when
 // the message has no `note` key — or `{ error }`. A key that is present is judged whatever it holds, so

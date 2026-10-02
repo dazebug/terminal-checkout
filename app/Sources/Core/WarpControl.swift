@@ -603,7 +603,7 @@ func reclaimDeadWarpHelperSockets(
 ///
 /// A launch timeout is not a bound: "the instruction after `listen`" is not a time, and a suspended
 /// process can be anywhere. The helper's own caps do not close it
-/// either — the 180-second idle cap and the 900-second lifetime cap both start once it is *serving*,
+/// either — the `idleTimeout` and `maxLifetime` caps both start once it is *serving*,
 /// which is after the claim, so a helper suspended before the claim had no cap at all.
 ///
 /// So the helper is handed this at birth and refuses to claim past it. That is not a check on app

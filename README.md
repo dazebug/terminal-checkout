@@ -150,7 +150,7 @@ Read Issue (claude) schedules these shell-mode lines; Start Work on Issue and Tr
 
 ### claude input
 
-If a button's command runs `claude`, the options page lets you schedule up to 5 inputs for it — for example `!gh pr diff {number}` followed by `Summarize the risky parts`. The app supplies an eligible opening message at launch or types inputs into the running session:
+If a button's command runs `claude`, the options page lets you schedule up to 10 inputs for it — for example `!gh pr diff {number}` followed by `Summarize the risky parts`. The app supplies an eligible opening message at launch or types inputs into the running session:
 
 - **`!` inputs are typed into claude's shell mode**, so they run as real shell commands and their output stays in the session. Consecutive ones are merged into one line only when the safety checks pass and the line fits within 4 KiB.
 - **Exactly one plain-text input can become the opening message** when the command, shell and executable checks below pass; otherwise it is typed.
@@ -189,7 +189,7 @@ If a button's command runs `claude`, the options page lets you schedule up to 5 
 
 ### A note for claude
 
-A button whose command has the word `claude` in it and room for another input (five per click) gets a ▾ caret, on page headers and list batch buttons. It opens a one-line box with the inputs the button already sends listed above it. Your note is sent after them, so claude reads it with any fetched context already there; it belongs to that one click and is never saved, and on a list page every session in the batch gets it.
+A button whose command has the word `claude` in it gets a ▾ caret, on page headers and list batch buttons — even one that stores all 10 inputs, because your note takes a slot of its own. It opens a one-line box with the inputs the button already sends listed above it. Your note is sent after them, so claude reads it with any fetched context already there; it belongs to that one click and is never saved, and on a list page every session in the batch gets it.
 
 The note is one line of plain text, at most 4096 bytes of UTF-8. It may not start with `!`, `/`, `#` or another kind of space or invisible character, contain a `{…}` span, or hold line breaks, tabs or other control characters.
 

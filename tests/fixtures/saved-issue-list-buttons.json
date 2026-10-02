@@ -1,0 +1,18 @@
+{
+  "_source": "chrome.storage.sync issueListButtons of the user who reported the missing ▾ caret on the issue-list button, 2026-10-02",
+  "_note": "Real saved data. It records what a user actually has stored, so it must never be edited to make a test pass.",
+  "issueListButtons": [
+    {
+      "claudeInputs": [
+        "!gh issue view {number}",
+        "!gh issue view {number} --comments",
+        "!gh api repos/{owner}/{repo}/issues/{number}/timeline --jq '[.[]|select(.event==\"cross-referenced\")|.source.issue.number]'",
+        "/rename {repo} Issue#{number}",
+        "이 이슈는 여전히 존재하는 이슈인가요?"
+      ],
+      "command": "{cd} && claude --model opus",
+      "face": "📋",
+      "label": "이슈 분류"
+    }
+  ]
+}

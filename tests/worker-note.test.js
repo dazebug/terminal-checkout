@@ -14,8 +14,8 @@ vm.runInThisContext(readExtension('i18n.js'));
 vm.runInThisContext(readExtension('defaults.js'));
 const { catalogueBackend } = require('./chrome-messages.js');
 vm.runInThisContext('({ installMessageBackend })').installMessageBackend(catalogueBackend('en'));
-const { BUTTON_KINDS, buttonFingerprint, pageTargetOfUrl, buildListBatchMessage } =
-  vm.runInThisContext('({ BUTTON_KINDS, buttonFingerprint, pageTargetOfUrl, buildListBatchMessage })');
+const { BUTTON_KINDS, MAX_CLAUDE_INPUTS, buttonFingerprint, pageTargetOfUrl, buildListBatchMessage } =
+  vm.runInThisContext('({ BUTTON_KINDS, MAX_CLAUDE_INPUTS, buttonFingerprint, pageTargetOfUrl, buildListBatchMessage })');
 
 const cp = (...points) => String.fromCodePoint(...points);
 const DETAIL_ACTION = { pr: 'execute_command', issue: 'execute_issue_command', repo: 'execute_repo_command' };
@@ -100,6 +100,28 @@ test('a note joins as the last claude input, once, on every branch', async () =>
   }
 });
 
+test('a note on the saved issue-list button reaches the worker in its own slot', async () => {
+  const note = 'is this issue still open?';
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/saved-issue-list-buttons.json'), 'utf8'));
+  const issueListButton = fixture.issueListButtons[0];
+  const issueWorker = workerWith('issue-list', issueListButton);
+  const issueResponse = await issueWorker.dispatch(click('issue-list', issueListButton, { note }));
+  assert.equal(issueResponse?.success, true, JSON.stringify(issueResponse));
+  assert.deepEqual(issueWorker.native(), [expected('issue-list', issueListButton.command, [...issueListButton.claudeInputs, note])]);
+  assert.equal(issueWorker.native()[0].message.claude_inputs.length, 6);
+
+  const full = stored({
+    command: '{cd} && claude',
+    claudeInputs: Array.from({ length: MAX_CLAUDE_INPUTS }, (_, i) => `!echo ${i}`),
+  });
+  const boundaryWorker = workerWith('issue-list', full);
+  const boundaryResponse = await boundaryWorker.dispatch(click('issue-list', full, { note }));
+  assert.equal(boundaryResponse?.success, true, JSON.stringify(boundaryResponse));
+  const payload = boundaryWorker.native()[0].message.claude_inputs;
+  assert.equal(payload.length, MAX_CLAUDE_INPUTS + 1);
+  assert.equal(payload.at(-1), note);
+});
+
 test('the note sent is the worker\'s own verdict on it, after the stored inputs as a click sends them', async () => {
   const button = stored({ command: '{cd} && claude', claudeInputs: ['  !gh pr diff {number}  ', '', '   '] });
   const worker = workerWith('pr', button);
@@ -134,11 +156,10 @@ test('a refused note never reaches the native host, and is refused before anythi
   }
 });
 
-test('a note is refused by a button that takes none, judged on the button storage holds', async () => {
+test('a note is refused by a button whose command does not start claude', async () => {
   const notTaking = ['pr.checkout', 'pr.worktree', 'issue.open', 'repo.open', 'repo.updateMain']
     .map(id => [kindOf(id), stored(preset(id))]);
-  const full = stored({ command: '{cd} && claude', claudeInputs: ['!a', '!b', '!c', '!d', '!e'] });
-  for (const [kind, button] of [...notTaking, ['pr', full], ['pr-list', full]]) {
+  for (const [kind, button] of notTaking) {
     const worker = workerWith(kind, button);
     const response = await worker.dispatch(click(kind, button, { note: 'please' }));
     assert.deepEqual(response, { success: false, error: worker.get('CLAUDE_NOTE_NOT_TAKEN_ERROR') }, button.command);

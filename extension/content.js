@@ -618,8 +618,9 @@ function createCommandIconButton(buttonConfig, index, { action, kind, className 
 
 // --- Split buttons: one run per button, and the note a claude button can carry ---
 //
-// A header button or a list batch button is its body and, when it starts claude with room for one more
-// input (`buttonTakesClaudeNote`, defaults.js), a caret beside it that opens a one-line note for claude
+// A header button or a list batch button is its body and, when it starts claude with at most
+// `MAX_CLAUDE_INPUTS` stored inputs (`buttonTakesClaudeNote`, defaults.js), a caret beside it that
+// opens a one-line note for claude
 // — one split button, kept on one line. Every run goes through `runSplitButton`: the body's click, and
 // the popover's send button and Enter. The run is held by the button's identity (defaults.js), not by
 // the node that was pressed, so the same button drawn again while its request is in flight comes back

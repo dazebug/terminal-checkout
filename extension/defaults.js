@@ -318,7 +318,11 @@ const PR_BRANCH_LINK_SELECTOR =
 
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
-const MAX_CLAUDE_INPUTS = 5;
+// Maximum claude inputs stored on a button. A click-time note takes its own slot, so one session
+// request carries at most MAX_CLAUDE_INPUTS + 1 claude inputs. Do not raise this without rechecking
+// `maxLifetime` in app/Sources/WarpHelper/main.swift — it is reckoned for that many inputs, and a
+// Warp delivery that outlives it loses its remaining inputs.
+const MAX_CLAUDE_INPUTS = 10;
 const MAX_BATCH_ITEMS = 25;
 const LIST_BATCH_ACTION = 'execute_list_batch';
 const LIST_BATCH_RESULT_KEY_PROTOCOL = 1;
@@ -969,13 +973,13 @@ function commandStartsClaude(command) {
   return typeof command === 'string' && /\bclaude\b/.test(command);
 }
 
-// Whether a button can take a note: it starts claude, and one more input still fits under the cap.
-// The inputs are counted the way a click sends them (executionPayload), not the way they are stored.
+// Whether a button can take a note: it starts claude, and its normalized stored inputs fit the button cap.
+// The note takes a separate click-time slot. Count inputs through executionPayload, the same list a click sends.
 function buttonTakesClaudeNote(button) {
   if (!button || typeof button !== 'object') return false;
   if (button.claudeInputs !== undefined && !Array.isArray(button.claudeInputs)) return false;
   if (!commandStartsClaude(button.command)) return false;
-  return executionPayload(button).claudeInputs.length < MAX_CLAUDE_INPUTS;
+  return executionPayload(button).claudeInputs.length <= MAX_CLAUDE_INPUTS;
 }
 
 // UTF-8 bytes. The same budget the app gives the longest line it merges out of `!` inputs

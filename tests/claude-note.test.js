@@ -99,26 +99,28 @@ test('the options warning counts inputs the way a click sends them', () => {
   assert.doesNotMatch(body, /\.trim\(\)/, 'the warning trims inputs with trim()');
 });
 
-test('a button takes a note only when it starts claude and has room for one more input', () => {
-  const { buttonTakesClaudeNote, MAX_CLAUDE_INPUTS } = pick('buttonTakesClaudeNote, MAX_CLAUDE_INPUTS');
+test('a button takes a note only when its command starts claude', () => {
+  const { buttonTakesClaudeNote } = pick('buttonTakesClaudeNote');
   for (const preset of allPresets()) {
     assert.equal(buttonTakesClaudeNote(frozenButton(preset)), STARTS_CLAUDE[preset.id], preset.id);
   }
-  const inputs = count => Array.from({ length: count }, (_, i) => `!echo ${i}`);
-  const claude = '{cd} && claude';
-  assert.equal(buttonTakesClaudeNote(frozenButton({ command: claude, claudeInputs: inputs(MAX_CLAUDE_INPUTS - 1) })), true);
-  assert.equal(buttonTakesClaudeNote(frozenButton({ command: claude, claudeInputs: inputs(MAX_CLAUDE_INPUTS) })), false);
   assert.equal(buttonTakesClaudeNote(frozenButton({ command: '{cd}', claudeInputs: [] })), false);
 });
 
-test('the room left is counted over the inputs a click actually sends', () => {
-  // The count is the normalized one — what executionPayload hands the app — so a blank entry takes
-  // no room, while an input the extension keeps (a lone zero-width space) takes a slot even though
-  // the app would drop it later.
+test('only normalized saved inputs count against the button cap', () => {
+  // The note gets its own slot. Empty entries are removed by executionPayload, but U+200B is retained
+  // as a saved input even though the app may drop it later.
   const { buttonTakesClaudeNote, MAX_CLAUDE_INPUTS } = pick('buttonTakesClaudeNote, MAX_CLAUDE_INPUTS');
-  const four = Array.from({ length: MAX_CLAUDE_INPUTS - 1 }, (_, i) => `!echo ${i}`);
-  assert.equal(buttonTakesClaudeNote(frozenButton({ command: '{cd} && claude', claudeInputs: [...four, '   '] })), true);
-  assert.equal(buttonTakesClaudeNote(frozenButton({ command: '{cd} && claude', claudeInputs: [...four, cp(0x200B)] })), false);
+  const atCap = Array.from({ length: MAX_CLAUDE_INPUTS }, (_, i) => `!echo ${i}`);
+  assert.equal(buttonTakesClaudeNote(frozenButton({ command: '{cd} && claude', claudeInputs: [...atCap, '   '] })), true);
+  assert.equal(buttonTakesClaudeNote(frozenButton({ command: '{cd} && claude', claudeInputs: [...atCap, cp(0x200B)] })), false);
+});
+
+test('the saved issue-list button with five claude inputs takes a note', () => {
+  const { buttonTakesClaudeNote } = pick('buttonTakesClaudeNote');
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/saved-issue-list-buttons.json'), 'utf8'));
+  const issueListButton = fixture.issueListButtons[0];
+  assert.equal(buttonTakesClaudeNote(frozenButton(issueListButton)), true, 'the saved issue-list button gets a caret');
 });
 
 test('a button that is not a button takes no note', () => {
