@@ -536,6 +536,18 @@ test('adoptStoredButtons: claude inputs past the limit make the whole entry unus
   assert.equal(adoptStoredButtons([{ command: '{cd}', claudeInputs: claudeInputs.slice(0, MAX_CLAUDE_INPUTS) }]).skipped, 0);
 });
 
+test('adoptStoredButtons: the saved-input cap accepts ten and skips eleven', () => {
+  const button = count => ({
+    face: 'x', label: 'b', command: '{cd}',
+    claudeInputs: Array.from({ length: count }, (_, i) => `input ${i}`),
+  });
+  const accepted = adoptStoredButtons([button(10)]);
+  assert.equal(accepted.skipped, 0);
+  assert.equal(accepted.buttons.length, 1);
+  assert.equal(accepted.buttons[0].claudeInputs.length, 10);
+  assert.deepEqual(adoptStoredButtons([button(11)]), { buttons: [], skipped: 1 });
+});
+
 // --- What was clicked has to be what was shown ---
 // The page draws a button and sends only its index; the service worker then reads storage again and
 // runs whatever sits at that index *now*. Between those two reads the settings can have changed —

@@ -1142,8 +1142,8 @@ test('entries beyond the button limit are skipped and counted, never silently tr
 });
 
 test('claude inputs beyond the limit make the whole entry unusable rather than being trimmed', () => {
-  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
-  const claudeInputs = ['1', '2', '3', '4', '5', '6'];
+  const { adoptStoredSettings, MAX_CLAUDE_INPUTS } = vm.runInThisContext('({ adoptStoredSettings, MAX_CLAUDE_INPUTS })');
+  const claudeInputs = Array.from({ length: MAX_CLAUDE_INPUTS + 1 }, (_, i) => `${i}`);
   const adopted = adoptStoredSettings({ buttons: [{ face: 'x', label: 'b', command: '{cd}', claudeInputs }] });
   assert.equal(adopted.settings.buttons.length, 0);
   assert.equal(adopted.skippedByKey.buttons, 1);

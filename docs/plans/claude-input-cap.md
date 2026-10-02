@@ -4,7 +4,7 @@
 - 대상: terminal-checkout의 Chrome extension 및 macOS app
 - 시작 커밋: 4c3c722
 - 기준 트리: /Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/claude-input-cap-review (worktree-claude-input-cap-review · 4c3c722) · 작업 트리: /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work (claude-input-cap-work)
-- 현재: R0 · 마지막 승격 없음 · 리뷰 중 없음 · 게이트 그린 (node 320 · check-locales · swift 132)
+- 현재: R1 · 마지막 승격 6a90e36 · 리뷰 중 없음 · 게이트 그린 (node 323 · check-locales · swift 132)
 - 최근 검증자 판정: R0 처리 반영으로 시작하는 데 합의한다 · 원문 /private/tmp/claude-input-cap-loop/r1-assign.md
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 `파일:행`으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
@@ -80,12 +80,12 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | 저장 입력 상한 `MAX_CLAUDE_INPUTS`를 10으로 올리고, 저장 입력 수와 무관하게 Claude 버튼에 한 마디 자격을 준다 | 확장 정책·worker/content 계약 | (a) `buttonTakesClaudeNote`가 저장+한 마디 ≤ 5를 요구해 실제 5개 버튼에 캐럿이 없다 (b) 저장 상한 `MAX_CLAUDE_INPUTS` 5 — 편집기·reader·import가 6개 이상을 거부 (c) worker 거절 문구 `CLAUDE_NOTE_NOT_TAKEN_ERROR`가 “no room for another input”을 말한다 (d) `content.js` 분할 버튼 머리 주석이 “room for one more input”을 말한다 | extension/defaults.js, extension/options.js, extension/background.js, extension/content.js, tests/claude-note.test.js, tests/buttons.test.js, tests/worker-note.test.js | — | todo | R0 기준선: /opt/homebrew/bin/node --test --test-reporter=tap (cwd=/Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work) → exit 0, 320 passed; /opt/homebrew/bin/node /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/tools/check-locales.js → exit 0, all 5 live catalogues carry the same names and argument bindings as en. | |
+| 1 | 저장 입력 상한 `MAX_CLAUDE_INPUTS`를 10으로 올리고, 저장 입력 수와 무관하게 Claude 버튼에 한 마디 자격을 준다 | 확장 정책·worker/content 계약 | (a) `buttonTakesClaudeNote`가 저장+한 마디 ≤ 5를 요구해 실제 5개 버튼에 캐럿이 없다 (b) 저장 상한 `MAX_CLAUDE_INPUTS` 5 — 편집기·reader·import가 6개 이상을 거부 (c) worker 거절 문구 `CLAUDE_NOTE_NOT_TAKEN_ERROR`가 “no room for another input”을 말한다 (d) `content.js` 분할 버튼 머리 주석이 “room for one more input”을 말한다 | extension/defaults.js, extension/options.js, extension/background.js, extension/content.js, tests/claude-note.test.js, tests/buttons.test.js, tests/worker-note.test.js, tests/migration.test.js, tests/fixtures/saved-issue-list-buttons.json | — | cleared | red: `/opt/homebrew/bin/node --test --test-reporter=tap --test-name-pattern='issue-list button and both saved-input boundaries|saved issue-list button reaches the worker|saved-input cap accepts ten' tests/claude-note.test.js tests/worker-note.test.js tests/buttons.test.js` → exit 1, 세 새 테스트 실패. green: `/opt/homebrew/bin/node --test --test-reporter=tap` → exit 0, 323 passed; `/opt/homebrew/bin/node /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/tools/check-locales.js` → exit 0, all 5 live catalogues match. Toggle: `git -C /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work apply -R /Users/choongjaelee/Codes/terminal-checkout-claude-input-cap-work/.git/toggle.patch` 후 full node gate exit 1 (319 passed, 4 failed: 세 새 테스트와 `only normalized saved inputs count against the button cap`); patch 재적용 exit 0, full node gate exit 0, 323 passed. `git diff --check` exit 0. 재실행(드라이버): clone node --test exit 0 · 323, check-locales exit 0; 스크래치 사본에 옛 defaults.js → exit 1 · 4 fail, worker 실패 사유 'takes no claude note' | |
 | 2 | 사용자 문서·context 결정·issue-list 수동 확인을 새 정책에 맞춘다 | 제품 문서·체크리스트 | (a) README 네 언어의 “최대 5개” (b) README 네 언어의 “입력을 하나 더 넣을 여유(클릭당 다섯)” (c) `docs/context/claude-input-delivery.md`의 상한 문단과 결정 근거·기각 대안 (d) `docs/new-terminal-checklist.md`의 “다섯 입력 버튼에는 캐럿 없음”·“여유 없는 버튼” 항목 (e) 구버전 확장 잔여의 결정 기록 | README.md, README.ko.md, README.zh-Hant.md, README.ja.md, docs/context/index.md, docs/context/claude-input-delivery.md, docs/new-terminal-checklist.md | 1 | todo | | |
 | 3 | Warp helper 수명 가정을 입력 11개 기준으로 고친다 | 수명 예산 설명 | (a) `maxLifetime` 주석의 “5 inputs” 전제 | app/Sources/WarpHelper/main.swift | 1 | todo | 느린 화면 반사 대기는 12회×2초≈24초/입력이다 (ClaudeInjector.swift:399-403, 601-607). 마지막 성공 입력의 지우기·본문 반사·제출 후 확인 창까지 각 deadline으로 잡으면 24+2+2+3.6=31.6초/입력이고, 120+11×31.6=467.6초; 900/467.6≈1.92. 샘플링은 read 비용을 빼 deadline을 보전한다 (ClaudeInjector.swift:438-455, 648-663); startup 대기 기본값은 120초다 (ClaudeInjector.swift:970-973). 정상 세션 확인 비용과 하위 프로세스 비용은 별도 원장 잔여다 | |
 
 - 항목 하나는 승격 하나의 크기다. 항목 2와 3은 항목 1의 승인된 계약을 사용한다. 판정으로 범위를 넓혀야 하면 새 항목을 만들고 사용자 결정을 기다린다.
-- 예정된 `tests/claude-note.test.js` red는 실제 5개 issueListButtons 값에서 `buttonTakesClaudeNote`가 false인 현재 동작을 true 기대와 비교한다. 이 변경 전체를 기존 다섯 입력 클릭 제한으로 토글하면 같은 assertion이 재실패해야 한다. `tests/buttons.test.js`의 고정 10개 허용·11개 거부와 `tests/worker-note.test.js`의 진입점 payload 경계도 구 코드에서 실패해야 한다. 기존 코드에서 통과하는 source-audit/context-sources 테스트를 새 근거 없이 늘리지 않는다.
+- `tests/claude-note.test.js` red는 실제 5개 issueListButtons 값에서 `buttonTakesClaudeNote`가 false인 현재 동작을 true 기대와 비교했다. defaults.js 변경을 토글하면 이 assertion이 재실패했다. `tests/buttons.test.js`의 고정 10개 허용·11개 거부와 `tests/worker-note.test.js`의 진입점 payload 경계도 토글에서 실패했다. 기존 코드에서 통과하는 source-audit/context-sources 테스트를 새 근거 없이 늘리지 않았다.
 
 ## 결정 원장
 
@@ -98,20 +98,21 @@
 | D5 | 드라이버 | 열린 질문 4: 앱 Core에서도 11개 초과를 거부할지 | 기각 — 비목표. 개수는 편집 한계이고, 앱의 경계는 같은 uid(app/Sources/WarpHelper/main.swift 서두)이며 전달 시간은 Warp helper의 자체 수명 상한이 묶는다 | app/Sources/Core/Request.swift:84-95 · R0 | — |
 | D6 | 드라이버 | 열린 질문 5: 900초가 입력 11개에서도 충분한가 | 유지 — 120 + 11 × 31.6 ≈ 468초, 약 1.9배. 주석의 “5 inputs” 전제만 클릭당 최대(`MAX_CLAUDE_INPUTS + 1`)로 갱신 | app/Sources/WarpHelper/main.swift:49-52 · app/Sources/Core/ClaudeInjector.swift:399-403, 438-455, 529-555, 601-629 · R0 | 세션 확인 대기(입력 사이 최대 15초)를 매 입력 다 쓰면 120 + 11 × 46.6 ≈ 633초 — 900초 안이지만 두 배는 아니다 |
 | D7 | 드라이버 | 열린 질문 6: `settingsTooLarge` 문구가 “가장 긴 명령을 줄여라”만 말해, 입력이 원인일 때 안내가 좁다 | 범위 밖 — 기록만. 입력 10개는 한 키가 6,144B에 닿을 가능성을 키운다. 후속 이슈 여부는 종결 때 사용자에게 묻는다 | extension/_locales/en/messages.json:185-186 · extension/defaults.js:741 · 사용자 실제 issueListButtons 키 392B · R0 | 트리거: 입력이 대부분인 키가 6,144B를 넘는 저장 |
+| D8 | 드라이버 | 열린 질문: migration.test.js의 adoptStoredSettings 상한 테스트가 adoptStoredButtons 경계 테스트와 중복인가 | 유지 — 설정 단위 reader가 키별 건너뜀 수(skippedByKey)를 보고하는 계약을 고정해 고도가 다르다. 이번 수정은 상한이 바뀐 뒤에도 참이도록 MAX_CLAUDE_INPUTS + 1로 바꾼 것뿐이다 | tests/migration.test.js:1144-1149 · R1 | — |
 
 ## 전수 소탕 표
 
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 파일:행 |
 |:--|:--|:--|
-| MAX_CLAUDE_INPUTS 선언·저장 reader·payload 판정 | 구멍 (항목 1) | extension/defaults.js:321, 801-819, 892-897, 972-979, 1049-1063, 1235-1244 |
-| 옵션 편집기·import·저장 경고·구버전 reader | 구멍 (항목 1), 구버전 처분 잔여 (D4) | extension/options.js:376, 593-669, 1305-1314; extension/migrations.js:176, 189-192, 688-708; extension/defaults.js:801-819, 1235-1244 |
-| content script와 worker의 버튼 판정 및 batch payload | 구멍 (항목 1), batch 입력은 세션당 (D3) | extension/content.js:94-101, 775-795; extension/background.js:139-145, 334-339, 501-542; extension/defaults.js:557-565 |
+| MAX_CLAUDE_INPUTS 선언·저장 reader·payload 판정 | 구현 완료 (항목 1) | extension/defaults.js:321-323, 801-819, 892-897, 974-980, 1049-1063, 1237-1244 |
+| 옵션 편집기·import·저장 경고·구버전 reader | 구현 완료 (항목 1), 구버전 처분 잔여 (D4) | extension/options.js:376, 593-669, 1305-1314; extension/migrations.js:176, 189-192, 688-708; extension/defaults.js:801-819, 1237-1244 |
+| content script와 worker의 버튼 판정 및 batch payload | 구현 완료 (항목 1), batch 입력은 세션당 (D3) | extension/content.js:94-101, 775-795; extension/background.js:139-145, 182-183, 334-339, 501-542; extension/defaults.js:557-565 |
 | 앱 입력 개수·batch·프레임 예산 | 개수 상한은 비목표 (D5); batch는 세션당 (D3) | app/Sources/Core/Request.swift:27-29, 84-95, 97-140; app/Sources/Core/Framing.swift:6, 19-27; app/Sources/App/HostServer.swift:199-205, 403-415 |
 | Warp helper per-input 수명 가정과 per-request size budget | 구멍 (항목 3); oversized-settings 안내 범위 밖 잔여 (D7) | app/Sources/WarpHelper/main.swift:20-27, 49-52, 122-127; app/Sources/Core/ClaudeInjector.swift:399-403, 438-455, 970-1024; app/Sources/Core/WarpHelperProtocol.swift:67-72 |
 | 네 README의 저장 입력·한 마디 설명 | 구멍 (항목 2) | README.md:153, 192; README.ko.md:154, 193; README.zh-Hant.md:154, 193; README.ja.md:154, 193 |
-| context 및 수동 체크리스트 | 구멍 (항목 2) | docs/context/index.md; docs/context/claude-input-delivery.md:228-284; docs/new-terminal-checklist.md:147-185; CLAUDE.md:46 |
+| context 및 수동 체크리스트 | 구멍 (항목 2) | docs/context/index.md; docs/context/claude-input-delivery.md:228-284; docs/context/options-page-reordering.md:13 (상수 이름 유지); docs/new-terminal-checklist.md:147-185; CLAUDE.md:46 |
 | 로케일 카탈로그 5개 | 상한 숫자 없음; oversized-settings 안내 범위 밖 잔여 (D7) | extension/_locales/en/messages.json:185-198, 222-229; extension/_locales/ko/messages.json:185-198, 222-229; extension/_locales/zh_CN/messages.json:185-198, 222-229; extension/_locales/zh_TW/messages.json:185-198, 222-229; extension/_locales/ja/messages.json:185-198, 222-229; 모두 ext_error_skipConsequence와 ext_error_settingsTooLarge를 보유 |
-| predicate·reader·worker red 후보 | 구멍 (항목 1) | tests/claude-note.test.js:102-122, 286-308; tests/buttons.test.js:528-537; tests/worker-note.test.js:87-100, 137-148 |
+| predicate·reader·worker·import adapter 테스트 | 구현 완료 (항목 1) | tests/claude-note.test.js:102-137; tests/buttons.test.js:528-549; tests/worker-note.test.js:87-135, 169-178; tests/migration.test.js:1144-1149 |
 | source lint와 context 출처 검사 | 안전 | tests/source-audit.test.js:250-270은 typed source-read 계약, tests/context-sources.test.js:34-36은 context metadata의 PR 출처만 다룬다 |
 | test-design 지침 | 안전 | docs/context/testing.md:3, 120-134, 136-167 |
 | 과거 settings migration plan | 안전 · 역사 기록 유지 | docs/plans/settings-migration.md:412, 643, 659의 상한 5는 당시 결정 기록 |
@@ -127,6 +128,15 @@
 - 처리: R0-1 기각(D2) · R0-2 반영(D3, 목표) · R0-3 잔여(D4, 항목 2) · R0-4 기각(D5, 비목표) · R0-5 반영(D6, 항목 3) · R0-6 범위 밖(D7) · R0-7 반영
 - 실측: node --test --test-reporter=tap exit 0 · 320 · tools/check-locales.js exit 0 · swift test (드라이버, 기준 트리 4c3c722) exit 0 · XCTest 132
 - 판정: R0 처리 반영으로 시작하는 데 합의한다
+
+### R1
+
+#### 리뷰 1 — 증분 · 항목 1 커밋 · 드라이버 · 리뷰 13:38∼13:50 · 왕복 0 · 원문 /private/tmp/claude-input-cap-loop/r2-assign.md
+
+- 차단: 없음
+- 수정: 항목 1 (배정 13:20 · 완료 13:37), 커밋 전 다듬기 — 실제 저장값 fixture 한 곳, 중복 경계 assertion 제거
+- 실측: node --test exit 0 · 323 · check-locales exit 0 · 옛 defaults.js 토글 exit 1 · 4 fail
+- 판정: 막혔다. 우회 없음 — reader를 거친 버튼은 저장 수가 늘 상한 이하라 가드에 닿지 않고, 저장 입력 11개 버튼은 reader가 건너뛴다 → 항목 1 cleared
 
 ## 열린 질문
 
