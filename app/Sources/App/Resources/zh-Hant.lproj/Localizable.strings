@@ -119,7 +119,7 @@
 "app.slack.workDirectory.placeholder" = "工作資料夾絕對路徑（不支援空格）";
 "app.slack.instruction.placeholder" = "給 claude 的指示（選填）";
 "app.slack.instruction.help" = "指示只能有一行。留空時只會傳送連結。";
-"app.slack.keyboardShortcut.help" = "在捷徑 App 中開啟 Terminal Checkout Slack Thread 的詳細資訊，並新增鍵盤快速鍵。";
+"app.slack.keyboardShortcut.help" = "在捷徑 App 中開啟 Terminal Checkout Slack Thread 的詳細資訊，並新增鍵盤快速鍵。第一次執行時，捷徑會詢問是否允許將連結傳送給 Terminal Checkout，請按下「永遠允許」。";
 "app.slack.button.install" = "安裝";
 "app.slack.button.reinstall" = "重新安裝";
 "app.slack.status.installed" = "捷徑已安裝";

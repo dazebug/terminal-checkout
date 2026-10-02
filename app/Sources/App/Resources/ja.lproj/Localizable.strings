@@ -118,7 +118,7 @@
 "app.slack.workDirectory.placeholder" = "作業フォルダの絶対パス（空白は使用できません）";
 "app.slack.instruction.placeholder" = "claude への指示（省略可）";
 "app.slack.instruction.help" = "指示は 1 行で入力します。空欄ならリンクだけを送ります。";
-"app.slack.keyboardShortcut.help" = "ショートカット App で Terminal Checkout Slack Thread の詳細を開き、キーボードショートカットを追加してください。";
+"app.slack.keyboardShortcut.help" = "ショートカット App で Terminal Checkout Slack Thread の詳細を開き、キーボードショートカットを追加してください。初回の実行時にリンクを Terminal Checkout に送ってよいか確認されるので、「常に許可」をクリックしてください。";
 "app.slack.button.install" = "インストール";
 "app.slack.button.reinstall" = "再インストール";
 "app.slack.status.installed" = "ショートカットをインストール済み";

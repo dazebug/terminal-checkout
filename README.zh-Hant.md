@@ -230,7 +230,7 @@ git pull --ff-only
 1. 在 Terminal Checkout 設定視窗的 Slack 區段設定工作資料夾與指示，然後按下**安裝**。
 2. 在開啟的匯入視窗中選擇**加入捷徑**。
 3. 在捷徑 App 中開啟 **Terminal Checkout Slack Thread** 的詳細資訊，新增鍵盤快速鍵。
-4. 在 Slack 中選擇訊息的**複製連結**，再按下該快速鍵。Terminal Checkout 會在設定的資料夾啟動 claude，並傳入一個開場引數，先放連結，有設定指示時再接在後面。claude 必須能使用你的 Slack MCP 才能讀取討論串。
+4. 在 Slack 中選擇訊息的**複製連結**，再按下該快速鍵。第一次執行時，捷徑會詢問是否允許將連結傳送給 Terminal Checkout，請按下**永遠允許**。Terminal Checkout 會在設定的資料夾啟動 claude，並傳入一個開場引數，先放連結，有設定指示時再接在後面。claude 必須能使用你的 Slack MCP 才能讀取討論串。
 
 網頁和其他 App 也能開啟 `terminal-checkout://` URL；瀏覽器會在開啟外部 App 前先詢問。此 URL 只能選擇 claude 要讀取哪則 Slack 訊息。工作資料夾、指示和命令都來自 Terminal Checkout 設定。移除 Terminal Checkout 後，捷徑仍會留在捷徑 App 中；不再需要時請在該 App 刪除。
 

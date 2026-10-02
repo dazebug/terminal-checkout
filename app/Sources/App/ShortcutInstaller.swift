@@ -82,9 +82,18 @@ struct SlackThreadShortcutInstaller: SlackThreadShortcutManaging {
             throw SlackThreadShortcutInstallerError.createDirectory(error)
         }
 
-        let source = directory.appendingPathComponent("\(SlackThreadShortcutWorkflow.name).plist")
+        // The unsigned source must also end in `.shortcut`: `shortcuts sign` rejects a `.plist` input
+        // as "isn't in the correct format" (exit 1, measured). It lives in its own folder because
+        // the signed output must be exactly `<name>.shortcut` — Shortcuts imports it under that name.
+        let unsignedDirectory = directory.appendingPathComponent("unsigned", isDirectory: true)
+        let source = unsignedDirectory.appendingPathComponent("\(SlackThreadShortcutWorkflow.name).shortcut")
         let signed = directory.appendingPathComponent("\(SlackThreadShortcutWorkflow.name).shortcut")
         do {
+            try fileManager.createDirectory(
+                at: unsignedDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
             try SlackThreadShortcutWorkflow.makePropertyListData().write(to: source, options: .atomic)
         } catch {
             throw SlackThreadShortcutInstallerError.writeWorkflow(error)
@@ -108,6 +117,8 @@ struct SlackThreadShortcutInstaller: SlackThreadShortcutManaging {
             throw SlackThreadShortcutInstallerError.signProcess(error)
         }
         guard signResult.status == 0 else {
+            // The setup window shows only the exit status; the CLI's reason goes to the app log.
+            checkoutLog("shortcuts sign failed (exit \(signResult.status)): \(signResult.stderr)")
             throw SlackThreadShortcutInstallerError.signRejected(
                 status: signResult.status,
                 stderr: signResult.stderr

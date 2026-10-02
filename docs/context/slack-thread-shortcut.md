@@ -40,9 +40,11 @@ The app creates the workflow and signs it on the user's Mac with `people-who-kno
 Driver measurements on Darwin 27.0.0 constrain the workflow file and its opening order:
 
 - The URL Encode action encodes `?`, `=`, and `&`, while leaving `:` and `/` unchanged. Its input must be serialized as a `WFTextTokenString`; a plain output attachment imported as an empty text field and opened the app with an empty `url` value.
-- Shortcuts imports the shortcut under the source file's name without its extension. The output filename therefore carries the fixed ASCII shortcut name.
+- Shortcuts imports the shortcut under the opened file's name without its extension. The signed output filename therefore carries the fixed ASCII shortcut name.
 - Opening the signed file while the Shortcuts app is still launching created an extra blank shortcut. The app launches Shortcuts by bundle identifier first when needed, waits for `isFinishedLaunching`, and only then opens the file.
 - `shortcuts sign --mode people-who-know-me` succeeded and produced an archive beginning with the `AEA1` magic. The app checks this before opening the import flow.
+- `shortcuts sign` rejects an input file whose name does not end in `.shortcut` — the same workflow plist named `.plist` failed with "The file couldn't be opened because it isn't in the correct format." (exit 1). The app writes the unsigned source as `unsigned/<name>.shortcut` so the signed output can keep the exact `<name>.shortcut` that Shortcuts imports under.
+- The first run of the imported shortcut stops at a Shortcuts prompt asking whether it may send one text item to Terminal Checkout. The app cannot pre-approve it, and `shortcuts run` did not return while the prompt was unanswered, so only the Shortcuts UI can answer it. The README and the setup window tell the user to choose Always Allow.
 
 ## URL launch ordering is measured
 
