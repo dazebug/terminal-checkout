@@ -133,15 +133,6 @@ final class SlackThreadURLHandlingTests: XCTestCase {
         XCTAssertFalse(shouldShowSetupWindowAtLaunch(launchIsDefault: nil, hasBackgroundArgument: true))
     }
 
-    func testServerUnavailableFailureHasLocalizedMessagesInEveryLocale() {
-        for tag in supportedLocales {
-            AppLocalization.tagOverrideForTesting = tag
-            let message = slackThreadRequestErrorMessage(SlackThreadURLHandlerError.serverUnavailable)
-            XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): empty message")
-            XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved key")
-        }
-    }
-
     func testHostServerResolvesSettingsAndUsesItsInjectedTerminalExecutor() throws {
         let workDirectory = NSTemporaryDirectory()
         var settingsReadCount = 0

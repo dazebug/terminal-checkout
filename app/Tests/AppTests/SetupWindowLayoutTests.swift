@@ -190,6 +190,14 @@ final class SetupWindowLayoutTests: XCTestCase {
             controller.rootStack.visibleFrameOverride = roomyScreen
             SetupWindowTestSupport.settle(window)
 
+            let slackCard = try XCTUnwrap(
+                controller.rootStack.arrangedSubviews.first {
+                    $0.identifier?.rawValue == "card.slackThread"
+                },
+                "\(tag) is missing the Slack thread card"
+            )
+            XCTAssertGreaterThan(slackCard.frame.height, 0, "\(tag) hid the Slack thread card")
+
             let needed = controller.rootStack.fittingSize.height
             XCTAssertGreaterThan(needed, 0, "\(tag) measured nothing")
             XCTAssertGreaterThanOrEqual(
@@ -209,26 +217,6 @@ final class SetupWindowLayoutTests: XCTestCase {
             let title = localized("app.card.baseDir.title")
             XCTAssertFalse(title.hasPrefix("app."), "\(tag) drew a raw key")
             XCTAssertEqual(title, try loadCatalogue(tag)["app.card.baseDir.title"], "\(tag) drew another locale")
-        }
-    }
-
-    func testSlackThreadCardFitsInEveryLocale() throws {
-        for tag in Self.populatedLocales {
-            AppLocalization.tagOverrideForTesting = tag
-            let controller = makeController(.warp)
-            let window = try XCTUnwrap(controller.window)
-            controller.rootStack.visibleFrameOverride = roomyScreen
-
-            let snapshot = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-            let card = try XCTUnwrap(
-                controller.rootStack.arrangedSubviews.first {
-                    $0.identifier?.rawValue == "card.slackThread"
-                },
-                "\(tag) is missing the Slack thread card"
-            )
-            XCTAssertGreaterThan(card.frame.height, 0, "\(tag) hid the Slack thread card")
-            try assertFittedPlacement(controller, in: window, label: "slack-thread-\(tag)")
-            XCTAssertGreaterThan(snapshot.fittingSize.height, 0, "\(tag) did not measure the card")
         }
     }
 

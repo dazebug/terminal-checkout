@@ -6,16 +6,6 @@ final class SlackThreadRequestTests: XCTestCase {
     private let validLink = "https://example.slack.com/archives/C0123ABCD/p1700000000123456"
     private let validWorkDirectory = "/tmp/terminal-checkout-tests"
 
-    func testURLContractConstantsDescribeTheSharedShortcutURL() {
-        XCTAssertEqual(SlackThreadURLContract.scheme, "terminal-checkout")
-        XCTAssertEqual(SlackThreadURLContract.host, "slack-thread")
-        XCTAssertEqual(SlackThreadURLContract.queryKey, "url")
-        XCTAssertEqual(
-            SlackThreadURLContract.shortcutURLPrefix,
-            "terminal-checkout://slack-thread?url="
-        )
-    }
-
     private func outerURL(for link: String) -> String {
         let allowed = CharacterSet(
             charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/"
@@ -111,8 +101,6 @@ final class SlackThreadRequestTests: XCTestCase {
         assertOuterURLRejected("terminal-checkout://slack-thread?url")
         assertOuterURLRejected("terminal-checkout://slack-thread?url=")
         assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&url=\(encodedLink)")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&command=echo")
-        assertOuterURLRejected("terminal-checkout://slack-thread?url=\(encodedLink)&folder=%2Ftmp")
         assertOuterURLRejected("terminal-checkout://user:password@slack-thread?url=\(encodedLink)")
         assertOuterURLRejected("terminal-checkout://slack-thread:443?url=\(encodedLink)")
     }

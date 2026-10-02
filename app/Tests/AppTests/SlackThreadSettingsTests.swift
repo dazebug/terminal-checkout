@@ -77,7 +77,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         XCTAssertFalse(settingsBody.contains("normalizedBaseDirectory("))
     }
 
-    func testRequestAndInstallerFailuresHaveLocalizedMessagesInEveryLocale() {
+    func testEverySlackThreadFailureHasLocalizedMessagesInEveryLocale() {
         let underlying = CommandError.invalidBaseDirectory(.notAbsolute, "synthetic")
         let requestErrors: [SlackThreadRequestError] = [
             .invalidOuterURL,
@@ -118,6 +118,9 @@ final class SlackThreadSettingsTests: XCTestCase {
                 XCTAssertFalse(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): \(error)")
                 XCTAssertFalse(message.hasPrefix("app."), "\(tag): unresolved installer key")
             }
+            let unavailableMessage = slackThreadRequestErrorMessage(SlackThreadURLHandlerError.serverUnavailable)
+            XCTAssertFalse(unavailableMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "\(tag): server unavailable")
+            XCTAssertFalse(unavailableMessage.hasPrefix("app."), "\(tag): unresolved server unavailable key")
         }
     }
 
