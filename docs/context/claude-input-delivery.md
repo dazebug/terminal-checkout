@@ -24,7 +24,7 @@ An input starting with `!` is typed into the running TUI so that claude's own sh
 
 **Type:** decision
 **Status:** active
-**Evidence:** Claude Code 2.1.287 in cmux on 2026-10-02: a 424-character merged line doubled its leading `!` in 6 of 8 one-write attempts, while sending `!` first and the rest immediately produced 0 of 8; a 24-character input doubled in 0 of 20 one-write attempts. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent all four typed inputs (424, 45, 21 and 105 characters) in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived, `/rename` took effect, and no doubled `!!` or `no such file` error appeared.
+**Evidence:** Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02: a 424-character merged line doubled its leading `!` in 6 of 8 one-write attempts, while sending `!` first and the rest immediately produced 0 of 8; a 24-character input doubled in 0 of 20 one-write attempts. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent all four typed inputs (424, 45, 21 and 105 characters) in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived, `/rename` took effect, and no doubled `!!` or `no such file` error appeared.
 **Source:** `typeAndSubmit` in `app/Sources/Core/ClaudeInjector.swift`; `testLeadingBangIsSentSeparatelyFromTheLongInputBody` in `app/Tests/CoreTests/CoreTests.swift`; a live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane
 **Revisit when:** Claude Code changes shell-mode entry or how it handles a long typed chunk
 
@@ -105,7 +105,7 @@ Before each input, the app types a throwaway marker, watches it appear, clears t
 
 **Type:** decision
 **Status:** active
-**Evidence:** Claude Code 2.1.287 in cmux on 2026-10-02 showed only the last five composer lines in 38×20 and 76×20 panes: for the 424-character merged line the head fragment stayed at 0→0 while the tail rose 0→2. A 2,000-character paste appeared as `[Pasted text #N]` with the head rising 0→1 and the tail staying at 0→0, though the cause of folding was not isolated. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent four typed inputs in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived and `/rename` took effect.
+**Evidence:** Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02 showed only the last five composer lines in 38×20 and 76×20 panes: for the 424-character merged line the head fragment stayed at 0→0 while the tail rose 0→2. A 2,000-character paste appeared as `[Pasted text #N]` with the head rising 0→1 and the tail staying at 0→0, though the cause of folding was not isolated. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent four typed inputs in 9.4 seconds; the first marker was retried once during startup, the Korean note arrived and `/rename` took effect.
 **Source:** `claudeInputProbe`, `screenReflectsNewInput` and `inputBoxAfterSubmit` in `app/Sources/Core/ClaudeInjector.swift`; `testShortPaneTailReflectionSubmitsThe424CharacterMergedInputOnce` and `testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires` in `app/Tests/CoreTests/CoreTests.swift`; a live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane
 **Revisit when:** Claude Code changes its composer scrolling or pasted-text rendering
 
@@ -121,7 +121,7 @@ The reflection check accepts a newly visible increase in the final 24 non-whites
 
 **Type:** decision
 **Status:** active
-**Evidence:** measured in a pty with Claude Code 2.1.238: Ctrl+U cleared text but left the `!` shell-mode prefix, and one Backspace removed it. Measured in cmux with Claude Code 2.1.287 on 2026-10-02: one Ctrl+U removed one visual line; writes of 64 or 128 Ctrl+U bytes were each dropped whole in two trials, while bursts of at most eight were processed. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent 4 of 4 typed inputs in 9.4 seconds.
+**Evidence:** measured in a pty with Claude Code 2.1.238: Ctrl+U cleared text but left the `!` shell-mode prefix, and one Backspace removed it. Measured in cmux 0.64.25 with Claude Code 2.1.287 on 2026-10-02: one Ctrl+U removed one visual line; writes of 64 or 128 Ctrl+U bytes were each dropped whole in two trials, while bursts of at most eight were processed. A live delivery of the issue-list button's inputs to Claude in a 38×20 cmux pane sent 4 of 4 typed inputs in 9.4 seconds.
 **Source:** `claudeClearBatches`, `InputBoxOwnership` and `clearAbandonedInput` in `app/Sources/Core/ClaudeInjector.swift`; `testRetryClearsWrappedRemainderBeforeRetypingInputAgain`, `testAbandonedWrappedInputIsFullyClearedAfterRetriesExhausted` and `testRetryClears120KoreanCharactersByCellWidthBeforeSubmittingOnce` in `app/Tests/CoreTests/CoreTests.swift`; `testItem10CmuxClearInputIsTwoSendTextCallsCtrlUThenBackspace` in `app/Tests/CoreTests/CmuxTests.swift`
 **Revisit when:** Claude Code changes how Ctrl+U clears wrapped or collapsed input, or a terminal changes how it groups writes
 
@@ -142,7 +142,7 @@ The app estimates how many terminal cells its own writes may occupy since the in
 **Type:** incident
 **Type:** decision
 **Status:** active
-**Evidence:** cmux 0.64.22 and Claude Code 2.1.246: `surface.send_key` did not send Ctrl+U as Claude expected and a combined Ctrl+U plus Backspace write did not preserve their order. Claude Code 2.1.287 in cmux on 2026-10-02 processed Ctrl+U bursts of eight bytes per `surface.send_text` call.
+**Evidence:** cmux 0.64.22 and Claude Code 2.1.246: `surface.send_key` did not send Ctrl+U as Claude expected and a combined Ctrl+U plus Backspace write did not preserve their order. Claude Code 2.1.287 in cmux 0.64.25 on 2026-10-02 processed Ctrl+U bursts of eight bytes per `surface.send_text` call.
 **Source:** PR #60; `cmuxSendOperations` in `app/Sources/Core/ClaudeInjector.swift`; `testItem10CmuxClearInputIsTwoSendTextCallsCtrlUThenBackspace` in `app/Tests/CoreTests/CmuxTests.swift`
 **Revisit when:** cmux changes key encoding or the ordering of bytes and key events sent through `surface.send_text`
 
