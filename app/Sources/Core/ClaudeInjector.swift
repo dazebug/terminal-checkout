@@ -30,10 +30,11 @@ private let claudeProcessNames: Set<String> = ["claude", "node", "bun"]
 let claudeSubmitKey = "\r"
 let claudeClearCtrlUKey = "\u{15}"
 let claudeClearBackspaceKey = "\u{7F}"
-/// Eight-key writes were processed; 64- and 128-key writes were ignored in repeated measurements.
+/// Do not raise this without measuring: one write of 64 or 128 Ctrl+U was dropped whole, while
+/// writes of eight were processed (Claude Code 2.1.287 in cmux).
 let claudeClearCtrlUWriteLimit = 8
-/// The smallest clear sequence: Ctrl+U (0x15) followed by Backspace (0x7F). Actual clears send enough Ctrl+U keys for the text we may have typed, then this final Backspace. Keeping the pair here names and pins the order; each carrier preserves its required write boundaries.
-/// iTerm2 receives AppleScript rather than bytes, and its script encodes each clear batch from this same key string (`appleScriptCharacters(of:)`).
+/// The smallest clear: one Ctrl+U (0x15), then Backspace (0x7F). A longer clear
+/// (`claudeClearBatches`) keeps this order — every Ctrl+U first, the Backspace last.
 ///
 /// **Why the Backspace is there — measured (2.1.238, pty).** Ctrl+U does not leave claude's `!` shell mode: sending it on `!text` erases the text and **leaves the `!`**. On screen that looks like an empty input box and even passes the disappearance check, while the plain text typed afterwards was **submitted and executed as a shell command** (`command not found: tcq3hello`). One Backspace after the Ctrl+U removes that `!`, and the plain text after it is submitted as an ordinary message (same measurement). Sending several Backspaces to an already-empty box had no side effect.
 ///
@@ -113,10 +114,12 @@ private func terminalCellCountUpperBound(of text: String) -> Int {
     }
 }
 
+/// One Ctrl+U clears one visual line, so a clear sends one for every line our typed cells can
+/// occupy, plus two. An unknown width falls back to 20 columns: overcounting lines only sends
+/// Ctrl+U to an already-empty box, which changes nothing.
 private func claudeClearBatches(cellCountUpperBound: Int, terminalColumns: Int?) -> [String] {
     let columns = terminalColumns.flatMap { $0 > 0 ? $0 : nil } ?? 20
     let lineCapacity = max(columns - 4, 8)
-    // K = ceil(typed cells / max(columns - 4, 8)) + 2.
     let typedLines = cellCountUpperBound / lineCapacity + (cellCountUpperBound % lineCapacity == 0 ? 0 : 1)
     var remaining = max(typedLines + 2, 2)
     var batches: [String] = []
@@ -227,7 +230,11 @@ public func paneProofToken() -> String {
     return String((0..<3).map { _ in runes.randomElement()! })
 }
 
-/// The primary screen-reflection fragment is the input's last 24 non-whitespace characters. Claude Code 2.1.287 showed only the last 5 composer lines in 38×20 and 76×20 panes (head24 0→0, tail24 0→2); in a 2,000-character folded paste it showed the head24 (0→1) but not the tail24 (0→0). Check the tail during the 2-second reflection window and accept the head only when that window expires without a tail reflection.
+/// The primary reflection fragment: the input's last 24 non-whitespace characters. In a short
+/// pane claude's composer scrolls the head of a long input off screen (#95), so the tail is what
+/// stays visible; the head (`claudeInputHeadProbe`) counts only once the reflection window ends
+/// without the tail, for a long paste folded into `[Pasted text #N]`. The measurements are in
+/// `docs/context/claude-input-delivery.md`.
 public func claudeInputProbe(_ input: String) -> String {
     String(input.filter { !$0.isWhitespace }.suffix(24))
 }
@@ -520,7 +527,9 @@ private func typeAndSubmit(
         // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice**. With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
         let typingSucceeded: Bool
         if text.hasPrefix("!") {
-            // A long one-shot `!` write can leave the mode prefix in the input too; send it alone before the body.
+            // Send a leading `!` in its own write: a long line written at once can switch claude to
+            // shell mode and still keep the `!` as text, so the shell runs `!/bin/echo …`
+            // (Claude Code 2.1.287).
             let remainder = String(text.dropFirst())
             let sentBang = send("!", io: io)
             typingSucceeded = sentBang && (remainder.isEmpty || send(remainder, io: io))

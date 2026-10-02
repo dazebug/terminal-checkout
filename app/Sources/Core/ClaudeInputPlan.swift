@@ -290,7 +290,7 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
 /// (`claudeInputProbe`) handle partial composer views) but because the Warp helper refuses an
 /// injection payload over 8 KiB. Merging is the optimisation, so it is what gives way: past the cap
 /// the run is typed input by input. **Nothing is ever truncated** — truncating would silently
-/// change a command the user wrote, which would silently change the command.
+/// change a command the user wrote.
 public func claudeTypedInputs(_ inputs: [String]) -> [String] {
     var typed: [String] = []
     var run: [String] = []

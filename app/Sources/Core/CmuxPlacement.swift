@@ -328,10 +328,12 @@ private func makeBalancedLayoutPlan(
 }
 
 /// Builds the target-addressed split sequence for an already-existing fixed-name workspace.
-/// The existing root surface is depth-first leaf zero and stays unassigned; N items are balanced
-/// across N+1 leaves. Splits start at depth 1 because the root pane is already half-width; the
-/// original branch receives ceil(n/2) leaves and the response receives floor(n/2) leaves.
-/// Response indices stand for the surface IDs returned by cmux.
+/// Never give the existing root surface an item: a reused workspace's first surface can still run
+/// an earlier batch's claude, and the send gate cannot tell that from a shell prompt. The root is
+/// depth-first leaf zero and stays unassigned; N items are balanced across N+1 leaves. Splits
+/// start at depth 1 because the root pane is already half-width; the original branch receives
+/// ceil(n/2) leaves and the response receives floor(n/2) leaves. Response indices stand for the
+/// surface IDs returned by cmux.
 public func cmuxFoundWorkspacePanePlan(itemCount: Int) -> CmuxFoundWorkspacePanePlan {
     precondition(itemCount > 0)
     precondition(itemCount <= cmuxPanePlacementItemLimit)
@@ -397,8 +399,8 @@ public func cmuxPlacementPlan(
     let operationID = batchOperationID.uuidString
     switch preset.arrangement {
     case .panePerItem:
-        // The batch limit is also 25 today, so this guard is unreachable; keep it if the batch
-        // limit grows before geometry is measured for larger pane counts.
+        // Do not remove this guard: it is unreachable while the batch limit is also 25, but if
+        // that limit grows it sends a pane count whose geometry was never measured to tabs.
         if itemCount > cmuxPanePlacementItemLimit {
             return CmuxPlacementPlan(
                 batchOperationID: batchOperationID,
