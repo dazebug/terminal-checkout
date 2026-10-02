@@ -225,6 +225,15 @@ Enter나 보내기 버튼으로 보냅니다. 버튼에는 ⏳가 뜬 다음 ✅
 
 </details>
 
+### Slack 스레드를 claude로 열기
+
+1. Terminal Checkout 설정 창의 Slack 절에서 작업 폴더와 지시문을 정하고 **설치하기**를 누릅니다.
+2. 열린 가져오기 창에서 **단축어 추가**를 누릅니다.
+3. 단축어 앱에서 **Terminal Checkout Slack Thread**의 세부사항을 열고 키보드 단축키를 추가합니다.
+4. Slack에서 메시지의 **링크 복사**를 선택한 뒤 그 단축키를 누릅니다. Terminal Checkout은 설정한 폴더에서 claude를 시작하고, 링크를 먼저 넣고 지시문이 있으면 뒤에 붙인 단일 시작 인자를 전달합니다. claude가 스레드를 읽으려면 Slack MCP를 사용할 수 있어야 합니다.
+
+`terminal-checkout://` URL은 웹페이지나 다른 앱도 열 수 있습니다. 브라우저는 외부 앱을 열기 전에 확인을 묻습니다. 이 URL이 고르는 것은 claude가 읽을 Slack 메시지뿐이며 작업 폴더·지시문·명령은 Terminal Checkout 설정에서 옵니다. Terminal Checkout을 제거해도 단축어는 단축어 앱에 남으므로 더는 필요하지 않다면 그곳에서 삭제하세요.
+
 ## 설정
 
 설치, 터미널, 권한, 저장소 기본 폴더는 앱의 설정 창에서 다룹니다. 버튼, 명령, main 브랜치는 확장 프로그램 옵션 페이지에서 다루며, 설정 창의 [확장 옵션 페이지 열기]나 `chrome://extensions` → Terminal Checkout → 확장 프로그램 옵션으로 열 수 있습니다.
