@@ -126,7 +126,7 @@
 "app.slack.workDirectory.placeholder" = "Absolute work folder (spaces are not supported)";
 "app.slack.instruction.placeholder" = "Instruction for claude (optional)";
 "app.slack.instruction.help" = "One line only. Leave it empty to send just the link.";
-"app.slack.keyboardShortcut.help" = "In Shortcuts, open the details for Terminal Checkout Slack Thread and add a keyboard shortcut.";
+"app.slack.keyboardShortcut.help" = "In Shortcuts, open the details for Terminal Checkout Slack Thread and add a keyboard shortcut. The first time it runs, Shortcuts asks whether it may send the link to Terminal Checkout; click Always Allow.";
 "app.slack.button.install" = "Install";
 "app.slack.button.reinstall" = "Reinstall";
 "app.slack.status.installed" = "Shortcut installed";

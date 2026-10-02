@@ -75,8 +75,13 @@ final class ShortcutInstallerTests: XCTestCase {
         try installer.install()
 
         let call = try XCTUnwrap(observed)
-        let sourcePath = temporaryDirectory.appendingPathComponent("\(SlackThreadShortcutWorkflow.name).plist").path
+        // `shortcuts sign` rejects an input whose name does not end in `.shortcut` (measured:
+        // "isn't in the correct format", exit 1, for the same plist named `.plist`).
+        let sourcePath = temporaryDirectory
+            .appendingPathComponent("unsigned", isDirectory: true)
+            .appendingPathComponent("\(SlackThreadShortcutWorkflow.name).shortcut").path
         let signedPath = temporaryDirectory.appendingPathComponent("\(SlackThreadShortcutWorkflow.name).shortcut").path
+        XCTAssertEqual((sourcePath as NSString).pathExtension, "shortcut")
         XCTAssertEqual(call.0, "/usr/bin/shortcuts")
         XCTAssertEqual(
             call.1,

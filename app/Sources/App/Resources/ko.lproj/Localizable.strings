@@ -118,7 +118,7 @@
 "app.slack.workDirectory.placeholder" = "작업 폴더 절대 경로 (공백은 지원하지 않음)";
 "app.slack.instruction.placeholder" = "claude 지시문 (선택 사항)";
 "app.slack.instruction.help" = "지시문은 한 줄로 입력하세요. 비워 두면 링크만 보냅니다.";
-"app.slack.keyboardShortcut.help" = "단축어 앱에서 Terminal Checkout Slack Thread의 세부사항을 열고 키보드 단축키를 추가하세요.";
+"app.slack.keyboardShortcut.help" = "단축어 앱에서 Terminal Checkout Slack Thread의 세부사항을 열고 키보드 단축키를 추가하세요. 처음 실행하면 링크를 Terminal Checkout에 보내도 되는지 묻습니다. [항상 허용]을 누르세요.";
 "app.slack.button.install" = "설치하기";
 "app.slack.button.reinstall" = "다시 설치";
 "app.slack.status.installed" = "단축어 설치됨";

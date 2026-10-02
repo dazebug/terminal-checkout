@@ -118,7 +118,7 @@
 "app.slack.workDirectory.placeholder" = "工作文件夹绝对路径（不支持空格）";
 "app.slack.instruction.placeholder" = "给 claude 的指示（可选）";
 "app.slack.instruction.help" = "指示只能是一行。留空时只发送链接。";
-"app.slack.keyboardShortcut.help" = "在快捷指令 App 中打开 Terminal Checkout Slack Thread 的详细信息并添加键盘快捷键。";
+"app.slack.keyboardShortcut.help" = "在快捷指令 App 中打开 Terminal Checkout Slack Thread 的详细信息并添加键盘快捷键。首次运行时，快捷指令会询问是否允许将链接发送给 Terminal Checkout，请点按“始终允许”。";
 "app.slack.button.install" = "安装";
 "app.slack.button.reinstall" = "重新安装";
 "app.slack.status.installed" = "快捷指令已安装";
