@@ -138,6 +138,7 @@
 "app.slack.error.invalidInstruction" = "指示必须为单行，且不能包含控制字符。";
 "app.slack.error.appendedPromptUnavailable" = "无法安全地将 Slack 链接作为参数传给 claude。";
 "app.slack.error.unexpectedRequest" = "无法验证 Slack 设置。";
+"app.slack.error.serverUnavailable" = "请求服务器不可用，无法处理 Slack 链接。";
 "app.slack.error.createDirectory" = "无法准备快捷指令文件夹。";
 "app.slack.error.writeWorkflow" = "无法创建快捷指令定义。";
 "app.slack.error.signProcess" = "无法运行快捷指令签名命令。";

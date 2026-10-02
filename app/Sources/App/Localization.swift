@@ -203,38 +203,47 @@ func localized(_ key: StaticString, _ arguments: CVarArg...) -> String {
     String(format: AppLocalization.string(key.description), arguments: arguments)
 }
 
-func slackThreadRequestErrorMessage(_ error: SlackThreadRequestError) -> String {
-    switch error {
-    case .invalidOuterURL:
-        return localized("app.slack.error.invalidOuterURL")
-    case .invalidSlackLink:
-        return localized("app.slack.error.invalidSlackLink")
-    case .slackLinkTooLong:
-        return localized("app.slack.error.slackLinkTooLong")
-    case .workDirectoryNotConfigured:
-        return localized("app.slack.error.workDirectoryNotConfigured")
-    case .invalidWorkDirectory(let underlying):
-        guard let commandError = underlying as? CommandError else {
-            return localized("app.slack.error.workDirectoryInvalid")
-        }
-        switch commandError {
-        case .invalidBaseDirectory(let problem, _):
-            switch problem {
-            case .notAbsolute:
-                return localized("app.slack.error.workDirectoryNotAbsolute")
-            case .invalidCharacters:
-                return localized("app.slack.error.workDirectoryInvalidCharacters")
+func slackThreadRequestErrorMessage(_ failure: Error) -> String {
+    if let error = failure as? SlackThreadRequestError {
+        switch error {
+        case .invalidOuterURL:
+            return localized("app.slack.error.invalidOuterURL")
+        case .invalidSlackLink:
+            return localized("app.slack.error.invalidSlackLink")
+        case .slackLinkTooLong:
+            return localized("app.slack.error.slackLinkTooLong")
+        case .workDirectoryNotConfigured:
+            return localized("app.slack.error.workDirectoryNotConfigured")
+        case .invalidWorkDirectory(let underlying):
+            guard let commandError = underlying as? CommandError else {
+                return localized("app.slack.error.workDirectoryInvalid")
             }
-        case .invalidCharacters, .unknownVariable, .variableNotProvided, .badRequest:
-            return localized("app.slack.error.workDirectoryInvalid")
+            switch commandError {
+            case .invalidBaseDirectory(let problem, _):
+                switch problem {
+                case .notAbsolute:
+                    return localized("app.slack.error.workDirectoryNotAbsolute")
+                case .invalidCharacters:
+                    return localized("app.slack.error.workDirectoryInvalidCharacters")
+                }
+            case .invalidCharacters, .unknownVariable, .variableNotProvided, .badRequest:
+                return localized("app.slack.error.workDirectoryInvalid")
+            }
+        case .workDirectoryUnavailable:
+            return localized("app.slack.error.workDirectoryUnavailable")
+        case .invalidInstruction:
+            return localized("app.slack.error.invalidInstruction")
+        case .appendedPromptUnavailable:
+            return localized("app.slack.error.appendedPromptUnavailable")
         }
-    case .workDirectoryUnavailable:
-        return localized("app.slack.error.workDirectoryUnavailable")
-    case .invalidInstruction:
-        return localized("app.slack.error.invalidInstruction")
-    case .appendedPromptUnavailable:
-        return localized("app.slack.error.appendedPromptUnavailable")
     }
+    if let error = failure as? SlackThreadURLHandlerError {
+        switch error {
+        case .serverUnavailable:
+            return localized("app.slack.error.serverUnavailable")
+        }
+    }
+    return localizedErrorMessage(failure)
 }
 
 func slackThreadShortcutInstallerErrorMessage(_ error: Error) -> String {

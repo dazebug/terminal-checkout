@@ -5,6 +5,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: HostServer?
     private var setupWindow: SetupWindowController?
     private var languageObserver: NSObjectProtocol?
+    private lazy var slackThreadURLCoordinator = SlackThreadURLCoordinator(
+        execute: { [weak self] url, completion in
+            guard let self else { return }
+            guard let server = self.server else {
+                completion(.failure(SlackThreadURLHandlerError.serverUnavailable))
+                return
+            }
+            server.enqueueSlackThreadURL(url, completion: completion)
+        },
+        presentFailure: { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.showSetupWindow()
+                self.setupWindow?.presentSlackThreadRequestFailure(error)
+            }
+        },
+        clearFailure: { [weak self] in
+            DispatchQueue.main.async {
+                self?.setupWindow?.clearSlackThreadRequestFailure()
+            }
+        },
+        log: checkoutLog
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Takes the user somewhere that explains a rejection. The extension shows a failure as a
@@ -25,10 +48,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.setupMainMenu() }
-        // Launched in the background by the relay (`--background`): no window
-        if !CommandLine.arguments.contains("--background") {
+        slackThreadURLCoordinator.finishInitialization()
+        let launchIsDefault = (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber)?.boolValue
+        if shouldShowSetupWindowAtLaunch(
+            launchIsDefault: launchIsDefault,
+            hasBackgroundArgument: CommandLine.arguments.contains("--background")
+        ) {
             showSetupWindow()
         }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        slackThreadURLCoordinator.receive(urls)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -120,5 +151,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow?.showWindow(nil)
         setupWindow?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// The app's launch-origin policy, kept pure so URL and relay launches cannot open the setup window
+/// just because both start the same process.
+func shouldShowSetupWindowAtLaunch(launchIsDefault: Bool?, hasBackgroundArgument: Bool) -> Bool {
+    (launchIsDefault ?? true) && !hasBackgroundArgument
+}
+
+enum SlackThreadURLHandlerError: Error {
+    case serverUnavailable
+}
+
+/// Buffers URL events delivered before app initialization and forwards each accepted event once in
+/// arrival order after the host server and app settings are ready.
+final class SlackThreadURLCoordinator {
+    typealias Completion = (Result<Void, Error>) -> Void
+    typealias Executor = (URL, @escaping Completion) -> Void
+
+    private let execute: Executor
+    private let presentFailure: (Error) -> Void
+    private let clearFailure: () -> Void
+    private let log: (String) -> Void
+    private var initializationFinished = false
+    private var pending: [URL] = []
+
+    init(
+        execute: @escaping Executor,
+        presentFailure: @escaping (Error) -> Void,
+        clearFailure: @escaping () -> Void,
+        log: @escaping (String) -> Void
+    ) {
+        self.execute = execute
+        self.presentFailure = presentFailure
+        self.clearFailure = clearFailure
+        self.log = log
+    }
+
+    func receive(_ urls: [URL]) {
+        for url in urls {
+            guard let scheme = url.scheme,
+                  scheme.caseInsensitiveCompare(SlackThreadURLContract.scheme) == .orderedSame else {
+                log("ignored URL with unsupported scheme: \(url.scheme ?? "(none)")")
+                continue
+            }
+            if initializationFinished {
+                submit(url)
+            } else {
+                pending.append(url)
+            }
+        }
+    }
+
+    func finishInitialization() {
+        guard !initializationFinished else { return }
+        initializationFinished = true
+        let queued = pending
+        pending.removeAll()
+        queued.forEach(submit)
+    }
+
+    private func submit(_ url: URL) {
+        execute(url) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.clearFailure()
+            case .failure(let error):
+                self.log("Slack thread URL request failed — \(errorMessage(error))")
+                self.presentFailure(error)
+            }
+        }
     }
 }

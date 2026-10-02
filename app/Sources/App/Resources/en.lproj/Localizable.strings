@@ -146,6 +146,7 @@
 "app.slack.error.invalidInstruction" = "The instruction must be one line and contain no control characters.";
 "app.slack.error.appendedPromptUnavailable" = "This command cannot safely pass the Slack link to claude as an argument.";
 "app.slack.error.unexpectedRequest" = "The Slack settings could not be validated.";
+"app.slack.error.serverUnavailable" = "The app could not accept the Slack link because its request server is unavailable.";
 "app.slack.error.createDirectory" = "The app could not prepare its shortcut files.";
 "app.slack.error.writeWorkflow" = "The app could not create the shortcut definition.";
 "app.slack.error.signProcess" = "The shortcut signing command could not run.";

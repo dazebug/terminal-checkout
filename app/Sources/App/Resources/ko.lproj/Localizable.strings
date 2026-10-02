@@ -138,6 +138,7 @@
 "app.slack.error.invalidInstruction" = "지시문은 한 줄이어야 하며 제어 문자를 포함할 수 없습니다.";
 "app.slack.error.appendedPromptUnavailable" = "Slack 링크를 claude 인수로 안전하게 전달할 수 없습니다.";
 "app.slack.error.unexpectedRequest" = "Slack 설정을 검증할 수 없습니다.";
+"app.slack.error.serverUnavailable" = "요청 서버를 사용할 수 없어 Slack 링크를 처리할 수 없습니다.";
 "app.slack.error.createDirectory" = "단축어 파일을 저장할 폴더를 준비할 수 없습니다.";
 "app.slack.error.writeWorkflow" = "단축어 정의 파일을 만들 수 없습니다.";
 "app.slack.error.signProcess" = "단축어 서명 명령을 실행할 수 없습니다.";

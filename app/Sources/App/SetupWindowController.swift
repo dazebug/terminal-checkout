@@ -278,7 +278,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     private var slackShortcutInstallInProgress = false
     private var slackShortcutAddConfirmationPending = false
     private var lastSlackShortcutFailure: Error?
-    private var lastSlackRequestFailure: SlackThreadRequestError?
+    private var lastSlackRequestFailure: Error?
     /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
     /// was one member silently missing out.
     /// The three stacks that are **filled** rather than created — a rebuild appends to them unless
@@ -1813,7 +1813,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     /// Presents a failure delivered by the URL handler; URL launches have no response channel.
-    func presentSlackThreadRequestFailure(_ error: SlackThreadRequestError) {
+    func presentSlackThreadRequestFailure(_ error: Error) {
         let present = { [weak self] in
             self?.lastSlackRequestFailure = error
             self?.updateSlackThreadSettingsCard()

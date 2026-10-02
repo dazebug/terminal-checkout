@@ -53,6 +53,9 @@ final class HostServer {
     private let log: (String) -> Void
     private let now: () -> Date
     private let monotonicNow: () -> TimeInterval
+    private let slackThreadSettings: () -> (workDirectory: String?, instruction: String)
+    private let loginShellPathProvider: () -> String
+    private let claudeExecutableProvider: () -> Bool
     /// Test-only pause before serial admission; production leaves it nil.
     private let beforeExecQueueAdmission: (() -> Void)?
 
@@ -81,7 +84,12 @@ final class HostServer {
         log: @escaping (String) -> Void = checkoutLog,
         now: @escaping () -> Date = Date.init,
         monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        beforeExecQueueAdmission: (() -> Void)? = nil
+        beforeExecQueueAdmission: (() -> Void)? = nil,
+        slackThreadSettings: @escaping () -> (workDirectory: String?, instruction: String) = {
+            (Settings.slackThreadWorkDirectory, Settings.slackThreadInstruction)
+        },
+        loginShellPathProvider: @escaping () -> String = Core.loginShellPath,
+        claudeExecutableProvider: @escaping () -> Bool = { Settings.claudeIsExecutable }
     ) {
         self.socketPath = socketPath
         self.runInTerminalFactory = runInTerminal
@@ -91,6 +99,9 @@ final class HostServer {
         self.now = now
         self.monotonicNow = monotonicNow
         self.beforeExecQueueAdmission = beforeExecQueueAdmission
+        self.slackThreadSettings = slackThreadSettings
+        self.loginShellPathProvider = loginShellPathProvider
+        self.claudeExecutableProvider = claudeExecutableProvider
     }
 
     /// Binds the socket, records the file identity, and then arms the accept loop. Every request is
@@ -247,7 +258,9 @@ final class HostServer {
                     // exactly one plain-text input rides in argv, everything else is typed (a run of
                     // consecutive `!` merges into one line only when the safety gate allows it)
                     let prepared = prepareRequest(
-                        resolved, claudeIsExecutable: Settings.claudeIsExecutable
+                        resolved,
+                        loginShell: self.loginShellPathProvider(),
+                        claudeIsExecutable: self.claudeExecutableProvider()
                     )
                     let route = prepared.claudeInputs.isEmpty
                         ? (resolved.claudeInputs.isEmpty ? "no claude input" : "merged into argv")
@@ -264,41 +277,13 @@ final class HostServer {
                                 + " and each tab watched"
                         )
                     }
-                    // **The slot is reserved before anything can launch a helper**, not when the
-                    // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
-                    // below runs asynchronously, so a registration taken there is late by that whole
-                    // interval — a restart could otherwise be admitted through it.
-                    // Refused means the app is already leaving, and the request fails rather than
-                    // opening a tab whose input would be dropped. The slot is then handed to the
-                    // launch, which writes the helper's address into it before creating anything —
-                    // this side no longer records after the fact, because there is no moment at
-                    // which it could know that the launch has not already passed.
-                    var admission: ClaudeDelivery.Admission?
-                    if !prepared.claudeInputs.isEmpty {
-                        guard let token = ClaudeDelivery.admit() else { throw TerminalError.goingAway }
-                        admission = token
-                    }
-                    // Every path out of here that is not a started delivery has to give the slot
-                    // back, including the throwing ones
-                    var deliveryStarted = false
-                    defer { if let admission, !deliveryStarted { admission.end() } }
-                    let handle = try self.runInTerminalFactory(prepared.command, terminal, admission, activation)
-                    timeline.step("\(terminal.rawValue) tab created")
-                    // The reservation **is** "this request has input to deliver" — the same value the
-                    // launch was given, so the launch and the watch cannot disagree about it
-                    if let admission {
-                        // Watching the delivery can take minutes — waiting for claude to come up
-                        // and the per-input retries both block — so the response goes back as soon
-                        // as the tab is spawned and the watch runs outside the serial execQueue,
-                        // which would otherwise hold up both that queue and Chrome's answer
-                        deliveryStarted = true
-                        DispatchQueue.global(qos: .utility).async {
-                            deliverClaudeInputs(
-                                prepared.claudeInputs, to: handle, timeline: timeline,
-                                admission: admission
-                            )
-                        }
-                    }
+                    try self.executePreparedRequest(
+                        resolved: resolved,
+                        prepared: prepared,
+                        terminal: terminal,
+                        activation: activation,
+                        timeline: timeline
+                    )
                     },
                     notLaunched: { position, reason in
                         // A content-rejected batch never reaches `run`, so the per-item timeline
@@ -319,6 +304,94 @@ final class HostServer {
         }
     }
 
+    /// Sends a validated Slack URL through the same serial queue and terminal launch function as
+    /// socket requests. Completion runs on the execution queue and reports failures to the caller.
+    func enqueueSlackThreadURL(
+        _ url: URL,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let requestArrival = now()
+        execQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let settings = self.slackThreadSettings()
+                let resolved = try resolveSlackThreadRequest(
+                    outerURL: url.absoluteString,
+                    workDirectory: settings.workDirectory,
+                    instruction: settings.instruction
+                )
+                let prepared = try prepareSlackThreadRequest(
+                    resolved,
+                    loginShell: self.loginShellPathProvider(),
+                    claudeIsExecutable: self.claudeExecutableProvider()
+                )
+                let terminal = Settings.terminal
+                let activation = Settings.tabActivation
+                let timeline = self.timelineFactory(requestArrival, "Slack thread")
+                let route = prepared.claudeInputs.isEmpty
+                    ? (resolved.claudeInputs.isEmpty ? "no claude input" : "merged into argv")
+                    : "typing \(prepared.claudeInputs.count)"
+                timeline.step("request received — \(resolved.claudeInputs.count) claude input(s), \(route)")
+                try self.executePreparedRequest(
+                    resolved: resolved,
+                    prepared: prepared,
+                    terminal: terminal,
+                    activation: activation,
+                    timeline: timeline
+                )
+                completion(.success(()))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// The socket and Slack URL paths share the terminal launch, input admission, and delivery
+    /// lifetime through this function.
+    private func executePreparedRequest(
+        resolved: ResolvedRequest,
+        prepared: PreparedRequest,
+        terminal: Terminal,
+        activation: TabActivation,
+        timeline: DeliveryTimeline
+    ) throws {
+        // **The slot is reserved before anything can launch a helper**, not when the
+        // delivery starts: `runInTerminal` brings the Warp helper up, and the watch
+        // below runs asynchronously, so a registration taken there is late by that whole
+        // interval — a restart could otherwise be admitted through it.
+        // Refused means the app is already leaving, and the request fails rather than
+        // opening a tab whose input would be dropped. The slot is then handed to the
+        // launch, which writes the helper's address into it before creating anything —
+        // this side no longer records after the fact, because there is no moment at
+        // which it could know that the launch has not already passed.
+        var admission: ClaudeDelivery.Admission?
+        if !prepared.claudeInputs.isEmpty {
+            guard let token = ClaudeDelivery.admit() else { throw TerminalError.goingAway }
+            admission = token
+        }
+        // Every path out of here that is not a started delivery has to give the slot
+        // back, including the throwing ones
+        var deliveryStarted = false
+        defer { if let admission, !deliveryStarted { admission.end() } }
+        let handle = try runInTerminalFactory(prepared.command, terminal, admission, activation)
+        timeline.step("\(terminal.rawValue) tab created")
+        // The reservation **is** "this request has input to deliver" — the same value the
+        // launch was given, so the launch and the watch cannot disagree about it
+        if let admission {
+            // Watching the delivery can take minutes — waiting for claude to come up
+            // and the per-input retries both block — so the response goes back as soon
+            // as the tab is spawned and the watch runs outside the serial execQueue,
+            // which would otherwise hold up both that queue and Chrome's answer
+            deliveryStarted = true
+            DispatchQueue.global(qos: .utility).async {
+                deliverClaudeInputs(
+                    prepared.claudeInputs, to: handle, timeline: timeline,
+                    admission: admission
+                )
+            }
+        }
+    }
+
     private func runCmuxBatch(
         _ resolvedItems: [ResolvedRequest],
         channel: CmuxChannel,
@@ -330,7 +403,11 @@ final class HostServer {
             timelineFactory(requestArrival, "item \(index + 1)/\(resolvedItems.count)")
         }
         let preparedItems = resolvedItems.map {
-            prepareRequest($0, claudeIsExecutable: Settings.claudeIsExecutable)
+            prepareRequest(
+                $0,
+                loginShell: loginShellPathProvider(),
+                claudeIsExecutable: claudeExecutableProvider()
+            )
         }
 
         for index in resolvedItems.indices {

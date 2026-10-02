@@ -139,6 +139,7 @@
 "app.slack.error.invalidInstruction" = "指示必須只有一行，且不得包含控制字元。";
 "app.slack.error.appendedPromptUnavailable" = "無法安全地將 Slack 連結作為參數傳給 claude。";
 "app.slack.error.unexpectedRequest" = "無法驗證 Slack 設定。";
+"app.slack.error.serverUnavailable" = "要求伺服器無法使用，無法處理 Slack 連結。";
 "app.slack.error.createDirectory" = "無法準備捷徑檔案資料夾。";
 "app.slack.error.writeWorkflow" = "無法建立捷徑定義。";
 "app.slack.error.signProcess" = "無法執行捷徑簽署命令。";
