@@ -21,10 +21,22 @@ protocol HotKeyRegistering: AnyObject {
 /// Shortcuts app does not: it is a Services key equivalent that only apps handling Services act on,
 /// and Slack does not (measured; `docs/context/slack-thread-shortcut.md`).
 final class CarbonHotKeyRegistrar: HotKeyRegistering {
+    typealias RegisterHotKey = (
+        _ keyCode: UInt32, _ modifiers: UInt32, _ identifier: EventHotKeyID, _ options: OptionBits,
+        _ reference: inout EventHotKeyRef?
+    ) -> OSStatus
+
     private static let signature: OSType = 0x5443_534C // 'TCSL'
+    private let registerHotKey: RegisterHotKey
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var onPress: (() -> Void)?
+
+    init(registerHotKey: @escaping RegisterHotKey = { keyCode, modifiers, identifier, options, reference in
+        RegisterEventHotKey(keyCode, modifiers, identifier, GetApplicationEventTarget(), options, &reference)
+    }) {
+        self.registerHotKey = registerHotKey
+    }
 
     /// The handler holds an unretained pointer to this object, so it goes when the object does.
     deinit {
@@ -37,11 +49,12 @@ final class CarbonHotKeyRegistrar: HotKeyRegistering {
     func register(_ combination: HotKeyCombination, onPress: @escaping () -> Void) throws {
         unregister()
         try installHandlerIfNeeded()
+        // Exclusive, or a combination another app already holds exclusively registers "successfully"
+        // and never fires (measured) — the refusal is what lets the window say so.
         var reference: EventHotKeyRef?
-        let status = RegisterEventHotKey(
+        let status = registerHotKey(
             combination.keyCode, combination.modifiers.rawValue,
-            EventHotKeyID(signature: Self.signature, id: 1),
-            GetApplicationEventTarget(), 0, &reference
+            EventHotKeyID(signature: Self.signature, id: 1), OptionBits(kEventHotKeyExclusive), &reference
         )
         guard status == noErr, let reference else {
             throw HotKeyRegistrationError(status: status)

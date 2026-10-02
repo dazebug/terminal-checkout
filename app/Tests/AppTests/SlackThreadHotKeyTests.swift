@@ -66,6 +66,22 @@ final class SlackThreadHotKeyTests: XCTestCase {
         XCTAssertEqual(letter, letter.uppercased())
     }
 
+    /// Measured: while another process holds a combination exclusively, a registration without
+    /// `kEventHotKeyExclusive` returns noErr and never fires; with it, Carbon returns -9878. In one
+    /// process a duplicate is refused either way, so the option itself is what this pins.
+    func testRegistrationAsksForTheCombinationExclusively() {
+        var requested: [OptionBits] = []
+        let registrar = CarbonHotKeyRegistrar(registerHotKey: { _, _, _, options, _ in
+            requested.append(options)
+            return OSStatus(eventHotKeyExistsErr)
+        })
+
+        XCTAssertThrowsError(try registrar.register(combination) {}) { error in
+            XCTAssertEqual(error as? HotKeyRegistrationError, HotKeyRegistrationError(status: Int32(eventHotKeyExistsErr)))
+        }
+        XCTAssertEqual(requested, [OptionBits(kEventHotKeyExclusive)])
+    }
+
     func testApplyRegistersReplacesAndTurnsOff() {
         let registrar = FakeHotKeyRegistrar()
         let controller = makeController(registrar: registrar)
