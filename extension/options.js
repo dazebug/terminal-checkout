@@ -1070,7 +1070,7 @@ function parseImportedSettings(raw) {
   // Shape checking — and the limits — are shared with the load path (adoptStoredSettings): a file
   // and a stored object are the same kind of stranger, and a shape one path survives must not be one
   // the other dies on. The limits used to be applied only here, as a silent `slice`, so the same
-  // four-button array was three buttons through import and four through storage; and the entry this
+  // over-limit array was cut short through import and kept whole through storage; and the entry this
   // trimmed away vanished with nothing said. All that is left specific to a file is "an empty array
   // is not a setting".
   const adopted = adoptStoredSettings(data);

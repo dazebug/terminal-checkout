@@ -101,7 +101,7 @@ git pull --ff-only
 
 ## 사용법
 
-<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>GitHub 페이지 종류마다 최대 세 개의 버튼이 따로 있고, 버튼은 이모지나 짧은 텍스트로 표시됩니다. 확장 프로그램 아이콘을 누르면 지금 보고 있는 페이지의 첫 번째 버튼이 실행됩니다.
+<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>GitHub 페이지 종류마다 최대 다섯 개의 버튼이 따로 있고, 버튼은 이모지나 짧은 텍스트로 표시됩니다. 확장 프로그램 아이콘을 누르면 지금 보고 있는 페이지의 첫 번째 버튼이 실행됩니다.
 
 | 페이지 | 버튼 위치 | 기본 버튼 |
 |:---|:---|:---|

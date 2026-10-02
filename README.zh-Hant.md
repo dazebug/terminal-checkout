@@ -101,7 +101,7 @@ git pull --ff-only
 
 ## 使用方式
 
-<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>每一種 GitHub 頁面各有一組專屬按鈕，最多三個，按鈕上顯示表情符號或簡短文字。點選擴充功能圖示，會執行目前頁面的第一個按鈕。
+<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>每一種 GitHub 頁面各有一組專屬按鈕，最多五個，按鈕上顯示表情符號或簡短文字。點選擴充功能圖示，會執行目前頁面的第一個按鈕。
 
 | 頁面 | 按鈕位置 | 預設按鈕 |
 |:---|:---|:---|

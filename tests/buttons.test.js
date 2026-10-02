@@ -511,7 +511,7 @@ test('appendButton: leaves the original array alone and stops at the cap', () =>
 });
 
 // --- The limits are part of the shape verdict, not an import-only afterthought ---
-// They used to live on the import path alone, so a stored fourth button reached the app while the
+// They used to live on the import path alone, so a stored surplus button reached the app while the
 // same array arriving as a file lost it silently. Every reader shares this decision now — the
 // content script and the service worker included, which is why it is here and not in migrations.js.
 
@@ -523,6 +523,16 @@ test('adoptStoredButtons: entries past the button limit are skipped and counted'
   assert.equal(buttons.length, MAX_BUTTONS);
   assert.equal(skipped, 2);
   assert.equal(buttons[0].command, '{cd} && echo 1', 'the ones kept are the first ones');
+});
+
+test('adoptStoredButtons: a page kind keeps five buttons and skips the sixth', () => {
+  const button = n => ({ face: 'x', label: `b${n}`, command: `{cd} && echo ${n}`, claudeInputs: [] });
+  const five = Array.from({ length: 5 }, (_, i) => button(i + 1));
+  assert.deepEqual(adoptStoredButtons(five).buttons.map(b => b.label), ['b1', 'b2', 'b3', 'b4', 'b5']);
+  assert.equal(adoptStoredButtons(five).skipped, 0);
+  const six = [...five, button(6)];
+  assert.equal(adoptStoredButtons(six).buttons.length, 5);
+  assert.equal(adoptStoredButtons(six).skipped, 1);
 });
 
 test('adoptStoredButtons: claude inputs past the limit make the whole entry unusable', () => {

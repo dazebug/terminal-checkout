@@ -101,7 +101,7 @@ git pull --ff-only
 
 ## 使い方
 
-<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>GitHub のページの種類ごとに、最大 3 つのボタンからなる専用のセットがあり、ラベルには絵文字か短いテキストを使います。拡張機能のアイコンをクリックすると、開いているページの最初のボタンが実行されます。
+<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>GitHub のページの種類ごとに、最大 5 つのボタンからなる専用のセットがあり、ラベルには絵文字か短いテキストを使います。拡張機能のアイコンをクリックすると、開いているページの最初のボタンが実行されます。
 
 | ページ | ボタンの位置 | 既定のボタン |
 |:---|:---|:---|

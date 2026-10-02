@@ -1130,15 +1130,15 @@ test('a key that lost entries is not refilled with our defaults', () => {
 });
 
 test('entries beyond the button limit are skipped and counted, never silently trimmed', () => {
-  // The limits used to be enforced only on the import path, so storage readers passed a fourth
+  // The limits used to be enforced only on the import path, so storage readers passed a surplus
   // button through to the app while import quietly dropped it — and a quiet drop is the same defect
   // because the next Save records the trimmed list.
-  const { adoptStoredSettings } = vm.runInThisContext('({ adoptStoredSettings })');
+  const { adoptStoredSettings, MAX_BUTTONS } = vm.runInThisContext('({ adoptStoredSettings, MAX_BUTTONS })');
   const button = n => ({ face: 'x', label: `b${n}`, command: `{cd} && echo ${n}`, claudeInputs: [] });
-  const adopted = adoptStoredSettings({ buttons: [button(1), button(2), button(3), button(4)] });
-  assert.equal(adopted.settings.buttons.length, 3);
+  const adopted = adoptStoredSettings({ buttons: Array.from({ length: MAX_BUTTONS + 1 }, (_, i) => button(i + 1)) });
+  assert.equal(adopted.settings.buttons.length, MAX_BUTTONS);
   assert.equal(adopted.skippedByKey.buttons, 1);
-  assert.equal(adopted.settings.buttons[2].command, '{cd} && echo 3', 'the ones kept are the first ones');
+  assert.equal(adopted.settings.buttons[MAX_BUTTONS - 1].command, `{cd} && echo ${MAX_BUTTONS}`, 'the ones kept are the first ones');
 });
 
 test('claude inputs beyond the limit make the whole entry unusable rather than being trimmed', () => {
