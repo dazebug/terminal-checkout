@@ -224,6 +224,15 @@ Two things need your shell and filesystem at run time, so the app cannot check t
 
 </details>
 
+### Open a Slack thread in claude
+
+1. In the Slack section of Terminal Checkout's setup window, set the work folder and instruction, then click **Install**.
+2. In the import window, click **Add Shortcut**.
+3. In Shortcuts, open the details for **Terminal Checkout Slack Thread** and add a keyboard shortcut.
+4. In Slack, use **Copy link** on a message, then press that keyboard shortcut. Terminal Checkout starts claude in the configured folder and passes one opening argument with the link first and the instruction after it if set. claude must be able to use your Slack MCP to read the thread.
+
+A `terminal-checkout://` URL can also be opened by webpages and other apps; your browser asks before opening an external app. The URL chooses only which Slack message claude reads. The work folder, instruction and command come from Terminal Checkout's settings. Uninstalling Terminal Checkout leaves this shortcut in Shortcuts; remove it there if you no longer need it.
+
 ## Configuration
 
 Installation, the terminal, permissions and the repository base folder live in the app's setup window. Buttons, commands and the main branch live in the extension options page — [Open Extension Options Page] in the setup window, or `chrome://extensions` → Terminal Checkout → Extension options.

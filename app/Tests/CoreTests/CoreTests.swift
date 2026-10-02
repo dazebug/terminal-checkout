@@ -5242,6 +5242,30 @@ final class UninstallScriptSyncTests: XCTestCase {
             )
         }
     }
+
+    func testUninstallUnregistersBeforeDeletingAndNamesTheShortcutItLeavesBehind() throws {
+        let script = try repoFileContents("uninstall.sh")
+        let installScript = try repoFileContents("install.sh")
+        let registrationPath = try XCTUnwrap(
+            installScript.components(separatedBy: .newlines)
+                .first(where: { $0.hasPrefix("LSREGISTER=") })
+        )
+        XCTAssertTrue(script.contains(registrationPath))
+
+        let unregister = try XCTUnwrap(
+            script.range(of: #""$LSREGISTER" -u "$APP_PATH" 2>/dev/null || true"#)
+        )
+        let appRemoval = try XCTUnwrap(script.range(of: #"rm -rf "$APP_PATH""#))
+        XCTAssertLessThan(unregister.lowerBound, appRemoval.lowerBound)
+
+        XCTAssertTrue(script.contains(#"APP_SUPPORT="$HOME/Library/Application Support/TerminalCheckout""#))
+        XCTAssertTrue(script.contains(#"rm -rf "$APP_SUPPORT""#))
+        XCTAssertTrue(
+            script.contains(
+                #"echo "The imported “Terminal Checkout Slack Thread” shortcut remains in Shortcuts; remove it there if desired.""#
+            )
+        )
+    }
 }
 
 /// What `UninstallScriptSyncTests` cannot see: it asks whether a string appears in the script, and

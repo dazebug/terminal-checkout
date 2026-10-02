@@ -295,7 +295,9 @@ final class LocaleRestartTests: XCTestCase {
         var asked = 0
         LocaleRestartGate.admitRestart = { asked += 1; return false }
 
-        let controller = SetupWindowController()
+        let controller = SetupWindowController(
+            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+        )
         _ = controller.window
         controller.perform(NSSelectorFromString("restartForLanguage"))
         XCTAssertEqual(asked, 1, "a non-owning window bypassed LocaleRestartGate")

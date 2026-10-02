@@ -11,12 +11,18 @@ import XCTest
 /// that impossible rather than the one call site that happened to get it wrong.
 final class SetupWindowLayoutTests: XCTestCase {
     private var savedTerminal: Terminal!
+    private var savedSlackWorkDirectory: String!
+    private var savedSlackInstruction: String!
 
     private var savedResources: String?
 
     override func setUp() {
         super.setUp()
         savedTerminal = Settings.terminal
+        savedSlackWorkDirectory = Settings.slackThreadWorkDirectory
+        savedSlackInstruction = Settings.slackThreadInstruction
+        Settings.slackThreadWorkDirectory = ""
+        Settings.slackThreadInstruction = ""
         PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         // Without this the window draws **raw keys**, and a key is shorter than every sentence it
         // stands for — a layout test that passed on keys would be silent about the case it exists
@@ -27,6 +33,8 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     override func tearDown() {
         Settings.terminal = savedTerminal
+        Settings.slackThreadWorkDirectory = savedSlackWorkDirectory
+        Settings.slackThreadInstruction = savedSlackInstruction
         PermissionChecker.accessibilityStatusProvider = { accessibilityIsTrusted() }
         AppLocalization.resourcesPath = savedResources
         super.tearDown()
@@ -53,7 +61,9 @@ final class SetupWindowLayoutTests: XCTestCase {
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
-        return SetupWindowController()
+        return SetupWindowController(
+            shortcutInstaller: StubSlackThreadShortcutManager(status: .unknown)
+        )
     }
 
     private func contentHeight(_ window: NSWindow) -> CGFloat {
@@ -179,6 +189,14 @@ final class SetupWindowLayoutTests: XCTestCase {
             // the clamp is deliberate and has its own test
             controller.rootStack.visibleFrameOverride = roomyScreen
             SetupWindowTestSupport.settle(window)
+
+            let slackCard = try XCTUnwrap(
+                controller.rootStack.arrangedSubviews.first {
+                    $0.identifier?.rawValue == "card.slackThread"
+                },
+                "\(tag) is missing the Slack thread card"
+            )
+            XCTAssertGreaterThan(slackCard.frame.height, 0, "\(tag) hid the Slack thread card")
 
             let needed = controller.rootStack.fittingSize.height
             XCTAssertGreaterThan(needed, 0, "\(tag) measured nothing")
@@ -499,6 +517,29 @@ final class SetupWindowLayoutTests: XCTestCase {
         )
         XCTAssertEqual(nodes.last?.label, "cmux NIGHTLY")
         XCTAssertEqual(nodes.last?.detail, localized("app.status.cmux.reachable"))
+    }
+
+    func testSlackRequestFailureIsVisibleInTheDocumentViewportWhenWindowIsShort() throws {
+        let controller = makeController(.warp)
+        let window = try XCTUnwrap(controller.window)
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let needed = controller.rootStack.fittingSize.height
+        controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: needed / 3)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertGreaterThan(controller.rootStack.frame.height, scroll.contentView.bounds.height)
+
+        controller.presentSlackThreadRequestFailure(SlackThreadRequestError.invalidSlackLink)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let failure = try XCTUnwrap(controller.statusLabelsForTesting.last)
+        XCTAssertFalse(failure.isHidden)
+        let document = try XCTUnwrap(scroll.documentView)
+        let failureFrame = failure.convert(failure.bounds, to: document)
+        let visible = scroll.documentVisibleRect
+        XCTAssertGreaterThanOrEqual(failureFrame.minY, visible.minY - 0.5)
+        XCTAssertLessThanOrEqual(failureFrame.maxY, visible.maxY + 0.5)
     }
 
 

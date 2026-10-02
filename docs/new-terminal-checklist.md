@@ -78,6 +78,14 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] `{cd}` with a base directory set and `<base>/<repo>` existing but **not** a git repository (an empty folder is enough) — the chain must not settle there: `fatal: not a git repository` appears and the clone clause takes over (empty folder) or stops visibly (non-empty)
 - [ ] A long `&&` chain (create worktree → cd → merge → claude) reaches its final step
 
+**Slack thread URL requests (repeat for iTerm2, WezTerm, Warp, cmux stable, and cmux NIGHTLY separately)**
+
+- [ ] With Terminal Checkout quit, copy a Slack message link and trigger its assigned shortcut → exactly one session opens in the selected terminal.
+- [ ] With Terminal Checkout already running, trigger the shortcut again → exactly one new session opens; repeat the same URL event to confirm it is not deduplicated.
+- [ ] With an instruction configured, verify claude's single opening argument contains the copied link first and the instruction after it; use the argv transcript check in Verification tools below.
+- [ ] Compare the setup window's Keep the current screen setting on and off against that terminal's expected behavior; Warp still opens its new tab in front.
+- [ ] Trigger a request with an invalid synthetic Slack link, then a terminal-launch failure → each failure opens the setup window with a Slack error line, including from a cold URL launch; after a successful request, the error line is cleared.
+
 **Window selection**
 
 - [ ] With two or more windows open and the second one active, run → the tab appears in the window you were looking at
