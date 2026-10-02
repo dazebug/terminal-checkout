@@ -66,11 +66,13 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
     markupSource: HTML_FILES,
     manifest: MANIFEST_FILES,
     localeCatalogue: CATALOGUE_FILES,
+    extensionIcon: ICON_ASSETS,
   })) {
     assert.ok(files.length > 0, `nothing in the extension is ${role}, so its gates read nothing`);
   }
   // Each data role is exactly what its name claims rather than "whatever had that suffix": one
-  // manifest, and one catalogue per shipped locale. A stray `probe.json` is neither.
+  // manifest, one catalogue per shipped locale, and the four icon files. A stray `probe.json` or
+  // arbitrary PNG is neither.
   assert.deepEqual(MANIFEST_FILES, ['manifest.json']);
   assert.equal(CATALOGUE_FILES.length, TC_I18N_LOCALES.length, 'the catalogues and the locales disagree');
   assert.deepEqual(
@@ -84,7 +86,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
     EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
-    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES].sort(),
+    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...ICON_ASSETS].sort(),
     'a file has a role that no set takes',
   );
 });
@@ -155,6 +157,46 @@ test('the manifest names those two keys and declares where to fall back', () => 
     fs.existsSync(path.join(extension, '_locales', manifest.default_locale, 'messages.json')),
     'default_locale names a directory that is not there — documented as a load failure, not measured here',
   );
+});
+
+test('manifest icons point to shipped PNGs with the declared pixel dimensions', () => {
+  const expected = {
+    16: 'icons/icon16.png',
+    32: 'icons/icon32.png',
+    48: 'icons/icon48.png',
+    128: 'icons/icon128.png',
+  };
+  assert.equal(
+    manifest.key,
+    'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9H9y+H1eFxDXAS77EooL8aU01VZfLkKJmG3r6gOOL3s05YNrSU2iU6YzQpDMKLwxahQKT7pAIuiPsDvrX9fqcfq1Z5iL0LeSu0RZmpeWb7pkzVpW+iY1eKspfYZcvagEDTaUxznEcguDKAP+kcH+9wjBUSY0Wo3Xgu3V0nJ3qERMhbCFTI2NqNPIvPWtWgPAMOPz0eW8rhakaST6S0RqmHC4qlEClNI66hWaR3VWPTST63mwV6DkRmkemxks/pjfiOFhc40rEio3b2PwunROzE6uDQhje//ILNTT3uyyTwTMPy2HpCbnZoiFE3cjBtmVOK7A7HkzUJSoWQ+LoIO+eQIDAQAB',
+    'the extension key changed, which changes the Chrome extension ID',
+  );
+  assert.deepEqual(manifest.icons, expected);
+  assert.deepEqual(manifest.action.default_icon, {
+    16: expected[16],
+    32: expected[32],
+  });
+
+  for (const [declaredSize, relativePath] of Object.entries(manifest.icons)) {
+    const file = path.join(extension, relativePath);
+    assert.ok(fs.existsSync(file), `${relativePath} is listed but not on disk`);
+    const png = fs.readFileSync(file);
+    assert.deepEqual(
+      png.subarray(0, 8),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      `${relativePath} does not have a PNG signature`,
+    );
+    assert.equal(png.readUInt32BE(8), 13, `${relativePath} has a malformed IHDR chunk`);
+    assert.equal(png.toString('ascii', 12, 16), 'IHDR', `${relativePath} has no IHDR chunk`);
+    assert.equal(
+      png.readUInt32BE(16), Number(declaredSize),
+      `${relativePath} width differs from its manifest size`,
+    );
+    assert.equal(
+      png.readUInt32BE(20), Number(declaredSize),
+      `${relativePath} height differs from its manifest size`,
+    );
+  }
 });
 
 test('every script the manifest lists exists, and i18n.js comes before content.js', () => {
@@ -243,8 +285,11 @@ const cataloguePathForLocale = tag => {
   return `_locales/${directory}/messages.json`;
 };
 const CATALOGUE_PATHS = new Set(TC_I18N_LOCALES.map(cataloguePathForLocale));
+const ICON_FILES = ['icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png'];
+const ICON_PATHS = new Set(ICON_FILES);
 const roleOf = (relativePath) => {
   if (relativePath === 'manifest.json') return 'manifest';
+  if (ICON_PATHS.has(relativePath)) return 'extensionIcon';
   if (CATALOGUE_PATHS.has(relativePath)) return 'localeCatalogue';
   if (relativePath.startsWith('_locales/')) return null;
   if (relativePath.endsWith('.js')) return 'speakingSource';
@@ -265,6 +310,7 @@ const HTML_FILES = filesInRole('markupSource');
 const MARKUP_FILES = [...SPEAKING_FILES, ...HTML_FILES].sort();
 const MANIFEST_FILES = filesInRole('manifest');
 const CATALOGUE_FILES = filesInRole('localeCatalogue');
+const ICON_ASSETS = filesInRole('extensionIcon');
 assert.ok(SPEAKING_FILES.length >= 5, `only ${SPEAKING_FILES.length} extension scripts found`);
 assert.ok(HTML_FILES.length >= 1, 'no markup was found at all');
 // A consumer names a message through a literal call, a declared key-bearing data position, or a
