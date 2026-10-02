@@ -319,7 +319,9 @@ const PR_BRANCH_LINK_SELECTOR =
 const DEFAULT_MAIN = 'main';
 const MAX_BUTTONS = 3;
 // Maximum claude inputs stored on a button. A click-time note takes its own slot, so one session
-// request carries at most MAX_CLAUDE_INPUTS + 1 claude inputs.
+// request carries at most MAX_CLAUDE_INPUTS + 1 claude inputs. Do not raise this without rechecking
+// `maxLifetime` in app/Sources/WarpHelper/main.swift — it is reckoned for that many inputs, and a
+// Warp delivery that outlives it loses its remaining inputs.
 const MAX_CLAUDE_INPUTS = 10;
 const MAX_BATCH_ITEMS = 25;
 const LIST_BATCH_ACTION = 'execute_list_batch';
