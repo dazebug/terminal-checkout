@@ -317,7 +317,11 @@ const PR_BRANCH_LINK_SELECTOR =
   'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
 
 const DEFAULT_MAIN = 'main';
-const MAX_BUTTONS = 3;
+// Maximum buttons per page kind. Every reader enforces it (adoptStoredButtons), so an older extension
+// on another synced device — capped at 3 before this was 5 — keeps the first three, skips the rest,
+// and removes them if it saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this
+// count, is what stops a kind whose commands are long.
+const MAX_BUTTONS = 5;
 // Maximum claude inputs stored on a button. A click-time note takes its own slot, so one session
 // request carries at most MAX_CLAUDE_INPUTS + 1 claude inputs. Do not raise this without rechecking
 // `maxLifetime` in app/Sources/WarpHelper/main.swift — it is reckoned for that many inputs, and a

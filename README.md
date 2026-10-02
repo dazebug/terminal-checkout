@@ -100,7 +100,7 @@ Your saved buttons keep the exact command you already had — nothing is rewritt
 
 ## Usage
 
-<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>Each GitHub page kind gets its own set of up to three buttons, labelled with an emoji or short text. Clicking the extension icon runs the first button for the page you are on.
+<a name="pr-pages"></a><a name="issue-pages"></a><a name="pr-and-issue-list-pages"></a><a name="repository-pages"></a>Each GitHub page kind gets its own set of up to five buttons, labelled with an emoji or short text. Clicking the extension icon runs the first button for the page you are on.
 
 | Page | Where the button appears | Default button |
 |:---|:---|:---|
