@@ -254,11 +254,12 @@
 "app.setup.general.connection.chrome.recorded" = "上次请求 %@。这只记录了请求到达应用，不代表命令执行成功或 claude 输入已完成。";
 "app.setup.general.connection.chrome.waiting" = "扩展程序的请求尚未到达应用。";
 "app.setup.general.connection.nativeHost" = "Native Host";
-"app.setup.general.connection.terminal" = "所选终端";
+"app.setup.general.connection.terminal" = "所选终端：%@";
 "app.setup.general.connection.tools" = "登录 shell 中找到的工具";
 "app.setup.general.connectionDetails" = "连接详情";
 "app.setup.general.editGitHubButton" = "编辑 GitHub 按钮…";
-"app.setup.general.hint.other" = "发送预定的 claude 输入期间，请不要在该%@中输入。";
+"app.setup.general.hint.tabs" = "发送预定的 claude 输入期间，请不要在该终端标签页中输入。";
+"app.setup.general.hint.workspace" = "发送预定的 claude 输入期间，请不要在该 cmux 工作区中输入。";
 "app.setup.general.hint.warp" = "Warp 始终切换到新标签页 — 只有在当前查看的标签页中才能传递 claude 输入。";
 "app.setup.general.request.recorded" = "已收到扩展程序请求 — %@";
 "app.setup.general.request.waiting" = "尚未收到扩展程序请求";

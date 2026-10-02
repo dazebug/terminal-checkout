@@ -254,11 +254,12 @@
 "app.setup.general.connection.chrome.recorded" = "마지막 요청 %@. 요청이 앱에 도착했다는 기록이며, 명령 성공이나 claude 입력 완료를 뜻하지 않습니다.";
 "app.setup.general.connection.chrome.waiting" = "아직 확장 요청이 앱에 도착하지 않았습니다.";
 "app.setup.general.connection.nativeHost" = "Native Host";
-"app.setup.general.connection.terminal" = "선택한 터미널";
+"app.setup.general.connection.terminal" = "선택한 터미널: %@";
 "app.setup.general.connection.tools" = "로그인 셸에서 찾은 도구";
 "app.setup.general.connectionDetails" = "연결 상세";
 "app.setup.general.editGitHubButton" = "GitHub 버튼 편집…";
-"app.setup.general.hint.other" = "예약한 claude 입력을 보내는 동안에는 그 %@에 직접 입력하지 마세요.";
+"app.setup.general.hint.tabs" = "예약한 claude 입력을 보내는 동안에는 그 터미널 탭에 직접 입력하지 마세요.";
+"app.setup.general.hint.workspace" = "예약한 claude 입력을 보내는 동안에는 그 cmux workspace에 직접 입력하지 마세요.";
 "app.setup.general.hint.warp" = "Warp는 항상 새 탭으로 이동합니다 — 보고 있는 탭에만 claude 입력을 전달할 수 있습니다.";
 "app.setup.general.request.recorded" = "확장 요청을 받았습니다 — %@";
 "app.setup.general.request.waiting" = "아직 확장 요청이 없습니다";

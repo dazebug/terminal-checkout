@@ -164,6 +164,29 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         )
     }
 
+    func testTerminalDetailTitleUsesOneLocalizedSentenceWithTerminalName() throws {
+        let fixture = makePane(state: makeState(terminal: .cmux))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        XCTAssertEqual(
+            fixture.pane.terminalDetailTitleForTesting,
+            localized("app.setup.general.connection.terminal", "cmux")
+        )
+    }
+
+    func testHintUsesACompleteSentenceForTabsOrCmuxWorkspace() throws {
+        let fixture = makePane(state: makeState(terminal: .iterm))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let tabsHint = fixture.pane.hintTextForTesting
+
+        fixture.pane.update(makeState(terminal: .cmux))
+
+        XCTAssertEqual(tabsHint, localized("app.setup.general.hint.tabs"))
+        XCTAssertEqual(fixture.pane.hintTextForTesting, localized("app.setup.general.hint.workspace"))
+    }
+
     private func makePane(state: SetupWindowGeneralPaneState) -> (
         pane: SetupWindowGeneralPane,
         target: GeneralPaneActionTarget,

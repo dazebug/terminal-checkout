@@ -262,11 +262,12 @@
 "app.setup.general.connection.chrome.recorded" = "Last request %@. This records that a request reached the app; it does not prove that a command succeeded or claude input finished.";
 "app.setup.general.connection.chrome.waiting" = "No extension request has reached the app yet.";
 "app.setup.general.connection.nativeHost" = "Native Host";
-"app.setup.general.connection.terminal" = "Selected terminal";
+"app.setup.general.connection.terminal" = "Selected terminal: %@";
 "app.setup.general.connection.tools" = "Tools found in the login shell";
 "app.setup.general.connectionDetails" = "Connection details";
 "app.setup.general.editGitHubButton" = "Edit GitHub buttons…";
-"app.setup.general.hint.other" = "Do not type in that %@ while scheduled claude input is being sent.";
+"app.setup.general.hint.tabs" = "Do not type in that terminal tab while scheduled claude input is being sent.";
+"app.setup.general.hint.workspace" = "Do not type in that cmux workspace while scheduled claude input is being sent.";
 "app.setup.general.hint.warp" = "Warp always switches to a new tab — claude input can be delivered only to the tab you are viewing.";
 "app.setup.general.request.recorded" = "Extension request received — %@";
 "app.setup.general.request.waiting" = "No extension request yet";

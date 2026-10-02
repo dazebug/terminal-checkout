@@ -254,11 +254,12 @@
 "app.setup.general.connection.chrome.recorded" = "最終リクエスト %@。リクエストがアプリに届いた記録であり、コマンドの成功や claude 入力の完了を示すものではありません。";
 "app.setup.general.connection.chrome.waiting" = "拡張機能からのリクエストはまだアプリに届いていません。";
 "app.setup.general.connection.nativeHost" = "Native Host";
-"app.setup.general.connection.terminal" = "選択中のターミナル";
+"app.setup.general.connection.terminal" = "選択中のターミナル: %@";
 "app.setup.general.connection.tools" = "ログインシェルで見つかったツール";
 "app.setup.general.connectionDetails" = "接続の詳細";
 "app.setup.general.editGitHubButton" = "GitHub ボタンを編集…";
-"app.setup.general.hint.other" = "予約した claude 入力の送信中は、その %@ に入力しないでください。";
+"app.setup.general.hint.tabs" = "予約した claude 入力の送信中は、そのターミナルタブに入力しないでください。";
+"app.setup.general.hint.workspace" = "予約した claude 入力の送信中は、その cmux ワークスペースに入力しないでください。";
 "app.setup.general.hint.warp" = "Warp は常に新しいタブに切り替わります — claude 入力を送れるのは表示中のタブだけです。";
 "app.setup.general.request.recorded" = "拡張機能のリクエストを受信 — %@";
 "app.setup.general.request.waiting" = "拡張機能のリクエストはまだありません";

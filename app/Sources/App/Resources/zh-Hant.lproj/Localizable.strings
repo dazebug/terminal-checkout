@@ -255,11 +255,12 @@
 "app.setup.general.connection.chrome.recorded" = "上次要求 %@。這只記錄要求已送達應用程式，不代表命令成功或 claude 輸入已完成。";
 "app.setup.general.connection.chrome.waiting" = "擴充功能的要求尚未送達應用程式。";
 "app.setup.general.connection.nativeHost" = "Native Host";
-"app.setup.general.connection.terminal" = "所選終端機";
+"app.setup.general.connection.terminal" = "所選終端機：%@";
 "app.setup.general.connection.tools" = "登入 shell 中找到的工具";
 "app.setup.general.connectionDetails" = "連線詳細資料";
 "app.setup.general.editGitHubButton" = "編輯 GitHub 按鈕…";
-"app.setup.general.hint.other" = "傳送預定的 claude 輸入期間，請勿在該%@中輸入。";
+"app.setup.general.hint.tabs" = "傳送預定的 claude 輸入期間，請勿在該終端機分頁中輸入。";
+"app.setup.general.hint.workspace" = "傳送預定的 claude 輸入期間，請勿在該 cmux 工作區中輸入。";
 "app.setup.general.hint.warp" = "Warp 一律切換至新分頁 — 只有目前正在檢視的分頁能接收 claude 輸入。";
 "app.setup.general.request.recorded" = "已收到擴充功能要求 — %@";
 "app.setup.general.request.waiting" = "尚未收到擴充功能要求";

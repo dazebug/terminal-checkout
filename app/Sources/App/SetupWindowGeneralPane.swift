@@ -120,6 +120,8 @@ final class SetupWindowGeneralPane: NSView {
     private let versionLabel = NSTextField(labelWithString: "")
 
     var requestStatusText: String { requestStatusLabel.stringValue }
+    var hintTextForTesting: String { hintLabel.stringValue }
+    var terminalDetailTitleForTesting: String { terminalDetailRow.titleLabel.stringValue }
     var cmuxActionButtonRoles: [NSUserInterfaceItemIdentifier] {
         cmuxActionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.identifier }
     }
@@ -150,7 +152,7 @@ final class SetupWindowGeneralPane: NSView {
         connectionDetailsPopover = NSPopover()
         nativeHostDetailRow = SetupWindowGeneralPopoverRow(title: localized("app.setup.general.connection.nativeHost"))
         appSocketDetailRow = SetupWindowGeneralPopoverRow(title: localized("app.setup.general.connection.appSocket"))
-        terminalDetailRow = SetupWindowGeneralPopoverRow(title: localized("app.setup.general.connection.terminal"))
+        terminalDetailRow = SetupWindowGeneralPopoverRow(title: "")
         toolDetailRows = Dictionary(uniqueKeysWithValues: ["zoxide", "gh", "claude"].map {
             ($0, SetupWindowGeneralPopoverRow(title: $0))
         })
@@ -491,14 +493,13 @@ final class SetupWindowGeneralPane: NSView {
         }
         terminalStatusLabel.stringValue = state.terminalStatus.text
         terminalDot.update(tone: state.terminalStatus.tone)
-        hintLabel.stringValue = state.terminal == .warp
-            ? localized("app.setup.general.hint.warp")
-            : localized(
-                "app.setup.general.hint.other",
-                state.terminal.cmuxChannel == nil
-                    ? localized("app.setup.preview.general.destination.tab")
-                    : localized("app.setup.preview.general.destination.workspace")
-            )
+        if state.terminal == .warp {
+            hintLabel.stringValue = localized("app.setup.general.hint.warp")
+        } else if state.terminal.cmuxChannel == nil {
+            hintLabel.stringValue = localized("app.setup.general.hint.tabs")
+        } else {
+            hintLabel.stringValue = localized("app.setup.general.hint.workspace")
+        }
     }
 
     private func updateActivation(_ state: SetupWindowGeneralPaneState) {
@@ -531,8 +532,9 @@ final class SetupWindowGeneralPane: NSView {
     private func updateConnectionPopover(_ state: SetupWindowGeneralPaneState) {
         nativeHostDetailRow.update(state.nativeHostStatus)
         appSocketDetailRow.update(state.appSocketStatus)
-        terminalDetailRow.titleLabel.stringValue = localized("app.setup.general.connection.terminal")
-            + " — " + terminalName(state.terminal)
+        terminalDetailRow.titleLabel.stringValue = localized(
+            "app.setup.general.connection.terminal", terminalName(state.terminal)
+        )
         terminalDetailRow.update(state.terminalStatus)
         for name in ["zoxide", "gh", "claude"] {
             let status: SetupWindowGeneralIndicator
