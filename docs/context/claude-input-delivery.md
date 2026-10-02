@@ -241,6 +241,26 @@ A ▾ caret beside a button that starts claude opens a one-line box, and what is
 
 **Rejected alternative — `trim()` or `\p{Z}` for the front.** Both miss U+0085 and U+200B, so a note starting with one of them before `!x` would pass the check and still reach the app's classification as `!x`.
 
+## A click-time note has a slot above the button's stored inputs
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the 2026-10-02 report found no caret on an issue-list button with five stored inputs; its saved value is preserved in `tests/fixtures/saved-issue-list-buttons.json` and exercised by `the saved issue-list button with five claude inputs takes a note` (`tests/claude-note.test.js`) and `a note on the saved issue-list button reaches the worker in its own slot` (`tests/worker-note.test.js`). The stored-input cap of 10 is the user's decision.
+**Source:** `buttonTakesClaudeNote` and `MAX_CLAUDE_INPUTS` in `extension/defaults.js`; the two tests above; `maxLifetime` in `app/Sources/WarpHelper/main.swift`
+**Revisit when:** the app begins enforcing a `claude_inputs` count limit, the Warp helper lifetime cap changes, or the storage format can block outdated readers
+
+A button stores up to 10 claude inputs. A click-time note uses a separate slot and follows them, so each session request can carry up to 11 inputs. A button whose command contains the word `claude` gets a ▾ caret regardless of its stored-input count. The content script and worker use the same predicate, `buttonTakesClaudeNote`.
+
+**Reason:** the previous rule counted the note against the button's stored-input cap, so a full button lost its caret. A note belongs to one click and is not saved with the button; it is appended for delivery.
+
+**Rejected alternative — count the note toward the stored-input cap.** That was the previous rule and hides the caret when the button is full.
+
+**Rejected alternative — raise only the combined cap by one.** The note would still share the saved-input budget, moving the same cutoff one input higher.
+
+**Rejected alternative — a count cap in the app too.** The count is a limit of the extension's editor, not a safety boundary: the app's boundary stays the same macOS uid.
+
+**Cost, accepted:** An older extension still has a stored-input cap of five. On another device, or in Chrome before it reloads the updated extension, it skips buttons with six or more saved inputs. If every button under a storage key is skipped, `readStoredButtons` draws the defaults; those can run commands different from the stored ones, with only a console warning, and the options page warns that saving will remove the skipped buttons. Update every device before saving six or more inputs. No version gate is added: the stored version marks the settings generation the user explicitly reviewed and moves only through an explicit review action, so using it as an extension compatibility switch would overload that contract.
+
 ## A note carries no variables: any closed brace span is refused
 
 **Type:** decision
@@ -279,7 +299,7 @@ The app answers as soon as the tab exists and delivers claude input afterwards, 
 **Source:** PR #90; `executionPayload` and `buttonTakesClaudeNote` in `extension/defaults.js`
 **Revisit when:** the extension and the app come to share one normalization of stored inputs
 
-The note joins the stored inputs, and the app chooses the route by the rules above, after its own trim. The extension trims ordinary spaces only while the app's trim is wider, so the extension cannot know which list the app will see; the README and the popover state no route. What the extension does own is the cap: the stored inputs as a click sends them (`executionPayload`) plus the note must fit under `MAX_CLAUDE_INPUTS`, which is why a button with five stored inputs gets no caret.
+The note joins the stored inputs, and the app chooses the route by the rules above, after its own trim. The extension trims ordinary spaces only while the app's trim is wider, so the extension cannot know which list the app will see; the README and the popover state no route. What the extension does own is the per-button stored-input cap, `MAX_CLAUDE_INPUTS`; a note uses one slot above it, so one request carries at most `MAX_CLAUDE_INPUTS + 1` claude inputs.
 
 **Rejected alternative — state the route per button** ("an input-less button hands the note over in argv"). The measurement above is a counterexample, and keeping such a sentence true would take a second copy of the app's trim in the extension.
 
