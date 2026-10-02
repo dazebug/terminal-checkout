@@ -20,7 +20,7 @@ public enum WarpHelperRequest: Equatable {
 /// The tty input queue has a cap (TTYHOG) and the kernel silently drops whatever overflows it. So the amount written at once is limited and the surplus waits for consumption before continuing — rejecting an over-cap input outright would make every claude prompt longer than 512 bytes fail.
 /// Cutting on byte boundaries is safe: the tty input queue is a byte stream, so a multi-byte character split across chunks still arrives whole for claude as long as the order is kept (measured with Korean input).
 ///
-/// **Nothing is written while even one byte is still in the queue.** Continuing just because there is room leaves the previous chunk's tail in the queue while the next piles on: claude reads only the front and draws it, so the app's reflection check passes (the probe looks at the first 24 characters only — `claudeInputProbe`). Then, once claude exits, **the shell reads the tail left in the queue and runs it as a command.** This was the branch by which bytes we produced got executed in the user's shell. Writing only into an empty queue means every chunk is confirmed read by claude before the next one goes.
+/// **Nothing is written while even one byte is still in the queue.** Continuing just because there is room leaves the previous chunk's tail in the queue while the next piles on; once claude exits, **the shell can read the tail and run it as a command.** The reflection fragments (`claudeInputProbe`) do not identify which queued bytes claude has consumed, so this queue check remains backpressure and does not replace screen reflection.
 public func warpInjectChunkSize(pending: Int, remaining: Int, limit: Int) -> Int {
     guard pending == 0 else { return 0 }
     return max(0, min(remaining, limit))

@@ -214,6 +214,101 @@ final class CmuxGroupedExecutionTests: XCTestCase {
         XCTAssertEqual(send.params["text"] as? String, commands[0] + claudeSubmitKey)
     }
 
+    func testFoundPaneExecutionNeverSendsItemsToExistingRoot() throws {
+        for itemCount in [1, 9, 25] {
+            let commands = (0..<itemCount).map { "echo item-\($0) && claude" }
+            let plan = cmuxPlacementPlan(
+                preset: CmuxPlacementPreset(
+                    identityMode: .fixedName("work"),
+                    arrangement: .panePerItem
+                ),
+                commandByteCounts: commands.map(\.utf8.count),
+                batchOperationID: cmuxGroupedTestBatchID,
+                itemOperationIDs: cmuxGroupedTestItemIDs(count: itemCount)
+            )
+            guard case .pane(let pane) = plan.route,
+                  let foundPlan = pane.found else {
+                return XCTFail("expected a found-workspace pane plan")
+            }
+
+            let existingSurfaceID = "existing-root"
+            var calls: [Call] = []
+            var splitResponseSurfaceIDs: [String] = []
+            let dependencies = makeDependencies(
+                rpc: { method, params in
+                    calls.append(Call(method: method, params: params))
+                    switch method {
+                    case cmuxWorkspaceListMethod:
+                        return [
+                            "workspaces": [[
+                                "id": "workspace-found",
+                                "index": 0,
+                                "has_custom_title": true,
+                                "custom_title": "work",
+                            ]]
+                        ]
+                    case cmuxPaneListMethod:
+                        return ["panes": [["id": "pane-0", "index": 0]]]
+                    case cmuxSurfaceListMethod:
+                        return [
+                            "surfaces": [[
+                                "id": existingSurfaceID,
+                                "index_in_pane": 0,
+                                "pane_id": "pane-0",
+                            ]]
+                        ]
+                    case cmuxSurfaceSplitMethod:
+                        let surfaceID = "split-\(splitResponseSurfaceIDs.count)"
+                        splitResponseSurfaceIDs.append(surfaceID)
+                        return ["surface_id": surfaceID]
+                    case cmuxSurfaceSendTextMethod:
+                        return ["queued": false]
+                    default:
+                        return [:]
+                    }
+                },
+                createWorkspace: { _ in
+                    XCTFail("found workspace must not be created")
+                    return [:]
+                }
+            )
+
+            let execution = executeCmuxPlacementPlan(
+                plan,
+                commands: commands,
+                using: dependencies
+            )
+            let splitCalls = calls.filter { $0.method == cmuxSurfaceSplitMethod }
+            let sendCalls = calls.filter { $0.method == cmuxSurfaceSendTextMethod }
+            let sentSurfaceIDs = sendCalls.compactMap { $0.params["surface_id"] as? String }
+            let sentPayloads = sendCalls.compactMap { $0.params["text"] as? String }
+            let handles = try successfulHandles(from: execution.results)
+            let handleSurfaceIDs = handles.map(surfaceID)
+            XCTAssertEqual(foundPlan.splitOperations.count, itemCount, "N=\(itemCount)")
+            XCTAssertEqual(foundPlan.itemSurfaceOrder.count, itemCount, "N=\(itemCount)")
+            XCTAssertFalse(foundPlan.itemSurfaceOrder.contains(.root), "N=\(itemCount)")
+            let expectedItemSurfaceIDs = try cmuxResolveFoundSurfaceIDs(
+                rootSurfaceID: existingSurfaceID,
+                splitResponseSurfaceIDs: splitResponseSurfaceIDs,
+                itemSurfaceOrder: foundPlan.itemSurfaceOrder
+            )
+
+            XCTAssertEqual(execution.path, .foundSplit, "N=\(itemCount)")
+            XCTAssertEqual(splitCalls.count, itemCount, "N=\(itemCount)")
+            XCTAssertEqual(splitResponseSurfaceIDs.count, itemCount, "N=\(itemCount)")
+            XCTAssertEqual(sentSurfaceIDs.count, itemCount, "N=\(itemCount)")
+            XCTAssertFalse(sentSurfaceIDs.contains(existingSurfaceID), "N=\(itemCount)")
+            XCTAssertFalse(handleSurfaceIDs.contains(existingSurfaceID), "N=\(itemCount)")
+            XCTAssertEqual(Set(handleSurfaceIDs).count, itemCount, "N=\(itemCount)")
+            XCTAssertTrue(expectedItemSurfaceIDs.allSatisfy {
+                splitResponseSurfaceIDs.contains($0)
+            }, "N=\(itemCount)")
+            XCTAssertEqual(sentSurfaceIDs, expectedItemSurfaceIDs, "N=\(itemCount)")
+            XCTAssertEqual(handleSurfaceIDs, expectedItemSurfaceIDs, "N=\(itemCount)")
+            XCTAssertEqual(sentPayloads, commands.map { $0 + claudeSubmitKey }, "N=\(itemCount)")
+        }
+    }
+
     func testFoundPaneExecutionUsesExplicitSplitTargetsAndMeasuredItemOrder() throws {
         let commands = ["one", "two", "three"]
         let plan = cmuxPlacementPlan(
@@ -267,7 +362,7 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                 case cmuxSurfaceSplitMethod:
                     splitTargets.append(params["surface_id"] as? String ?? "")
                     splitDirections.append(params["direction"] as? String ?? "")
-                    return ["surface_id": splitTargets.count == 1 ? "r0" : "r1"]
+                    return ["surface_id": "r\(splitTargets.count - 1)"]
                 case cmuxSurfaceSendTextMethod:
                     return ["queued": true]
                 default:
@@ -294,18 +389,97 @@ final class CmuxGroupedExecutionTests: XCTestCase {
                 cmuxSurfaceListMethod,
                 cmuxSurfaceSplitMethod,
                 cmuxSurfaceSplitMethod,
+                cmuxSurfaceSplitMethod,
                 cmuxSurfaceSendTextMethod,
                 cmuxSurfaceSendTextMethod,
                 cmuxSurfaceSendTextMethod,
             ]
         )
-        XCTAssertEqual(splitTargets, ["root-surface", "root-surface"])
-        XCTAssertEqual(splitDirections, ["down", "right"])
+        XCTAssertEqual(splitTargets, ["root-surface", "root-surface", "r0"])
+        XCTAssertEqual(splitDirections, ["down", "right", "right"])
         XCTAssertEqual(execution.path, .foundSplit)
         XCTAssertEqual(
             try successfulHandles(from: execution.results).map(surfaceID),
-            ["root-surface", "r1", "r0"]
+            ["r1", "r0", "r2"]
         )
+    }
+
+    func testFoundPaneExecutionRoutesAll25ItemsInPlannedSurfaceOrder() throws {
+        let commands = (0..<25).map { "item-\($0)" }
+        let plan = cmuxPlacementPlan(
+            preset: CmuxPlacementPreset(
+                identityMode: .fixedName("work"),
+                arrangement: .panePerItem
+            ),
+            commandByteCounts: commands.map(\.utf8.count),
+            batchOperationID: cmuxGroupedTestBatchID,
+            itemOperationIDs: cmuxGroupedTestItemIDs(count: commands.count)
+        )
+        var splitTargets: [String] = []
+        var splitResponseSurfaceIDs: [String] = []
+        var sentSurfaceIDs: [String] = []
+        var sentPayloads: [String] = []
+        let dependencies = makeDependencies(
+            rpc: { method, params in
+                switch method {
+                case cmuxWorkspaceListMethod:
+                    return [
+                        "workspaces": [[
+                            "id": "workspace-found",
+                            "index": 0,
+                            "has_custom_title": true,
+                            "custom_title": "work",
+                        ]]
+                    ]
+                case cmuxPaneListMethod:
+                    return ["panes": [["id": "pane-0", "index": 0]]]
+                case cmuxSurfaceListMethod:
+                    return [
+                        "surfaces": [[
+                            "id": "root-surface",
+                            "index_in_pane": 0,
+                            "pane_id": "pane-0",
+                        ]]
+                    ]
+                case cmuxSurfaceSplitMethod:
+                    splitTargets.append(params["surface_id"] as? String ?? "")
+                    let surfaceID = "split-\(splitResponseSurfaceIDs.count)"
+                    splitResponseSurfaceIDs.append(surfaceID)
+                    return ["surface_id": surfaceID]
+                case cmuxSurfaceSendTextMethod:
+                    sentSurfaceIDs.append(params["surface_id"] as? String ?? "")
+                    sentPayloads.append(params["text"] as? String ?? "")
+                    return ["queued": true]
+                default:
+                    return [:]
+                }
+            },
+            createWorkspace: { _ in
+                XCTFail("found workspace must not be created")
+                return [:]
+            }
+        )
+
+        let execution = executeCmuxPlacementPlan(
+            plan,
+            commands: commands,
+            using: dependencies
+        )
+
+        let expectedSurfaceIDs = [
+            "split-4", "split-3", "split-5", "split-2", "split-7", "split-6",
+            "split-1", "split-10", "split-9", "split-8", "split-12", "split-11",
+            "split-0", "split-16", "split-15", "split-17", "split-14", "split-19",
+            "split-18", "split-13", "split-22", "split-21", "split-20", "split-24",
+            "split-23",
+        ]
+        XCTAssertEqual(splitTargets.count, 25)
+        XCTAssertEqual(splitResponseSurfaceIDs.count, 25)
+        XCTAssertEqual(sentSurfaceIDs, expectedSurfaceIDs)
+        XCTAssertFalse(sentSurfaceIDs.contains("root-surface"))
+        XCTAssertEqual(sentPayloads, commands.map { $0 + claudeSubmitKey })
+        XCTAssertEqual(execution.path, .foundSplit)
+        XCTAssertEqual(try successfulHandles(from: execution.results).map(surfaceID), expectedSurfaceIDs)
     }
 
     func testFoundPaneFailureUsesConservativeAllItemFailureWithoutRollback() throws {
