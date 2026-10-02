@@ -48,7 +48,12 @@ private let foregroundRecheckStride = 16
 //
 /// The idle cap for when `bye` never arrives. The longest silence in a normal delivery is the stretch where the app waits for claude to start (120 seconds by default in `deliverClaudeInputs`), so this only needs headroom over that.
 private let idleTimeout: TimeInterval = 180
-/// The overall lifetime cap. The worst normal delivery (a 120-second startup wait plus 5 inputs with retries) stays inside 400 seconds, so this is set at roughly twice that — being caught here already means something is abnormal.
+/// The overall lifetime cap. A session gets at most `MAX_CLAUDE_INPUTS + 1` inputs (`extension/defaults.js`
+/// stored cap plus one click-time note). Twelve attempts × about 2 seconds for the marker to appear, plus
+/// successful marker-erasure and body-reflection windows of about 2 seconds each and `inputBoxLookDeadline`
+/// (3.6 seconds), give about 31.6 seconds per input: the 120-second wait for claude to start (the default `timeout` of `deliverClaudeInputs`) + 11 × 31.6 ≈ 470 seconds, so 900 seconds is about
+/// twice the normal worst case. This excludes `betweenInputTimeout` (up to 15 seconds); charging all 11 gives
+/// 120 + 11 × 46.6 ≈ 633 seconds, still under 900 seconds.
 private let maxLifetime: TimeInterval = 900
 
 private let serveFlag = "--serve"
