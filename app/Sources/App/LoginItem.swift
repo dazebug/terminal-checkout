@@ -4,7 +4,7 @@ import ServiceManagement
 enum LoginItemStatus: Equatable {
     case enabled
     case disabled
-    /// Registered, but the user has to allow it in System Settings → General → Login Items.
+    /// Registered, but waiting for the user to allow it under Login Items in System Settings.
     case requiresApproval
 }
 
@@ -20,7 +20,7 @@ struct MainAppLoginItem: LoginItemManaging {
         switch SMAppService.mainApp.status {
         case .enabled: return .enabled
         case .requiresApproval: return .requiresApproval
-        // `.notFound` is what an app that never registered can report; registering is the way out
+        // `.notFound` is shown as not registered: registering is the way forward from either
         case .notRegistered, .notFound: return .disabled
         @unknown default: return .disabled
         }
@@ -35,8 +35,9 @@ struct MainAppLoginItem: LoginItemManaging {
     }
 }
 
-/// Whether AppKit is handling the open event loginwindow sends a login item. Read while
-/// `applicationDidFinishLaunching` runs, when that event is the current one.
+/// True when the open event AppKit is handling carries `keyAELaunchedAsLogInItem`; call it from
+/// `applicationDidFinishLaunching`. Not yet observed for an `SMAppService` login launch, which needs
+/// a logout — if the flag is absent, the setup window opens at login and can simply be closed.
 func launchedAsLoginItem() -> Bool {
     guard let event = NSAppleEventManager.shared().currentAppleEvent,
           event.eventID == kAEOpenApplication else { return false }

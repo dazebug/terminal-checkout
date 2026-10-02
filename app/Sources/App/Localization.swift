@@ -263,7 +263,7 @@ func slackLoginItemStatusMessage(_ status: LoginItemStatus) -> String {
     }
 }
 
-/// ServiceManagement's own description is already in the user's language, so it is carried as is.
+/// The system's own description of the refusal is shown as is.
 func slackLoginItemFailureMessage(_ error: Error) -> String {
     localized("app.slack.loginItem.failed", (error as NSError).localizedDescription)
 }

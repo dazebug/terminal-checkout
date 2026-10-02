@@ -17,8 +17,7 @@ if CommandLine.arguments.contains("--headless-server") {
     exit(0)
 }
 
-// Run by uninstall.sh before it deletes the bundle: only the app can withdraw its own login item,
-// and a deleted app's entry would otherwise stay listed in System Settings → Login Items.
+// Run by uninstall.sh before it deletes the bundle — only the app can withdraw its own login item.
 if CommandLine.arguments.contains("--unregister-login-item") {
     try? SMAppService.mainApp.unregister()
     exit(0)
