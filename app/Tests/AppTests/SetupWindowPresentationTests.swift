@@ -14,7 +14,6 @@ final class SetupWindowPresentationTests: XCTestCase {
 
     func testOpeningReasonsComeFirstAndNewestReasonComesFirst() {
         let state = snapshot(selectedTerminal: .warp) {
-            $0.warpHelperAvailable = false
             $0.slackRequestFailureIsActive = true
             $0.openingReasons = [
                 .claudeInputRejected(blocker: .warpHelperUnavailable, arrivalOrder: 1),
@@ -41,6 +40,34 @@ final class SetupWindowPresentationTests: XCTestCase {
         let problems = SetupWindowPresentationModel.make(from: state).problems
 
         XCTAssertFalse(problems.contains { $0.copy == .claudeInputRejected(.warpAccessibility) })
+    }
+
+    func testWarpHelperOpeningReasonRemainsVisibleUntilReasonIsCleared() {
+        let open = snapshot(selectedTerminal: .iterm) {
+            $0.openingReasons = [
+                .claudeInputRejected(blocker: .warpHelperUnavailable, arrivalOrder: 1),
+            ]
+        }
+        let closed = snapshot(selectedTerminal: .iterm)
+
+        XCTAssertTrue(SetupWindowPresentationModel.make(from: open).problems.contains {
+            $0.copy == .claudeInputRejected(.warpHelperUnavailable)
+        })
+        XCTAssertFalse(SetupWindowPresentationModel.make(from: closed).problems.contains {
+            $0.copy == .claudeInputRejected(.warpHelperUnavailable)
+        })
+    }
+
+    func testWezTermSessionBlockerDoesNotCreateSetupWindowProblem() {
+        let state = snapshot(selectedTerminal: .wezterm) {
+            $0.openingReasons = [
+                .claudeInputRejected(blocker: .wezTermSessionUnavailable, arrivalOrder: 1),
+            ]
+        }
+
+        XCTAssertFalse(SetupWindowPresentationModel.make(from: state).problems.contains {
+            $0.copy == .claudeInputRejected(.wezTermSessionUnavailable)
+        })
     }
 
     func testErrorsPrecedeWarningsAfterOpeningReasons() {
@@ -70,10 +97,79 @@ final class SetupWindowPresentationTests: XCTestCase {
             SetupWindowPresentationModel.make(from: denied).problems.first?.copy,
             .cmuxAccessDenied(.stable)
         )
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: denied).problems.first?.severity, .error)
         XCTAssertEqual(
             SetupWindowPresentationModel.make(from: stopped).problems.first?.copy,
             .cmuxNotRunning(.stable)
         )
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: stopped).problems.first?.severity, .warning)
+    }
+
+    func testCmuxNotInstalledIsAnErrorAndCheckFailureIsAWarning() {
+        let notInstalled = snapshot(selectedTerminal: .cmux) {
+            $0.cmuxStableSocket = .notInstalled
+        }
+        let failed = snapshot(selectedTerminal: .cmux) {
+            $0.cmuxStableSocket = .failed("unexpected response")
+        }
+
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: notInstalled).problems.first, .init(
+            severity: .error,
+            copy: .cmuxNotInstalled(.stable)
+        ))
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: failed).problems.first, .init(
+            severity: .warning,
+            copy: .cmuxCheckFailed(.stable, detail: "unexpected response")
+        ))
+    }
+
+    func testSelectedTerminalNotInstalledIsAnError() {
+        let state = snapshot {
+            $0.terminalInstallations = [.init(terminal: .iterm, isInstalled: false)]
+        }
+
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: state).problems.first, .init(
+            severity: .error,
+            copy: .selectedTerminalNotInstalled(.iterm)
+        ))
+    }
+
+    func testDeniedITermAutomationIsAnError() {
+        let state = snapshot {
+            $0.iTermAutomation = .denied
+        }
+
+        XCTAssertEqual(SetupWindowPresentationModel.make(from: state).problems.first, .init(
+            severity: .error,
+            copy: .iTermAutomation(.denied)
+        ))
+    }
+
+    func testUndeterminedOrStoppedITermAutomationRemainsAWarning() {
+        let cases: [(AutomationStatus, SetupWindowAutomationProblem)] = [
+            (.notDetermined, .notDetermined),
+            (.targetNotRunning, .targetNotRunning),
+            (.unknown(-1), .unknown(-1)),
+        ]
+        for (status, issue) in cases {
+            let state = snapshot { $0.iTermAutomation = status }
+            let problem = SetupWindowPresentationModel.make(from: state).problems.first
+
+            XCTAssertEqual(problem?.severity, .warning)
+            XCTAssertEqual(problem?.copy, .iTermAutomation(issue))
+        }
+    }
+
+    func testUnexpectedManifestPathAndExtensionIDRemainWarnings() {
+        for manifest in [SetupWindowManifestStatus.wrongRelayPath, .wrongExtensionID] {
+            let state = snapshot { $0.manifest = manifest }
+            let problem = SetupWindowPresentationModel.make(from: state).problems.first
+
+            XCTAssertEqual(problem?.severity, .warning)
+            XCTAssertTrue(
+                problem?.copy == .manifestWrongRelayPath || problem?.copy == .manifestWrongExtensionID
+            )
+        }
     }
 
     func testMissingExtensionFolderIsAProblemOnlyAfterARequestWasRecorded() {
@@ -110,18 +206,23 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertTrue(SetupWindowPresentationModel.make(from: reopened).showsFirstInstallChecklist)
     }
 
-    func testZoxideIsCriticalOnlyWithoutConfiguredBaseDirectory() {
+    func testZoxideIsCriticalOnlyWithoutUsableBaseDirectory() {
         let noBaseDirectory = snapshot {
             $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
             $0.baseDirectory = .unconfigured
         }
-        let configuredBaseDirectory = snapshot {
+        let usableBaseDirectory = snapshot {
             $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
-            $0.baseDirectory = .normalized("/example")
+            $0.baseDirectory = .normalized("/example", directoryExists: true)
+        }
+        let missingBaseDirectory = snapshot {
+            $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
+            $0.baseDirectory = .normalized("/example", directoryExists: false)
         }
 
         let critical = SetupWindowPresentationModel.make(from: noBaseDirectory).problems
-        let warning = SetupWindowPresentationModel.make(from: configuredBaseDirectory).problems
+        let warning = SetupWindowPresentationModel.make(from: usableBaseDirectory).problems
+        let missing = SetupWindowPresentationModel.make(from: missingBaseDirectory).problems
 
         XCTAssertTrue(critical.contains {
             $0.severity == .error && $0.copy == .criticalToolUnavailable(name: "zoxide")
@@ -129,6 +230,57 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertTrue(warning.contains {
             $0.severity == .warning && $0.copy == .toolUnavailable(name: "zoxide")
         })
+        XCTAssertTrue(missing.contains {
+            $0.severity == .error && $0.copy == .criticalToolUnavailable(name: "zoxide")
+        })
+    }
+
+    func testEmptyBaseDirectoryNeedsNoNoticeWhenZoxideIsAvailable() {
+        let state = snapshot {
+            $0.tools = .init(available: ["zoxide": true], executable: ["zoxide": true])
+            $0.baseDirectory = .unconfigured
+        }
+
+        XCTAssertNil(SetupWindowPresentationModel.make(from: state).baseDirectoryNotice)
+    }
+
+    func testEmptyBaseDirectoryShowsErrorNoticeWhenZoxideIsUnavailable() {
+        let state = snapshot {
+            $0.tools = .init(available: ["zoxide": false], executable: ["zoxide": false])
+            $0.baseDirectory = .unconfigured
+        }
+        let notice = SetupWindowPresentationModel.make(from: state).baseDirectoryNotice
+
+        XCTAssertEqual(notice, .notConfigured)
+        XCTAssertEqual(notice?.severity, .error)
+    }
+
+    func testEmptyBaseDirectoryDoesNotAssumeZoxideIsMissingBeforeToolCheck() {
+        let state = snapshot { $0.baseDirectory = .unconfigured }
+
+        XCTAssertNil(SetupWindowPresentationModel.make(from: state).baseDirectoryNotice)
+    }
+
+    func testExistingNormalizedBaseDirectoryNeedsNoNotice() {
+        let state = snapshot { $0.baseDirectory = .normalized("/example", directoryExists: true) }
+
+        XCTAssertNil(SetupWindowPresentationModel.make(from: state).baseDirectoryNotice)
+    }
+
+    func testMissingNormalizedBaseDirectoryShowsWarningNotice() {
+        let state = snapshot { $0.baseDirectory = .normalized("/example", directoryExists: false) }
+        let notice = SetupWindowPresentationModel.make(from: state).baseDirectoryNotice
+
+        XCTAssertEqual(notice, .directoryMissing)
+        XCTAssertEqual(notice?.severity, .warning)
+    }
+
+    func testInvalidStoredBaseDirectoryShowsErrorNotice() {
+        let state = snapshot { $0.baseDirectory = .invalidStoredValue }
+        let notice = SetupWindowPresentationModel.make(from: state).baseDirectoryNotice
+
+        XCTAssertEqual(notice, .storedValueInvalid)
+        XCTAssertEqual(notice?.severity, .error)
     }
 
     func testWorkspacePerItemIgnoresStoredNamedWorkspaceIdentity() {
@@ -234,7 +386,17 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.problems.contains { $0.copy == .slackThreadRequestFailed })
     }
 
-    func testClaudeExecutableWarningIdentifiesSlackImpact() {
+    func testClaudeUnavailableWarningUsesSharedImpactIdentifier() {
+        let state = snapshot {
+            $0.tools = .init(available: ["claude": false], executable: ["claude": false])
+        }
+
+        XCTAssertTrue(SetupWindowPresentationModel.make(from: state).problems.contains {
+            $0.copy == .claudeUnavailable
+        })
+    }
+
+    func testClaudeExecutableWarningUsesSharedImpactIdentifier() {
         let state = snapshot {
             $0.tools = .init(
                 available: ["claude": true],
@@ -243,7 +405,7 @@ final class SetupWindowPresentationTests: XCTestCase {
         }
 
         XCTAssertTrue(SetupWindowPresentationModel.make(from: state).problems.contains {
-            $0.copy == .claudeNotExecutableForSlack
+            $0.copy == .claudeNotExecutable
         })
     }
 }
@@ -259,7 +421,6 @@ private struct SetupWindowSnapshotValues {
     var cmuxStableSocket: CmuxSocketStatus? = .reachable
     var cmuxNightlySocket: CmuxSocketStatus? = .reachable
     var warpAccessibilityGranted = true
-    var warpHelperAvailable = true
     var wezTermSessionAvailable = true
     var tools: SetupWindowToolResults?
     var baseDirectory: SetupWindowBaseDirectoryStatus = .unconfigured
@@ -287,7 +448,6 @@ private struct SetupWindowSnapshotValues {
             cmuxStableSocket: cmuxStableSocket,
             cmuxNightlySocket: cmuxNightlySocket,
             warpAccessibilityGranted: warpAccessibilityGranted,
-            warpHelperAvailable: warpHelperAvailable,
             wezTermSessionAvailable: wezTermSessionAvailable,
             tools: tools,
             baseDirectory: baseDirectory,

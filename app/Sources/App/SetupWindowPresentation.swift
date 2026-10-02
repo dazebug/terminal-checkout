@@ -23,10 +23,10 @@ enum SetupWindowAppSocketStatus {
 enum SetupWindowBaseDirectoryStatus {
     case unconfigured
     case invalidStoredValue
-    case normalized(String)
+    case normalized(String, directoryExists: Bool)
 
-    var isConfigured: Bool {
-        if case .normalized = self { return true }
+    var isUsable: Bool {
+        if case .normalized(_, directoryExists: true) = self { return true }
         return false
     }
 }
@@ -76,7 +76,6 @@ struct SetupWindowSnapshot {
     let cmuxStableSocket: CmuxSocketStatus?
     let cmuxNightlySocket: CmuxSocketStatus?
     let warpAccessibilityGranted: Bool
-    let warpHelperAvailable: Bool
     let wezTermSessionAvailable: Bool
     let tools: SetupWindowToolResults?
     let baseDirectory: SetupWindowBaseDirectoryStatus
@@ -99,7 +98,6 @@ struct SetupWindowSnapshot {
         cmuxStableSocket: CmuxSocketStatus? = .reachable,
         cmuxNightlySocket: CmuxSocketStatus? = .reachable,
         warpAccessibilityGranted: Bool = true,
-        warpHelperAvailable: Bool = true,
         wezTermSessionAvailable: Bool = true,
         tools: SetupWindowToolResults? = nil,
         baseDirectory: SetupWindowBaseDirectoryStatus = .unconfigured,
@@ -121,7 +119,6 @@ struct SetupWindowSnapshot {
         self.cmuxStableSocket = cmuxStableSocket
         self.cmuxNightlySocket = cmuxNightlySocket
         self.warpAccessibilityGranted = warpAccessibilityGranted
-        self.warpHelperAvailable = warpHelperAvailable
         self.wezTermSessionAvailable = wezTermSessionAvailable
         self.tools = tools
         self.baseDirectory = baseDirectory
@@ -148,11 +145,11 @@ struct SetupWindowSnapshot {
     func isClaudeBlockerActive(_ blocker: ClaudeInputBlocker) -> Bool {
         switch blocker {
         case .warpAccessibility:
-            return selectedTerminal == .warp && !warpAccessibilityGranted
+            return !warpAccessibilityGranted
         case .warpHelperUnavailable:
-            return selectedTerminal == .warp && !warpHelperAvailable
+            return true
         case .wezTermSessionUnavailable:
-            return selectedTerminal == .wezterm && !wezTermSessionAvailable
+            return false
         }
     }
 }
@@ -188,8 +185,8 @@ enum SetupWindowProblemCopy: Equatable {
     case warpAccessibilityRequired
     case toolUnavailable(name: String)
     case criticalToolUnavailable(name: String)
-    case claudeUnavailableForSlack
-    case claudeNotExecutableForSlack
+    case claudeUnavailable
+    case claudeNotExecutable
 }
 
 struct SetupWindowProblem: Equatable {
@@ -205,6 +202,14 @@ enum SetupWindowConnectionSentence: Equatable {
 enum SetupWindowBaseDirectoryNotice: Equatable {
     case notConfigured
     case storedValueInvalid
+    case directoryMissing
+
+    var severity: SetupWindowProblemSeverity {
+        switch self {
+        case .directoryMissing: return .warning
+        case .notConfigured, .storedValueInvalid: return .error
+        }
+    }
 }
 
 enum SetupWindowPreviewDestination: Equatable {
@@ -294,11 +299,11 @@ enum SetupWindowPresentationModel {
         let baseDirectoryNotice: SetupWindowBaseDirectoryNotice?
         switch snapshot.baseDirectory {
         case .unconfigured:
-            baseDirectoryNotice = .notConfigured
+            baseDirectoryNotice = snapshot.tools?.available["zoxide"] == false ? .notConfigured : nil
         case .invalidStoredValue:
             baseDirectoryNotice = .storedValueInvalid
-        case .normalized:
-            baseDirectoryNotice = nil
+        case .normalized(_, let directoryExists):
+            baseDirectoryNotice = directoryExists ? nil : .directoryMissing
         }
 
         return SetupWindowPresentation(
@@ -324,7 +329,9 @@ enum SetupWindowPresentationModel {
             .compactMap { _, reason -> SetupWindowProblem? in
                 switch reason {
                 case .claudeInputRejected(let blocker, _):
-                    guard snapshot.isClaudeBlockerActive(blocker) else { return nil }
+                    guard blocker.setupWindowCanHelp, snapshot.isClaudeBlockerActive(blocker) else {
+                        return nil
+                    }
                     return SetupWindowProblem(
                         severity: .warning,
                         copy: .claudeInputRejected(blocker)
@@ -356,7 +363,7 @@ enum SetupWindowPresentationModel {
 
         if snapshot.isInstalled(snapshot.selectedTerminal) == false {
             current.append(.init(
-                severity: .warning,
+                severity: .error,
                 copy: .selectedTerminalNotInstalled(snapshot.selectedTerminal)
             ))
         }
@@ -378,7 +385,10 @@ enum SetupWindowPresentationModel {
             let issue: SetupWindowAutomationProblem
             switch status {
             case .granted: return
-            case .denied: issue = .denied
+            case .denied:
+                issue = .denied
+                problems.append(.init(severity: .error, copy: .iTermAutomation(issue)))
+                return
             case .notDetermined: issue = .notDetermined
             case .targetNotRunning: issue = .targetNotRunning
             case .unknown(let code): issue = .unknown(code)
@@ -400,7 +410,7 @@ enum SetupWindowPresentationModel {
             case .reachable:
                 break
             case .notInstalled:
-                problems.append(.init(severity: .warning, copy: .cmuxNotInstalled(channel)))
+                problems.append(.init(severity: .error, copy: .cmuxNotInstalled(channel)))
             case .notRunning:
                 problems.append(.init(severity: .warning, copy: .cmuxNotRunning(channel)))
             case .denied:
@@ -420,11 +430,11 @@ enum SetupWindowPresentationModel {
         guard let tools = snapshot.tools else { return }
         for name in checkedTools where tools.available[name] == false {
             if name == "claude" {
-                problems.append(.init(severity: .warning, copy: .claudeUnavailableForSlack))
+                problems.append(.init(severity: .warning, copy: .claudeUnavailable))
             } else {
                 let critical = toolIsCritical(
                     name,
-                    baseDirectoryConfigured: snapshot.baseDirectory.isConfigured
+                    baseDirectoryConfigured: snapshot.baseDirectory.isUsable
                 )
                 problems.append(.init(
                     severity: critical ? .error : .warning,
@@ -435,7 +445,7 @@ enum SetupWindowPresentationModel {
             }
         }
         if tools.available["claude"] == true, tools.executable["claude"] == false {
-            problems.append(.init(severity: .warning, copy: .claudeNotExecutableForSlack))
+            problems.append(.init(severity: .warning, copy: .claudeNotExecutable))
         }
     }
 
