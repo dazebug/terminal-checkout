@@ -974,16 +974,16 @@ final class ClaudeInjectorTests: XCTestCase {
         XCTAssertNil(wezTermTTYName(listJSON: Data("broken".utf8), paneID: "3"))
     }
 
-    // The probe for confirming the screen reflects an input: a long input wraps at the screen width and breaks a whole-string match, so only its front is used
+    // The reflection candidates are the input's two non-whitespace boundaries: short panes can show only the tail, while a folded paste can show only the head.
     func testClaudeInputProbeShortInputUsedWhole() {
         XCTAssertEqual(claudeInputProbe("/help"), "/help")
     }
 
-    func testClaudeInputProbeLongInputTruncated() {
-        let long = String(repeating: "a", count: 60)
-        let probe = claudeInputProbe(long)
-        XCTAssertEqual(probe.count, 24)
-        XCTAssertTrue(long.hasPrefix(probe))
+    func testClaudeInputProbeLongInputBuildsTailAndHeadCandidates() {
+        let long = "01234 56789 01234 56789 01234 56789 01234 56789 01234 56789 01234"
+        let compact = String(long.filter { !$0.isWhitespace })
+        XCTAssertEqual(claudeInputProbe(long), String(compact.suffix(24)))
+        XCTAssertEqual(claudeInputHeadProbe(long), String(compact.prefix(24)))
     }
 
     func testClaudeInputProbeTrimsWhitespace() {
@@ -2287,7 +2287,7 @@ final class ClaudePromptReclaimTests: XCTestCase {
 // MARK: - Delivery order and failure recovery
 // The delivery loop calls osascript and the wezterm cli, but the order, the retries and the stop verdicts have to be verifiable without any processes — ClaudeSessionIO swaps out exactly those calls.
 
-/// A stand-in for a claude session. It mirrors whatever is typed into the input box (box) onto the screen, and on receiving a CR it treats that as a submission and empties the box.
+/// A stand-in for a claude session. By default it mirrors the input box onto the screen; an optional renderer models cropped or folded composer output. On CR it records a submission and empties the box.
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
@@ -2378,6 +2378,8 @@ private final class FakeClaudeSession {
     var presetBox = "" { didSet { box = presetBox } }
     /// Text already on screen (used to build the situation where another pane is being read)
     var screenPrefix = ""
+    /// Optional composer viewport for short-pane rows and folded paste placeholders.
+    var screenBoxRenderer: ((String) -> String)?
     /// What the claude TUI draws **below** the input box — hint lines, the permission indicator, the context %, a clock.
     /// Without these the region `screenTail` looks at (from our input to the end of the screen) is not represented, so a defect like "a probe that also appears in the bottom chrome pins the tail forever" is invisible in the fake
     var bottomChrome = "? for shortcuts"
@@ -2484,7 +2486,8 @@ private final class FakeClaudeSession {
                 if failScreenAt.contains(screenCalls) { return nil }
                 if screenIsForeign { return foreignScreen }
                 let ticker = tickingChrome ? " \(screenCalls)% context left" : ""
-                return screenPrefix + " " + history + "❯ " + box + "\n" + bottomChrome + ticker
+                let visibleBox = screenBoxRenderer?(box) ?? box
+                return screenPrefix + " " + history + "❯ " + visibleBox + "\n" + bottomChrome + ticker
             },
             confirmSession: { [unowned self] _ in sessionAlive },
             sessionIsUnchanged: { [unowned self] in
@@ -2553,6 +2556,45 @@ final class ClaudeSubmissionSurvivalTests: XCTestCase {
         let session = FakeClaudeSession()
         XCTAssertEqual(submitClaudeInputs(inputs, io: session.io), 1)
         XCTAssertEqual(session.submitted, inputs)
+    }
+
+    func testShortPaneTailReflectionSubmitsThe424CharacterMergedInputOnce() {
+        let input = #"!/bin/echo '==== !gh issue view 95 ===='; gh issue view 95; /bin/echo '==== !gh issue view 95 --comments ===='; gh issue view 95 --comments; /bin/echo '==== !gh api repos/dazebug/terminal-checkout/issues/95/timeline --jq '\''[.[]|select(.event=="cross-referenced")|.source.issue.number]'\'' ===='; gh api repos/dazebug/terminal-checkout/issues/95/timeline --jq '[.[]|select(.event=="cross-referenced")|.source.issue.number]'"#
+        XCTAssertEqual(input.count, 424)
+        let session = FakeClaudeSession()
+        session.screenBoxRenderer = { box in
+            guard box == input else { return box }
+            let visible = Array(box.suffix(191))
+            let widths = [39, 38, 38, 38, 38]
+            var start = 0
+            return widths.map { width in
+                let end = start + width
+                defer { start = end }
+                return String(visible[start..<end])
+            }.joined(separator: "\n")
+        }
+
+        XCTAssertEqual(submitClaudeInputs([input], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [input])
+        XCTAssertEqual(session.keystrokes.filter { $0 == claudeSubmitKey }.count, 1)
+        XCTAssertEqual(session.waits.count, 0, "the visible tail should pass on the first reflection read")
+    }
+
+    func testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires() {
+        let visibleHead = "A long plain note starts here"
+        let visibleEnd = "india8"
+        let fillerCount = 2_000 - visibleHead.count - visibleEnd.count
+        let input = visibleHead + String(repeating: "x", count: fillerCount) + visibleEnd
+        let session = FakeClaudeSession()
+        session.screenBoxRenderer = { box in
+            guard box == input else { return box }
+            return String(box.prefix(70)) + "…india8[Pasted text #1]"
+        }
+
+        XCTAssertEqual(submitClaudeInputs([input], io: session.io), 1)
+        XCTAssertEqual(session.submitted, [input])
+        XCTAssertEqual(session.keystrokes.filter { $0 == claudeSubmitKey }.count, 1)
+        XCTAssertEqual(session.waits.count, 12, "head-only reflection must wait through the full window")
     }
 
     /// **Reproduction:** the CR is reported as sent, the TUI has not acted on it,
@@ -4545,7 +4587,11 @@ final class WarpHelperStopTests: XCTestCase {
 // The tty input queue has a cap (TTYHOG) and the kernel silently drops whatever overflows it. So a claude input over 512 bytes does not fail wholesale: it is written in pieces sized to the queue's headroom, waiting for consumption in between.
 
 final class WarpInjectChunkTests: XCTestCase {
-    /// Regression guard: nothing is written while **even one byte** remains in the queue. Continuing just because there is room leaves the previous piece's tail in the queue while the next piles on, and once claude reads only the first 24 characters and draws them, the screen check passes — then, when claude ends, **the shell reads and runs** the remaining tail
+    /// Regression guard: nothing is written while **even one byte** remains in the queue. Continuing
+    /// just because there is room leaves the previous piece's tail in the queue while the next piles
+    /// on; the reflection fragments (`claudeInputProbe`) cannot replace backpressure because they do
+    /// not identify which queued bytes claude has consumed. If claude exits, **the shell can read and
+    /// run** the remaining tail
     func testChunkOnlyGoesIntoAnEmptyQueue() {
         XCTAssertEqual(warpInjectChunkSize(pending: 1, remaining: 1000, limit: 512), 0)
         XCTAssertEqual(warpInjectChunkSize(pending: 100, remaining: 1000, limit: 512), 0)

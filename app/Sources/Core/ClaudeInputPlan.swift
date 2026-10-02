@@ -60,8 +60,8 @@ let claudeBannerCommand = "/bin/echo"
 /// short — a single input has no length limit — only that the merge stops adding to it. **Nothing
 /// is truncated either way**; a body too long for the helper fails visibly rather than quietly.
 ///
-/// The ceiling is **not** about the reflection probe: a 4,000-character line still shows its first
-/// 24 characters in the composer, which grows vertically (measured, 2.1.238).
+/// The ceiling is **not** about screen reflection: the reflection fragments (`claudeInputProbe`)
+/// handle partial composer views. This cap only limits the merged payload sent to the Warp helper.
 let claudeMergedLineLimit = 4096
 
 /// Words that open, continue or close a **compound command**. Neither scanner in this file models
@@ -286,11 +286,11 @@ func claudeBodyJoinsSafely(_ body: String) -> Bool {
 ///    read as syntax.
 ///
 /// A merged line is capped at `claudeMergedLineLimit` — not because the line is too long to type
-/// (it goes into a TUI, so `ARG_MAX` does not apply, and the reflection probe still sees its first
-/// 24 characters at 4,000, measured) but because the Warp helper refuses an injection payload over
-/// 8 KiB. Merging is the optimisation, so it is what gives way: past the cap the run is typed input
-/// by input. **Nothing is ever truncated** — truncating would silently change a command the user
-/// wrote, which would silently change the command.
+/// (it goes into a TUI, so `ARG_MAX` does not apply, and the reflection fragments
+/// (`claudeInputProbe`) handle partial composer views) but because the Warp helper refuses an
+/// injection payload over 8 KiB. Merging is the optimisation, so it is what gives way: past the cap
+/// the run is typed input by input. **Nothing is ever truncated** — truncating would silently
+/// change a command the user wrote, which would silently change the command.
 public func claudeTypedInputs(_ inputs: [String]) -> [String] {
     var typed: [String] = []
     var run: [String] = []

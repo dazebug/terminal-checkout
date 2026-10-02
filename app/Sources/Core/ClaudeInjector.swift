@@ -176,15 +176,17 @@ public func paneProofToken() -> String {
     return String((0..<3).map { _ in runes.randomElement()! })
 }
 
-/// The probe used to confirm the screen reflects an input. A long input is truncated or folded somewhere on screen, so only its front is used.
-///
-/// **Are the first 24 characters enough — measured (2.1.238, pty).** Even a single 4,000-character line put into the input box makes the composer grow vertically and show all of it, with the first 24 characters staying on screen. A merged `!` line (∼300 characters for the shipped presets) is far shorter than that. So there is no reason to move the probe to a later slice or to lower the merge cap.
+/// The primary screen-reflection fragment is the input's last 24 non-whitespace characters. Claude Code 2.1.287 showed only the last 5 composer lines in 38×20 and 76×20 panes (head24 0→0, tail24 0→2); in a 2,000-character folded paste it showed the head24 (0→1) but not the tail24 (0→0). Check the tail during the 2-second reflection window and accept the head only when that window expires without a tail reflection.
 public func claudeInputProbe(_ input: String) -> String {
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    return String(trimmed.prefix(24))
+    String(input.filter { !$0.isWhitespace }.suffix(24))
 }
 
-/// Decides whether the typed input appeared on screen **this time round**. The probe has to be visible one more time than in the screen taken immediately before typing (`before`) for it to count as reflected.
+/// The first 24 non-whitespace characters are the fallback fragment when Claude folds a long paste and never draws its tail.
+func claudeInputHeadProbe(_ input: String) -> String {
+    String(input.filter { !$0.isWhitespace }.prefix(24))
+}
+
+/// Decides whether the input's primary tail fragment appeared at least one more time than in the screen taken immediately before typing (`before`). The delayed head fallback is handled by `typeAndSubmit` after its reflection window expires.
 ///
 /// Why "is it on screen" is not enough: on Warp the screen read through Accessibility belongs to the focused pane, with no guarantee it is ours. If another pane happens to show the same text, a plain substring match passes even before we type, and the CR that follows submits — leaving our input unsubmitted while whatever the user was typing in that pane goes in instead.
 /// A nil `before` (a failed screen read) is a failed check — treating what could not be sampled as "it was not there" leaves exactly the same hole open.
@@ -192,11 +194,15 @@ public func claudeInputProbe(_ input: String) -> String {
 /// All whitespace is removed before comparing because the claude TUI does not draw the input verbatim: shell mode (`!`) inserts a space after the `!`, as in "! gh …", and a long input wraps at the terminal width (both measured). Compared whole, such inputs would fail the reflection check forever and hang in the input box.
 /// It counts occurrences rather than presence so that scheduling the same input twice still submits the second one while the first is still in the transcript.
 public func screenReflectsNewInput(before: String?, after: String, input: String) -> Bool {
+    screenReflectsNewProbe(before: before, after: after, probe: claudeInputProbe(input))
+}
+
+private func screenReflectsNewProbe(before: String?, after: String, probe: String) -> Bool {
     guard let before else { return false }
-    let probe = claudeInputProbe(input).filter { !$0.isWhitespace }
+    let normalizedProbe = probe.filter { !$0.isWhitespace }
     // An empty probe matches any screen at all and would approve a submission that should not happen
-    guard !probe.isEmpty else { return false }
-    return probeCount(probe, in: after) > probeCount(probe, in: before)
+    guard !normalizedProbe.isEmpty else { return false }
+    return probeCount(normalizedProbe, in: after) > probeCount(normalizedProbe, in: before)
 }
 
 private func probeCount(_ probe: String, in screen: String) -> Int {
@@ -420,16 +426,23 @@ private func typeAndSubmit(
         timeline?.step("\(label) pane proof passed (attempt \(attempt)/\(maxAttempts))")
         // At this point the input box has been **observed** empty — an observation, not a successful write
         boxObservedEmpty()
-        guard let baseline = io.screenText().map({ probeCount(of: text, in: $0) }) else {
+        guard let before = io.screenText() else {
             checkoutLog("screen read failed — retrying (\(attempt)/\(maxAttempts))")
             continue
         }
+        let tailProbe = claudeInputProbe(text)
+        let headProbe = claudeInputHeadProbe(text)
+        guard !tailProbe.isEmpty, !headProbe.isEmpty else { continue }
+        let tailBaseline = probeCount(of: text, in: before)
+        let headBaseline = probeCount(headProbe, in: before)
         // The body is typed **exactly once**. While the experiment used the body, the moment that trial typing appeared on screen the user could press Enter, the command would run, and — not knowing that — we would retype and send a CR, so **the `!` command ran twice**. With the marker taking the hit instead, what gets submitted is one inert line, and the fact that the user's Enter is not counted stays true without doing any damage
         guard send(text, io: io) else {
             checkoutLog("failed to send the typing — retrying (\(attempt)/\(maxAttempts))")
             continue
         }
         var reflected: String?
+        var reflectedProbe: String?
+        var headFallback: (screen: String, probe: String)?
         var failure = "the input is not reflected on screen"
         // Same read-cost compensation as `poll` — a 137ms Warp read on top of a full interval
         // sleep stretched this "2 second" window to ~3.8s of wall clock. The wait comes before
@@ -440,20 +453,34 @@ private func typeAndSubmit(
             let readStarted = Date()
             guard let screen = io.screenText() else {
                 failure = "screen read failed"
+                headFallback = nil
                 break
             }
             lastReadCost = Date().timeIntervalSince(readStarted)
-            // **At least** one more, not exactly one more: claude may draw our line a second time
-            // (the hint-line behaviour the attribution experiment exists for), and demanding an
-            // exact count made the button do nothing at all — five typings, no CR, no message
-            // Only the *disappearance* check needs an exact count, where
-            // "some of it is still there" has to fail
-            if probeCount(of: text, in: screen) >= baseline + 1 {
+            // **At least** one more, not exactly one more: claude may draw our line a second time (the
+            // hint-line behaviour the attribution experiment exists for), and demanding an exact
+            // count made the button do nothing at all — five typings, no CR, no message. Only the
+            // *disappearance* check needs an exact count, where 'some of it is still there' has to
+            // fail. This applies to both the tail and head fragment comparisons.
+            // The tail proves the end of the typed input is on screen, so use it as soon as its
+            // count grows. A head-only reflection can be a folded paste; remember its first
+            // increased screen, but do not submit until the full window has had a chance to show
+            // the tail.
+            if probeCount(of: text, in: screen) > tailBaseline {
                 reflected = screen
+                reflectedProbe = tailProbe
                 break
             }
+            if tailProbe != headProbe, headFallback == nil,
+               probeCount(headProbe, in: screen) > headBaseline {
+                headFallback = (screen, headProbe)
+            }
         }
-        if let reflected {
+        if reflected == nil, let headFallback {
+            reflected = headFallback.screen
+            reflectedProbe = headFallback.probe
+        }
+        if let reflected, let reflectedProbe {
             timeline?.step("\(label) body reflection confirmed")
             guard submitConfirmedInput(io: io, retryConfirmTimeout: retryConfirmTimeout) else {
                 // **A CR that went out may have landed even when the call reports failure** — the
@@ -467,7 +494,7 @@ private func typeAndSubmit(
             }
             // The "total" printed on this line for the first input is the number the user actually feels — from the button click to the first submission
             timeline?.step("\(label) submission (CR) sent")
-            switch inputBoxAfterSubmit(io: io, whenTyped: reflected, text: text) {
+            switch inputBoxAfterSubmit(io: io, whenTyped: reflected, probe: reflectedProbe) {
             case .stillHoldsOurInput:
                 timeline?.step("\(label) post-check: the input is still in the input box")
                 return .leftInTheInputBox
@@ -535,28 +562,28 @@ enum InputBoxAfterSubmit: Equatable {
 private let inputBoxLookDeadline: TimeInterval = 3.6
 
 func inputBoxAfterSubmit(
-    io: ClaudeSessionIO, whenTyped: String, text: String
+    io: ClaudeSessionIO, whenTyped: String, probe: String
 ) -> InputBoxAfterSubmit {
     // Warp's screen is whichever pane has focus, so "unchanged" there is not about our box. The
     // pane proof is only valid up to the moment the body is typed, and re-proving here would mean
     // typing bytes into a box a submission may have just emptied
     guard !io.screenNeedsPaneProof else { return .unknown }
-    let probe = claudeInputProbe(text).filter { !$0.isWhitespace }
-    guard !probe.isEmpty else { return .unknown }
+    let selectedProbe = probe.filter { !$0.isWhitespace }
+    guard !selectedProbe.isEmpty else { return .unknown }
     // **The probe has to identify our copy, and only ours.** claude draws hint lines, a permission
     // indicator and a context meter *below* the box, and `screenTail` takes the last occurrence —
     // so a probe that also appears down there pins the tail forever and a submission that went
     // through reads as "still in the box" (reproduced: input `y` against "bypass permissions on",
     // and `/review` against a "try /review" hint; both dropped every later input). When the probe
     // is not unique we cannot tell the copies apart, so we do not judge
-    guard probeOccurrences(of: probe, in: whenTyped) == 1,
-          let typedTail = screenTail(from: probe, in: whenTyped) else { return .unknown }
+    guard probeOccurrences(of: selectedProbe, in: whenTyped) == 1,
+          let typedTail = screenTail(from: selectedProbe, in: whenTyped) else { return .unknown }
     var last = InputBoxAfterSubmit.unknown
     _ = poll(io: io, within: inputBoxLookDeadline) {
         // A read we could not make says nothing; keep the look open so earlier readable samples
         // remain useful.
         guard let screen = io.screenText() else { return false }
-        guard let tail = screenTail(from: probe, in: screen) else {
+        guard let tail = screenTail(from: selectedProbe, in: screen) else {
             last = .ourInputIsGone
             return false
         }
@@ -672,10 +699,10 @@ private func waitUntilMarkerErased(
     }
 }
 
-/// How many times the input's probe appears on the screen, whitespace removed on both sides —
+/// How many times the input's tail probe appears on the screen, whitespace removed on both sides —
 /// the TUI reflows and pads what it draws (`screenReflectsNewInput` normalises the same way).
 func probeCount(of input: String, in screen: String) -> Int {
-    probeCount(claudeInputProbe(input).filter { !$0.isWhitespace }, in: screen)
+    probeCount(claudeInputProbe(input), in: screen)
 }
 
 private func probeOccurrences(of probe: String, in screen: String) -> Int {

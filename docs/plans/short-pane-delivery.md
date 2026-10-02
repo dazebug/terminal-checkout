@@ -4,7 +4,7 @@
 - 대상: terminal-checkout · app Claude input delivery 및 cmux grouped placement
 - 시작 커밋: 21382f5
 - 기준 트리: (worktree-short-pane-delivery-review · 21382f5) · 작업 트리: /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work (short-pane-delivery-work)
-- 현재: R0 · 마지막 승격 없음 · 리뷰 중 없음 · 게이트 Node 323 green, Swift 드라이버 실행
+- 현재: R1 · 마지막 승격 4783740 · 리뷰 중 없음 · 게이트 Node 323 · Swift CoreTests 535 / AppTests 132
 - 최근 검증자 판정: 미요청 · 원문 없음
 
 이 파일은 **실행한 계획과 실행할 계획의 기록**이다 — 결정(사용자·드라이버), 판정(검증자), 항목의 상태와 재실행 근거(명령 + 결과 줄 + 수치), 남은 큐, 크로스 리포 사실. 코드 수정 과정을 자연어로 풀어 쓰지 않는다: 무엇이 바뀌었는지는 커밋이, 어떻게 동작하는지는 코드가 말한다. 결정이나 질문이 특정 동작에 걸리면 한 절과 파일:행으로 끝낸다. 이 템플릿에 없는 소절을 만들지 않는다 — 테스트 설계는 테스트 파일이 말한다.
@@ -60,7 +60,7 @@
 - 본문 반사는 before snapshot 대비 증가한 끝 조각을 우선하고, 반사 창이 끝날 때까지 끝 조각이 없으면 앞 조각 증가를 대체로 받는다; 반사를 통과시킨 같은 조각으로 post-CR 상태를 판정하고, 입력 화면에서 유일하지 않으면 `.unknown`이다 ( app/Sources/Core/ClaudeInjector.swift:179-200, 423-486, 537-570, 681-692 ).
 - marker는 pane proof와 입력 위치 attribution에 계속 쓰지만 marker 글자 count나 composer 구조 파싱을 clear oracle로 쓰지 않는다. marker clear, 재시도 전 clear, delivery-end cleanup은 동일한 K 산정 규칙을 쓴다 ( app/Sources/Core/ClaudeInjector.swift:212-223, 287-318, 591-629 ).
 - `InputBoxOwnership`은 마지막으로 우리 입력이 없다고 판정한 뒤 시도한 입력 글자 수를 marker 포함해 추적한다; send 실패도 일부 byte가 갔을 수 있으므로 전체 시도 글자 수를 상한에 포함한다. Ctrl+U·Backspace는 count에 더하지 않고, CR 뒤에도 입력창 부재 증거나 count clear 전까지 기존 count를 유지한다. 가능한 tty 열 수를 읽어 K를 산정하고, 못 읽으면 20열의 보수적 하한을 쓴다; 사용자 초안이 K보다 길면 남는 경우는 기존 #16 잔여와 같은 부류다 ( app/Sources/Core/ClaudeInjector.swift:226-236, 287-318, 1025-1060, 1075-1096 ).
-- clear는 Ctrl+U를 K개 보낸 뒤 Backspace 하나다. cmux는 K개의 Ctrl+U를 한 `surface.send_text` 호출에, Backspace를 별도 호출에 보낸다; 빈 입력창에서 추가 Ctrl+U가 무해하다는 관찰은 cmux의 C1이다. iTerm2, WezTerm, Warp의 쓰기 단위는 코드로 확인하고 hands-on checklist에 남기며, cmux 외 TUI 실측은 이 루프의 게이트가 아니다 ( app/Sources/Core/ClaudeInjector.swift:31-79, 1227-1294; app/Sources/Core/AppleScriptSupport.swift:121-146 ).
+- clear는 Ctrl+U를 K개 보낸 뒤 Backspace 하나다. cmux는 Ctrl+U를 최대 8개씩 `surface.send_text`에 나눠 보내고 Backspace는 별도 호출에 보낸다; 빈 입력창에서 추가 Ctrl+U가 무해하다는 관찰은 cmux의 C1이다. iTerm2, WezTerm, Warp의 쓰기 단위는 코드로 확인하고 hands-on checklist에 남기며, cmux 외 TUI 실측은 이 루프의 게이트가 아니다 ( app/Sources/Core/ClaudeInjector.swift:31-79, 1227-1294; app/Sources/Core/AppleScriptSupport.swift:121-146 ).
 - 입력이 `!`로 시작하면 첫 글자와 나머지를 별도 send로 연달아 보낸다. 셸 모드 전환을 확인하려고 기다리지 않는다; 두 send 각각 gate ③을 통과하며 화면 반사는 앞의 `!`를 포함한 전체 원문으로 한다 ( app/Sources/Core/ClaudeInjector.swift:276-285, 393-486 ).
 - 연속 `!` 입력의 merge 안전성, shell 의미, banner, 순서는 유지한다; 전송 경로만 leading `!`를 분리한다 ( app/Sources/Core/ClaudeInputPlan.swift:280-325 ).
 - pane geometry 상한 25는 `batchItemLimit`과 값이 같더라도 별도 명시값으로 둔다; batch 상한 변경만으로 미측정 geometry 범위를 자동 확장하지 않는다 ( app/Sources/Core/Request.swift:27-35, app/Sources/Core/CmuxPlacement.swift:89-90 ).
@@ -80,7 +80,7 @@
 | 설정 worktree.baseRef: "head" — 에이전트 첫 보고의 git log --oneline -2가 기준 HEAD를 보이는가 | N/A — 작업 트리는 전용 clone, 첫 보고 log가 기준 HEAD 21382f5 |
 | 에이전트 첫 보고: 작업 트리 경로 · 브랜치 · HEAD | /Users/choongjaelee/Codes/terminal-checkout-short-pane-delivery-work · short-pane-delivery-work · 21382f5 |
 | 리포 오버레이 .claude/drive-agent-loop.md — 기준 트리의 경로(메인 것을 복사했으면 그렇게), 없으면 드라이버가 골격으로 작성. 커밋하지 않는다 — 오버레이 무시: ignored 확인 | `.claude/drive-agent-loop.md`는 리포에 커밋된 파일 — 이 루프는 수정하지 않는다 |
-| cmux 패널 (점검 블록 cmux: 신호가 켜졌을 때만, 아니면 N/A) — cmux markdown open <작업 트리 계획 파일 절대경로> → pane id. 계획 파일 첫 승격 전에 채운다 | 드라이버가 첫 승격 전에 연다 |
+| cmux 패널 (점검 블록 cmux: 신호가 켜졌을 때만, 아니면 N/A) — cmux markdown open <작업 트리 계획 파일 절대경로> → pane id. 계획 파일 첫 승격 전에 채운다 | surface:406 · pane:324 (드라이버, 이 세션 workspace에 focus 없이) |
 | 트리마다 의존성 동기화 (기준·작업) | N/A — 외부 의존성 없음 |
 | git 밖 로컬 자산을 가리키는 env (이름=절대경로) — 에이전트가 읽기 확인 | 없음 |
 | 증분 리뷰 소요(분) — 첫 세 번 | |
@@ -89,17 +89,17 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1a | 반사 확인을 tail-first, head-fallback으로 바꾸고 `inputBoxAfterSubmit`이 반사를 통과시킨 같은 조각을 쓰게 한다. | 입력 반사 | M1: 424자 합친 줄에서 38×20·76×20의 head24는 0→0이고 tail24는 0→2; current first-24 probe misses the input ( app/Sources/Core/ClaudeInjector.swift:179-200, 423-455, 537-570, 677-683 ). | app/Sources/Core/ClaudeInjector.swift, app/Sources/Core/WarpHelperProtocol.swift, app/Sources/WarpHelper/main.swift, app/Tests/CoreTests/CoreTests.swift | — | todo | 재실행: `cat /private/tmp/short-pane-loop/measurements.md` → M1; 반사 정책은 D2 | — |
+| 1a | 반사 확인을 tail-first, head-fallback으로 바꾸고 `inputBoxAfterSubmit`이 반사를 통과시킨 같은 조각을 쓰게 한다. | 입력 반사 | M1: 424자 합친 줄에서 38×20·76×20의 head24는 0→0이고 tail24는 0→2; 구 head-only probe는 입력을 놓친다 ( app/Sources/Core/ClaudeInjector.swift:179-207, 423-493, 558-590, 696-713 ). | app/Sources/Core/ClaudeInjector.swift, app/Sources/Core/ClaudeInputPlan.swift, app/Sources/Core/Request.swift, app/Sources/Core/WarpHelperProtocol.swift, app/Sources/WarpHelper/main.swift, app/Tests/CoreTests/CoreTests.swift | — | cleared | 재실행(드라이버): clone swift test → exit 1, 접힘 테스트 대역 결함(공백 포함 24자 렌더) · 토글(옛 ClaudeInjector) → 새 테스트 2개 실패(짧은 pane: 제출 0·waits 144, 접힘: waits 0); `node --test --test-reporter=tap` → exit 0·323 · 재실행(드라이버): clone swift test → exit 0, CoreTests 535(1 skipped), AppTests 132 · 토글 → 새 테스트 2개 실패 | — |
 | 1b | `!`로 시작하는 입력을 `!` 한 글자와 나머지로 나눠 연속 전송한다; 셸 모드 화면 확인이나 대기는 넣지 않고 반사는 전체 입력으로 한다. | 입력 전송 | 424자 합친 줄은 한 번에 보내면 6/8 중복되고, `!`를 별도 send로 보낸 뒤 나머지를 즉시 보내면 0/8이다; 24자 단독 입력은 한 번 전송도 0/20이라 중복은 긴 덩어리에서 관찰됐다 ( app/Sources/Core/ClaudeInjector.swift:276-285, 393-486 ). | app/Sources/Core/ClaudeInjector.swift, app/Tests/CoreTests/CoreTests.swift | 1a | todo | 재실행: `cat /private/tmp/short-pane-loop/measurements.md` → C2·D1; 전송 정책은 D3 | — |
-| 1c | composer 구조를 파싱하지 않고 `InputBoxOwnership`의 누적 글자 수와 tty 열 수로 K를 산정해 Ctrl+U K개, Backspace 하나를 보내는 clear 경로를 만든다. marker clear, 재시도 전 clear, delivery-end cleanup이 한 함수를 쓴다. | 입력 비우기 | C1: 한 Ctrl+U는 시각 줄 하나만 지우며 현재 Ctrl+U+Backspace는 319자·424자 입력의 앞 줄을 남긴다. 확정된 추가 결함: 반사 실패 뒤 재시도는 이 잔여 위에 marker와 다음 본문을 쌓는다; 같은 줄 누적은 입력 병합·오제출로 이어질 수 있다 ( app/Sources/Core/ClaudeInjector.swift:31-39, 287-318, 393-486, 591-629 ). | app/Sources/Core/ClaudeInjector.swift, app/Sources/Core/AppleScriptSupport.swift, app/Sources/Core/WarpHelperProtocol.swift, app/Sources/WarpHelper/main.swift, app/Tests/CoreTests/CoreTests.swift, app/Tests/CoreTests/CmuxTests.swift | 1a·1b; retry reflection은 1a 정책 전제 | todo | 재실행: `cat /private/tmp/short-pane-loop/measurements.md` → C1·D2; clear 정책은 D4; K≥64 한 호출 측정은 승격 전 | — |
+| 1c | composer 구조를 파싱하지 않고 `InputBoxOwnership`의 누적 글자 수와 tty 열 수로 K를 산정해 Ctrl+U K개, Backspace 하나를 보내는 clear 경로를 만든다. marker clear, 재시도 전 clear, delivery-end cleanup이 한 함수를 쓴다. | 입력 비우기 | C1: 한 Ctrl+U는 시각 줄 하나만 지우며 현재 Ctrl+U+Backspace는 319자·424자 입력의 앞 줄을 남긴다. 확정된 추가 결함: 반사 실패 뒤 재시도는 이 잔여 위에 marker와 다음 본문을 쌓는다; 같은 줄 누적은 입력 병합·오제출로 이어질 수 있다. D7: Ctrl+U를 64·128개 한 번에 보내면 무시되므로 한 쓰기당 8개 이하로 나눈다 ( app/Sources/Core/ClaudeInjector.swift:31-39, 287-318, 393-486, 591-629; measurements.md B2 ). | app/Sources/Core/ClaudeInjector.swift, app/Sources/Core/AppleScriptSupport.swift, app/Sources/Core/WarpHelperProtocol.swift, app/Sources/WarpHelper/main.swift, app/Tests/CoreTests/CoreTests.swift, app/Tests/CoreTests/CmuxTests.swift | 1a·1b; retry reflection은 1a 정책 전제 | todo | 재실행: `cat /private/tmp/short-pane-loop/measurements.md` → C1·D2·D7; K는 8개 이하씩 쓰기로 나누며 8/call은 B2 조건에서 처리됨 | — |
 | 2 | cmux pane-per-item 상한을 명시값 25로 올리고 balanced layout 및 fixed-name found split 경로가 모두 25 item을 표현하는지 고정한다. | cmux placement | N=9∼25는 현재 탭 경로로 바뀌고 found-workspace split helper도 8 cap을 강제한다 ( app/Sources/Core/CmuxPlacement.swift:89-90, 295-379, 383-435 ). | app/Sources/Core/CmuxPlacement.swift, app/Sources/Core/CmuxGroupedExecution.swift, app/Tests/CoreTests/CmuxPlacementTests.swift, app/Tests/CoreTests/CmuxGroupedExecutionTests.swift | 1c | todo | 재실행: `cat /private/tmp/short-pane-loop/measurements.md` → N=9∼25 geometry; live found-route 확인은 항목 2 구현 뒤 | — |
 | 3 | 실측으로 확정된 입력 전달·pane placement 이유와 지원 체크리스트를 갱신한다; 새 carrier 측정 게이트는 추가하지 않는다. | 근거·체크리스트 | active context와 hands-on checklist가 first-24 probe, Ctrl+U clear, N>8 tab fallback을 현재 계약처럼 남긴다. | CLAUDE.md, docs/context/claude-input-delivery.md, docs/context/cmux-integration.md, docs/new-terminal-checklist.md | 1a·1b·1c·2 및 cmux 실측 | todo | 기존 PR #80 계획은 역사 기록으로 유지 | — |
 
 - 승격 순서: 1a → 1b → 1c → 2 → 3. 같은 `ClaudeInjector.swift`를 건드리는 항목은 순서로 분리한다; 1c는 1a의 반사 판정과 post-CR candidate contract를 전제한다.
-- 1a red: before 화면에 head·tail이 없고 after 화면은 tail24만 2회 새로 보이는 M1 sequence에서 현재 first-24 probe는 false다. 계약 테스트는 tail 즉시 통과, 창 만료 시 tail이 없고 head만 증가한 경우 fallback 통과, `inputBoxAfterSubmit`이 선택 조각을 유일하게 찾지 못하면 `.unknown`이다. M2의 head-only 부분 화면을 측정되지 않은 실패로 가정하는 테스트는 추가하지 않는다.
+- 1a tests: `testShortPaneTailReflectionSubmitsThe424CharacterMergedInputOnce` feeds the M1 five-row tail-only screen through `submitClaudeInputs`; `testCollapsedInputUsesHeadReflectionOnlyAfterTheWindowExpires` models the M2 head-only folded-paste screen and pins deadline fallback. The existing long-probe test now checks both tail-primary and head-fallback candidates; `inputBoxAfterSubmit` uses the selected fragment and still returns `.unknown` when it is not unique.
 - 1b red: 기존 `typeAndSubmit`은 `!`와 나머지를 한 번에 보낸다. fake I/O send 기록에서 424자 합친 입력이 `!`, 나머지 두 call로 분리되고 두 call이 각각 `send(_:io:)`의 identity gate를 거치는 계약을 고정한다; Claude 화면에서 singleton/merged 실제 실행은 driver measurement source가 판정한다.
 - 1c red: `FakeClaudeSession`을 시각 줄 모델로 바꾼다. 319자 줄에 현재 Ctrl+U+Backspace 한 쌍을 적용하면 마지막 시각 줄 외의 잔여가 남는다; 반사 실패 후 다음 attempt의 marker/body가 기존 잔여에 쌓이는 순서를 재현한다. 대역은 Ctrl+U마다 현재 시각 줄 하나를 제거하고 같은 call 안의 반복도 순서대로 적용한다. `InputBoxOwnership`은 send 성공 여부와 무관하게 시도한 marker·prefix·본문 글자 수를 추적하고 Ctrl+U·Backspace·CR은 더하지 않도록 시험한다.
-- 1c K: 가능한 경우 이미 알고 있는 tty path로 `/bin/stty -f <tty> size`의 열 수를 읽고, 실패하면 보수적으로 20열을 사용한다. K는 마지막 clear 이후 우리 쪽에서 시도한 글자 수와 열 수로 산정하고 marker를 포함한다. K≥64를 한 `send_text` 호출에 보냈을 때 Ctrl+U burst가 paste로 취급되지 않는지는 코드 테스트로 대체하지 않고 승격 전에 드라이버가 측정한다. 사용자의 초안이 K보다 길면 남을 수 있는 잔여는 이슈 #16과 같은 부류로 문서화한다.
+- 1c K: 가능한 경우 이미 알고 있는 tty path로 `/bin/stty -f <tty> size`의 열 수를 읽고, 실패하면 보수적으로 20열을 사용한다. K는 마지막 clear 이후 우리 쪽에서 시도한 글자 수와 열 수로 산정하고 marker를 포함한다. 한 `send_text` 호출에는 Ctrl+U를 최대 8개씩 넣는다; B2에서 8/call은 처리됐지만 모든 조건에서 안전하다고 입증되지는 않았다 (D7). 사용자의 초안이 K보다 길면 남을 수 있는 잔여는 이슈 #16과 같은 부류로 문서화한다.
 - 1c carrier 점검은 코드 단위만 본다: iTerm2는 한 AppleScript write, WezTerm은 send-text 호출, Warp는 helper inject 요청의 경계와 빈 queue 대기, cmux는 Ctrl+U burst 한 `surface.send_text`와 Backspace 별도 call. iTerm2·WezTerm·Warp TUI 동작은 게이트가 아니며 hands-on checklist에 남긴다.
 - 2 red: N=9·16·17·25 plan 테스트가 pane route를 기대해 현재 N=9 tab fallback에서 실패해야 한다. N=25 fixed-name planner는 기존 precondition trap을 직접 부르지 않고 통합 계획 경로에서 fallback을 red로 만든다. N=25 live found split 검사는 구현 뒤 workspace를 화면에 보여야 pane 크기가 맞으므로 사용자에게 먼저 알린다.
 - 2의 25는 geometry policy의 명시값이다; `batchItemLimit`은 batch cardinality로 둔다. N=26은 batch precondition 전에 거부되어 이 루프의 pane oracle이 아니다.
@@ -117,6 +117,7 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 | D4 | 드라이버 | 열린 질문 2: 비웠는지를 composer 영역 파싱으로 확인해야 한다 | 기각 — 우리가 넣었을 수 있는 글자 수와 pane 폭으로 필요한 Ctrl+U 개수 K를 구해 한 번에 보내고(D2: 한 호출에 여러 개가 줄마다 처리된다), 그 뒤 Backspace 하나(셸 모드 ! 제거, cmux는 지금처럼 따로). 빈 입력창의 추가 Ctrl+U는 무해하다(C1). 마커 지우기·실패한 반사 뒤 재시도 전·전달 끝 정리 세 곳이 같은 함수를 쓴다. 우리 것이 아닌 사용자 초안이 K보다 길면 남는다 — 기존 잔여(#16)와 같은 부류로 문서화한다 | measurements.md C1·D2 · ClaudeInjector.swift proveOurPaneAndEmptyBox·clearAbandonedInput · R0 | K가 클 때(64 이상) 한 호출의 Ctrl+U 묶음이 붙여넣기로 처리되지 않는지 드라이버 측정 전 |
 | D5 | 드라이버 | 항목 1을 한 승격으로 묶자는 초안 | 기각 — 셋은 결함·실패 모드·대역이 달라 따로 리뷰해야 우회가 보인다. 같은 파일을 만지는 것은 순서로 푼다 | R0 | — |
 | D6 | 드라이버 | 네 터미널 모두에서 TUI 실측을 완료 조건으로 | 기각 — cmux 실측 + 나머지는 전달 방식 코드 확인과 체크리스트. 사용자 모르게 Warp를 띄우지 않는다 | R0 | iTerm2·WezTerm·Warp에서 K개 Ctrl+U 묶음·! 분리 전송이 같은 결과인지 미측정 |
+| D7 | 드라이버 | D4 정정: K개 Ctrl+U를 한 호출로 보내면 64·128개 묶음이 통째로 무시된다(B2) | 한 번의 쓰기에 Ctrl+U를 8개 이하로 나눠 보낸다(8개 묶음은 매번 처리됐다). 나머지(누적 글자 수·열 수로 K 산정, 뒤에 Backspace 하나, 세 곳이 같은 함수)는 D4 그대로 | measurements.md B2 · R0 뒤 드라이버 실측 | 묶음이 무시되는 조건(크기·내용·타이밍)은 모른다 — 8이 모든 상황에서 안전하다는 증명은 없다, cmux 밖 터미널은 미측정 |
 
 ## 전수 소탕 표
 
@@ -124,20 +125,22 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 
 | 대상 | 판정 | 코드로 알 수 없는 이유 또는 파일:행 |
 |:--|:--|:--|
-| `claudeInputProbe`·`screenReflectsNewInput`·`probeCount(of:)` | 변경 대상 (1a) | app/Sources/Core/ClaudeInjector.swift:179-200, 423-455, 675-683 |
-| `inputBoxAfterSubmit`의 selected candidate 재사용·유일성 | 변경 대상 (1a) | app/Sources/Core/ClaudeInjector.swift:537-570, 681-692 |
-| `screenTail`·`probeOccurrences`의 selected candidate 처리 | 변경 대상 (1a) | app/Sources/Core/ClaudeInjector.swift:681-692 |
-| Warp helper의 first-24 reflection 주석 | 변경 대상 (1a) | app/Sources/Core/WarpHelperProtocol.swift:20-26; app/Sources/WarpHelper/main.swift:180-186 |
+| `claudeInputProbe`·head fallback·`screenReflectsNewInput`·`probeCount(of:)` | tail 우선; head baseline은 저장하고 reflection window 끝에 fallback (1a) | app/Sources/Core/ClaudeInjector.swift:179-207, 423-493, 696-699 |
+| `inputBoxAfterSubmit`의 selected candidate 재사용·유일성 | 반사를 통과시킨 조각을 받아 유일성을 확인 (1a) | app/Sources/Core/ClaudeInjector.swift:558-590, 702-713 |
+| `screenTail`·`probeOccurrences`의 selected candidate 처리 | 선택된 조각만 전달받음 (1a) | app/Sources/Core/ClaudeInjector.swift:702-713 |
+| marker appearance in `proveOurPaneAndEmptyBox` | 변경 없음: 3글자 marker는 head와 tail이 같다 (1a) | app/Sources/Core/ClaudeInjector.swift:604-638 |
+| Warp helper의 reflection 설명 | 2.1.287 tail-only·folded-head 측정과 현재 정책으로 갱신 (1a) | app/Sources/Core/WarpHelperProtocol.swift:20-26; app/Sources/WarpHelper/main.swift:180-186 |
+| merged-line cap 및 typed-input control-byte rationale | 현재 경계 probe 설명으로 갱신 (1a) | app/Sources/Core/ClaudeInputPlan.swift:59-65, 287-294; app/Sources/Core/Request.swift:207-220 |
 | leading `!`를 나머지와 분리하는 두 send | 코드 호출 단위 확인 + checklist (1b) | iTerm2·WezTerm·cmux·Warp 각각의 send path: app/Sources/Core/ClaudeInjector.swift:1227-1276; Warp queue behavior: app/Sources/WarpHelper/main.swift:123-175, 244-245; 다른 terminal의 한 TUI read 여부는 D3 잔여 |
 | `InputBoxOwnership`의 bool을 누적 글자 수로 확장 | 변경 대상 (1c) | app/Sources/Core/ClaudeInjector.swift:287-318, 341-379 |
-| tty 열 수 조회와 K 계산·보수적 20열 fallback | 변경 대상; 승격 전 K≥64 호출 실측 | app/Sources/Core/ClaudeInjector.swift:1025-1060, 1075-1096 |
-| marker appearance, marker clear, retry pre-clear | marker appearance는 pane proof 유지; clear는 K count로 변경 (1c) | app/Sources/Core/ClaudeInjector.swift:591-629 |
+| tty 열 수 조회와 K 계산·보수적 20열 fallback | 변경 대상; Ctrl+U는 call당 최대 8개 (1c) | app/Sources/Core/ClaudeInjector.swift:1025-1060, 1075-1096 |
+| marker clear, retry pre-clear | clear는 K count로 변경 (1c) | app/Sources/Core/ClaudeInjector.swift:591-629 |
 | `clearAbandonedInput` delivery-end cleanup | K count로 변경 (1c) | app/Sources/Core/ClaudeInjector.swift:287-296, 331-385 |
-| 공통 clear sequence와 cmux Ctrl+U burst / Backspace 분리 | 변경 대상 (1c) | app/Sources/Core/ClaudeInjector.swift:31-79, 1227-1276; app/Tests/CoreTests/CmuxTests.swift:397-463 |
+| 공통 clear sequence와 cmux Ctrl+U burst / Backspace 분리 | 변경 대상 (1c); Ctrl+U call당 최대 8개 | app/Sources/Core/ClaudeInjector.swift:31-79, 1227-1276; app/Tests/CoreTests/CmuxTests.swift:397-463 |
 | iTerm2 clear carrier | 쓰기 단위 코드 확인 + checklist (1c), TUI 실측 게이트 아님 | 한 AppleScript write에서 scalar sequence 생성: app/Sources/Core/AppleScriptSupport.swift:121-146; app/Sources/Core/ClaudeInjector.swift:1233-1248 |
 | WezTerm clear carrier | 쓰기 단위 코드 확인 + checklist (1c), TUI 실측 게이트 아님 | 각 send가 `wezterm cli send-text --no-paste` 한 번: app/Sources/Core/ClaudeInjector.swift:1249-1254 |
 | Warp helper clear carrier | 쓰기 단위 코드 확인 + checklist (1c), TUI 실측 게이트 아님 | request bytes 및 empty-queue chunk wait: app/Sources/Core/ClaudeInjector.swift:1261-1276; app/Sources/WarpHelper/main.swift:123-175, 244-245 |
-| cmux clear carrier | C1·D2 실측; K Ctrl+U 한 `surface.send_text`, Backspace 별도 call (1c) | app/Sources/Core/ClaudeInjector.swift:59-79, 1255-1276; app/Tests/CoreTests/CmuxTests.swift:397-463 |
+| cmux clear carrier | C1·D2·B2 실측; Ctrl+U는 최대 8개씩 한 `surface.send_text` call에, Backspace 별도 call (1c) | app/Sources/Core/ClaudeInjector.swift:59-79, 1255-1276; app/Tests/CoreTests/CmuxTests.swift:397-463 |
 | `FakeClaudeSession` whole-box clear 모델 | visual-line Ctrl+U 모델로 변경 (1c) | app/Tests/CoreTests/CoreTests.swift:2367-2500 |
 | balanced-layout cap, found-workspace cap, fallback selector | 변경 대상 (2) | app/Sources/Core/CmuxPlacement.swift:89-90, 295-379, 383-435 |
 | found-split executor and item result mapping | N=25 live oracle (2), user notification before showing the workspace | app/Sources/Core/CmuxGroupedExecution.swift:511-579, 617-642 |
@@ -158,6 +161,15 @@ append-only — **첫 승격 이후부터**다(첫 승격 전의 R0 초안은 �
 - 처리: R0-1 기각(D2) · R0-2 기각(D3) · R0-3 기각(D4) · R0-4 반영(D5) · R0-5 기각(D6) · R0-6 반영(열린 질문 B1) · R0-7 반영 · R0-8 반영
 - 실측: 드라이버 C1·C2·D1·D2·B1 (measurements.md) · node --test exit 0 · 323
 - 판정: R0 처리 반영으로 시작하는 데 합의한다
+
+### R1
+
+#### 리뷰 1 — 증분 · 1a 커밋 · 드라이버 · 리뷰 17:05∼17:25 · 왕복 1 · 원문 /private/tmp/short-pane-loop/r3-assign.md
+
+- 차단: 접힘 테스트 대역이 공백 포함 24자만 렌더해 새 코드에서 실패 · 읽기 실패 시 창을 계속 도는 무배정 동작 변경 · 근거 주석 삭제 · 측정 수치 다섯 곳 중복
+- 수정: 항목 1a (배정 16:58 · 완료 17:16)
+- 실측: swift test exit 0 · CoreTests 535 · AppTests 132 · node 323 · 토글 새 테스트 2개 red
+- 판정: 막혔다. 우회 없음 → 항목 1a cleared
 
 ## 열린 질문
 
