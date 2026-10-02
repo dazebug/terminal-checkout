@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import Foundation
+import TestSupport
 import XCTest
 @testable import App
 
@@ -53,14 +54,14 @@ final class SlackThreadSettingsTests: XCTestCase {
     func testSettingsAndURLRequestUseTheSameCoreValidator() throws {
         let appRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let coreSource = try String(
-            contentsOf: appRoot.appendingPathComponent("Sources/Core/SlackThreadRequest.swift"),
-            encoding: .utf8
-        )
-        let windowSource = try String(
-            contentsOf: appRoot.appendingPathComponent("Sources/App/SetupWindowController.swift"),
-            encoding: .utf8
-        )
+        let coreSource = try auditSource(
+            appRoot.appendingPathComponent("Sources/Core/SlackThreadRequest.swift").path,
+            claim: .sourceStructure
+        ).text
+        let windowSource = try auditSource(
+            appRoot.appendingPathComponent("Sources/App/SetupWindowController.swift").path,
+            claim: .sourceStructure
+        ).text
         let requestBody = try XCTUnwrap(segment(
             in: coreSource,
             from: "public func resolveSlackThreadRequest(",

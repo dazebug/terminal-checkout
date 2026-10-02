@@ -1,4 +1,5 @@
 import Foundation
+import TestSupport
 import XCTest
 @testable import Core
 
@@ -103,10 +104,10 @@ final class ShortcutWorkflowTests: XCTestCase {
     func testWorkflowURLPrefixComesFromSharedContract() throws {
         let appDirectory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(
-            contentsOf: appDirectory.appendingPathComponent("Sources/Core/ShortcutWorkflow.swift"),
-            encoding: .utf8
-        )
+        let source = try auditSource(
+            appDirectory.appendingPathComponent("Sources/Core/ShortcutWorkflow.swift").path,
+            claim: .sourceLiteral
+        ).text
 
         XCTAssertTrue(source.contains("SlackThreadURLContract.shortcutURLPrefix"))
         XCTAssertFalse(source.contains("terminal-checkout://slack-thread?url="))
