@@ -286,6 +286,22 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         XCTAssertEqual(controller.cmuxPlacementNameFieldForTesting.stringValue, "draft-group")
     }
 
+    /// The rebuild carries a draft into a pane that is not selected; giving that hidden field focus
+    /// back let macOS 15 end its editing during layout and commit the draft.
+    func testFocusIsNotRestoredIntoAHiddenPane() throws {
+        Settings.cmuxPlacementIdentityMode = "fixed-name"
+        let controller = try makeController(terminal: .cmux)
+        let window = try XCTUnwrap(controller.window)
+        XCTAssertEqual(controller.selectedPaneForTesting, "general")
+        XCTAssertTrue(window.makeFirstResponder(controller.cmuxPlacementNameFieldForTesting))
+
+        NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let rebuilt = controller.cmuxPlacementNameFieldForTesting
+        XCTAssertTrue(rebuilt.isHiddenOrHasHiddenAncestor)
+        XCTAssertNil(rebuilt.currentEditor(), "focus was restored into a hidden pane")
+    }
+
     private func makeController(terminal: Terminal) throws -> SetupWindowController {
         Settings.terminal = terminal
         let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(

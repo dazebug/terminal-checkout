@@ -1081,8 +1081,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             document.scroll(NSPoint(x: 0, y: origin))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
+        // A control in a hidden pane does not take focus back: macOS 15 resigns a field editor that
+        // is laid out inside a hidden view, and the end of editing commits the carried-over draft.
         guard let role = place.focusedRole,
               let control = window.contentView?.firstDescendant(withRole: role),
+              !control.isHiddenOrHasHiddenAncestor,
               window.makeFirstResponder(control) else { return }
         guard let selection = place.selection,
               let editor = (control as? NSControl)?.currentEditor() else { return }
