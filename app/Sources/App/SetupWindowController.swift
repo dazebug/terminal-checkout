@@ -620,8 +620,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
                 detail: slackThreadRequestErrorMessage(failure), arrivalOrder: arrivalOrder
             )
         }
-        let socket: SetupWindowAppSocketStatus = FileManager.default.fileExists(atPath: defaultSocketPath())
-            ? .listening : .unavailable
+        let socket = PermissionChecker.appSocketStatusProvider()
         let snapshot = SetupWindowSnapshot(
             manifest: manifest,
             extensionFolder: folder,

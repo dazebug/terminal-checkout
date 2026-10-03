@@ -14,7 +14,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     private var savedResources: String?
     private var savedTag: String?
 
-    private var savedInstallationProvider: (Terminal) -> Bool = { _ in true }
+    private var restoreMachine: () -> Void = {}
 
     override func setUp() {
         super.setUp()
@@ -35,13 +35,11 @@ final class SetupWindowRedrawTests: XCTestCase {
         Settings.slackThreadWorkDirectory = NSTemporaryDirectory()
         Settings.slackThreadInstruction = "stored instruction"
         Settings.lastRequestAt = nil
-        savedInstallationProvider = PermissionChecker.terminalInstallationStatusProvider
-        // The CI runner has none of the terminals installed; these tests are about the window, not the machine.
-        PermissionChecker.terminalInstallationStatusProvider = { _ in true }
+        restoreMachine = SetupWindowTestSupport.installHealthyMachine()
     }
 
     override func tearDown() {
-        PermissionChecker.terminalInstallationStatusProvider = savedInstallationProvider
+        restoreMachine()
         Settings.terminal = savedTerminal
         Settings.baseDirectory = savedBaseDirectory
         Settings.cmuxPlacementIdentityMode = savedPlacementIdentity

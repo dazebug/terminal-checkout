@@ -39,6 +39,9 @@ enum PermissionChecker {
     static var iTermAutomationStatusProvider: () -> AutomationStatus = {
         Self.readITermAutomationStatus()
     }
+    static var appSocketStatusProvider: () -> SetupWindowAppSocketStatus = {
+        FileManager.default.fileExists(atPath: defaultSocketPath()) ? .listening : .unavailable
+    }
     static var cmuxSocketStatusProvider: (CmuxChannel) -> CmuxSocketStatus = { channel in
         Self.readCmuxSocketStatus(channel: channel)
     }
