@@ -221,6 +221,7 @@ final class SetupWindowSlackPane: NSView {
         workDirectoryField.placeholderString = localized("app.slack.workDirectory.placeholder")
         workDirectoryField.target = actionTarget
         workDirectoryField.action = selectors[.slackThreadSettingsEdited]
+        workDirectoryField.delegate = actionTarget as? NSTextFieldDelegate
         workDirectoryField.identifier = setupWindowControlRole(
             selectors[.slackThreadSettingsEdited]!, "workDirectory"
         )
@@ -260,6 +261,7 @@ final class SetupWindowSlackPane: NSView {
         instructionField.placeholderString = localized("app.slack.instruction.help")
         instructionField.target = actionTarget
         instructionField.action = selectors[.slackThreadSettingsEdited]
+        instructionField.delegate = actionTarget as? NSTextFieldDelegate
         instructionField.identifier = setupWindowControlRole(
             selectors[.slackThreadSettingsEdited]!, "instruction"
         )

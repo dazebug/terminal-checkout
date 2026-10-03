@@ -496,6 +496,75 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertEqual(controller.selectedPaneForTesting, "slack")
     }
 
+    func testReopenedWindowScrollsTheNewestOpeningReasonIntoView() throws {
+        let controller = makeController(.warp)
+        let window = try XCTUnwrap(controller.window)
+        let visible = NSRect(x: 0, y: 0, width: 1600, height: 300)
+        controller.rootStack.visibleFrameOverride = visible
+        for _ in 0..<5 {
+            controller.presentSlackThreadRequestFailure(SlackThreadRequestError.invalidSlackLink)
+        }
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        let document = try XCTUnwrap(scroll.documentView)
+
+        document.scroll(NSPoint(x: 0, y: document.frame.height - scroll.contentView.bounds.height))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let previousNewest = try XCTUnwrap(controller.sharedPanelForTesting.problemBlockViews.first {
+            $0.problem.openingReasonOrder != nil
+        })
+        let previousTitle = previousNewest.titleLabel.convert(previousNewest.titleLabel.bounds, to: document)
+        XCTAssertEqual(NSIntersectionRect(previousTitle, scroll.documentVisibleRect).height, 0)
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: window))
+        controller.presentSlackThreadRequestFailure(SlackThreadRequestError.workDirectoryNotConfigured)
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: window))
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let newest = try XCTUnwrap(controller.sharedPanelForTesting.problemBlockViews.first {
+            $0.problem.openingReasonOrder != nil
+        })
+        let title = newest.titleLabel.convert(newest.titleLabel.bounds, to: document)
+        let causeLabel = try XCTUnwrap(newest.paragraphLabels.first { !$0.isHidden })
+        let cause = causeLabel.convert(causeLabel.bounds, to: document)
+        XCTAssertGreaterThan(NSIntersectionRect(title, scroll.documentVisibleRect).height, 0)
+        XCTAssertGreaterThan(NSIntersectionRect(cause, scroll.documentVisibleRect).height, 0)
+        XCTAssertEqual(causeLabel.stringValue, localized("app.slack.error.workDirectoryNotConfigured"))
+    }
+
+    func testSlackOpeningReasonsKeepTheirOwnFailureMessages() throws {
+        let controller = makeController(.iterm)
+        let window = try XCTUnwrap(controller.window)
+        controller.presentSlackThreadRequestFailure(SlackThreadRequestError.invalidSlackLink)
+        controller.presentSlackThreadRequestFailure(SlackThreadRequestError.workDirectoryNotConfigured)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let blocks = controller.sharedPanelForTesting.problemBlockViews.filter {
+            if case .slackThreadRequestFailed = $0.problem.copy { return true }
+            return false
+        }
+        XCTAssertEqual(blocks.count, 2)
+        XCTAssertEqual(
+            blocks.map { $0.paragraphLabels[0].stringValue },
+            [localized("app.slack.error.workDirectoryNotConfigured"), localized("app.slack.error.invalidSlackLink")]
+        )
+    }
+
+    func testShortVisibleFrameClampsTheWindowFrameAndLeavesTheDocumentScrollable() throws {
+        let controller = makeController(.warp)
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let visible = NSRect(x: 0, y: 0, width: 1600, height: 500)
+        controller.rootStack.visibleFrameOverride = visible
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertGreaterThan(controller.rootStack.fittingSize.height, scroll.contentView.bounds.height)
+        XCTAssertGreaterThanOrEqual(window.frame.minY, visible.minY - 0.5)
+        XCTAssertGreaterThanOrEqual(window.frame.minX, visible.minX - 0.5)
+        XCTAssertLessThanOrEqual(window.frame.maxY, visible.maxY + 0.5)
+        XCTAssertLessThanOrEqual(window.frame.maxX, visible.maxX + 0.5)
+    }
+
     func testLanguageRebuildChangesToolbarAndAllThreePaneSentences() throws {
         let controller = makeController(.iterm)
         let window = try XCTUnwrap(controller.window)

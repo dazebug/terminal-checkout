@@ -27,8 +27,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         manifest: SetupWindowManifestStatus = .registered,
         extensionFolder: SetupWindowExtensionFolderStatus = .present,
         installStepsExpanded: Bool = false,
-        installFeedback: String? = nil,
-        slackFailureDetail: String? = nil
+        installFeedback: String? = nil
     ) throws -> SetupWindowSharedPanel {
         let target = NSObject()
         let selectors = Dictionary(uniqueKeysWithValues: SetupWindowSharedPanelAction.allCases.map {
@@ -40,7 +39,6 @@ final class SetupWindowSharedPanelTests: XCTestCase {
             extensionFolder: extensionFolder,
             installStepsExpanded: installStepsExpanded,
             installFeedback: installFeedback,
-            slackFailureDetail: slackFailureDetail,
             target: target,
             selectors: selectors
         )

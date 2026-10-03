@@ -17,7 +17,7 @@ final class SetupWindowPresentationTests: XCTestCase {
             $0.slackRequestFailureIsActive = true
             $0.openingReasons = [
                 .claudeInputRejected(blocker: .warpHelperUnavailable, arrivalOrder: 1),
-                .slackThreadRequestFailed(arrivalOrder: 2),
+                .slackThreadRequestFailed(detail: "slack failure", arrivalOrder: 2),
             ]
             $0.manifest = .notRegistered
         }
@@ -34,8 +34,8 @@ final class SetupWindowPresentationTests: XCTestCase {
         let state = snapshot {
             $0.slackRequestFailureIsActive = true
             $0.openingReasons = [
-                .slackThreadRequestFailed(arrivalOrder: 1),
-                .slackThreadRequestFailed(arrivalOrder: 4),
+                .slackThreadRequestFailed(detail: "first failure", arrivalOrder: 1),
+                .slackThreadRequestFailed(detail: "latest failure", arrivalOrder: 4),
             ]
         }
 
@@ -43,6 +43,7 @@ final class SetupWindowPresentationTests: XCTestCase {
 
         XCTAssertEqual(problems.map(\.openingReasonOrder), [4, 1])
         XCTAssertTrue(problems.allSatisfy { $0.copy == .slackThreadRequestFailed })
+        XCTAssertEqual(problems.map(\.detail), ["latest failure", "first failure"])
     }
 
     func testResolvedClaudeOpeningReasonIsRemoved() {
@@ -438,7 +439,7 @@ final class SetupWindowPresentationTests: XCTestCase {
     func testSuccessfulSlackRequestClearsOpeningFailureAndToolbarDot() {
         let state = snapshot {
             $0.slackRequestFailureIsActive = false
-            $0.openingReasons = [.slackThreadRequestFailed(arrivalOrder: 1)]
+            $0.openingReasons = [.slackThreadRequestFailed(detail: "old failure", arrivalOrder: 1)]
         }
 
         let presentation = SetupWindowPresentationModel.make(from: state)

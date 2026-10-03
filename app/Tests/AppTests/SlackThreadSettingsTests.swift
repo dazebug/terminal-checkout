@@ -267,25 +267,67 @@ final class SlackThreadSettingsTests: XCTestCase {
         Settings.slackThreadInstruction = ""
 
         let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem())
+        let window = try XCTUnwrap(controller.window)
+        select("slack", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let workField = controller.slackPaneForTesting.workDirectoryField
-        workField.stringValue = "/tmp/has space"
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workField))
+        try enterText("/tmp/has space", in: workField, window: window)
         XCTAssertEqual(Settings.slackThreadWorkDirectory, "/tmp/has space")
         XCTAssertTrue(
             controller.slackPaneForTesting.workDirectoryValidationLabel.stringValue
                 .contains(localized("app.slack.error.workDirectoryInvalidCharacters"))
         )
 
-        workField.stringValue = NSTemporaryDirectory()
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workField))
+        try enterText(NSTemporaryDirectory(), in: workField, window: window)
+        XCTAssertEqual(Settings.slackThreadWorkDirectory, NSTemporaryDirectory())
         let instructionField = controller.slackPaneForTesting.instructionField
-        instructionField.stringValue = "line\nbreak"
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: instructionField))
+        try enterText("line\nbreak", in: instructionField, window: window)
         XCTAssertEqual(Settings.slackThreadInstruction, "line\nbreak")
         XCTAssertTrue(
             controller.slackPaneForTesting.instructionValidationLabel.stringValue
                 .contains(localized("app.slack.error.invalidInstruction"))
         )
+    }
+
+    func testLeavingSlackPaneEndsHotKeyRecordingBeforePasteCanChangeTheChoice() throws {
+        let restore = preserveHotKeySetting()
+        defer { restore() }
+        let original = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .option])
+        )
+        Settings.slackThreadHotKey = original
+        let hotKey = StubSlackThreadHotKey()
+        hotKey.combination = original
+        hotKey.state = .active(original)
+        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let window = try XCTUnwrap(controller.window)
+        select("slack", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        controller.slackPaneForTesting.hotKeyButton.performClick(nil)
+        XCTAssertTrue(controller.isRecordingHotKeyForTesting)
+        select("github", in: window)
+
+        XCTAssertFalse(controller.isRecordingHotKeyForTesting)
+        let paste = keyDown(kVK_ANSI_V, [.command])
+        XCTAssertTrue(controller.handleHotKeyRecordingEvent(paste) === paste)
+        XCTAssertEqual(Settings.slackThreadHotKey, original)
+    }
+
+    private func select(_ pane: String, in window: NSWindow) {
+        guard let item = window.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "setup.pane.\(pane)" }),
+              let action = item.action else {
+            XCTFail("missing toolbar item for \(pane)")
+            return
+        }
+        XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+    }
+
+    private func enterText(_ text: String, in field: NSTextField, window: NSWindow) throws {
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        let replacedRange = NSRange(location: 0, length: editor.string.utf16.count)
+        editor.insertText(text, replacementRange: replacedRange)
     }
 
     private func keyDown(_ keyCode: Int, _ flags: NSEvent.ModifierFlags) -> NSEvent {

@@ -46,7 +46,6 @@ final class SetupWindowSharedPanel: NSView {
     private(set) var presentation: SetupWindowPresentation
     private var manifest: SetupWindowManifestStatus
     private var extensionFolder: SetupWindowExtensionFolderStatus
-    private var slackFailureDetail: String?
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSharedPanelAction: Selector]
     private let contentStack = NSStackView()
@@ -68,7 +67,6 @@ final class SetupWindowSharedPanel: NSView {
         extensionFolder: SetupWindowExtensionFolderStatus,
         installStepsExpanded: Bool = false,
         installFeedback: String? = nil,
-        slackFailureDetail: String? = nil,
         target: AnyObject?,
         selectors: [SetupWindowSharedPanelAction: Selector]
     ) {
@@ -79,7 +77,6 @@ final class SetupWindowSharedPanel: NSView {
         self.presentation = presentation
         self.manifest = manifest
         self.extensionFolder = extensionFolder
-        self.slackFailureDetail = slackFailureDetail
         self.actionTarget = target
         self.selectors = selectors
         super.init(frame: .zero)
@@ -106,7 +103,7 @@ final class SetupWindowSharedPanel: NSView {
             let block = SetupWindowProblemBlockView(
                 problem: template,
                 roleQualifier: role,
-                copy: Self.copy(for: template, manifest: manifest, slackFailureDetail: nil),
+                copy: Self.copy(for: template, manifest: manifest),
                 target: target,
                 selectors: selectors
             )
@@ -128,7 +125,7 @@ final class SetupWindowSharedPanel: NSView {
         contentStack.addArrangedSubview(checklist)
         checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         update(presentation, manifest: manifest, extensionFolder: extensionFolder,
-               slackFailureDetail: slackFailureDetail, installStepsExpanded: installStepsExpanded,
+               installStepsExpanded: installStepsExpanded,
                installFeedback: installFeedback)
     }
 
@@ -145,14 +142,12 @@ final class SetupWindowSharedPanel: NSView {
         _ presentation: SetupWindowPresentation,
         manifest: SetupWindowManifestStatus,
         extensionFolder: SetupWindowExtensionFolderStatus,
-        slackFailureDetail: String?,
         installStepsExpanded: Bool,
         installFeedback: String?
     ) {
         self.presentation = presentation
         self.manifest = manifest
         self.extensionFolder = extensionFolder
-        self.slackFailureDetail = slackFailureDetail
         installChecklistView?.update(
             manifest: manifest,
             extensionFolder: extensionFolder,
@@ -181,7 +176,7 @@ final class SetupWindowSharedPanel: NSView {
                 let created = SetupWindowProblemBlockView(
                     problem: problem,
                     roleQualifier: role,
-                    copy: Self.copy(for: problem, manifest: manifest, slackFailureDetail: slackFailureDetail),
+                    copy: Self.copy(for: problem, manifest: manifest),
                     target: actionTarget,
                     selectors: selectors
                 )
@@ -193,7 +188,7 @@ final class SetupWindowSharedPanel: NSView {
             }
             block.update(
                 problem: problem,
-                copy: Self.copy(for: problem, manifest: manifest, slackFailureDetail: slackFailureDetail)
+                copy: Self.copy(for: problem, manifest: manifest)
             )
             block.isHidden = false
             ordered.append(block)
@@ -270,8 +265,7 @@ final class SetupWindowSharedPanel: NSView {
 
     private static func copy(
         for problem: SetupWindowProblem,
-        manifest: SetupWindowManifestStatus,
-        slackFailureDetail: String?
+        manifest: SetupWindowManifestStatus
     ) -> SetupWindowSharedPanelBlockCopy {
         func button(
             _ title: String,
@@ -308,7 +302,7 @@ final class SetupWindowSharedPanel: NSView {
         case .slackThreadRequestFailed:
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.slack.title"),
-                paragraphs: [slackFailureDetail ?? localized("app.setup.problem.slack.detailUnavailable")],
+                paragraphs: [problem.detail ?? localized("app.setup.problem.slack.detailUnavailable")],
                 effects: [],
                 buttons: [button(localized("app.setup.action.openSlackSettings"), .openSlackSettings)]
             )

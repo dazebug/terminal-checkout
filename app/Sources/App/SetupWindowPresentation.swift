@@ -53,11 +53,11 @@ struct SetupWindowToolResults {
 
 enum SetupWindowOpeningReason {
     case claudeInputRejected(blocker: ClaudeInputBlocker, arrivalOrder: Int)
-    case slackThreadRequestFailed(arrivalOrder: Int)
+    case slackThreadRequestFailed(detail: String, arrivalOrder: Int)
 
     var arrivalOrder: Int {
         switch self {
-        case .claudeInputRejected(_, let arrivalOrder), .slackThreadRequestFailed(let arrivalOrder):
+        case .claudeInputRejected(_, let arrivalOrder), .slackThreadRequestFailed(_, let arrivalOrder):
             return arrivalOrder
         }
     }
@@ -190,15 +190,18 @@ struct SetupWindowProblem: Equatable {
     let severity: SetupWindowProblemSeverity
     let copy: SetupWindowProblemCopy
     let openingReasonOrder: Int?
+    let detail: String?
 
     init(
         severity: SetupWindowProblemSeverity,
         copy: SetupWindowProblemCopy,
-        openingReasonOrder: Int? = nil
+        openingReasonOrder: Int? = nil,
+        detail: String? = nil
     ) {
         self.severity = severity
         self.copy = copy
         self.openingReasonOrder = openingReasonOrder
+        self.detail = detail
     }
 }
 
@@ -364,12 +367,13 @@ enum SetupWindowPresentationModel {
                         copy: .claudeInputRejected(blocker),
                         openingReasonOrder: reason.arrivalOrder
                     )
-                case .slackThreadRequestFailed:
+                case .slackThreadRequestFailed(let detail, _):
                     guard snapshot.slackRequestFailureIsActive else { return nil }
                     return SetupWindowProblem(
                         severity: .error,
                         copy: .slackThreadRequestFailed,
-                        openingReasonOrder: reason.arrivalOrder
+                        openingReasonOrder: reason.arrivalOrder,
+                        detail: detail
                     )
                 }
             }

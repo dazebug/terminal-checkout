@@ -64,11 +64,17 @@ final class FittedContentStackView: NSStackView {
         // another main screen here would reintroduce the split-screen decision this path removes.
         // The deferred application has a separate recovery fallback for that transient state.
         let visible = visibleFrameOverride ?? window.screen?.visibleFrame
-        if let visible { target.height = min(target.height, visible.height) }
+        if let visible {
+            target.height = min(target.height, maximumContentHeight(target, visibleHeight: visible.height, window: window))
+        }
         // A screen can change without changing the clamped size; placement still has to consume
         // the new visible rect rather than letting the size early return discard it.
         let visibleFrameChanged = lastVisibleFrame != visible
         guard lastRequestedSize != target || visibleFrameChanged else {
+            if !windowUpdateScheduled, let completion = afterWindowUpdate {
+                afterWindowUpdate = nil
+                completion()
+            }
             return
         }
         lastRequestedSize = target
@@ -87,8 +93,12 @@ final class FittedContentStackView: NSStackView {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.windowUpdateScheduled = false
-            guard self.deferredWindowUpdateAllowed,
-                  let window = self.window,
+            guard self.deferredWindowUpdateAllowed else {
+                self.lastRequestedSize = nil
+                self.lastVisibleFrame = nil
+                return
+            }
+            guard let window = self.window,
                   window.contentView != nil,
                   let requestedTarget = self.lastRequestedSize
             else {
@@ -123,7 +133,12 @@ final class FittedContentStackView: NSStackView {
             let centerAfterUpdate = self.shouldCenterAfterFirstWindowUpdate?() == true
             let originBeforeResize = window.frame.origin
             var target = requestedTarget
-            if let visible { target.height = min(target.height, visible.height) }
+            if let visible {
+                target.height = min(
+                    target.height,
+                    self.maximumContentHeight(target, visibleHeight: visible.height, window: window)
+                )
+            }
             window.setContentSize(target)
             if centerAfterUpdate, let visible {
                 Self.centerInside(visible, window)
@@ -171,16 +186,11 @@ final class FittedContentStackView: NSStackView {
         needsLayout = true
     }
 
-    /// The caller uses this only after rebuilding the content, when `layout()` has already measured
-    /// the new stack. A queued size request defers the callback until that request and its clip
-    /// layout finish; if no request is queued, no window geometry is waiting to change, so restoring
-    /// immediately is safe and prevents a completion from depending on a future layout pass.
+    /// Run after the next stack measurement. If the window size changes, wait for the deferred
+    /// resize and clip layout; if not, the measurement confirms the current size first.
     func afterNextWindowUpdate(_ completion: @escaping () -> Void) {
-        if windowUpdateScheduled {
-            afterWindowUpdate = completion
-        } else {
-            completion()
-        }
+        afterWindowUpdate = completion
+        needsLayout = true
     }
 
     /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
@@ -200,6 +210,13 @@ final class FittedContentStackView: NSStackView {
         frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - frame.height))
         frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - frame.width))
         if frame.origin != window.frame.origin { window.setFrameOrigin(frame.origin) }
+    }
+
+    private func maximumContentHeight(_ contentSize: NSSize, visibleHeight: CGFloat, window: NSWindow) -> CGFloat {
+        let contentRect = NSRect(origin: .zero, size: contentSize)
+        let frameHeight = window.frameRect(forContentRect: contentRect).height
+        let chromeHeight = frameHeight - contentSize.height
+        return max(0, visibleHeight - chromeHeight)
     }
 }
 
@@ -285,6 +302,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private var hotKeyNeedsModifier = false
     private var lastSlackLoginItemFailure: Error?
     private var lastSlackRequestFailure: Error?
+    private var slackRequestFailuresByOrder: [Int: Error] = [:]
     private var openingReasons: [SetupWindowOpeningReason] = []
     private var nextReasonOrder = 0
     private var selectedPane: SetupWindowPane = .general
@@ -316,6 +334,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
 
     var onClose: (() -> Void)?
     var selectedPaneForTesting: String { selectedPane.rawValue }
+    var isRecordingHotKeyForTesting: Bool { isRecordingHotKey }
     var sharedPanelForTesting: SetupWindowSharedPanel { sharedPanel }
     var generalPaneForTesting: SetupWindowGeneralPane { generalPane }
     var githubPaneForTesting: SetupWindowGitHubPane { githubPane }
@@ -357,7 +376,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         if let openingBlocker { appendOpeningReason(.claudeInputRejected(blocker: openingBlocker, arrivalOrder: nextArrival())) }
         if let slackRequestFailure {
             lastSlackRequestFailure = slackRequestFailure
-            appendOpeningReason(.slackThreadRequestFailed(arrivalOrder: nextArrival()))
+            let arrivalOrder = nextArrival()
+            slackRequestFailuresByOrder[arrivalOrder] = slackRequestFailure
+            appendOpeningReason(.slackThreadRequestFailed(
+                detail: slackThreadRequestErrorMessage(slackRequestFailure), arrivalOrder: arrivalOrder
+            ))
             selectedPane = .slack
         } else if openingBlocker != nil {
             selectedPane = .general
@@ -449,10 +472,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     private func selectPane(_ pane: SetupWindowPane) {
+        let endedRecording = selectedPane == .slack && pane != .slack && isRecordingHotKey
+        if endedRecording { endHotKeyRecording() }
         selectedPane = pane
         toolbar?.selectedItemIdentifier = pane.toolbarIdentifier
         updateWindowTitle()
         applyPaneVisibility()
+        if endedRecording { refresh() }
     }
 
     private func updateWindowTitle() {
@@ -563,6 +589,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         let tools = Settings.toolAvailability.map {
             SetupWindowToolResults(available: $0, executable: Settings.toolExecutables ?? [:])
         }
+        let currentLanguageOpeningReasons = openingReasons.map { reason -> SetupWindowOpeningReason in
+            guard case .slackThreadRequestFailed(_, let arrivalOrder) = reason,
+                  let failure = slackRequestFailuresByOrder[arrivalOrder] else { return reason }
+            return .slackThreadRequestFailed(
+                detail: slackThreadRequestErrorMessage(failure), arrivalOrder: arrivalOrder
+            )
+        }
         let socket: SetupWindowAppSocketStatus = FileManager.default.fileExists(atPath: defaultSocketPath())
             ? .listening : .unavailable
         let snapshot = SetupWindowSnapshot(
@@ -578,7 +611,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             warpAccessibilityGranted: PermissionChecker.isAccessibilityGranted,
             tools: tools,
             baseDirectory: baseDirectory,
-            openingReasons: openingReasons,
+            openingReasons: currentLanguageOpeningReasons,
             slackRequestFailureIsActive: lastSlackRequestFailure != nil,
             tabActivation: Settings.tabActivation,
             cmuxIdentityMode: Settings.cmuxPlacementIdentityMode,
@@ -609,7 +642,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             presentation,
             manifest: environment.manifest,
             extensionFolder: environment.extensionFolder,
-            slackFailureDetail: lastSlackRequestFailure.map(slackThreadRequestErrorMessage),
             installStepsExpanded: guideStepsExpanded,
             installFeedback: installFeedback
         )
@@ -937,17 +969,39 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         appendOpeningReason(.claudeInputRejected(blocker: blocker, arrivalOrder: nextArrival()))
         selectPane(.general)
         refresh()
+        rootStack.afterNextWindowUpdate { [weak self] in self?.revealNewestOpeningReason() }
     }
 
     func presentSlackThreadRequestFailure(_ error: Error) {
         lastSlackRequestFailure = error
-        appendOpeningReason(.slackThreadRequestFailed(arrivalOrder: nextArrival()))
+        let arrivalOrder = nextArrival()
+        slackRequestFailuresByOrder[arrivalOrder] = error
+        appendOpeningReason(.slackThreadRequestFailed(
+            detail: slackThreadRequestErrorMessage(error), arrivalOrder: arrivalOrder
+        ))
         selectPane(.slack)
         refresh()
+        rootStack.afterNextWindowUpdate { [weak self] in self?.revealNewestOpeningReason() }
+    }
+
+    private func revealNewestOpeningReason() {
+        guard let window,
+              let scrollView = window.contentView as? NSScrollView,
+              let document = scrollView.documentView,
+              let block = sharedPanel.problemBlockViews.first(where: { $0.problem.openingReasonOrder != nil })
+        else { return }
+
+        var target = block.titleLabel.convert(block.titleLabel.bounds, to: document)
+        if let causeLabel = block.paragraphLabels.first(where: { !$0.isHidden }) {
+            target = NSUnionRect(target, causeLabel.convert(causeLabel.bounds, to: document))
+        }
+        document.scrollToVisible(target)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     func clearSlackThreadRequestFailure() {
         lastSlackRequestFailure = nil
+        slackRequestFailuresByOrder.removeAll()
         openingReasons.removeAll {
             if case .slackThreadRequestFailed = $0 { return true }
             return false
