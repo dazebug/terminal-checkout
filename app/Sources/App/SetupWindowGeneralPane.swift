@@ -95,7 +95,7 @@ final class SetupWindowGeneralPane: NSView {
     let previewView: SetupWindowPreviewView
     let connectionDetailsPopover: NSPopover
     let requestStatusLabel = NSTextField(labelWithString: "")
-    let languageNoteLabel = NSTextField(wrappingLabelWithString: "")
+    let languageNoteLabel = makeSetupWindowWrappingLabel()
     private(set) var savedTabActivationForTesting: TabActivation = .foreground
 
     private weak var actionTarget: AnyObject?
@@ -104,9 +104,9 @@ final class SetupWindowGeneralPane: NSView {
     private let popoverRequestDot = SetupWindowGeneralStatusDot()
     private let terminalDot = SetupWindowGeneralStatusDot()
     private let terminalStatusLabel = NSTextField(labelWithString: "")
-    private let terminalTestResultLabel = NSTextField(wrappingLabelWithString: "")
-    private let extensionStatusExplanation = NSTextField(wrappingLabelWithString: "")
-    private let cmuxFeedbackLabel = NSTextField(wrappingLabelWithString: "")
+    private let terminalTestResultLabel = makeSetupWindowWrappingLabel()
+    private let extensionStatusExplanation = makeSetupWindowWrappingLabel()
+    private let cmuxFeedbackLabel = makeSetupWindowWrappingLabel()
     private let nativeHostDetailRow: SetupWindowGeneralPopoverRow
     private let appSocketDetailRow: SetupWindowGeneralPopoverRow
     private let terminalDetailRow: SetupWindowGeneralPopoverRow
@@ -199,7 +199,7 @@ final class SetupWindowGeneralPane: NSView {
         leftColumn.distribution = .fill
         leftColumn.spacing = 13
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
-        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setHuggingPriority(.required, for: .vertical)
         leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
         previewColumn.orientation = .vertical
@@ -231,10 +231,10 @@ final class SetupWindowGeneralPane: NSView {
     private let requestStatusRow = NSStackView()
     private let terminalRow = NSStackView()
     private let activationRow = NSStackView()
-    private let hintLabel = NSTextField(wrappingLabelWithString: "")
+    private let hintLabel = makeSetupWindowWrappingLabel()
     private let previewColumn = NSStackView()
     private let previewTitle = NSTextField(labelWithString: localized("app.setup.preview.general.title"))
-    private let previewCaption = NSTextField(wrappingLabelWithString: "")
+    private let previewCaption = makeSetupWindowWrappingLabel()
 
     func update(_ state: SetupWindowGeneralPaneState) {
         updateRequestStatus(state)
@@ -428,10 +428,8 @@ final class SetupWindowGeneralPane: NSView {
         extensionStatusExplanation.font = Theme.ui(11)
         extensionStatusExplanation.textColor = Theme.textDim
         extensionStatusExplanation.maximumNumberOfLines = 0
-        extensionStatusExplanation.preferredMaxLayoutWidth = 320
         cmuxFeedbackLabel.font = Theme.ui(11)
         cmuxFeedbackLabel.maximumNumberOfLines = 0
-        cmuxFeedbackLabel.preferredMaxLayoutWidth = 320
 
         let cmuxConfig = generalButton(
             localized("app.setup.action.openCmuxConfig"), action: .openCmuxConfig,

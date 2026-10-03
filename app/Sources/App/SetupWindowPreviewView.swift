@@ -9,6 +9,11 @@ final class SetupWindowPreviewView: NSView {
     private var slackModel: SetupWindowSlackPreview?
     private(set) var effectDescription: String
     var githubTerminalForTesting: Terminal? { githubModel?.terminal }
+    var previewWindowFrameForTesting: NSRect { Self.outerWindowFrame(in: bounds) }
+
+    private static func outerWindowFrame(in bounds: NSRect) -> NSRect {
+        bounds.insetBy(dx: 13, dy: 13)
+    }
 
     init(model: SetupWindowGeneralPreview) {
         generalModel = model
@@ -100,13 +105,13 @@ final class SetupWindowPreviewView: NSView {
         if let generalModel {
             if generalModel.frontmostScreen == .existingScreen {
                 drawTerminalWindow(
-                    in: terminalFrame(for: .newTerminalSession, behind: true), model: generalModel
+                    in: terminalFrame(behind: true), model: generalModel
                 )
-                drawCurrentScreen(in: currentScreenFrame)
+                drawCurrentScreen(in: currentScreenFrame(behindTerminal: false))
             } else {
-                drawCurrentScreen(in: currentScreenFrame.offsetBy(dx: 0, dy: 3))
+                drawCurrentScreen(in: currentScreenFrame(behindTerminal: true))
                 drawTerminalWindow(
-                    in: terminalFrame(for: .newTerminalSession, behind: false), model: generalModel
+                    in: terminalFrame(behind: false), model: generalModel
                 )
             }
         } else if let githubModel {
@@ -116,15 +121,14 @@ final class SetupWindowPreviewView: NSView {
         }
     }
 
-    private var currentScreenFrame: NSRect {
-        NSRect(x: 30, y: 52, width: max(110, bounds.width - 60), height: max(96, bounds.height - 67))
+    private func currentScreenFrame(behindTerminal: Bool) -> NSRect {
+        let outer = Self.outerWindowFrame(in: bounds)
+        return behindTerminal ? outer.insetBy(dx: 12, dy: 12) : outer
     }
 
-    private func terminalFrame(for screen: SetupWindowFrontmostScreen, behind: Bool) -> NSRect {
-        if behind {
-            return NSRect(x: 13, y: 45, width: max(100, bounds.width - 42), height: max(92, bounds.height - 60))
-        }
-        return NSRect(x: 19, y: 38, width: max(108, bounds.width - 40), height: max(98, bounds.height - 51))
+    private func terminalFrame(behind: Bool) -> NSRect {
+        let outer = Self.outerWindowFrame(in: bounds)
+        return behind ? outer.insetBy(dx: 12, dy: 12) : outer
     }
 
     private func drawTerminalWindow(in rect: NSRect, model: SetupWindowGeneralPreview) {
@@ -285,9 +289,7 @@ final class SetupWindowPreviewView: NSView {
     }
 
     private func drawSlackPreview(_ model: SetupWindowSlackPreview) {
-        let rect = NSRect(
-            x: 18, y: 35, width: max(145, bounds.width - 36), height: max(132, bounds.height - 47)
-        )
+        let rect = Self.outerWindowFrame(in: bounds)
         let window = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
         Theme.bg.setFill()
         Theme.border.setStroke()
@@ -357,9 +359,7 @@ final class SetupWindowPreviewView: NSView {
     }
 
     private func drawGitHubPreview(_ model: SetupWindowGitHubPreview) {
-        let rect = NSRect(
-            x: 9, y: 30, width: max(150, bounds.width - 18), height: max(130, bounds.height - 40)
-        )
+        let rect = Self.outerWindowFrame(in: bounds)
         let window = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
         Theme.bg.setFill()
         Theme.border.setStroke()

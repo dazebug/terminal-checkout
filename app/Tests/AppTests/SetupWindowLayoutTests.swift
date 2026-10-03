@@ -51,12 +51,16 @@ final class SetupWindowLayoutTests: XCTestCase {
     private func makeController(
         _ terminal: Terminal = .iterm,
         blocker: ClaudeInputBlocker? = nil,
-        slackFailure: Error? = nil
+        slackFailure: Error? = nil,
+        manifest: SetupWindowManifestStatus = .registered,
+        extensionFolder: SetupWindowExtensionFolderStatus = .present
     ) -> SetupWindowController {
         Settings.terminal = terminal
         return SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
-            openingBlocker: blocker, slackRequestFailure: slackFailure
+            openingBlocker: blocker, slackRequestFailure: slackFailure,
+            manifestStatusProvider: { manifest },
+            extensionFolderStatusProvider: { extensionFolder }
         )
     }
 
@@ -67,6 +71,18 @@ final class SetupWindowLayoutTests: XCTestCase {
     private func select(_ pane: String, in window: NSWindow) throws {
         let item = try XCTUnwrap(window.toolbar?.items.first { $0.itemIdentifier.rawValue == "setup.pane.\(pane)" })
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+    }
+
+    private func visibleWrappingLabels(in view: NSView) -> [NSTextField] {
+        guard !view.isHidden else { return [] }
+        var labels: [NSTextField] = []
+        if let field = view as? NSTextField, field.cell?.wraps == true, !field.usesSingleLineMode {
+            labels.append(field)
+        }
+        for child in view.subviews {
+            labels.append(contentsOf: visibleWrappingLabels(in: child))
+        }
+        return labels
     }
 
     func testPreferenceToolbarHasThreePanesAndUsesAStandardTitlebar() throws {
@@ -122,7 +138,9 @@ final class SetupWindowLayoutTests: XCTestCase {
     func testOpeningReasonsChooseTheirPaneAndSlackFailureMarksItsToolbarItem() throws {
         let slack = SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
-            slackRequestFailure: SlackThreadRequestError.invalidSlackLink
+            slackRequestFailure: SlackThreadRequestError.invalidSlackLink,
+            manifestStatusProvider: { .registered },
+            extensionFolderStatusProvider: { .present }
         )
         let slackWindow = try XCTUnwrap(slack.window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(slackWindow))
@@ -236,6 +254,53 @@ final class SetupWindowLayoutTests: XCTestCase {
         }
     }
 
+    func testEveryVisibleWrappedLabelFitsItsAssignedWidthInEveryLocaleAndPane() throws {
+        Settings.lastRequestAt = nil
+        let controller = makeController(
+            .iterm,
+            slackFailure: SlackThreadRequestError.invalidSlackLink,
+            manifest: .wrongRelayPath
+        )
+        let window = try XCTUnwrap(controller.window)
+        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).width, 720, accuracy: 0.5)
+
+        for tag in Self.populatedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            controller.rebuildForLanguageChange()
+            _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+            let checklist = try XCTUnwrap(controller.sharedPanelForTesting.installChecklistView)
+            XCTAssertFalse(checklist.isHidden)
+            XCTAssertTrue(controller.sharedPanelForTesting.problemBlockViews.contains {
+                $0.problem.copy == .slackThreadRequestFailed
+            })
+            if tag == "ko" {
+                XCTAssertEqual(
+                    checklist.steps[0].statusLabel.stringValue,
+                    "Native Host가 다른 위치의 앱을 가리킵니다. 앱은 실행될 때마다 확인하고 고치지만, 이번에는 고치지 못했습니다."
+                )
+            }
+
+            for pane in ["general", "github", "slack"] {
+                try select(pane, in: window)
+                _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+                let labels = visibleWrappingLabels(in: controller.rootStack)
+                XCTAssertGreaterThan(labels.count, 0, "\(tag)/\(pane) exposed no wrapping labels")
+                for label in labels {
+                    let width = label.bounds.width
+                    XCTAssertGreaterThan(width, 0, "\(tag)/\(pane) has an unmeasured wrapping label: \(label.stringValue)")
+                    let needed = try XCTUnwrap(label.cell).cellSize(forBounds: NSRect(
+                        x: 0, y: 0, width: width, height: 10_000
+                    )).height
+                    XCTAssertGreaterThanOrEqual(
+                        label.frame.height + 0.75,
+                        needed,
+                        "\(tag)/\(pane) clipped `\(label.stringValue)` at \(width)pt: frame \(label.frame.height), needed \(needed)"
+                    )
+                }
+            }
+        }
+    }
+
     func testWindowMatchesContentAcrossEveryTerminalTransition() throws {
         let controller = makeController(.iterm)
         let window = try XCTUnwrap(controller.window)
@@ -344,33 +409,56 @@ final class SetupWindowLayoutTests: XCTestCase {
         XCTAssertTrue(statusAction.contains("refresh()"))
     }
 
-    func testPaneLeftColumnsRetainFixedSectionSpacingAcrossAllThreePanes() throws {
+    func testPaneLeftColumnsFitTheirContentAndLeaveSurplusBelow() throws {
         let controller = makeController()
         let window = try XCTUnwrap(controller.window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
-        func assertFixedGaps(_ column: NSStackView, file: StaticString = #filePath, line: UInt = #line) {
-            let visible = column.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
-                .sorted { $0.frame.minY < $1.frame.minY }
-            for (upper, lower) in zip(visible, visible.dropFirst()) {
+        func assertVerticalStacksFit(_ view: NSView, file: StaticString = #filePath, line: UInt = #line) {
+            guard !view.isHidden else { return }
+            if let stack = view as? NSStackView, stack.orientation == .vertical {
                 XCTAssertEqual(
-                    lower.frame.minY - upper.frame.maxY,
-                    column.spacing,
+                    stack.frame.height,
+                    stack.fittingSize.height,
                     accuracy: 1,
-                    "left sections should retain their fixed stack spacing",
+                    "vertical stack should stay at its content height: \(stack.identifier?.rawValue ?? String(describing: type(of: stack)))",
                     file: file,
                     line: line
                 )
             }
+            for child in view.subviews {
+                assertVerticalStacksFit(child, file: file, line: line)
+            }
         }
 
-        assertFixedGaps(controller.generalPaneForTesting.leftColumnForTesting)
+        assertVerticalStacksFit(controller.generalPaneForTesting.leftColumnForTesting)
         try select("github", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        assertFixedGaps(controller.githubPaneForTesting.leftColumnForTesting)
+        assertVerticalStacksFit(controller.githubPaneForTesting.leftColumnForTesting)
         try select("slack", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        assertFixedGaps(controller.slackPaneForTesting.leftColumnForTesting)
+        assertVerticalStacksFit(controller.slackPaneForTesting.leftColumnForTesting)
+    }
+
+    func testPreviewWindowsUseEqualOuterMarginsAcrossAllThreePanes() throws {
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        for pane in ["general", "github", "slack"] {
+            try select(pane, in: window)
+            _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+            let preview = switch pane {
+            case "general": controller.generalPaneForTesting.previewView
+            case "github": controller.githubPaneForTesting.previewView
+            default: controller.slackPaneForTesting.previewView
+            }
+            let frame = preview.previewWindowFrameForTesting
+            XCTAssertEqual(frame.minX, 13, accuracy: 0.5, pane)
+            XCTAssertEqual(frame.minY, 13, accuracy: 0.5, pane)
+            XCTAssertEqual(preview.bounds.maxX - frame.maxX, 13, accuracy: 0.5, pane)
+            XCTAssertEqual(preview.bounds.maxY - frame.maxY, 13, accuracy: 0.5, pane)
+        }
     }
 
     func testSlackRequestFailureStaysVisibleAtTheTopOfAShortDocument() throws {

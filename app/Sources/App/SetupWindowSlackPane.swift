@@ -39,17 +39,17 @@ func setupWindowSlackPreviewCaption(_ sentence: SetupWindowEffectSentence) -> St
 final class SetupWindowSlackPane: NSView {
     let workDirectoryField = NSTextField(string: "")
     let chooseWorkDirectoryButton = NSButton(title: "", target: nil, action: nil)
-    let workDirectoryValidationLabel = NSTextField(wrappingLabelWithString: "")
+    let workDirectoryValidationLabel = makeSetupWindowWrappingLabel()
     let instructionField = NSTextField(string: "")
-    let instructionValidationLabel = NSTextField(wrappingLabelWithString: "")
+    let instructionValidationLabel = makeSetupWindowWrappingLabel()
     let hotKeyButton = NSButton(title: "", target: nil, action: nil)
     let clearHotKeyButton = NSButton(title: "", target: nil, action: nil)
-    let hotKeyStatusLabel = NSTextField(wrappingLabelWithString: "")
+    let hotKeyStatusLabel = makeSetupWindowWrappingLabel()
     let loginItemCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    let loginItemStatusLabel = NSTextField(wrappingLabelWithString: "")
-    let previewTitleLabel = NSTextField(wrappingLabelWithString: "")
+    let loginItemStatusLabel = makeSetupWindowWrappingLabel()
+    let previewTitleLabel = makeSetupWindowWrappingLabel()
     let previewView: SetupWindowPreviewView
-    let previewCaptionLabel = NSTextField(wrappingLabelWithString: "")
+    let previewCaptionLabel = makeSetupWindowWrappingLabel()
 
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSlackAction: Selector]
@@ -313,7 +313,7 @@ final class SetupWindowSlackPane: NSView {
         loginItemCheckbox.action = selectors[.slackLoginItemToggled]
         loginItemCheckbox.identifier = setupWindowControlRole(selectors[.slackLoginItemToggled]!)
 
-        let hint = NSTextField(wrappingLabelWithString: localized("app.slack.loginItem.help"))
+        let hint = makeSetupWindowWrappingLabel(localized("app.slack.loginItem.help"))
         hint.font = Theme.ui(10.5)
         hint.textColor = Theme.textDim
         loginItemStatusLabel.font = Theme.ui(11)
@@ -357,7 +357,7 @@ final class SetupWindowSlackPane: NSView {
         leftColumn.distribution = .fill
         leftColumn.spacing = 15
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
-        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setHuggingPriority(.required, for: .vertical)
         leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
 

@@ -49,7 +49,11 @@ final class SetupWindowRedrawTests: XCTestCase {
     }
 
     private func makeController() -> SetupWindowController {
-        SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem())
+        SetupWindowController(
+            slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
+            manifestStatusProvider: { .registered },
+            extensionFolderStatusProvider: { .present }
+        )
     }
 
     private func select(_ pane: String, in window: NSWindow) throws {
@@ -198,7 +202,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let clipHeight = scroll.contentView.bounds.height
         scroll.contentView.scroll(to: NSPoint(x: 0, y: document.frame.maxY - clipHeight))
         scroll.reflectScrolledClipView(scroll.contentView)
-        XCTAssertEqual(panel.frame.maxY, scroll.documentVisibleRect.maxY, accuracy: 0.5)
+        XCTAssertEqual(panel.frame.maxY + 12, scroll.documentVisibleRect.maxY, accuracy: 0.5)
 
         Settings.lastRequestAt = Date()
         try postLanguageChange(in: window)
@@ -206,7 +210,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let after = try XCTUnwrap(window.contentView as? NSScrollView)
         XCTAssertTrue(controller.sharedPanelForTesting.isHidden)
         XCTAssertEqual(
-            controller.generalPaneForTesting.frame.maxY - after.documentVisibleRect.maxY,
+            controller.generalPaneForTesting.frame.maxY + 12 - after.documentVisibleRect.maxY,
             0,
             accuracy: 0.5,
             "a hidden shared-panel anchor did not fall forward to the selected pane"

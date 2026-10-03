@@ -314,7 +314,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(try XCTUnwrap(panel.window)))
         XCTAssertGreaterThan(status.frame.height, status.font!.boundingRectForFont.height)
         XCTAssertTrue(status.cell?.wraps == true)
-        XCTAssertGreaterThan(status.maximumNumberOfLines, 1)
+        XCTAssertTrue(status.maximumNumberOfLines == 0 || status.maximumNumberOfLines > 1)
     }
 
     func testReopenedGuideCanBeClosedWithoutChangingRequestEvidence() throws {

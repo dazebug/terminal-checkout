@@ -995,14 +995,9 @@ private func makeStatusDot(for severity: SetupWindowProblemSeverity) -> NSView {
 private func makeSetupPanelLabel(
     _ text: String, font: NSFont, color: NSColor
 ) -> NSTextField {
-    let label = NSTextField(wrappingLabelWithString: text)
+    let label = makeSetupWindowWrappingLabel(text)
     label.font = font
     label.textColor = color
-    label.usesSingleLineMode = false
-    label.cell?.wraps = true
-    label.cell?.isScrollable = false
-    label.maximumNumberOfLines = 0
-    label.preferredMaxLayoutWidth = 660
     label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     return label
 }

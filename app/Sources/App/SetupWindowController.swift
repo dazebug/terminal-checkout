@@ -241,15 +241,48 @@ final class FittedContentStackView: NSStackView {
     }
 }
 
+/// Measures wrapped text against the width Auto Layout actually assigns to the label.
+final class SetupWindowWrappingLabel: NSTextField {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureWrapping()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureWrapping()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard newSize.width > 0, abs(preferredMaxLayoutWidth - newSize.width) > 0.5 else { return }
+        preferredMaxLayoutWidth = newSize.width
+        invalidateIntrinsicContentSize()
+    }
+
+    private func configureWrapping() {
+        usesSingleLineMode = false
+        cell?.wraps = true
+        cell?.isScrollable = false
+        maximumNumberOfLines = 0
+        isBezeled = false
+        isBordered = false
+        isEditable = false
+        isSelectable = false
+        drawsBackground = false
+    }
+}
+
+func makeSetupWindowWrappingLabel(_ text: String = "") -> SetupWindowWrappingLabel {
+    let label = SetupWindowWrappingLabel(frame: .zero)
+    label.stringValue = text
+    return label
+}
+
 /// Creates a status label with wrapping configured before it receives localized values.
 func makeStatusLabel(font: NSFont) -> NSTextField {
-    let label = NSTextField(labelWithString: "")
+    let label = makeSetupWindowWrappingLabel()
     label.font = font
-    label.usesSingleLineMode = false
-    label.cell?.wraps = true
-    label.cell?.isScrollable = false
-    label.maximumNumberOfLines = 0
-    label.preferredMaxLayoutWidth = setupTextWidth
     return label
 }
 
@@ -306,6 +339,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private var isRebuildingForLanguageChange = false
     private var hasCenteredMeasuredWindow = false
     private var windowHasClosed = false
+    private var manifestStatusProvider: (() -> SetupWindowManifestStatus)?
+    private var extensionFolderStatusProvider: (() -> SetupWindowExtensionFolderStatus)?
 
     private var languageObserver: NSObjectProtocol?
     private var screenParametersObserver: NSObjectProtocol?
@@ -343,7 +378,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         slackHotKey: SlackThreadHotKeyManaging,
         loginItem: LoginItemManaging,
         openingBlocker: ClaudeInputBlocker? = nil,
-        slackRequestFailure: Error? = nil
+        slackRequestFailure: Error? = nil,
+        manifestStatusProvider: (() -> SetupWindowManifestStatus)? = nil,
+        extensionFolderStatusProvider: (() -> SetupWindowExtensionFolderStatus)? = nil
     ) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
@@ -359,6 +396,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         self.init(window: window)
         self.slackHotKey = slackHotKey
         self.slackLoginItem = loginItem
+        self.manifestStatusProvider = manifestStatusProvider
+        self.extensionFolderStatusProvider = extensionFolderStatusProvider
         if let openingBlocker { appendOpeningReason(.claudeInputRejected(blocker: openingBlocker, arrivalOrder: nextArrival())) }
         if let slackRequestFailure {
             lastSlackRequestFailure = slackRequestFailure
@@ -539,8 +578,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     private func currentEnvironment() -> SetupWindowEnvironment {
-        let manifest = Installer.setupWindowManifestStatus()
-        let folder = Installer.setupWindowExtensionFolderStatus()
+        let manifest = manifestStatusProvider?() ?? Installer.setupWindowManifestStatus()
+        let folder = extensionFolderStatusProvider?() ?? Installer.setupWindowExtensionFolderStatus()
         let terminal = Settings.terminal
         let installations = [
             SetupWindowTerminalInstallation(terminal: .iterm, isInstalled: PermissionChecker.isITermInstalled),
@@ -1359,7 +1398,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        let description = NSTextField(wrappingLabelWithString: detail)
+        let description = makeSetupWindowWrappingLabel(detail)
         description.font = Theme.ui(12)
         description.textColor = Theme.text
         description.maximumNumberOfLines = 0

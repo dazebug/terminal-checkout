@@ -55,7 +55,7 @@ private func setupWindowBaseDirectoryReason(_ problem: BaseDirectoryProblem) -> 
 final class SetupWindowGitHubPane: NSView {
     let baseDirectoryField: NSTextField
     let chooseBaseDirectoryButton: NSButton
-    let baseDirectoryNoticeLabel = NSTextField(wrappingLabelWithString: "")
+    let baseDirectoryNoticeLabel = makeSetupWindowWrappingLabel()
     let arrangementSegment: NSSegmentedControl
     let identitySegment: NSSegmentedControl
     let workspaceNameField: NSTextField
@@ -226,7 +226,7 @@ final class SetupWindowGitHubPane: NSView {
     private let arrangementRow = NSStackView()
     private let identityRow = NSStackView()
     private let previewColumn = NSStackView()
-    private let previewCaption = NSTextField(wrappingLabelWithString: "")
+    private let previewCaption = makeSetupWindowWrappingLabel()
 
     private func buildCmuxControls() {
         let sectionTitle = NSTextField(labelWithString: localized("app.setup.github.batch.title"))
@@ -325,7 +325,7 @@ final class SetupWindowGitHubPane: NSView {
         leftColumn.distribution = .fill
         leftColumn.spacing = 17
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
-        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setHuggingPriority(.required, for: .vertical)
         leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
 
