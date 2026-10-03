@@ -482,7 +482,6 @@ private struct SetupWindowSnapshotValues {
     var cmuxStableSocket: CmuxSocketStatus? = .reachable
     var cmuxNightlySocket: CmuxSocketStatus? = .reachable
     var warpAccessibilityGranted = true
-    var wezTermSessionAvailable = true
     var tools: SetupWindowToolResults?
     var baseDirectory: SetupWindowBaseDirectoryStatus = .unconfigured
     var openingReasons: [SetupWindowOpeningReason] = []
@@ -509,7 +508,6 @@ private struct SetupWindowSnapshotValues {
             cmuxStableSocket: cmuxStableSocket,
             cmuxNightlySocket: cmuxNightlySocket,
             warpAccessibilityGranted: warpAccessibilityGranted,
-            wezTermSessionAvailable: wezTermSessionAvailable,
             tools: tools,
             baseDirectory: baseDirectory,
             openingReasons: openingReasons,

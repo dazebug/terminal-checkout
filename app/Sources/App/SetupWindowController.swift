@@ -576,7 +576,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             cmuxStableSocket: stableSocket,
             cmuxNightlySocket: nightlySocket,
             warpAccessibilityGranted: PermissionChecker.isAccessibilityGranted,
-            wezTermSessionAvailable: true,
             tools: tools,
             baseDirectory: baseDirectory,
             openingReasons: openingReasons,

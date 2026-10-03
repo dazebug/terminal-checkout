@@ -76,7 +76,6 @@ struct SetupWindowSnapshot {
     let cmuxStableSocket: CmuxSocketStatus?
     let cmuxNightlySocket: CmuxSocketStatus?
     let warpAccessibilityGranted: Bool
-    let wezTermSessionAvailable: Bool
     let tools: SetupWindowToolResults?
     let baseDirectory: SetupWindowBaseDirectoryStatus
     let openingReasons: [SetupWindowOpeningReason]
@@ -98,7 +97,6 @@ struct SetupWindowSnapshot {
         cmuxStableSocket: CmuxSocketStatus? = .reachable,
         cmuxNightlySocket: CmuxSocketStatus? = .reachable,
         warpAccessibilityGranted: Bool = true,
-        wezTermSessionAvailable: Bool = true,
         tools: SetupWindowToolResults? = nil,
         baseDirectory: SetupWindowBaseDirectoryStatus = .unconfigured,
         openingReasons: [SetupWindowOpeningReason] = [],
@@ -119,7 +117,6 @@ struct SetupWindowSnapshot {
         self.cmuxStableSocket = cmuxStableSocket
         self.cmuxNightlySocket = cmuxNightlySocket
         self.warpAccessibilityGranted = warpAccessibilityGranted
-        self.wezTermSessionAvailable = wezTermSessionAvailable
         self.tools = tools
         self.baseDirectory = baseDirectory
         self.openingReasons = openingReasons
