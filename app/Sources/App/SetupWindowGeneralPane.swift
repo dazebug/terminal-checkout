@@ -391,8 +391,6 @@ final class SetupWindowGeneralPane: NSView {
         activationSegment.setLabel(localized("app.setup.general.afterAction.terminal"), forSegment: 0)
         activationSegment.setLabel(localized("app.setup.general.afterAction.current"), forSegment: 1)
         activationSegment.segmentStyle = .rounded
-        activationSegment.setWidth(118, forSegment: 0)
-        activationSegment.setWidth(130, forSegment: 1)
         activationSegment.identifier = setupWindowControlRole(selectors[.tabActivationChanged]!)
         activationSegment.setAccessibilityLabel(localized("app.setup.general.afterAction.title"))
         activationRow.orientation = .horizontal

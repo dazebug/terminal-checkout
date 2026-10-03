@@ -264,6 +264,28 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         XCTAssertNotEqual(Settings.cmuxPlacementFixedName, "draft-group")
     }
 
+    /// macOS 15 ended the replaced field's editing after the rebuild had returned and sent its
+    /// action then, which stored the draft the rebuild only carried over. Sending the old field's
+    /// action after the rebuild stands in for that late end of editing on any macOS version.
+    func testAReplacedFieldCannotStoreTheDraftAfterTheRebuild() throws {
+        Settings.cmuxPlacementIdentityMode = "fixed-name"
+        Settings.cmuxPlacementFixedName = "stored-group"
+        let controller = try makeController(terminal: .cmux)
+        let window = try XCTUnwrap(controller.window)
+        let field = controller.cmuxPlacementNameFieldForTesting
+        XCTAssertTrue(window.makeFirstResponder(field))
+        try XCTUnwrap(field.currentEditor()).string = "draft-group"
+
+        NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertFalse(field === controller.cmuxPlacementNameFieldForTesting, "language change did not rebuild the pane")
+
+        field.sendAction(field.action, to: field.target)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertEqual(Settings.cmuxPlacementFixedName, "stored-group")
+        XCTAssertEqual(controller.cmuxPlacementNameFieldForTesting.stringValue, "draft-group")
+    }
+
     private func makeController(terminal: Terminal) throws -> SetupWindowController {
         Settings.terminal = terminal
         let controller = SetupWindowController(

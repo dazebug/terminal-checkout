@@ -232,9 +232,6 @@ final class SetupWindowGitHubPane: NSView {
         arrangementSegment.setLabel(localized("app.setup.github.arrangement.tab"), forSegment: 1)
         arrangementSegment.setLabel(localized("app.setup.github.batch.workspace"), forSegment: 2)
         arrangementSegment.segmentStyle = .rounded
-        arrangementSegment.setWidth(64, forSegment: 0)
-        arrangementSegment.setWidth(64, forSegment: 1)
-        arrangementSegment.setWidth(96, forSegment: 2)
         arrangementSegment.target = actionTarget
         arrangementSegment.action = selectors[.cmuxPlacementArrangementChanged]
         arrangementSegment.identifier = setupWindowControlRole(
@@ -253,8 +250,6 @@ final class SetupWindowGitHubPane: NSView {
         identitySegment.setLabel(localized("app.cmux.placement.identity.alwaysNew"), forSegment: 0)
         identitySegment.setLabel(localized("app.cmux.placement.identity.fixedName"), forSegment: 1)
         identitySegment.segmentStyle = .rounded
-        identitySegment.setWidth(114, forSegment: 0)
-        identitySegment.setWidth(124, forSegment: 1)
         identitySegment.target = actionTarget
         identitySegment.action = selectors[.cmuxPlacementIdentityChanged]
         identitySegment.identifier = setupWindowControlRole(

@@ -1102,6 +1102,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         let environment = currentEnvironment()
         isRebuildingForLanguageChange = true
         defer { isRebuildingForLanguageChange = false }
+        // End the edit while the rebuild guard holds, then cut the old controls loose. macOS 15
+        // ended a removed field's editing after the rebuild had returned, and the action it sent
+        // then stored the draft this rebuild only carries over to the new field.
+        window.makeFirstResponder(nil)
+        if let oldContent = window.contentView { detachControls(in: oldContent) }
         window.contentView = buildContent(using: environment)
         githubPane.baseDirectoryField.stringValue = drafts.0
         githubPane.workspaceNameField.stringValue = drafts.1
@@ -1115,6 +1120,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             guard let self, let window, self.window === window else { return }
             self.restore(place, in: window)
         }
+    }
+
+    /// A control from a replaced pane must not write settings: its action and delegate would read
+    /// the new pane's fields, which hold carried-over drafts.
+    private func detachControls(in view: NSView) {
+        if let control = view as? NSControl {
+            control.target = nil
+            control.action = nil
+        }
+        if let field = view as? NSTextField { field.delegate = nil }
+        for subview in view.subviews { detachControls(in: subview) }
     }
 
     @objc private func terminalChanged(_ sender: NSPopUpButton) {
@@ -1196,6 +1212,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     @objc private func openOptionsPage() { openInChrome(Installer.optionsPageURL) }
 
     @objc private func baseDirectoryEdited() {
+        guard !isRebuildingForLanguageChange else { return }
         let typed = githubPane.baseDirectoryField.stringValue
         do {
             let normalized = try normalizedBaseDirectory(typed)
@@ -1259,6 +1276,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func slackThreadSettingsEdited() {
+        guard !isRebuildingForLanguageChange else { return }
         Settings.slackThreadWorkDirectory = slackPane.workDirectoryField.stringValue
         Settings.slackThreadInstruction = slackPane.instructionField.stringValue
         refresh()
