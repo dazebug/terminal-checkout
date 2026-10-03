@@ -145,7 +145,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
     }
 
     func testTerminalTestSuccessUsesACompleteLocalizedSentenceForItsDestination() throws {
-        let fixture = makePane(state: makeState(terminalTestResult: .succeeded))
+        let fixture = makePane(state: makeState(terminalTestResult: .succeeded(.iterm)))
         let window = makeWindow(for: fixture.pane)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         XCTAssertEqual(
@@ -153,7 +153,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
             localized("app.setup.general.terminalTest.success.tab")
         )
 
-        fixture.pane.update(makeState(terminal: .cmux, terminalTestResult: .succeeded))
+        fixture.pane.update(makeState(terminal: .cmux, terminalTestResult: .succeeded(.cmux)))
         XCTAssertEqual(
             fixture.pane.terminalTestResultTextForTesting,
             localized("app.setup.general.terminalTest.success.workspace")
@@ -189,7 +189,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
 
         pane.update(makeState(
             terminal: .cmux,
-            cmuxFeedback: .init(text: localized("app.status.cmux.configOpened"), tone: .success)
+            cmuxFeedback: .fileOpened
         ))
 
         XCTAssertTrue(popover === pane.connectionDetailsPopover)
@@ -279,7 +279,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         tabActivation: TabActivation = .foreground,
         installed: [Terminal: Bool] = Dictionary(uniqueKeysWithValues: Terminal.allCases.map { ($0, true) }),
         languageChange: SetupWindowGeneralLanguageChange = .unchanged,
-        cmuxFeedback: SetupWindowGeneralIndicator? = nil,
+        cmuxFeedback: SetupWindowCmuxActionResult? = nil,
         terminalStatus: SetupWindowGeneralIndicator = .init(text: "Ready", tone: .success),
         terminalTestResult: SetupWindowGeneralTerminalTestResult = .notRun
     ) -> SetupWindowGeneralPaneState {

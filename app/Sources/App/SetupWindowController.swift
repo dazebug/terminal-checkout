@@ -294,6 +294,26 @@ private struct SetupWindowEnvironment {
     let presentation: SetupWindowPresentation
 }
 
+struct SetupWindowControllerEffects {
+    let writeClipboard: (String) -> Bool
+    let fileExists: (URL) -> Bool
+    let openURL: (URL) -> Bool
+    let runTerminal: (String, Terminal) throws -> Void
+
+    static let live = SetupWindowControllerEffects(
+        writeClipboard: { value in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            return pasteboard.setString(value, forType: .string)
+        },
+        fileExists: { FileManager.default.fileExists(atPath: $0.path) },
+        openURL: { NSWorkspace.shared.open($0) },
+        runTerminal: { command, terminal in
+            _ = try runInTerminal(command: command, terminal: terminal)
+        }
+    )
+}
+
 final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSTextFieldDelegate {
     private var slackHotKey: SlackThreadHotKeyManaging!
     private var slackLoginItem: LoginItemManaging!
@@ -308,10 +328,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private var selectedPane: SetupWindowPane = .general
     private var languageChange = SetupWindowGeneralLanguageChange.unchanged
     private var terminalTestResult = SetupWindowGeneralTerminalTestResult.notRun
+    private var terminalTestAttempt = 0
     private var guideWasReopened = false
     private var guideStepsExpanded = false
     private var installFeedback: String?
-    private var cmuxFeedback: (String, SetupWindowGeneralStatusTone)?
+    private var cmuxFeedback: SetupWindowCmuxActionResult?
+    private var effects = SetupWindowControllerEffects.live
     private var isRebuildingForLanguageChange = false
     private var hasCenteredMeasuredWindow = false
     private var windowHasClosed = false
@@ -355,7 +377,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         openingBlocker: ClaudeInputBlocker? = nil,
         slackRequestFailure: Error? = nil,
         manifestStatusProvider: (() -> SetupWindowManifestStatus)? = nil,
-        extensionFolderStatusProvider: (() -> SetupWindowExtensionFolderStatus)? = nil
+        extensionFolderStatusProvider: (() -> SetupWindowExtensionFolderStatus)? = nil,
+        effects: SetupWindowControllerEffects = .live
     ) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
@@ -373,6 +396,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         self.slackLoginItem = loginItem
         self.manifestStatusProvider = manifestStatusProvider
         self.extensionFolderStatusProvider = extensionFolderStatusProvider
+        self.effects = effects
         if let openingBlocker { appendOpeningReason(.claudeInputRejected(blocker: openingBlocker, arrivalOrder: nextArrival())) }
         if let slackRequestFailure {
             lastSlackRequestFailure = slackRequestFailure
@@ -643,7 +667,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             manifest: environment.manifest,
             extensionFolder: environment.extensionFolder,
             installStepsExpanded: guideStepsExpanded,
-            installFeedback: installFeedback
+            installFeedback: installFeedback,
+            cmuxActionResult: cmuxFeedback
         )
         let generalState = makeGeneralState(environment)
         generalPane.update(generalState)
@@ -684,7 +709,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             storedLanguage: Settings.language,
             resolvedLanguage: AppLocalization.resolvedTag(),
             languageChange: languageChange,
-            cmuxFeedback: cmuxFeedback.map { .init(text: $0.0, tone: $0.1) }
+            cmuxFeedback: cmuxFeedback
         )
     }
 
@@ -823,6 +848,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             presentation: environment.presentation,
             manifest: environment.manifest,
             extensionFolder: environment.extensionFolder,
+            cmuxActionResult: cmuxFeedback,
             target: self,
             selectors: sharedPanelSelectors
         )
@@ -1322,31 +1348,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func openCmuxConfig() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        guard pasteboard.setString(CmuxConfigHelp.cmuxConfigClipboardFragment(), forType: .string) else {
-            cmuxFeedback = (localized("app.status.cmux.configClipboardFailed"), .warning)
+        guard effects.writeClipboard(CmuxConfigHelp.cmuxConfigClipboardFragment()) else {
+            cmuxFeedback = .clipboardWriteFailed
             refresh()
             return
         }
         let configURL = CmuxConfigHelp.defaultConfigURL()
-        let fileManager = FileManager.default
         let target = CmuxConfigHelp.cmuxConfigRevealTarget(
             configURL: configURL,
-            fileExists: fileManager.fileExists(atPath: configURL.path),
-            directoryExists: fileManager.fileExists(atPath: configURL.deletingLastPathComponent().path)
+            fileExists: effects.fileExists(configURL),
+            directoryExists: effects.fileExists(configURL.deletingLastPathComponent())
         )
         switch target {
         case .file(let url):
-            let opened = NSWorkspace.shared.open(url)
-            cmuxFeedback = (opened ? localized("app.status.cmux.configOpened") : localized("app.status.cmux.configOpenFailed"),
-                            opened ? .success : .warning)
+            cmuxFeedback = effects.openURL(url) ? .fileOpened : .openFailed
         case .directory(let url):
-            let opened = NSWorkspace.shared.open(url)
-            cmuxFeedback = (opened ? localized("app.status.cmux.configDirectoryOpened") : localized("app.status.cmux.configOpenFailed"),
-                            opened ? .success : .warning)
+            cmuxFeedback = effects.openURL(url) ? .directoryOpened : .openFailed
         case .nothing:
-            cmuxFeedback = (localized("app.status.cmux.configUnavailable"), .warning)
+            cmuxFeedback = .targetUnavailable
         }
         refresh()
     }
@@ -1354,15 +1373,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     @objc private func testTerminal() {
         let terminal = Settings.terminal
         let command = testCommand.command
-        terminalTestResult = .running
+        terminalTestAttempt += 1
+        let attempt = terminalTestAttempt
+        terminalTestResult = .running(terminal)
         refresh()
+        let runTerminal = effects.runTerminal
         DispatchQueue.global().async { [weak self] in
             var failure: Error?
-            do { try runInTerminal(command: command, terminal: terminal) } catch { failure = error }
+            do { try runTerminal(command, terminal) } catch { failure = error }
             DispatchQueue.main.async {
-                guard let self else { return }
-                if let failure { self.terminalTestResult = .failed(localizedErrorMessage(failure)) }
-                else { self.terminalTestResult = .succeeded }
+                guard let self, self.terminalTestAttempt == attempt else { return }
+                if let failure { self.terminalTestResult = .failed(terminal, localizedErrorMessage(failure)) }
+                else { self.terminalTestResult = .succeeded(terminal) }
                 self.refresh()
             }
         }

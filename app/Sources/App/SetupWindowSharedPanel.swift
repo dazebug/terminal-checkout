@@ -54,7 +54,9 @@ final class SetupWindowSharedPanel: NSView {
     private(set) var problemBlockViews: [SetupWindowProblemBlockView] = []
     private(set) var installChecklistView: SetupWindowInstallChecklistView?
     var wrappingStatusLabelsForTesting: [NSTextField] {
-        let problemLabels = blocksByRole.values.flatMap { $0.paragraphLabels + $0.effectLabels }
+        let problemLabels = blocksByRole.values.flatMap {
+            $0.paragraphLabels + $0.effectLabels + [$0.cmuxFeedbackLabelForTesting]
+        }
         let checklistLabels = installChecklistView.map { checklist in
             checklist.steps.map(\.statusLabel) + checklist.guideStepLabels + [checklist.feedbackLabel]
         } ?? []
@@ -67,6 +69,7 @@ final class SetupWindowSharedPanel: NSView {
         extensionFolder: SetupWindowExtensionFolderStatus,
         installStepsExpanded: Bool = false,
         installFeedback: String? = nil,
+        cmuxActionResult: SetupWindowCmuxActionResult? = nil,
         target: AnyObject?,
         selectors: [SetupWindowSharedPanelAction: Selector]
     ) {
@@ -126,7 +129,8 @@ final class SetupWindowSharedPanel: NSView {
         checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         update(presentation, manifest: manifest, extensionFolder: extensionFolder,
                installStepsExpanded: installStepsExpanded,
-               installFeedback: installFeedback)
+               installFeedback: installFeedback,
+               cmuxActionResult: cmuxActionResult)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -143,7 +147,8 @@ final class SetupWindowSharedPanel: NSView {
         manifest: SetupWindowManifestStatus,
         extensionFolder: SetupWindowExtensionFolderStatus,
         installStepsExpanded: Bool,
-        installFeedback: String?
+        installFeedback: String?,
+        cmuxActionResult: SetupWindowCmuxActionResult? = nil
     ) {
         self.presentation = presentation
         self.manifest = manifest
@@ -188,7 +193,11 @@ final class SetupWindowSharedPanel: NSView {
             }
             block.update(
                 problem: problem,
-                copy: Self.copy(for: problem, manifest: manifest)
+                copy: Self.copy(for: problem, manifest: manifest),
+                cmuxActionResult: {
+                    if case .cmuxAccessDenied = problem.copy { return cmuxActionResult }
+                    return nil
+                }()
             )
             block.isHidden = false
             ordered.append(block)
@@ -523,10 +532,14 @@ final class SetupWindowProblemBlockView: NSView {
     private let contentStack = NSStackView()
     private let severityDot = makeStatusDot(for: .warning)
     private let actionsStack = NSStackView()
+    private let cmuxFeedbackLabel = makeSetupWindowWrappingLabel()
     private let roleQualifier: String
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSharedPanelAction: Selector]
     private var accessibilityLabelText = ""
+    var cmuxFeedbackLabelForTesting: NSTextField { cmuxFeedbackLabel }
+    var cmuxFeedbackTextForTesting: String { cmuxFeedbackLabel.stringValue }
+    var cmuxFeedbackIsHiddenForTesting: Bool { cmuxFeedbackLabel.isHidden }
 
     init(
         problem: SetupWindowProblem,
@@ -590,12 +603,21 @@ final class SetupWindowProblemBlockView: NSView {
         actionsStack.spacing = 8
         for button in actionButtons { actionsStack.addArrangedSubview(button) }
         contentStack.addArrangedSubview(actionsStack)
+        cmuxFeedbackLabel.font = Theme.ui(11)
+        cmuxFeedbackLabel.maximumNumberOfLines = 0
+        cmuxFeedbackLabel.isHidden = true
+        contentStack.addArrangedSubview(cmuxFeedbackLabel)
+        cmuxFeedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         update(problem: problem, copy: copy)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func update(problem: SetupWindowProblem, copy: SetupWindowSharedPanelBlockCopy) {
+    func update(
+        problem: SetupWindowProblem,
+        copy: SetupWindowSharedPanelBlockCopy,
+        cmuxActionResult: SetupWindowCmuxActionResult? = nil
+    ) {
         self.problem = problem
         titleLabel.stringValue = copy.title
         severityDot.layer?.backgroundColor = (problem.severity == .error ? Theme.err : Theme.warn).cgColor
@@ -622,6 +644,14 @@ final class SetupWindowProblemBlockView: NSView {
             button.isHidden = false
         }
         actionsStack.isHidden = copy.buttons.isEmpty
+        if case .cmuxAccessDenied = problem.copy, let cmuxActionResult {
+            cmuxFeedbackLabel.stringValue = cmuxActionResult.message
+            cmuxFeedbackLabel.textColor = cmuxActionResult.tone.color
+            cmuxFeedbackLabel.isHidden = false
+        } else {
+            cmuxFeedbackLabel.stringValue = ""
+            cmuxFeedbackLabel.isHidden = true
+        }
         accessibilityLabelText = localized(
             "app.setup.problem.accessibilityLabel",
             localized(problem.severity == .error ? "app.setup.severity.error" : "app.setup.severity.warning"),

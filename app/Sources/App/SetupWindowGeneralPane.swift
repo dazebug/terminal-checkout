@@ -23,11 +23,43 @@ struct SetupWindowGeneralIndicator {
     let tone: SetupWindowGeneralStatusTone
 }
 
+enum SetupWindowCmuxActionResult: Equatable {
+    case fileOpened
+    case directoryOpened
+    case openFailed
+    case targetUnavailable
+    case clipboardWriteFailed
+
+    var message: String {
+        switch self {
+        case .fileOpened: return localized("app.status.cmux.configOpened")
+        case .directoryOpened: return localized("app.status.cmux.configDirectoryOpened")
+        case .openFailed: return localized("app.status.cmux.configOpenFailed")
+        case .targetUnavailable: return localized("app.status.cmux.configUnavailable")
+        case .clipboardWriteFailed: return localized("app.status.cmux.configClipboardFailed")
+        }
+    }
+
+    var tone: SetupWindowGeneralStatusTone {
+        switch self {
+        case .fileOpened, .directoryOpened: return .success
+        case .openFailed, .targetUnavailable, .clipboardWriteFailed: return .warning
+        }
+    }
+}
+
 enum SetupWindowGeneralTerminalTestResult {
     case notRun
-    case running
-    case succeeded
-    case failed(String)
+    case running(Terminal)
+    case succeeded(Terminal)
+    case failed(Terminal, String)
+
+    var testedTerminal: Terminal? {
+        switch self {
+        case .notRun: return nil
+        case .running(let terminal), .succeeded(let terminal), .failed(let terminal, _): return terminal
+        }
+    }
 }
 
 enum SetupWindowGeneralLanguageChange: Equatable {
@@ -62,7 +94,7 @@ struct SetupWindowGeneralPaneState {
     let storedLanguage: String
     let resolvedLanguage: String
     let languageChange: SetupWindowGeneralLanguageChange
-    let cmuxFeedback: SetupWindowGeneralIndicator?
+    let cmuxFeedback: SetupWindowCmuxActionResult?
 
     var terminal: Terminal { presentation.previews.general.terminal }
 
@@ -121,6 +153,7 @@ final class SetupWindowGeneralPane: NSView {
     var requestStatusTextForTesting: String { requestStatusLabel.stringValue }
     var terminalStatusTextForTesting: String { terminalStatusLabel.stringValue }
     var terminalTestResultTextForTesting: String { terminalTestResultLabel.stringValue }
+    var terminalTestResultIsHiddenForTesting: Bool { terminalTestResultLabel.isHidden }
     var hintTextForTesting: String { hintLabel.stringValue }
     var previewCaptionForTesting: String { previewCaption.stringValue }
     var terminalDetailTitleForTesting: String { terminalDetailRow.titleLabel.stringValue }
@@ -574,7 +607,7 @@ final class SetupWindowGeneralPane: NSView {
         )
         terminalDetailRow.update(state.terminalStatus)
         if let feedback = state.cmuxFeedback {
-            cmuxFeedbackLabel.stringValue = feedback.text
+            cmuxFeedbackLabel.stringValue = feedback.message
             cmuxFeedbackLabel.textColor = feedback.tone.color
             cmuxFeedbackLabel.isHidden = false
         } else {
@@ -603,23 +636,29 @@ final class SetupWindowGeneralPane: NSView {
     }
 
     private func updateTestResult(_ state: SetupWindowGeneralPaneState) {
+        guard state.terminalTestResult.testedTerminal == nil
+                || state.terminalTestResult.testedTerminal == state.terminal else {
+            terminalTestResultLabel.stringValue = ""
+            terminalTestResultLabel.isHidden = true
+            return
+        }
         switch state.terminalTestResult {
         case .notRun:
             terminalTestResultLabel.isHidden = true
             terminalTestResultLabel.stringValue = ""
-        case .running:
+        case .running(_):
             terminalTestResultLabel.stringValue = localized("app.test.running")
             terminalTestResultLabel.textColor = Theme.textDim
             terminalTestResultLabel.isHidden = false
-        case .succeeded:
-            if state.terminal.cmuxChannel == nil {
+        case .succeeded(let terminal):
+            if terminal.cmuxChannel == nil {
                 terminalTestResultLabel.stringValue = localized("app.setup.general.terminalTest.success.tab")
             } else {
                 terminalTestResultLabel.stringValue = localized("app.setup.general.terminalTest.success.workspace")
             }
             terminalTestResultLabel.textColor = Theme.ok
             terminalTestResultLabel.isHidden = false
-        case .failed(let reason):
+        case .failed(_, let reason):
             terminalTestResultLabel.stringValue = localized("app.test.failed", reason)
             terminalTestResultLabel.textColor = Theme.err
             terminalTestResultLabel.isHidden = false
