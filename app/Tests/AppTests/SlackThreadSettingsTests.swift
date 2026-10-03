@@ -147,7 +147,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         defer { restore() }
         Settings.slackThreadHotKey = nil
         let hotKey = StubSlackThreadHotKey()
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
         let button = controller.slackPaneForTesting.hotKeyButton
         let clear = controller.slackPaneForTesting.clearHotKeyButton
         let status = controller.slackPaneForTesting.hotKeyStatusLabel
@@ -194,7 +194,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         let hotKey = StubSlackThreadHotKey()
         hotKey.combination = combination
         hotKey.state = .active(combination)
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
         let button = controller.slackPaneForTesting.hotKeyButton
 
         button.performClick(nil)
@@ -214,7 +214,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         let hotKey = StubSlackThreadHotKey()
         hotKey.combination = combination
         hotKey.state = .failed(combination, status: -9878)
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
         let window = try XCTUnwrap(controller.window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let status = controller.slackPaneForTesting.hotKeyStatusLabel
@@ -230,7 +230,7 @@ final class SlackThreadSettingsTests: XCTestCase {
     func testLoginItemCheckboxShowsTheServiceStateNotTheClick() {
         AppLocalization.tagOverrideForTesting = "en"
         let loginItem = StubLoginItem(status: .disabled)
-        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: loginItem)
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: loginItem))
         let checkbox = controller.slackPaneForTesting.loginItemCheckbox
         let status = controller.slackPaneForTesting.loginItemStatusLabel
         XCTAssertEqual(checkbox.state, .off)
@@ -266,7 +266,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         Settings.slackThreadWorkDirectory = ""
         Settings.slackThreadInstruction = ""
 
-        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem())
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem()))
         let window = try XCTUnwrap(controller.window)
         select("slack", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
@@ -299,7 +299,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         let hotKey = StubSlackThreadHotKey()
         hotKey.combination = original
         hotKey.state = .active(original)
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
         let window = try XCTUnwrap(controller.window)
         select("slack", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))

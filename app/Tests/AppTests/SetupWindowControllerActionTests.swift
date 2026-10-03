@@ -165,13 +165,13 @@ final class SetupWindowControllerActionTests: XCTestCase {
         Settings.baseDirectory = ""
         Settings.toolAvailability = nil
         Settings.toolExecutables = nil
-        return SetupWindowController(
+        return SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(),
             loginItem: StubLoginItem(),
             manifestStatusProvider: { .registered },
             extensionFolderStatusProvider: { .present },
             effects: effects
-        )
+        ))
     }
 
     private func cmuxAccessDeniedBlock(in controller: SetupWindowController) throws -> SetupWindowProblemBlockView {

@@ -217,12 +217,12 @@ final class SetupWindowGeneralCompressionTests: XCTestCase {
 
     private func makeController(_ terminal: Terminal) -> SetupWindowController {
         Settings.terminal = terminal
-        return SetupWindowController(
+        return SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(),
             loginItem: StubLoginItem(),
             manifestStatusProvider: { .registered },
             extensionFolderStatusProvider: { .present }
-        )
+        ))
     }
 
     private func select(_ pane: String, in window: NSWindow) throws {

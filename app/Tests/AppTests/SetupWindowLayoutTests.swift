@@ -72,12 +72,12 @@ final class SetupWindowLayoutTests: XCTestCase {
         extensionFolder: SetupWindowExtensionFolderStatus = .present
     ) -> SetupWindowController {
         Settings.terminal = terminal
-        return SetupWindowController(
+        return SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
             openingBlocker: blocker, slackRequestFailure: slackFailure,
             manifestStatusProvider: { manifest },
             extensionFolderStatusProvider: { extensionFolder }
-        )
+        ))
     }
 
     private func contentHeight(_ window: NSWindow) -> CGFloat {
@@ -152,12 +152,12 @@ final class SetupWindowLayoutTests: XCTestCase {
     }
 
     func testOpeningReasonsChooseTheirPaneAndSlackFailureMarksItsToolbarItem() throws {
-        let slack = SetupWindowController(
+        let slack = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
             slackRequestFailure: SlackThreadRequestError.invalidSlackLink,
             manifestStatusProvider: { .registered },
             extensionFolderStatusProvider: { .present }
-        )
+        ))
         let slackWindow = try XCTUnwrap(slack.window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(slackWindow))
         XCTAssertEqual(slack.selectedPaneForTesting, "slack")

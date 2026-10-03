@@ -51,6 +51,15 @@ struct SetupWindowLayoutSnapshot: CustomStringConvertible {
 }
 
 enum SetupWindowTestSupport {
+    /// Larger than any fixture window, so whether the window fits its content never depends on the
+    /// display the tests run on — CI runners can have short screens, and the clamp then shrinks it.
+    static let roomyVisibleFrame = NSRect(x: 0, y: 0, width: 2560, height: 1600)
+
+    static func onRoomyScreen(_ controller: SetupWindowController) -> SetupWindowController {
+        controller.rootStack.visibleFrameOverride = roomyVisibleFrame
+        return controller
+    }
+
     private static let maximumRunLoopSamples = 20
     private static let runLoopPumpDuration: TimeInterval = 0.001
 

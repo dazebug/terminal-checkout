@@ -49,11 +49,11 @@ final class SetupWindowRedrawTests: XCTestCase {
     }
 
     private func makeController() -> SetupWindowController {
-        SetupWindowController(
+        SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
             slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem(),
             manifestStatusProvider: { .registered },
             extensionFolderStatusProvider: { .present }
-        )
+        ))
     }
 
     private func select(_ pane: String, in window: NSWindow) throws {
