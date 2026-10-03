@@ -195,7 +195,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
-        XCTAssertEqual(contentHeight(window), needed / 2, accuracy: 0.5)
+        XCTAssertEqual(window.frame.height, needed / 2, accuracy: 0.5)
         XCTAssertGreaterThan(controller.rootStack.frame.height, scroll.contentView.bounds.height)
         XCTAssertEqual(controller.rootStack.frame.height, controller.rootStack.fittingSize.height, accuracy: 0.5)
     }
@@ -508,7 +508,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
         let document = try XCTUnwrap(scroll.documentView)
 
-        document.scroll(NSPoint(x: 0, y: document.frame.height - scroll.contentView.bounds.height))
+        document.scroll(NSPoint(x: 0, y: document.isFlipped ? document.frame.height - scroll.contentView.bounds.height : 0))
         scroll.reflectScrolledClipView(scroll.contentView)
         let previousNewest = try XCTUnwrap(controller.sharedPanelForTesting.problemBlockViews.first {
             $0.problem.openingReasonOrder != nil

@@ -987,15 +987,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private func revealNewestOpeningReason() {
         guard let window,
               let scrollView = window.contentView as? NSScrollView,
-              let document = scrollView.documentView,
-              let block = sharedPanel.problemBlockViews.first(where: { $0.problem.openingReasonOrder != nil })
-        else { return }
+              let document = scrollView.documentView else { return }
 
-        var target = block.titleLabel.convert(block.titleLabel.bounds, to: document)
-        if let causeLabel = block.paragraphLabels.first(where: { !$0.isHidden }) {
-            target = NSUnionRect(target, causeLabel.convert(causeLabel.bounds, to: document))
-        }
-        document.scrollToVisible(target)
+        // The newest reason is the first block at the top of the document, so scroll to the top.
+        let clipHeight = scrollView.contentView.bounds.height
+        document.scroll(NSPoint(x: 0, y: document.isFlipped ? 0 : max(0, document.bounds.height - clipHeight)))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
