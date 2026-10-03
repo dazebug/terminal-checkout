@@ -57,15 +57,15 @@ final class SetupWindowControllerActionTests: XCTestCase {
 
         sendAction(button)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        XCTAssertFalse(block.cmuxFeedbackIsHiddenForTesting)
-        XCTAssertEqual(block.cmuxFeedbackTextForTesting, localized("app.status.cmux.configUnavailable"))
+        XCTAssertFalse(block.actionFeedbackIsHiddenForTesting)
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.status.cmux.configUnavailable"))
         XCTAssertTrue(effects.openedURLs.isEmpty)
         XCTAssertEqual(effects.checkedPaths.count, 2)
 
         effects.clipboardWriteSucceeds = false
         sendAction(button)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        XCTAssertEqual(block.cmuxFeedbackTextForTesting, localized("app.status.cmux.configClipboardFailed"))
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.status.cmux.configClipboardFailed"))
         XCTAssertEqual(effects.checkedPaths.count, 2)
         XCTAssertTrue(effects.openedURLs.isEmpty)
 
@@ -74,7 +74,7 @@ final class SetupWindowControllerActionTests: XCTestCase {
         effects.workspaceOpenSucceeds = false
         sendAction(button)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        XCTAssertEqual(block.cmuxFeedbackTextForTesting, localized("app.status.cmux.configOpenFailed"))
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.status.cmux.configOpenFailed"))
         XCTAssertEqual(effects.openedURLs.count, 1)
 
         effects.configFileExists = false
@@ -82,7 +82,7 @@ final class SetupWindowControllerActionTests: XCTestCase {
         effects.workspaceOpenSucceeds = true
         sendAction(button)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        XCTAssertEqual(block.cmuxFeedbackTextForTesting, localized("app.status.cmux.configDirectoryOpened"))
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.status.cmux.configDirectoryOpened"))
         XCTAssertEqual(effects.openedURLs.count, 2)
     }
 
@@ -141,7 +141,7 @@ final class SetupWindowControllerActionTests: XCTestCase {
 
         sendAction(try cmuxConfigButton(in: block))
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
-        XCTAssertEqual(block.cmuxFeedbackTextForTesting, localized("app.status.cmux.configOpened"))
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.status.cmux.configOpened"))
         XCTAssertEqual(effects.openedURLs.count, 1)
 
         AppLocalization.tagOverrideForTesting = "ko"
@@ -149,7 +149,7 @@ final class SetupWindowControllerActionTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         let rebuiltBlock = try cmuxAccessDeniedBlock(in: controller)
-        XCTAssertEqual(rebuiltBlock.cmuxFeedbackTextForTesting, localized("app.status.cmux.configOpened"))
+        XCTAssertEqual(rebuiltBlock.actionFeedbackTextForTesting, localized("app.status.cmux.configOpened"))
         XCTAssertEqual(
             controller.generalPaneForTesting.cmuxFeedbackTextForTesting,
             localized("app.status.cmux.configOpened")
@@ -172,6 +172,134 @@ final class SetupWindowControllerActionTests: XCTestCase {
             extensionFolderStatusProvider: { .present },
             effects: effects
         ))
+    }
+
+    func testSocketRecoveryRestartIsRefusedDuringDeliveryAndSaysSoInItsBlock() throws {
+        let previousGate = LocaleRestartGate.admitRestart
+        let previousSocket = PermissionChecker.appSocketStatusProvider
+        var asked = 0
+        LocaleRestartGate.admitRestart = { asked += 1; return false }
+        PermissionChecker.appSocketStatusProvider = { .unavailable }
+        defer {
+            LocaleRestartGate.admitRestart = previousGate
+            PermissionChecker.appSocketStatusProvider = previousSocket
+        }
+        let effects = SetupWindowControllerEffectsStub()
+        let controller = makeController(.wezterm, effects: effects.dependencies)
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        sendAction(try firstVisibleButton(in: appSocketBlock(in: controller)))
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(effects.relaunchCount, 0)
+        XCTAssertEqual(effects.terminateCount, 0)
+        let block = try appSocketBlock(in: controller)
+        XCTAssertFalse(block.actionFeedbackIsHiddenForTesting)
+        XCTAssertEqual(block.actionFeedbackTextForTesting, localized("app.language.restartDeferred"))
+    }
+
+    func testBothRestartsRelaunchOnlyThroughTheGateAndAFailedRelaunchGivesTheAdmissionBack() throws {
+        let previousGate = LocaleRestartGate.admitRestart
+        let previousWithdraw = LocaleRestartGate.withdrawAdmission
+        let previousSocket = PermissionChecker.appSocketStatusProvider
+        var withdrawn = 0
+        LocaleRestartGate.admitRestart = { true }
+        LocaleRestartGate.withdrawAdmission = { withdrawn += 1 }
+        PermissionChecker.appSocketStatusProvider = { .unavailable }
+        defer {
+            LocaleRestartGate.admitRestart = previousGate
+            LocaleRestartGate.withdrawAdmission = previousWithdraw
+            PermissionChecker.appSocketStatusProvider = previousSocket
+        }
+        let effects = SetupWindowControllerEffectsStub()
+        let controller = makeController(.wezterm, effects: effects.dependencies)
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        sendAction(try firstVisibleButton(in: appSocketBlock(in: controller)))
+        controller.perform(NSSelectorFromString("restartForLanguage"))
+        XCTAssertEqual(effects.relaunchCount, 2)
+        XCTAssertEqual(effects.terminateCount, 2)
+
+        effects.relaunchError = CocoaError(.fileNoSuchFile)
+        sendAction(try firstVisibleButton(in: appSocketBlock(in: controller)))
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertEqual(effects.terminateCount, 2)
+        XCTAssertEqual(withdrawn, 1)
+        XCTAssertEqual(try appSocketBlock(in: controller).actionFeedbackTextForTesting, localized("app.language.restartFailed"))
+    }
+
+    func testInstallRecoveryReopensTheGuideWithItsChromeStepsExpanded() throws {
+        Settings.terminal = .wezterm
+        Settings.lastRequestAt = Date()
+        var folder = SetupWindowExtensionFolderStatus.missing
+        let effects = SetupWindowControllerEffectsStub()
+        effects.onInstall = { folder = .present }
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(
+            slackHotKey: StubSlackThreadHotKey(),
+            loginItem: StubLoginItem(),
+            manifestStatusProvider: { .registered },
+            extensionFolderStatusProvider: { folder },
+            effects: effects.dependencies
+        ))
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let block = try XCTUnwrap(controller.sharedPanelForTesting.problemBlockViews.first {
+            $0.problem.copy == .extensionFolderMissingAfterRequest
+        })
+
+        sendAction(try firstVisibleButton(in: block))
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        XCTAssertEqual(effects.installCount, 1)
+        XCTAssertEqual(effects.openedInChrome, ["chrome://extensions"])
+        let checklist = try XCTUnwrap(controller.sharedPanelForTesting.installChecklistView)
+        XCTAssertFalse(checklist.isHiddenOrHasHiddenAncestor, "the guide stayed closed for a user with a recorded request")
+        XCTAssertFalse(checklist.guideStepsContainer.isHiddenOrHasHiddenAncestor)
+    }
+
+    func testATerminalTestFailureIsTranslatedWhenItIsDrawn() throws {
+        let effects = SetupWindowControllerEffectsStub()
+        effects.terminalRunner = { _, _ in throw TerminalError.cmuxSocketDenied }
+        let controller = makeController(.cmux, effects: effects.dependencies)
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        sendAction(controller.generalPaneForTesting.terminalTestButton)
+        let english = localized("app.test.failed", localized("app.error.cmux.socketDenied"))
+        try pump(until: { controller.generalPaneForTesting.terminalTestResultTextForTesting == english }, in: window)
+
+        AppLocalization.tagOverrideForTesting = "ko"
+        NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        let korean = localized("app.test.failed", localized("app.error.cmux.socketDenied"))
+        XCTAssertNotEqual(korean, english)
+        XCTAssertEqual(controller.generalPaneForTesting.terminalTestResultTextForTesting, korean)
+    }
+
+    private func appSocketBlock(in controller: SetupWindowController) throws -> SetupWindowProblemBlockView {
+        try XCTUnwrap(controller.sharedPanelForTesting.problemBlockViews.first {
+            $0.problem.copy == .appSocketUnavailable
+        })
+    }
+
+    private func firstVisibleButton(in block: SetupWindowProblemBlockView) throws -> NSButton {
+        try XCTUnwrap(block.actionButtons.first { !$0.isHidden })
+    }
+
+    /// The terminal test finishes on a background queue; wait for its main-queue completion with a
+    /// named bound, then let layout settle.
+    private func pump(
+        until condition: () -> Bool, in window: NSWindow, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertTrue(condition(), "the terminal test result never arrived", file: file, line: line)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
     }
 
     private func cmuxAccessDeniedBlock(in controller: SetupWindowController) throws -> SetupWindowProblemBlockView {
@@ -212,6 +340,12 @@ private final class SetupWindowControllerEffectsStub {
     var checkedPaths: [String] = []
     var openedURLs: [URL] = []
     var terminalRunner: (String, Terminal) throws -> Void = { _, _ in }
+    var relaunchCount = 0
+    var relaunchError: Error?
+    var terminateCount = 0
+    var installCount = 0
+    var onInstall: () -> Void = {}
+    var openedInChrome: [String] = []
 
     var dependencies: SetupWindowControllerEffects {
         SetupWindowControllerEffects(
@@ -228,7 +362,18 @@ private final class SetupWindowControllerEffectsStub {
             },
             runTerminal: { [weak self] command, terminal in
                 try self?.terminalRunner(command, terminal)
-            }
+            },
+            relaunch: { [weak self] in
+                guard let self else { return }
+                self.relaunchCount += 1
+                if let error = self.relaunchError { throw error }
+            },
+            terminate: { [weak self] in self?.terminateCount += 1 },
+            installExtensionCopyIfNeeded: { [weak self] in
+                self?.installCount += 1
+                self?.onInstall()
+            },
+            openInChrome: { [weak self] url in self?.openedInChrome.append(url) }
         )
     }
 }

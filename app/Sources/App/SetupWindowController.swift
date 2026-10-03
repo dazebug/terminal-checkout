@@ -299,6 +299,10 @@ struct SetupWindowControllerEffects {
     let fileExists: (URL) -> Bool
     let openURL: (URL) -> Bool
     let runTerminal: (String, Terminal) throws -> Void
+    let relaunch: () throws -> Void
+    let terminate: () -> Void
+    let installExtensionCopyIfNeeded: () throws -> Void
+    let openInChrome: (String) -> Void
 
     static let live = SetupWindowControllerEffects(
         writeClipboard: { value in
@@ -310,6 +314,21 @@ struct SetupWindowControllerEffects {
         openURL: { NSWorkspace.shared.open($0) },
         runTerminal: { command, terminal in
             _ = try runInTerminal(command: command, terminal: terminal)
+        },
+        relaunch: {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", Bundle.main.bundlePath]
+            try task.run()
+        },
+        terminate: { NSApp.terminate(nil) },
+        installExtensionCopyIfNeeded: {
+            if Installer.extensionCopyNeedsUpdate() { try Installer.installExtensionCopy() }
+        },
+        openInChrome: { urlString in
+            guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
+                  let url = URL(string: urlString) else { NSSound.beep(); return }
+            NSWorkspace.shared.open([url], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
         }
     )
 }
@@ -331,7 +350,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private var terminalTestAttempt = 0
     private var guideWasReopened = false
     private var guideStepsExpanded = false
-    private var installFeedback: String?
+    private var installFeedbackShown = false
+    private var appSocketRestartFeedback: SetupWindowActionFeedback?
     private var cmuxFeedback: SetupWindowCmuxActionResult?
     private var effects = SetupWindowControllerEffects.live
     private var isRebuildingForLanguageChange = false
@@ -575,7 +595,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         rootStack?.suspendDeferredWindowUpdates()
         guideWasReopened = false
         guideStepsExpanded = false
-        installFeedback = nil
+        installFeedbackShown = false
         openingReasons.removeAll {
             if case .claudeInputRejected = $0 { return true }
             return false
@@ -660,14 +680,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         if environment.snapshot.openingReasons.count != openingReasons.count {
             environment = currentEnvironment()
         }
+        if environment.snapshot.appSocket == .listening { appSocketRestartFeedback = nil }
         let presentation = environment.presentation
         sharedPanel.update(
             presentation,
             manifest: environment.manifest,
             extensionFolder: environment.extensionFolder,
             installStepsExpanded: guideStepsExpanded,
-            installFeedback: installFeedback,
-            cmuxActionResult: cmuxFeedback
+            installFeedback: installFeedbackShown ? localized("app.setup.install.chrome.feedback") : nil,
+            cmuxActionResult: cmuxFeedback,
+            appSocketRestart: appSocketRestartFeedback
         )
         let generalState = makeGeneralState(environment)
         generalPane.update(generalState)
@@ -970,16 +992,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         Self.relativeFormatter(for: AppLocalization.resolvedTag()).localizedString(for: date, relativeTo: Date())
     }
 
-    private func terminalName(_ terminal: Terminal) -> String {
-        switch terminal {
-        case .iterm: return "iTerm2"
-        case .wezterm: return "WezTerm"
-        case .warp: return "Warp"
-        case .cmux: return "cmux"
-        case .cmuxNightly: return "cmux NIGHTLY"
-        }
-    }
-
     private func nextArrival() -> Int {
         defer { nextReasonOrder += 1 }
         return nextReasonOrder
@@ -1155,24 +1167,30 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func restartForLanguage() {
+        relaunchThroughGate(
+            onRefused: { languageChange = .restartBlocked },
+            onFailed: { languageChange = .restartFailed }
+        )
+    }
+
+    /// Every restart takes the delivery gate's admission first: relaunching while claude input is
+    /// being delivered cuts that delivery off and orphans a Warp helper (`LocaleRestartGate`).
+    private func relaunchThroughGate(onRefused: () -> Void, onFailed: () -> Void) {
         guard LocaleRestartGate.admitRestart() else {
-            languageChange = .restartBlocked
+            onRefused()
             refresh()
             return
         }
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", Bundle.main.bundlePath]
         do {
-            try task.run()
+            try effects.relaunch()
         } catch {
             LocaleRestartGate.withdrawAdmission()
             checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
-            languageChange = .restartFailed
+            onFailed()
             refresh()
             return
         }
-        NSApp.terminate(nil)
+        effects.terminate()
     }
 
     @objc private func registerManifest() {
@@ -1182,26 +1200,25 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func installInChrome() {
-        if Installer.extensionCopyNeedsUpdate() {
-            do { try Installer.installExtensionCopy() }
-            catch {
-                showError(localized("app.alert.extensionFolderFailed"), error)
-                return
-            }
+        do { try effects.installExtensionCopyIfNeeded() }
+        catch {
+            showError(localized("app.alert.extensionFolderFailed"), error)
+            return
         }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(Installer.extensionDirectory, forType: .string)
-        openInChrome("chrome://extensions")
+        _ = effects.writeClipboard(Installer.extensionDirectory)
+        effects.openInChrome("chrome://extensions")
+        // The recovery block for a vanished folder offers this action to a user who already has a
+        // recorded request, for whom the checklist is otherwise hidden; reopen it to show the steps.
+        if Settings.lastRequestAt != nil { guideWasReopened = true }
         guideStepsExpanded = true
-        installFeedback = localized("app.setup.install.chrome.feedback")
+        installFeedbackShown = true
         refresh()
     }
 
     @objc private func dismissSetupGuide() {
         guideWasReopened = false
         guideStepsExpanded = false
-        installFeedback = nil
+        installFeedbackShown = false
         refresh()
     }
 
@@ -1211,7 +1228,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         refresh()
     }
 
-    @objc private func openOptionsPage() { openInChrome(Installer.optionsPageURL) }
+    @objc private func openOptionsPage() { effects.openInChrome(Installer.optionsPageURL) }
 
     @objc private func baseDirectoryEdited() {
         guard !isRebuildingForLanguageChange else { return }
@@ -1403,7 +1420,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             do { try runTerminal(command, terminal) } catch { failure = error }
             DispatchQueue.main.async {
                 guard let self, self.terminalTestAttempt == attempt else { return }
-                if let failure { self.terminalTestResult = .failed(terminal, localizedErrorMessage(failure)) }
+                if let failure { self.terminalTestResult = .failed(terminal, failure) }
                 else { self.terminalTestResult = .succeeded(terminal) }
                 self.refresh()
             }
@@ -1426,11 +1443,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func restartApp() {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-n", Bundle.main.bundlePath]
-        do { try task.run(); NSApp.terminate(nil) }
-        catch { showError(localized("app.language.restartFailed"), error) }
+        relaunchThroughGate(
+            onRefused: { appSocketRestartFeedback = .restartDeferred },
+            onFailed: { appSocketRestartFeedback = .restartFailed }
+        )
     }
 
     @objc private func showZoxideInstallHelp(_ sender: NSButton) {
@@ -1484,12 +1500,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         popover.contentSize = root.frame.size
         helpPopover = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
-    }
-
-    private func openInChrome(_ urlString: String) {
-        guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
-              let url = URL(string: urlString) else { NSSound.beep(); return }
-        NSWorkspace.shared.open([url], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func showError(_ title: String, _ error: Error) {

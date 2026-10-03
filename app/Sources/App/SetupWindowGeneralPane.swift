@@ -52,7 +52,7 @@ enum SetupWindowGeneralTerminalTestResult {
     case notRun
     case running(Terminal)
     case succeeded(Terminal)
-    case failed(Terminal, String)
+    case failed(Terminal, any Error)
 
     var testedTerminal: Terminal? {
         switch self {
@@ -656,8 +656,8 @@ final class SetupWindowGeneralPane: NSView {
             }
             terminalTestResultLabel.textColor = Theme.ok
             terminalTestResultLabel.isHidden = false
-        case .failed(_, let reason):
-            terminalTestResultLabel.stringValue = localized("app.test.failed", reason)
+        case .failed(_, let error):
+            terminalTestResultLabel.stringValue = localized("app.test.failed", localizedErrorMessage(error))
             terminalTestResultLabel.textColor = Theme.err
             terminalTestResultLabel.isHidden = false
         }

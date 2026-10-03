@@ -2,6 +2,30 @@ import AppKit
 import Core
 import Foundation
 
+/// The outcome of an action pressed in a problem block, drawn inside that block. Kept as a value
+/// and translated when drawn, so a language change redraws it in the new language.
+enum SetupWindowActionFeedback: Equatable {
+    case cmux(SetupWindowCmuxActionResult)
+    case restartDeferred
+    case restartFailed
+
+    var message: String {
+        switch self {
+        case .cmux(let result): return result.message
+        case .restartDeferred: return localized("app.language.restartDeferred")
+        case .restartFailed: return localized("app.language.restartFailed")
+        }
+    }
+
+    var tone: SetupWindowGeneralStatusTone {
+        switch self {
+        case .cmux(let result): return result.tone
+        case .restartDeferred: return .warning
+        case .restartFailed: return .error
+        }
+    }
+}
+
 enum SetupWindowSharedPanelAction: String, CaseIterable, Hashable {
     case registerManifest
     case installInChrome
@@ -55,7 +79,7 @@ final class SetupWindowSharedPanel: NSView {
     private(set) var installChecklistView: SetupWindowInstallChecklistView?
     var wrappingStatusLabelsForTesting: [NSTextField] {
         let problemLabels = blocksByRole.values.flatMap {
-            $0.paragraphLabels + $0.effectLabels + [$0.cmuxFeedbackLabelForTesting]
+            $0.paragraphLabels + $0.effectLabels + [$0.actionFeedbackLabelForTesting]
         }
         let checklistLabels = installChecklistView.map { checklist in
             checklist.steps.map(\.statusLabel) + checklist.guideStepLabels + [checklist.feedbackLabel]
@@ -148,7 +172,8 @@ final class SetupWindowSharedPanel: NSView {
         extensionFolder: SetupWindowExtensionFolderStatus,
         installStepsExpanded: Bool,
         installFeedback: String?,
-        cmuxActionResult: SetupWindowCmuxActionResult? = nil
+        cmuxActionResult: SetupWindowCmuxActionResult? = nil,
+        appSocketRestart: SetupWindowActionFeedback? = nil
     ) {
         self.presentation = presentation
         self.manifest = manifest
@@ -194,9 +219,12 @@ final class SetupWindowSharedPanel: NSView {
             block.update(
                 problem: problem,
                 copy: Self.copy(for: problem, manifest: manifest),
-                cmuxActionResult: {
-                    if case .cmuxAccessDenied = problem.copy { return cmuxActionResult }
-                    return nil
+                actionFeedback: {
+                    switch problem.copy {
+                    case .cmuxAccessDenied: return cmuxActionResult.map(SetupWindowActionFeedback.cmux)
+                    case .appSocketUnavailable: return appSocketRestart
+                    default: return nil
+                    }
                 }()
             )
             block.isHidden = false
@@ -532,14 +560,14 @@ final class SetupWindowProblemBlockView: NSView {
     private let contentStack = NSStackView()
     private let severityDot = makeStatusDot(for: .warning)
     private let actionsStack = NSStackView()
-    private let cmuxFeedbackLabel = makeSetupWindowWrappingLabel()
+    private let actionFeedbackLabel = makeSetupWindowWrappingLabel()
     private let roleQualifier: String
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSharedPanelAction: Selector]
     private var accessibilityLabelText = ""
-    var cmuxFeedbackLabelForTesting: NSTextField { cmuxFeedbackLabel }
-    var cmuxFeedbackTextForTesting: String { cmuxFeedbackLabel.stringValue }
-    var cmuxFeedbackIsHiddenForTesting: Bool { cmuxFeedbackLabel.isHidden }
+    var actionFeedbackLabelForTesting: NSTextField { actionFeedbackLabel }
+    var actionFeedbackTextForTesting: String { actionFeedbackLabel.stringValue }
+    var actionFeedbackIsHiddenForTesting: Bool { actionFeedbackLabel.isHidden }
 
     init(
         problem: SetupWindowProblem,
@@ -603,11 +631,11 @@ final class SetupWindowProblemBlockView: NSView {
         actionsStack.spacing = 8
         for button in actionButtons { actionsStack.addArrangedSubview(button) }
         contentStack.addArrangedSubview(actionsStack)
-        cmuxFeedbackLabel.font = Theme.ui(11)
-        cmuxFeedbackLabel.maximumNumberOfLines = 0
-        cmuxFeedbackLabel.isHidden = true
-        contentStack.addArrangedSubview(cmuxFeedbackLabel)
-        cmuxFeedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        actionFeedbackLabel.font = Theme.ui(11)
+        actionFeedbackLabel.maximumNumberOfLines = 0
+        actionFeedbackLabel.isHidden = true
+        contentStack.addArrangedSubview(actionFeedbackLabel)
+        actionFeedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         update(problem: problem, copy: copy)
     }
 
@@ -616,7 +644,7 @@ final class SetupWindowProblemBlockView: NSView {
     func update(
         problem: SetupWindowProblem,
         copy: SetupWindowSharedPanelBlockCopy,
-        cmuxActionResult: SetupWindowCmuxActionResult? = nil
+        actionFeedback: SetupWindowActionFeedback? = nil
     ) {
         self.problem = problem
         titleLabel.stringValue = copy.title
@@ -644,13 +672,13 @@ final class SetupWindowProblemBlockView: NSView {
             button.isHidden = false
         }
         actionsStack.isHidden = copy.buttons.isEmpty
-        if case .cmuxAccessDenied = problem.copy, let cmuxActionResult {
-            cmuxFeedbackLabel.stringValue = cmuxActionResult.message
-            cmuxFeedbackLabel.textColor = cmuxActionResult.tone.color
-            cmuxFeedbackLabel.isHidden = false
+        if let actionFeedback {
+            actionFeedbackLabel.stringValue = actionFeedback.message
+            actionFeedbackLabel.textColor = actionFeedback.tone.color
+            actionFeedbackLabel.isHidden = false
         } else {
-            cmuxFeedbackLabel.stringValue = ""
-            cmuxFeedbackLabel.isHidden = true
+            actionFeedbackLabel.stringValue = ""
+            actionFeedbackLabel.isHidden = true
         }
         accessibilityLabelText = localized(
             "app.setup.problem.accessibilityLabel",
