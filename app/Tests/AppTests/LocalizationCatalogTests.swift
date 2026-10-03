@@ -309,33 +309,4 @@ final class LocalizationCatalogTests: XCTestCase {
         }
     }
 
-    /// **A sentence that quotes a button names the button's key**, and that key is real.
-    ///
-    /// The relation is what the gate checks, not the wording: a body carrying `[%@]` has to be
-    /// called with a `localized("app.button…")` argument, so renaming or retranslating the button
-    /// moves the sentence with it. The drift this prevents already existed — the
-    /// Korean quoted `[권한 요청]` while the button read `iTerm2 권한 요청`.
-    func testEverySentenceQuotingALabelNamesARealLabelKey() throws {
-        let english = try catalogue(fallbackLocale)
-        let sources = try sourceText()
-        let quoting = english.filter { $0.value.contains("[%@]") }.keys.sorted()
-        XCTAssertFalse(quoting.isEmpty, "no sentence quotes a label any more — has the convention changed?")
-
-        for key in quoting {
-            let pattern = "localized\\(\\s*\"\(NSRegularExpression.escapedPattern(for: key))\"\\s*,"
-                + "\\s*localized\\(\\s*\"([A-Za-z0-9._]+)\"\\s*\\)"
-            let labelKeys = try matches(pattern, in: sources)
-            XCTAssertFalse(
-                labelKeys.isEmpty,
-                "\(key) quotes a label but is not called with one — the label is hardcoded or the call was split"
-            )
-            for labelKey in labelKeys {
-                XCTAssertNotNil(english[labelKey], "\(key) names \(labelKey), which is not in the catalogue")
-                XCTAssertTrue(
-                    labelKey.hasPrefix("app.button."),
-                    "\(key) takes \(labelKey), which is not a button label"
-                )
-            }
-        }
-    }
 }

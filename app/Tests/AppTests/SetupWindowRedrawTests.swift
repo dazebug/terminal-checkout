@@ -144,7 +144,6 @@ final class SetupWindowRedrawTests: XCTestCase {
         try select("github", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let field = controller.githubPaneForTesting.baseDirectoryField
-        window.makeKeyAndOrderFront(nil)
         XCTAssertTrue(window.makeFirstResponder(field))
         let editor = try XCTUnwrap(field.currentEditor())
         editor.string = "folder/😀name"
@@ -259,7 +258,6 @@ final class SetupWindowRedrawTests: XCTestCase {
         try select("github", in: window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let field = controller.githubPaneForTesting.baseDirectoryField
-        window.makeKeyAndOrderFront(nil)
         XCTAssertTrue(window.makeFirstResponder(field))
         let editor = try XCTUnwrap(field.currentEditor())
         XCTAssertEqual(editor.string, "/tmp/🙂/notes")

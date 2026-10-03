@@ -228,6 +228,7 @@ final class SetupWindowWrappingLabel: NSTextField {
         cell?.wraps = true
         cell?.isScrollable = false
         lineBreakStrategy = .standard
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         maximumNumberOfLines = 0
         isBezeled = false
         isBordered = false

@@ -10,6 +10,22 @@ final class SetupWindowLayoutTests: XCTestCase {
     private var savedTerminal: Terminal!
     private var savedResources: String?
     private var savedTag: String?
+
+    func testAppKitTestSourcesDoNotOrderWindowsOnScreen() throws {
+        let testsRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let sources = try swiftFiles(under: testsRoot)
+            .map { try auditSource($0.path, claim: .sourceStructure).text }
+            .joined(separator: "\n")
+        let forbiddenNames = ["makeKeyAndOrderFront", "orderFront", "activate"]
+        let pattern = "\\b(?:" + forbiddenNames
+            .map(NSRegularExpression.escapedPattern(for:))
+            .joined(separator: "|") + ")\\s*\\("
+        let matches = try NSRegularExpression(pattern: pattern)
+            .numberOfMatches(in: sources, range: NSRange(sources.startIndex..., in: sources))
+
+        XCTAssertEqual(matches, 0, "AppKit tests must keep windows off the developer's screen")
+    }
     private var savedBaseDirectory: String!
     private var savedLastRequestAt: Date?
     private var savedTools: [String: Bool]?

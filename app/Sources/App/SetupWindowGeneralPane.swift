@@ -332,17 +332,23 @@ final class SetupWindowGeneralPane: NSView {
         terminalTestResultLabel.maximumNumberOfLines = 3
         terminalTestResultLabel.isHidden = true
 
-        let status = NSStackView(views: [terminalDot, terminalStatusLabel])
+        let indent = NSView()
+        indent.translatesAutoresizingMaskIntoConstraints = false
+        let status = NSStackView(views: [indent, terminalDot, terminalStatusLabel])
         status.orientation = .horizontal
         status.alignment = .centerY
         status.spacing = 5
-        terminalRow.orientation = .horizontal
-        terminalRow.alignment = .centerY
-        terminalRow.spacing = 7
-        terminalRow.addArrangedSubview(title)
-        terminalRow.addArrangedSubview(terminalPopup)
+        let controls = NSStackView(views: [title, terminalPopup, terminalTestButton])
+        controls.orientation = .horizontal
+        controls.alignment = .centerY
+        controls.spacing = 7
+        terminalRow.orientation = .vertical
+        terminalRow.alignment = .leading
+        terminalRow.spacing = 4
+        terminalRow.addArrangedSubview(controls)
         terminalRow.addArrangedSubview(status)
-        terminalRow.addArrangedSubview(terminalTestButton)
+        // A single row exceeds 390 points in English and Japanese.
+        indent.widthAnchor.constraint(equalTo: title.widthAnchor, constant: 6).isActive = true
     }
 
     private func buildActivationRow() {
@@ -620,13 +626,18 @@ final class SetupWindowGeneralPane: NSView {
         }
     }
 
+    func sizeConnectionDetails() {
+        guard let root = connectionDetailsPopover.contentViewController?.view else { return }
+        root.setFrameSize(NSSize(width: 356, height: root.frame.height))
+        root.layoutSubtreeIfNeeded()
+        root.layoutSubtreeIfNeeded()
+        connectionDetailsPopover.contentSize = NSSize(width: 356, height: root.fittingSize.height)
+        root.setFrameSize(connectionDetailsPopover.contentSize)
+        root.layoutSubtreeIfNeeded()
+    }
+
     @objc private func presentConnectionDetails(_ sender: NSButton) {
-        if let root = connectionDetailsPopover.contentViewController?.view {
-            root.setFrameSize(NSSize(width: 356, height: root.frame.height))
-            root.layoutSubtreeIfNeeded()
-            root.layoutSubtreeIfNeeded()
-            connectionDetailsPopover.contentSize = NSSize(width: 356, height: root.fittingSize.height)
-        }
+        sizeConnectionDetails()
         connectionDetailsPopover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
 

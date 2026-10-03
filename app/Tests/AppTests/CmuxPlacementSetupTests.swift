@@ -250,7 +250,6 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         let field = controller.cmuxPlacementNameFieldForTesting
 
-        window.makeKeyAndOrderFront(nil)
         XCTAssertTrue(window.makeFirstResponder(field))
         try XCTUnwrap(field.currentEditor()).string = "draft-group"
         XCTAssertNotEqual(Settings.cmuxPlacementFixedName, "draft-group")

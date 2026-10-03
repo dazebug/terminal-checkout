@@ -83,7 +83,6 @@ final class SetupWindowGeneralCompressionTests: XCTestCase {
             apply(terminalStates[0])
             let controller = makeController(terminalStates[0].terminal)
             let window = try XCTUnwrap(controller.window)
-            window.makeKeyAndOrderFront(nil)
             _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
             for terminalState in terminalStates {
                 apply(terminalState)
@@ -124,7 +123,6 @@ final class SetupWindowGeneralCompressionTests: XCTestCase {
             apply(terminalStates[0])
             let controller = makeController(terminalStates[0].terminal)
             let window = try XCTUnwrap(controller.window)
-            window.makeKeyAndOrderFront(nil)
             _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
             for terminalState in terminalStates {
                 apply(terminalState)
@@ -133,13 +131,10 @@ final class SetupWindowGeneralCompressionTests: XCTestCase {
                 try select("general", in: window)
                 _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
                 let pane = controller.generalPaneForTesting
-                let button = pane.connectionDetailsButton
-                XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(button.action), to: button.target, from: button))
-                _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+                pane.sizeConnectionDetails()
 
                 let popover = pane.connectionDetailsPopover
                 let root = try XCTUnwrap(popover.contentViewController?.view)
-                XCTAssertTrue(popover.isShown, "\(tag)/\(terminalState.name) did not show the popover")
                 XCTAssertEqual(popover.contentSize.width, 356, accuracy: 0.5)
                 XCTAssertEqual(root.bounds.width, 356, accuracy: 0.5)
                 XCTAssertTrue(
@@ -166,7 +161,6 @@ final class SetupWindowGeneralCompressionTests: XCTestCase {
                     XCTAssertEqual(frame.height, 8, accuracy: 0.5)
                 }
                 XCTAssertTrue(pane.statusDotsAreAccessibilityElementsForTesting.allSatisfy { !$0 })
-                popover.performClose(nil)
             }
         }
     }
