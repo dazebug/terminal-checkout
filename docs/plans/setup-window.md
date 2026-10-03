@@ -420,7 +420,7 @@ README 네 언어의 첫 설치 설명은 [Chrome에 설치하기]를 누르면 
 | `SlackThreadSettingsTests` (9) | 5·6 · (i)(ii): Controller와 Slack request의 동일 validator, 모든 로케일 오류, pane 입력·상태/녹화 액션 연결 | 이 파일의 validator 호출 횟수 검사는 `.sourceStructure` claim을 사용한다. `StubSlackThreadHotKey`·`StubLoginItem`은 각각 실제 프로토콜을 구현하며 다른 클래스에 중복 정의하지 않고 공유한다. |
 | `SlackThreadHotKeyTests` (13, 한 테스트 이름·단언 갱신) | 5 (D7) · (ii): 등록 거부 뒤 저장한 조합과 `.failed` 상태를 보존해 Slack pane이 표시할 상태를 공급 | 기존 단축키 구현 자체를 바꾼 테스트가 아니다. D7이 명시한 등록 실패 표시의 실제 상태 계약이고 pane 표시 검사는 별도 층이다. `FakeHotKeyRegistrar` 한 개가 `HotKeyRegistering` 경계를 대역한다. |
 | `CatalogueOwnershipTests` (6), `LocalizationCatalogTests` (7), `CmuxLocalizationTests` (2) | 2∼7 · (i)(ii): 새 pane 키의 다국어 존재·호출, 중복/포함 값 사유, cmux 새 문구; 옛 창 키 삭제 | 일반 catalog 검사와 cmux 키 검사는 일부 겹친다. 전자는 전체 key/placeholder/호출부의 동등성을, cmux 검사는 해당 런타임 문자열 API가 5개 locale에서 raw key가 아닌 답을 주는지를 확인하므로 유지. 삭제된 `testEverySentenceQuotingALabelNamesARealLabelKey` 는 6⁶′에서 카탈로그에 해당 문장이 없어져 이미 제거했다. |
-| `LocalizationBundleTests` (심사 뒤 9; 기존 10) | 6·7 · (i): 새 Slack 실패 문구가 다섯 소스 catalog에서 각 언어 값으로 읽히는지 | `testEachBundledCatalogAnswersInItsOwnLanguage` 는 새 catalog 키 도입을 되돌리면 실패하므로 유지. `testAMissingKeyFallsBackToEnglishAndThenToTheKey` 는 이번 변경이 없는 `AppLocalization` 조회 API 자체만 확인하고 (i)∼(iii) 어느 것도 아니므로 이번 심사에서 삭제했다. |
+| `LocalizationBundleTests` (현재 10) | 6·7 · (i): 새 Slack 실패 문구가 다섯 소스 catalog에서 각 언어 값으로 읽히는지 | `testEachBundledCatalogAnswersInItsOwnLanguage` 는 새 catalog 키 도입을 되돌리면 실패하므로 유지. `testAMissingKeyFallsBackToEnglishAndThenToTheKey` 는 남김 — 루프 이전부터 있던 테스트, 이 루프는 픽스처의 키만 바꿈, 심사 범위 밖. 이전 심사 커밋이 지웠던 원래의 fallback 계약 테스트를 `274f67a` 의 모습으로 복구했다. |
 | `AppMessageTests` (현재 2; 이전 창 관련 3 삭제) | 6·6⁵ · (i)(ii): 옛 automation/installer 상태 검사 제거, 버튼 문장 계약을 새 panel로 이전 | 삭제한 옛 상태 API·카드 테스트는 현재 제품 caller가 없고 6⁵의 typed 상태 경로와 shared panel 테스트가 대체한다. 남은 메뉴·Info.plist 메시지 검사는 이 창 범위에서 바뀌지 않아 그대로 뒀다. |
 | `tests/i18n.test.js`, `tests/readme-catalogue-labels.test.js` (아이콘 1개·README label 1개 추가) | 7′·8 · (i)(ii): README의 bracket label과 extension PNG/manifest 경로·크기·역할·ID 고정 | 이들은 UI 렌더와 다른 문서/asset 데이터 경계다. 소스 코드를 읽어 호출 수를 세지 않는다. |
 | `SetupWindowTestSupport` (테스트 없음) | 6⁗·6⁶′ · (ii): 셀에 요구되는 줄바꿈 높이를 측정하는 보조 함수 | assertion 클래스가 아니라 공용 측정 helper이므로 별도 테스트 수로 세지 않는다. |
@@ -437,7 +437,7 @@ README 네 언어의 첫 설치 설명은 [Chrome에 설치하기]를 누르면 
 | `FakeHotKeyRegistrar` | `HotKeyRegistering.register(_:onPress:) throws` 와 `unregister()` 를 구현하는 Carbon 경계 대역 하나이며 Slack manager stub과 다른 추상 경계다. |
 | `PermissionChecker` provider | `SetupWindowGeneralCompressionTests` 가 설치 판정 `(Terminal) -> Bool`, iTerm 권한 `() -> AutomationStatus`, cmux 채널 `(CmuxChannel) -> CmuxSocketStatus`, Warp 권한 `() -> Bool` 를 주입하고 복원한다. 실물 API와 같은 입력·결과 형식의 provider라 다른 permission mock 구현은 없다. |
 
-이번 심사에서 삭제한 테스트는 1개다. 판단 기준은 “루프를 되돌리면 red, 계획에서 이름을 부른 불변식, 또는 인계된 결함의 특성화” 가운데 하나를 충족하는지다. 보류 항목은 없다.
+최종 제거한 테스트는 0개다. 이전 심사 커밋이 삭제한 fallback 테스트는 루프 전에 존재했고 이 루프에서 픽스처 키만 바꿨으므로 이번 심사 범위 밖이며, 이번 커밋에서 복구했다. 판단 기준은 “루프를 되돌리면 red, 계획에서 이름을 부른 불변식, 또는 인계된 결함의 특성화” 가운데 하나를 충족하는지다. 보류 항목은 없다.
 
 ### 6⁶ 팝오버·터미널 상태 수정 근거
 

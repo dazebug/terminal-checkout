@@ -77,6 +77,38 @@ final class LocalizationBundleTests: XCTestCase {
         ])
     }
 
+    /// The lookup asks the requested catalog, then English, then gives back the key. The last step
+    /// is a floor and not a feature: the catalogue gate turns a missing key into a red build, and a raw
+    /// key on screen is the failure that gate exists to prevent.
+    func testAMissingKeyFallsBackToEnglishAndThenToTheKey() throws {
+        let resources = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tc-localization-fallback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: resources) }
+        let english = resources.appendingPathComponent("en.lproj", isDirectory: true)
+        let japanese = resources.appendingPathComponent("ja.lproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: english, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: japanese, withIntermediateDirectories: true)
+        let fixtureKey = "app.test.localization.fallback"
+        let catalog = Data("\"\(fixtureKey)\" = \"English fixture value\";".utf8)
+        try catalog.write(to: english.appendingPathComponent("Localizable.strings"))
+        let japaneseCatalog = Data("\"app.test.localization.other\" = \"日本語\";".utf8)
+        try japaneseCatalog.write(to: japanese.appendingPathComponent("Localizable.strings"))
+
+        XCTAssertEqual(
+            AppLocalization.string(fixtureKey, tag: "ja", resources: resources.path),
+            "English fixture value"
+        )
+        XCTAssertEqual(
+            AppLocalization.string("app.test.localization.unknown", tag: "ja", resources: resources.path),
+            "app.test.localization.unknown"
+        )
+        // A tag with no catalogue at all falls to English rather than to the key.
+        XCTAssertEqual(
+            AppLocalization.string(fixtureKey, tag: "fr", resources: resources.path),
+            "English fixture value"
+        )
+    }
+
     /// `auto` may remove only the `AppleLanguages` value this app can prove it wrote. A value that
     /// arrived from System Settings, another domain or an older build is not ours to delete, even
     /// when it has the same shape as the value we would have written.
