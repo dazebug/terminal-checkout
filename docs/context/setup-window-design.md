@@ -1,39 +1,77 @@
 # Setup window design
 
-**Type:** product decision
+## Three toolbar panes with per-pane previews
+
+**Type:** decision
 **Status:** active
-**Evidence:** the user chose the B2 mockup on 2026-10-03; the integrated General, GitHub and Slack panes were reviewed as one window
-**Source:** user decision (2026-10-03); `app/Sources/App/SetupWindowController.swift`, `SetupWindowPresentation.swift`, `SetupWindowSharedPanel.swift`, `SetupWindowGeneralPane.swift`, `SetupWindowGitHubPane.swift`, `SetupWindowSlackPane.swift`, `SetupWindowPreviewView.swift`, `app/AppIcon.icns`, and `extension/manifest.json`
-**Revisit when:** the user chooses a different settings-window structure, the meaning of the request record changes, or the source icon is replaced
+**Evidence:** confirmed — the user chose B2 on 2026-10-03 and said they liked B with explanatory illustrations added; the dimensions below are from the mockups, not the shipped window
+**Source:** user decision (2026-10-03); `/tmp/tc-app-redesign/final/index.html`, `/tmp/tc-app-redesign/final/B2.html`; `app/Sources/App/SetupWindowController.swift`, `app/Sources/App/SetupWindowGeneralPane.swift`, `app/Sources/App/SetupWindowGitHubPane.swift`, `app/Sources/App/SetupWindowSlackPane.swift`, and `app/Sources/App/SetupWindowPreviewView.swift`
+**Revisit when:** the user chooses a different settings-window structure or preview treatment
 
-## Three toolbar panes with previews
+The old setup window stacked eleven equally weighted cards into a 600 × 1410 pt scroll and showed its help paragraphs even when nothing needed attention. The chosen B2 mockup has a macOS preference toolbar for General, GitHub and Slack and shows one pane at a time, with a shared problem and first-install area below the toolbar. Showing one pane at a time lets each category include its own preview without stacking all three panes into a long window. In the A mockup, terminal and after-running settings were shared by two entry points and sat above the tabs, so they remained visible from either tab; its usual mockup size was 720 × 515 pt. B2's mockup sizes were General 720 × 405 pt, GitHub 720 × 328 pt and Slack 720 × 364 pt. The B mockup was the shortest usual state at 600 × 279 pt for General, but had no illustration; the user asked to add the explanatory illustration. C used A's tab and shared-settings structure without illustrations as a comparison.
 
-The old setup window stacked eleven equally weighted cards into a 600 × 1410 pt scroll and showed every help paragraph even when nothing needed attention. B2 uses General, GitHub and Slack in a preference toolbar and shows one pane at a time, so each pane can include a schematic preview without making the window a long scroll. The shared problem and first-install area stays below the toolbar because it applies regardless of the selected pane.
+**Rejected — A, tabs with previews and shared settings above the tabs.** A kept terminal and after-running settings visible from both tabs and measured 720 × 515 pt in its usual mockup state; the user chose B2's pane-specific arrangement.
 
-**Rejected alternative — A, tabs with previews and common settings above the tabs.** B2 keeps the shared problem area below the toolbar and puts one category in the main content; its one-at-a-time pane lets the preview explain the result without returning to a long scroll.
+**Rejected — B, toolbar without previews.** B was the shortest usual mockup at 600 × 279 pt for General, but omitted the illustrations the user wanted added.
 
-**Rejected alternative — B, a toolbar without previews.** The illustrations helped users understand which terminal screen would be affected.
-
-**Rejected alternative — C, tabs without previews.** It was a comparison layout without the illustrations that helped explain what a button would do.
+**Rejected — C, A's tab structure without previews.** C was the comparison layout; the user chose B2 with one illustrated pane visible at a time.
 
 ## A request record, not a pipeline health claim
 
-The app reports that an extension request was received because that is the event it can observe. The record does not establish that the request parsed, a command succeeded, or claude input was delivered. A pipeline strip looked like a success sequence and was read as a promise that the command had run, so the status line names only the request record and its relative time.
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the user decided that the status must report receipt of an extension request rather than say “normal”; the app records arrival, not command success
+**Source:** user decision (2026-10-03); `app/Sources/App/SetupWindowPresentation.swift` and `app/Sources/App/SetupWindowGeneralPane.swift`
+**Revisit when:** the recorded event changes from request arrival to evidence of command completion
 
-## Problems at the top, ordered by cause
+The status says that an extension request reached the app and gives its relative time. The request record does not prove that the request parsed, a command succeeded, or claude input finished.
 
-The shared problem area comes before the selected pane so an opening cause is visible wherever the user lands. Opening reasons appear first, newest first, followed by errors and warnings; a severity dot before the title conveys state. A colored strip on a block edge was rejected because the user said that treatment looked AI-generated. Filled surfaces, brightness and status dots carry active and warning emphasis instead. Opening reasons are not persisted across app restarts because they describe the event that opened this window, not a durable setting; persisting them would make an old failure look current on a later launch.
+**Rejected — a pipeline strip and “normal” status.** The strip was read as a claim that the command had succeeded, which the request record cannot support.
+
+## Problems appear first and use a status dot
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the user chose opening reasons first, newest first, followed by errors and warnings, and rejected a colored edge strip as “AI-like”
+**Source:** user decisions (2026-10-03); `app/Sources/App/SetupWindowPresentation.swift`, `app/Sources/App/SetupWindowSharedPanel.swift`, and `app/Sources/App/SetupWindowController.swift`
+**Revisit when:** problem ordering, opening-reason lifetime, or the shared problem area's placement changes
+
+The common problem area sits below the toolbar and before every pane. It lists the reason that opened the window first, newest first, then errors and warnings; a status dot before each title conveys severity. Opening reasons are not saved across app restarts because they describe the event that opened this window and would look current if shown on a later launch. Slack request failure clears when a later Slack request succeeds; a claude-input rejection clears when the window closes or its cause is resolved.
+
+**Rejected — a colored strip along a block edge.** The user said that treatment looked “AI-like”; filled surfaces, brightness and a status dot carry state instead.
 
 ## The repository base folder speaks only when unusable
 
-The GitHub pane does not explain repository lookup order, add a general help paragraph, or retain advice about an older button. The user judged that this sequence does not need to be taught in the window. The field remains quiet while its value can be used and shows a notice only for an invalid saved value, a not-yet-created folder, or an empty value with no zoxide fallback.
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the user said the window does not need to explain repository lookup order and should show a notice only when the setting cannot be used
+**Source:** user decision (2026-10-03); `app/Sources/App/SetupWindowPresentation.swift` and `app/Sources/App/SetupWindowGitHubPane.swift`
+**Revisit when:** the user asks for repository lookup guidance or the base-folder fallback changes
+
+The GitHub pane keeps the repository base-folder field without a help paragraph about search order or advice about an older button. It shows a notice only for an invalid saved value, a folder that does not exist yet, or an empty value with no zoxide fallback.
+
+**Rejected — explaining lookup order and the older button in the pane.** The user judged that sequence did not need to be taught there.
 
 ## Initial selection follows the opening cause
 
-A Slack request failure opens Slack; a Claude-input rejection opens General; other openings use the last pane selected in the current app run, with General as the initial default. The pane choice is not stored in UserDefaults: it is temporary navigation context tied to the current app run and opening event, not a machine preference that should be restored after a later launch. A language rebuild keeps the currently selected pane.
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the user chose Slack for a Slack-request failure, General for a claude-input rejection, and otherwise the last pane selected during this app run, defaulting to General
+**Source:** user decision (2026-10-03); `app/Sources/App/AppDelegate.swift` and `app/Sources/App/SetupWindowController.swift`
+**Revisit when:** the opening causes or pane-selection behavior changes
+
+The selected pane is temporary navigation context for the current app run, not a machine preference to restore after a later launch. A language rebuild keeps the current pane.
+
+**Rejected — saving the pane in UserDefaults.** The user chose not to carry a selection across app runs; an old pane choice is not an opening cause for a later launch.
 
 ## App and extension icon identity
 
-The app icon belongs in the General toolbar item and beside the app name and version in the General header, making the identity visible inside the settings window rather than only in the Dock. GitHub and Slack use their own SF Symbols. The preview prompt uses `Theme.ok`, chosen by comparing it with the icon's green so the illustration carries the app's identity without changing the control palette. The Chrome extension uses PNGs derived from `app/AppIcon.icns`: unpack the ICNS with `iconutil -c iconset`, measure the nontransparent tile from the source alpha channel, crop that square for the 16 and 32 px toolbar icons, and resize with `sips`; keep the source transparent margin for the 48 and 128 px icons, resizing the 128 px version from a 512 px source. The measured alpha bounds on the 1024 × 1024 source were x=97…926 and y=97…926, inclusive. The manifest declares these files for the extension and action while preserving its existing `key`, so the extension ID remains stable.
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — the user asked for more app identity in the settings window and specified app-derived Chrome extension icons while preserving the extension ID
+**Source:** user decisions (2026-10-03); `app/AppIcon.icns`, `docs/assets/icon.png`, `app/Sources/App/SetupWindowGeneralPane.swift`, `app/Sources/App/SetupWindowPreviewView.swift`, and `extension/manifest.json`
+**Revisit when:** the source app icon is replaced or the user changes the icon treatment
 
-**Rejected alternative — use a gear for General.** The user asked for more of the app's identity in the window, so the app icon is used there.
+The General toolbar item and General header use the app icon so its identity appears in the settings window; GitHub and Slack use SF Symbols. The preview prompt uses the green closest to the icon, selected by comparing the source colors. Chrome icons are regenerated from `app/AppIcon.icns`: unpack it with `iconutil -c iconset`, measure the nontransparent tile from the alpha channel, crop the tile for 16 and 32 px so it fills the toolbar canvas, and resize with `sips`; retain the source transparent margin for 48 and 128 px, resizing the 128 px image from a 512 px source. The measured alpha bounds on the 1024 × 1024 source are x=97…926 and y=97…926 inclusive. The manifest points to these PNGs and keeps its existing key so the extension ID remains stable.
+
+**Rejected — use a gear for General.** The user asked for the app identity to be more visible, so the app icon is used in the toolbar and header.

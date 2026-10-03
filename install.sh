@@ -173,7 +173,7 @@ echo ""
 echo "The app's General pane includes a first-install checklist; Native Host registration is automatic and checked whenever the app starts:"
 echo "  Step 1: [Install in Chrome] → follow the checklist's four steps in chrome://extensions"
 echo "  Step 2: On a GitHub pull-request page, press a Terminal Checkout button once to confirm the extension reached the app"
-echo "  Step 3: Choose a terminal in General, review Connection Details if needed, then verify it with [Terminal Test]"
+echo "  Step 3: Choose a terminal in General, review Connection details if needed, then verify it with [Terminal Test]"
 echo "  Step 4: Set the repository base folder in GitHub or configure Slack in the Slack pane if you use those workflows"
 echo ""
 

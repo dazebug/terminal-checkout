@@ -57,7 +57,7 @@ cd terminal-checkout
 
 The settings window has General, GitHub and Slack toolbar panes. Its shared first-install checklist covers Native Host registration, installing the extension in Chrome and making the first request from GitHub; you can reopen the guide from General.
 
-1. **First install** — In the checklist, expand the Chrome step and use its green [Install in Chrome] button. The app copies the extension folder path and opens `chrome://extensions`; follow the four numbered steps shown in the checklist.
+1. **First install** — Click the green [Install in Chrome] button. The app copies the extension folder path, opens `chrome://extensions` and expands the four checklist steps. In Chrome, turn on **Developer mode**, click **Load unpacked**, then use **⇧⌘G → ⌘V → Enter → Select**. Keep Developer mode on — from Chrome 133, turning it off disables unpacked extensions.
 2. **General** — Choose one of the [supported terminals](#supported-terminals), then use [Terminal Test] to check that a command opens in a new tab or workspace. This test does not verify that Chrome sent a request or that claude input was delivered.
 3. **After running** — Choose whether a button switches to the new terminal or keeps the current screen in front. Warp always switches to its new tab and shows this choice disabled.
 4. **GitHub** — Set the repository base folder if you want commands to look there before cloning an unfamiliar repository. The window shows a notice only when that setting cannot be used.
@@ -67,12 +67,13 @@ The settings window has General, GitHub and Slack toolbar panes. Its shared firs
 <summary>More on the settings window</summary>
 
 - **First-install checklist** — Native Host registration is checked and repaired when the app starts. After loading the extension, open a GitHub pull-request page and press any Terminal Checkout button once; the recorded request means an extension context reached the app, not that its command succeeded.
-- **Connection Details** in General shows the Chrome request record, Native Host, app socket, selected terminal and login-shell tool results. For cmux, use [Copy cmux settings and open the file] or [Check cmux status again].
+- **Connection details** in General shows the Chrome request record, Native Host, app socket, selected terminal and login-shell tool results. For cmux, use [Copy cmux settings and open the file] or [Check cmux status again].
 - **Permissions and problems** — iTerm2 automation, cmux socket access and Warp Accessibility requirements appear as problem blocks when they need attention. The cmux status does not treat access denial as “not running.” Automation is recommended for cmux socket control; password and allowAll modes also permit it.
 - **Warp claude input** — Accessibility is needed only for buttons that schedule typed claude input. The four shipped presets that schedule claude input all use that route. Delivery can continue only while the Warp tab is visible; without the permission, the app refuses the button before opening a tab.
 - **Repository base folder** — When it is empty, commands use zoxide. If zoxide has no matching repository, the configured base folder is the fallback; a missing repository is cloned there with `gh`, which must be installed and authenticated.
-- **GitHub Button Edit…** in General opens the extension options page after the app has received an extension request. The toolbar keeps all three panes available after setup; the checklist can be reopened from General.
+- **Edit GitHub buttons…** in General opens the extension options page after the app has received an extension request. The toolbar keeps all three panes available after setup; the checklist can be reopened from General.
 - The app is invisible in daily use — no menu-bar icon, and it appears in the Dock only while the settings window is open. Reopen it from Spotlight (⌘Space) or Launchpad. Pressing an extension button starts the app automatically if it is off.
+- Already using Terminal Checkout on another machine? If Chrome syncs under the same Google account, your buttons and commands come down automatically after you load the extension — no reconfiguration needed.
 
 </details>
 ### 3. Press your first button
@@ -168,7 +169,7 @@ If a button's command runs `claude`, the options page lets you schedule up to 10
 **A list holding exactly one plain-text input can become the opening message instead.** Plain text is just a message, so it can be appended to your command as claude's first argument and the session starts with it already in — no typing, no screen reading, no waiting for claude to boot. It is appended only when every rule below holds; otherwise it is typed:
 
 - It is handed to **`command claude`**, not to `claude`. `command` is POSIX for "skip functions and aliases, run the executable", so a wrapper of that name cannot receive your text. It does **not** skip shell builtins, which is why a command that loads one (`zmodload`, `enable`) stops the append instead.
-- Because of that, **appending needs a `claude` executable to exist**. The app asks your login shell at startup — in a child shell, so a function or an alias of yours does not hide the file behind it, and it checks the file is actually runnable. If `claude` is *only* a function or an alias, the shared problem area explains that Slack links cannot be opened either.
+- Because of that, **appending needs a `claude` executable to exist**. The app asks your login shell at startup — in a child shell, so a function or an alias of yours does not hide the file behind it, and it checks the file is actually runnable. If `claude` is *only* a function or an alias, the input is typed instead of being passed as the first message and the shared problem area explains this. Slack links can only be passed as the first message, so they will not open.
 - The append only happens when the rendered command is a plain chain (`&&`, `||`, `;`, `|`, groups, subshells) whose **last command is a bare `claude`** — no flags, not on the receiving end of a pipe, no redirect, nothing after it. Flags are out because some of them (`--resume`) swallow the argument as their own value.
 - Beyond that, **every word of the command has to be one that would be safe as a command name**: nothing that can rebind a name in that shell (`function`, `alias`, `eval`, `source`/`.`, `hash`, `trap`, `export`, an assignment like `PATH=…`, a compound keyword such as `if`/`for`/`while`/`case`) and nothing quoted or expanded, which the app cannot read. The price is over-folding — `git add . && claude` and anything with a quoted argument are typed instead, which is what they did before.
 - Your login shell has to be POSIX-family (`sh`, `bash`, `zsh`, `dash`, `ksh`…), and the message must be single-line. In csh/tcsh a `!` anywhere in your text is history-expanded **even inside single quotes** and takes the whole command line with it (measured: `echo START; /bin/echo -- 'do it!x'` prints only `x: Event not found.` — `START` never runs), and a newline would end the command line early in both iTerm2 and WezTerm.
@@ -232,7 +233,7 @@ The shortcut works whichever app is in front, Slack included. The clipboard deci
 
 ## Configuration
 
-The app's General, GitHub and Slack panes hold its settings. Buttons, commands and the main branch live in the extension options page — after the app receives an extension request, choose [GitHub Button Edit…] in General, or open `chrome://extensions` → Terminal Checkout → Extension options.
+The app's General, GitHub and Slack panes hold its settings. Buttons, commands and the main branch live in the extension options page — after the app receives an extension request, choose [Edit GitHub buttons…] in General, or open `chrome://extensions` → Terminal Checkout → Extension options.
 
 - Extension settings are written only when you press **Save**.
 - Reorder button cards by dragging the `⠿` handle, or focus it and press `↑` `↓`; [Duplicate] copies a card right after the original. The order is the order on GitHub, and the first button is what the extension icon runs.
@@ -363,14 +364,14 @@ Use the action in the relevant problem block to open Automation or Accessibility
 <details>
 <summary><b>cmux or cmux NIGHTLY socket access is denied</b></summary>
 
-In General, open Connection Details and choose [Copy cmux settings and open the file] to copy the JSON fragment and open `~/.config/cmux/cmux.json`. The app recommends `automation`; `password` and `allowAll` also permit socket control. Both channels share this file, and the app never writes it.
+In General, open Connection details and choose [Copy cmux settings and open the file] to copy the JSON fragment and open `~/.config/cmux/cmux.json`. The app recommends `automation`; `password` and `allowAll` also permit socket control. Both channels share this file, and the app never writes it.
 
 </details>
 
 <details>
 <summary><b>cmux or cmux NIGHTLY is not running</b></summary>
 
-Start the selected cmux channel yourself. In General, open Connection Details and choose [Check cmux status again] after its socket appears. NIGHTLY is a separate bundle and is never silently replaced by stable. [Copy cmux settings and open the file] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
+Start the selected cmux channel yourself. In General, open Connection details and choose [Check cmux status again] after its socket appears. NIGHTLY is a separate bundle and is never silently replaced by stable. [Copy cmux settings and open the file] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
 
 </details>
 
