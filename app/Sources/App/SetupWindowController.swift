@@ -1105,8 +1105,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         // End the edit while the rebuild guard holds, then cut the old controls loose. macOS 15
         // ended a removed field's editing after the rebuild had returned, and the action it sent
         // then stored the draft this rebuild only carries over to the new field.
-        let resigned = window.makeFirstResponder(nil)
-        print("DIAG-REBUILD resigned=\(resigned) firstResponder=\(String(describing: window.firstResponder))")
+        window.makeFirstResponder(nil)
         if let oldContent = window.contentView { detachControls(in: oldContent) }
         window.contentView = buildContent(using: environment)
         githubPane.baseDirectoryField.stringValue = drafts.0
@@ -1271,7 +1270,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     }
 
     @objc private func cmuxPlacementNameEdited() {
-        print("DIAG-PLACEMENT-STORE flag=\(isRebuildingForLanguageChange) value=\(githubPane.workspaceNameField.stringValue)\n" + Thread.callStackSymbols.prefix(40).joined(separator: "\n"))
         guard !isRebuildingForLanguageChange else { return }
         Settings.cmuxPlacementFixedName = githubPane.workspaceNameField.stringValue
         refresh()
