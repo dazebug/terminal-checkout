@@ -371,7 +371,7 @@ In General, open Connection details and choose [Copy cmux settings and open the 
 <details>
 <summary><b>cmux or cmux NIGHTLY is not running</b></summary>
 
-Start the selected cmux channel yourself. In General, open Connection details and choose [Check cmux status again] after its socket appears. NIGHTLY is a separate bundle and is never silently replaced by stable. [Copy cmux settings and open the file] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
+[Terminal Test] in General starts the selected channel without arguments. After its socket appears, open Connection details and choose [Check cmux status again]. NIGHTLY is a separate bundle and is never silently replaced by stable. [Copy cmux settings and open the file] only copies the JSON fragment and opens the existing file or its folder; it never starts cmux or writes a file.
 
 </details>
 

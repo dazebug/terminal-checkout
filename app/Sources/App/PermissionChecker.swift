@@ -8,11 +8,6 @@ enum AutomationStatus {
     case notDetermined
     case targetNotRunning
     case unknown(Int32)
-
-    var isGranted: Bool {
-        if case .granted = self { return true }
-        return false
-    }
 }
 
 enum PermissionChecker {

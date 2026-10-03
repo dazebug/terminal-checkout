@@ -372,7 +372,7 @@ macOS는 자동화 권한을 *책임 프로세스*(responsible process)에 귀�
 <details>
 <summary><b>cmux나 cmux NIGHTLY가 실행 중이 아닐 때</b></summary>
 
-선택한 cmux 채널을 직접 실행하세요. 일반 항목의 연결 상세에서 소켓이 나타난 뒤 [cmux 상태 다시 확인]을 누르세요. NIGHTLY는 별도 번들이며 stable로 조용히 바뀌지 않습니다. [cmux 설정 복사하고 파일 열기]는 JSON 조각을 복사하고 기존 파일이나 폴더를 열 뿐, cmux를 시작하거나 파일에 쓰지 않습니다.
+일반 항목의 [터미널 테스트]가 선택한 채널을 인자 없이 실행합니다. 소켓이 나타난 뒤 연결 상세에서 [cmux 상태 다시 확인]을 누르세요. NIGHTLY는 별도 번들이며 stable로 조용히 바뀌지 않습니다. [cmux 설정 복사하고 파일 열기]는 JSON 조각을 복사하고 기존 파일이나 폴더를 열 뿐, cmux를 시작하거나 파일에 쓰지 않습니다.
 
 </details>
 
