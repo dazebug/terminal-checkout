@@ -122,7 +122,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
 
         for terminal in [Terminal.iterm, .wezterm, .warp] {
-            controller.select(terminal: terminal)
+            controller.selectTerminalForTesting(terminal)
             SetupWindowTestSupport.settle(window)
             XCTAssertTrue(
                 controller.githubPaneForTesting.cmuxSectionIsHiddenForTesting,
@@ -130,7 +130,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             )
         }
         for terminal in [Terminal.cmux, .cmuxNightly] {
-            controller.select(terminal: terminal)
+            controller.selectTerminalForTesting(terminal)
             SetupWindowTestSupport.settle(window)
             XCTAssertFalse(
                 controller.githubPaneForTesting.cmuxSectionIsHiddenForTesting,

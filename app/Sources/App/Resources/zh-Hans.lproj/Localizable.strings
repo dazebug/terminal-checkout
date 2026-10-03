@@ -16,7 +16,6 @@
 "app.baseDir.storedInvalid" = "已保存的值无法使用 (%@) — 请重新选择";
 "app.button.chooseFolder" = "选择文件夹…";
 "app.button.installInChrome" = "在 Chrome 中安装";
-"app.button.registerUpdate" = "注册 / 更新";
 "app.button.requestAccessibility" = "请求辅助功能权限";
 "app.button.requestItermPermission" = "请求 iTerm2 权限";
 "app.button.restartNow" = "立即重新启动";
@@ -44,8 +43,6 @@
 "app.cmux.placement.name.placeholder" = "workspace 名称";
 "app.status.accessibility.denied" = "未授权 — 预约了 claude 输入的按钮会被拒绝";
 "app.status.accessibility.granted" = "已授权";
-"app.status.extensionFolder.missing" = "没有扩展程序文件夹 — 按 [%@] 会准备它";
-"app.status.extensionFolder.ready" = "已就绪";
 "app.status.cmux.notInstalled" = "未安装";
 "app.status.cmux.notRunning" = "cmux 未运行 — 无法确认套接字模式；请启动 cmux 后重新检查";
 "app.status.cmux.denied" = "套接字访问被拒绝 — socket control mode 不是 automation";
@@ -56,10 +53,7 @@
 "app.status.cmux.configOpenFailed" = "已复制自动化设置，但无法打开 cmux 配置目标";
 "app.status.cmux.configUnavailable" = "已复制自动化设置，但无法打开 cmux.json 及其文件夹";
 "app.status.cmux.configClipboardFailed" = "无法复制自动化设置，因此未打开 cmux 配置目标";
-"app.status.manifest.notRegistered" = "未注册 — 请按 [%@]";
 "app.status.manifest.registered" = "已注册";
-"app.status.manifest.wrongExtensionID" = "扩展程序 ID 与当前设置不同 — 请用 [%@] 刷新";
-"app.status.manifest.wrongPath" = "指向位于其他位置的应用 — 请用 [%@] 刷新";
 "app.slack.workDirectory.placeholder" = "工作文件夹绝对路径（不支持空格）";
 "app.slack.instruction.help" = "指示只能是一行。留空时只发送链接。";
 "app.slack.hotKey.label" = "快捷键";

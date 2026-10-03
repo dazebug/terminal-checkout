@@ -306,7 +306,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         controller.rootStack.visibleFrameOverride = roomyScreen
         for terminal in [Terminal.warp, .wezterm, .cmux, .cmuxNightly, .iterm, .warp] {
-            controller.select(terminal: terminal)
+            controller.selectTerminalForTesting(terminal)
             _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
             let needed = controller.rootStack.fittingSize.height
             XCTAssertEqual(contentHeight(window), needed, accuracy: 0.5, "\(terminal) did not fit")
@@ -326,7 +326,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         window.setFrameOrigin(NSPoint(x: roomyScreen.minX + 20, y: roomyScreen.minY + 4))
 
-        controller.select(terminal: .warp)
+        controller.selectTerminalForTesting(.warp)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         XCTAssertGreaterThanOrEqual(window.frame.minY, roomyScreen.minY - 0.5)
@@ -487,7 +487,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let beforeToolbar = window.toolbar?.items.map(\.label)
-        let beforeGeneral = controller.generalPaneForTesting.requestStatusText
+        let beforeGeneral = controller.generalPaneForTesting.requestStatusTextForTesting
         let beforeGitHub = controller.githubPaneForTesting.previewCaptionForTesting
         let beforeSlack = controller.slackPaneForTesting.previewCaptionLabel.stringValue
         XCTAssertEqual(beforeGeneral, localized("app.setup.general.request.waiting"))
@@ -499,7 +499,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         XCTAssertNotEqual(window.toolbar?.items.map(\.label), beforeToolbar)
-        XCTAssertNotEqual(controller.generalPaneForTesting.requestStatusText, beforeGeneral)
+        XCTAssertNotEqual(controller.generalPaneForTesting.requestStatusTextForTesting, beforeGeneral)
         XCTAssertNotEqual(controller.githubPaneForTesting.previewCaptionForTesting, beforeGitHub)
         XCTAssertNotEqual(controller.slackPaneForTesting.previewCaptionLabel.stringValue, beforeSlack)
         XCTAssertEqual(

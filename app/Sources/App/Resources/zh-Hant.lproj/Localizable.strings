@@ -17,7 +17,6 @@
 "app.baseDir.storedInvalid" = "已儲存的值無法使用 (%@) — 請重新選擇";
 "app.button.chooseFolder" = "選擇資料夾…";
 "app.button.installInChrome" = "在 Chrome 中安裝";
-"app.button.registerUpdate" = "註冊 / 更新";
 "app.button.requestAccessibility" = "請求輔助使用權限";
 "app.button.requestItermPermission" = "請求 iTerm2 權限";
 "app.button.restartNow" = "立即重新啟動";
@@ -45,8 +44,6 @@
 "app.cmux.placement.name.placeholder" = "workspace 名稱";
 "app.status.accessibility.denied" = "未授權 — 預約了 claude 輸入的按鈕會被拒絕";
 "app.status.accessibility.granted" = "已授權";
-"app.status.extensionFolder.missing" = "沒有擴充功能資料夾 — 按 [%@] 會準備它";
-"app.status.extensionFolder.ready" = "已就緒";
 "app.status.cmux.notInstalled" = "未安裝";
 "app.status.cmux.notRunning" = "cmux 未執行 — 無法確認通訊端模式；請啟動 cmux 後重新檢查";
 "app.status.cmux.denied" = "通訊端存取遭拒 — socket control mode 不是 automation";
@@ -57,10 +54,7 @@
 "app.status.cmux.configOpenFailed" = "已複製自動化設定，但無法開啟 cmux 設定目標";
 "app.status.cmux.configUnavailable" = "已複製自動化設定，但無法開啟 cmux.json 及其資料夾";
 "app.status.cmux.configClipboardFailed" = "無法複製自動化設定，因此未開啟 cmux 設定目標";
-"app.status.manifest.notRegistered" = "未註冊 — 請按 [%@]";
 "app.status.manifest.registered" = "已註冊";
-"app.status.manifest.wrongExtensionID" = "擴充功能 ID 與目前設定不同 — 請用 [%@] 重新整理";
-"app.status.manifest.wrongPath" = "指向位於其他位置的應用程式 — 請用 [%@] 重新整理";
 "app.slack.workDirectory.placeholder" = "工作資料夾絕對路徑（不支援空格）";
 "app.slack.instruction.help" = "指示只能有一行。留空時只會傳送連結。";
 "app.slack.hotKey.label" = "快速鍵";

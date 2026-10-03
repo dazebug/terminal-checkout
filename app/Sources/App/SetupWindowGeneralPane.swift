@@ -118,7 +118,7 @@ final class SetupWindowGeneralPane: NSView {
     private let identityIcon = NSImageView()
     private let versionLabel = NSTextField(labelWithString: "")
 
-    var requestStatusText: String { requestStatusLabel.stringValue }
+    var requestStatusTextForTesting: String { requestStatusLabel.stringValue }
     var terminalTestResultTextForTesting: String { terminalTestResultLabel.stringValue }
     var hintTextForTesting: String { hintLabel.stringValue }
     var previewCaptionForTesting: String { previewCaption.stringValue }
@@ -130,7 +130,7 @@ final class SetupWindowGeneralPane: NSView {
     }
     var cmuxFeedbackTextForTesting: String { cmuxFeedbackLabel.stringValue }
     var cmuxFeedbackIsHiddenForTesting: Bool { cmuxFeedbackLabel.isHidden }
-    var cmuxActionButtonRoles: [NSUserInterfaceItemIdentifier] {
+    var cmuxActionButtonRolesForTesting: [NSUserInterfaceItemIdentifier] {
         cmuxActionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.identifier }
     }
     var leftColumnForTesting: NSStackView { leftColumn }

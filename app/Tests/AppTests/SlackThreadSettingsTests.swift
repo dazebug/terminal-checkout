@@ -93,14 +93,12 @@ final class SlackThreadSettingsTests: XCTestCase {
             .invalidInstruction,
             .appendedPromptUnavailable,
         ]
-        let combination = HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])!
         let refusal = NSError(domain: "synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: "synthetic refusal"])
 
         for tag in supportedLocales {
             AppLocalization.tagOverrideForTesting = tag
             var messages = requestErrors.map { ("\($0)", slackThreadRequestErrorMessage($0)) }
             messages.append(("server unavailable", slackThreadRequestErrorMessage(SlackThreadHotKeyError.serverUnavailable)))
-            messages.append(("registration refused", slackThreadHotKeyStateMessage(.failed(combination, status: -9878))))
             messages.append(("login item approval", slackLoginItemStatusMessage(.requiresApproval)))
             messages.append(("login item refused", slackLoginItemFailureMessage(refusal)))
             for key in [

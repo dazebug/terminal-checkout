@@ -73,13 +73,6 @@ final class SetupWindowGitHubPane: NSView {
     private var drawnBaseDirectory: String?
     private var drawnCmuxPlacementName: String?
 
-    var selectedArrangementForTesting: CmuxPlacementArrangement {
-        guard case .cmux(let arrangement, _, _) = currentGitHubPreview.destination else {
-            return .panePerItem
-        }
-        return arrangement
-    }
-
     private var currentGitHubPreview: SetupWindowGitHubPreview
 
     init(
@@ -118,11 +111,10 @@ final class SetupWindowGitHubPane: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    var baseDirectoryNoticeText: String { baseDirectoryNoticeLabel.stringValue }
+    var baseDirectoryNoticeTextForTesting: String { baseDirectoryNoticeLabel.stringValue }
     var baseDirectoryNoticeRowIsHiddenForTesting: Bool { baseDirectoryNoticeRow.isHidden }
     var cmuxSectionIsHiddenForTesting: Bool { cmuxSection.isHidden }
-    var isCmuxPlacementVisible: Bool { !cmuxSection.isHidden }
-    var workspaceNameHintIsHidden: Bool { emptyWorkspaceNameHint.isHidden }
+    var workspaceNameHintIsHiddenForTesting: Bool { emptyWorkspaceNameHint.isHidden }
     var effectSentenceForTesting: String {
         setupWindowGitHubEffectSentence(currentGitHubPreview.effectSentence)
     }

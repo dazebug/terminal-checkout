@@ -1,18 +1,6 @@
 import Core
 import Foundation
 
-enum SetupState {
-    case ok(String)
-    case warning(String)
-    case error(String)
-
-    var message: String {
-        switch self {
-        case .ok(let m), .warning(let m), .error(let m): return m
-        }
-    }
-}
-
 enum InstallerError: Error, CustomStringConvertible {
     case bundledExtensionMissing
 
@@ -98,19 +86,6 @@ enum Installer {
         return .wrongExtensionID
     }
 
-    static func manifestState() -> SetupState {
-        switch setupWindowManifestStatus() {
-        case .registered:
-            return .ok(localized("app.status.manifest.registered"))
-        case .notRegistered:
-            return .error(localized("app.status.manifest.notRegistered", localized("app.button.registerUpdate")))
-        case .wrongRelayPath:
-            return .warning(localized("app.status.manifest.wrongPath", localized("app.button.registerUpdate")))
-        case .wrongExtensionID:
-            return .warning(localized("app.status.manifest.wrongExtensionID", localized("app.button.registerUpdate")))
-        }
-    }
-
     // MARK: The extension folder
 
     /// Copies the extension bundled inside the app to a fixed path under App Support, so that moving
@@ -177,15 +152,6 @@ enum Installer {
         return FileManager.default.fileExists(atPath: manifest) ? .present : .missing
     }
 
-    static func extensionState() -> SetupState {
-        switch setupWindowExtensionFolderStatus() {
-        case .present:
-            return .ok(localized("app.status.extensionFolder.ready"))
-        case .missing:
-            return .error(localized("app.status.extensionFolder.missing", localized("app.button.installInChrome")))
-        }
-    }
-
     /// Whether the bundled extension and the installed copy differ — after an app update, say
     static func extensionCopyNeedsUpdate() -> Bool {
         guard let source = bundledExtensionPath else { return false }
@@ -227,7 +193,7 @@ enum Installer {
                 checkoutLog("updating the installed extension copy failed — \(errorMessage(error))")
             }
         }
-        if case .ok = manifestState() {} else {
+        if setupWindowManifestStatus() != .registered {
             try? installManifest() // self-healing when the app has moved
         }
     }

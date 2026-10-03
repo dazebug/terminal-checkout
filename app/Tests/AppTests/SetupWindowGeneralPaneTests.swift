@@ -25,14 +25,14 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         let waiting = makePane(state: makeState())
         let waitingWindow = makeWindow(for: waiting.pane)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(waitingWindow))
-        XCTAssertEqual(waiting.pane.requestStatusText, localized("app.setup.general.request.waiting"))
+        XCTAssertEqual(waiting.pane.requestStatusTextForTesting, localized("app.setup.general.request.waiting"))
         XCTAssertTrue(waiting.pane.optionsButton.isHidden)
 
         let recorded = makePane(state: makeState(requestRecorded: true))
         let recordedWindow = makeWindow(for: recorded.pane)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(recordedWindow))
         XCTAssertEqual(
-            recorded.pane.requestStatusText,
+            recorded.pane.requestStatusTextForTesting,
             localized("app.setup.general.request.recorded", "3 hours ago")
         )
         XCTAssertFalse(recorded.pane.optionsButton.isHidden)
@@ -166,9 +166,9 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         XCTAssertEqual(fixture.pane.connectionDetailsPopover.behavior, .transient)
-        XCTAssertEqual(fixture.pane.cmuxActionButtonRoles.count, 2)
+        XCTAssertEqual(fixture.pane.cmuxActionButtonRolesForTesting.count, 2)
         XCTAssertEqual(
-            fixture.pane.cmuxActionButtonRoles,
+            fixture.pane.cmuxActionButtonRolesForTesting,
             [
                 setupWindowControlRole(
                     try XCTUnwrap(fixture.selectors[.openCmuxConfig]), "connection-details.cmux-config"

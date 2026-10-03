@@ -66,7 +66,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             tools: SetupWindowToolResults(available: ["zoxide": false], executable: [:])
         ))
         XCTAssertEqual(
-            fixture.pane.baseDirectoryNoticeText,
+            fixture.pane.baseDirectoryNoticeTextForTesting,
             localized("app.setup.github.baseDirectory.noZoxide")
         )
 
@@ -76,7 +76,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             storedProblem: .notAbsolute
         ))
         XCTAssertEqual(
-            fixture.pane.baseDirectoryNoticeText,
+            fixture.pane.baseDirectoryNoticeTextForTesting,
             localized("app.baseDir.storedInvalid", localized("app.baseDir.reason.notAbsolute"))
         )
 
@@ -85,7 +85,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             baseDirectory: "/not-created/yet"
         ))
         XCTAssertEqual(
-            fixture.pane.baseDirectoryNoticeText,
+            fixture.pane.baseDirectoryNoticeTextForTesting,
             localized("app.setup.github.baseDirectory.missing")
         )
 
@@ -94,7 +94,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             draftProblem: .invalidCharacters
         ))
         XCTAssertEqual(
-            fixture.pane.baseDirectoryNoticeText,
+            fixture.pane.baseDirectoryNoticeTextForTesting,
             localized("app.baseDir.notSaved", localized("app.baseDir.reason.invalidCharacters"))
         )
     }
@@ -178,7 +178,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             fixture.pane.effectSentenceForTesting,
             localized("app.setup.github.effect.pane.new")
         )
-        XCTAssertFalse(fixture.pane.workspaceNameHintIsHidden)
+        XCTAssertFalse(fixture.pane.workspaceNameHintIsHiddenForTesting)
 
         fixture.pane.update(makeState(terminal: .warp))
         XCTAssertEqual(

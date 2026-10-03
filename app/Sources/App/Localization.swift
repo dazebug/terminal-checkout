@@ -245,16 +245,6 @@ func slackThreadRequestErrorMessage(_ failure: Error) -> String {
     return localizedErrorMessage(failure)
 }
 
-/// The line under the shortcut button; empty while the shortcut is off or working.
-func slackThreadHotKeyStateMessage(_ state: SlackThreadHotKeyState) -> String {
-    switch state {
-    case .off, .active:
-        return ""
-    case .failed(_, let status):
-        return localized("app.slack.hotKey.registerFailed", status)
-    }
-}
-
 func slackLoginItemStatusMessage(_ status: LoginItemStatus) -> String {
     switch status {
     case .enabled, .disabled: return ""

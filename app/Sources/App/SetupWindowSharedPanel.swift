@@ -524,7 +524,7 @@ final class SetupWindowProblemBlockView: NSView {
     let paragraphLabels: [NSTextField]
     let effectLabels: [NSTextField]
     let actionButtons: [NSButton]
-    var voiceOverLabel: String { accessibilityLabelText }
+    var voiceOverLabelForTesting: String { accessibilityLabelText }
 
     private let contentStack = NSStackView()
     private let severityDot = makeStatusDot(for: .warning)

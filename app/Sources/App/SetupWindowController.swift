@@ -2,22 +2,8 @@ import AppKit
 import Carbon.HIToolbox
 import Core
 
-/// Settings document width. File scope so the status-label factory below can use it before `self` exists.
+/// Settings document width.
 let setupContentWidth: CGFloat = 720
-/// Text width for status labels, with the document's horizontal inset removed.
-let setupTextWidth: CGFloat = setupContentWidth - 28
-
-struct FittedContentLayoutPass {
-    let fittingSize: NSSize
-    let targetSize: NSSize
-    let lastRequestedSize: NSSize?
-    /// The window content size at the measurement point, before the deferred application runs.
-    let contentSizeBeforeApplication: NSSize
-    let clipBounds: NSRect
-    /// Nil when the measured window content is not an NSScrollView.
-    let documentFrame: NSRect?
-    let requestedSize: Bool
-}
 
 /// The settings stack, which sizes its window to itself.
 ///
@@ -52,8 +38,6 @@ final class FittedContentStackView: NSStackView {
     var shouldCenterAfterFirstWindowUpdate: (() -> Bool)?
     var didCenterAfterFirstWindowUpdate: (() -> Void)?
     private var afterWindowUpdate: (() -> Void)?
-    /// Test-only observation. It is nil in the application, and never participates in layout.
-    static var layoutProbeForTesting: ((FittedContentLayoutPass) -> Void)?
     /// Stands in for the visible frame used for both clamp measurement and window placement, so a
     /// test can exercise one complete layout cycle without depending on whichever display it runs
     /// on. The value captured by `layout()` is the rect passed to both center and clamp.
@@ -85,17 +69,11 @@ final class FittedContentStackView: NSStackView {
         // the new visible rect rather than letting the size early return discard it.
         let visibleFrameChanged = lastVisibleFrame != visible
         guard lastRequestedSize != target || visibleFrameChanged else {
-            reportLayoutPass(
-                fittingSize: fittingSize, targetSize: target, requestedSize: false, window: window
-            )
             return
         }
         lastRequestedSize = target
         lastVisibleFrame = visible
         scheduleWindowUpdate()
-        reportLayoutPass(
-            fittingSize: fittingSize, targetSize: target, requestedSize: true, window: window
-        )
     }
 
     /// Apply the measured size after this layout pass has returned. At the point where `layout()`
@@ -205,22 +183,6 @@ final class FittedContentStackView: NSStackView {
         }
     }
 
-    private func reportLayoutPass(
-        fittingSize: NSSize, targetSize: NSSize, requestedSize: Bool, window: NSWindow
-    ) {
-        guard let probe = Self.layoutProbeForTesting else { return }
-        let scroll = window.contentView as? NSScrollView
-        probe(FittedContentLayoutPass(
-            fittingSize: fittingSize,
-            targetSize: targetSize,
-            lastRequestedSize: lastRequestedSize,
-            contentSizeBeforeApplication: window.contentRect(forFrameRect: window.frame).size,
-            clipBounds: scroll?.contentView.bounds ?? .zero,
-            documentFrame: scroll?.documentView?.frame,
-            requestedSize: requestedSize
-        ))
-    }
-
     /// `setContentSize` keeps the top-left corner fixed, so growing pushes the bottom edge down
     /// and off the screen. Slide the window back rather than letting AppKit clamp the height.
     /// Centering and clamping both consume the visible rect captured by the same layout pass.
@@ -278,13 +240,6 @@ final class SetupWindowWrappingLabel: NSTextField {
 func makeSetupWindowWrappingLabel(_ text: String = "") -> SetupWindowWrappingLabel {
     let label = SetupWindowWrappingLabel(frame: .zero)
     label.stringValue = text
-    return label
-}
-
-/// Creates a status label with wrapping configured before it receives localized values.
-func makeStatusLabel(font: NSFont) -> NSTextField {
-    let label = makeSetupWindowWrappingLabel()
-    label.font = font
     return label
 }
 
@@ -370,8 +325,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
             + githubPane.wrappingStatusLabelsForTesting
             + slackPane.wrappingStatusLabelsForTesting
     }
-    var cmuxPlacementIdentitySegmentForTesting: NSSegmentedControl { githubPane.identitySegment }
-    var cmuxPlacementArrangementSegmentForTesting: NSSegmentedControl { githubPane.arrangementSegment }
     var cmuxPlacementNameFieldForTesting: NSTextField { githubPane.workspaceNameField }
 
     private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
@@ -990,7 +943,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
 
     func refreshForTesting() { refresh() }
 
-    func select(terminal: Terminal) {
+    func selectTerminalForTesting(_ terminal: Terminal) {
         Settings.terminal = terminal
         refresh()
     }

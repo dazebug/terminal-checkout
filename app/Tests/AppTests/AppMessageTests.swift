@@ -3,11 +3,8 @@ import TestSupport
 import XCTest
 @testable import App
 
-/// The user-facing strings the app draws **outside** the setup window: the menu bar, the automation
-/// and installer status lines, and the one `Info.plist` key macOS puts in the permission prompt. The
-/// window's own strings are `SetupWindowLayoutTests`' subject; what these cases pin is that nothing
-/// outside it went back to a literal, and that the sentences naming a button take that button's
-/// label as an argument instead of spelling it out.
+/// User-facing strings outside the setup window: menu labels, automation status, and the one
+/// `Info.plist` key macOS puts in the permission prompt. Window messages are tested with their panes.
 ///
 /// The catalogues are read from the **source** tree: `swift test` runs with no app bundle, and
 /// whether `build.sh` copied them is `verify-bundle.sh`'s question.
@@ -82,64 +79,12 @@ final class AppMessageTests: XCTestCase {
         XCTAssertEqual(Set(granted).count, populatedLocales.count, "the label did not change with the language")
     }
 
-    /// The installer's two status groups do the same.
-    ///
-    /// **One machine only ever reaches one branch of each**, which is why the structural half is
-    /// here and not a nicety: measured while writing this, restoring the literal in the `registered`
-    /// branch left every assertion green, because under `swift test` `Bundle.main` is the xctest
-    /// runner, its `relayPath` never matches the installed manifest, and the run lands in
-    /// `wrongPath` every time (on a machine with no manifest it would be `notRegistered`). The
-    /// runtime half pins whichever branch this machine takes; the source half covers the four it
-    /// cannot reach.
-    func testTheInstallerStatusMessagesComeFromTheCatalogue() throws {
-        let source = try repoSource("app/Sources/App/Installer.swift")
-        // **A constructor and its argument need not be on the same line**, and
-        // four of the six here are not: `.error(` opens and the argument sits indented on the next
-        // line. The spelling this looked for was the quote up against the parenthesis, so those
-        // four had no position it could see, and a sentence hardcoded one line down was read by
-        // nothing. Swift's whitespace goes into the pattern instead of out of it.
-        for constructor in ["ok", "warning", "error"] {
-            XCTAssertNil(
-                source.range(of: "\\.\(constructor)\\(\\s*\"", options: .regularExpression),
-                "a status message is written at the call site instead of read from the catalogue: .\(constructor)("
-            )
-        }
-
-        for tag in populatedLocales {
-            AppLocalization.tagOverrideForTesting = tag
-            let register = value("app.button.registerUpdate", tag)
-            let install = value("app.button.installInChrome", tag)
-
-            let manifest: Set<String> = [
-                value("app.status.manifest.registered", tag),
-                String(format: value("app.status.manifest.notRegistered", tag), register),
-                String(format: value("app.status.manifest.wrongPath", tag), register),
-                String(format: value("app.status.manifest.wrongExtensionID", tag), register),
-            ]
-            XCTAssertTrue(
-                manifest.contains(Installer.manifestState().message),
-                "\(tag): \(Installer.manifestState().message) is not one of this catalogue's sentences"
-            )
-
-            let folder: Set<String> = [
-                value("app.status.extensionFolder.ready", tag),
-                String(format: value("app.status.extensionFolder.missing", tag), install),
-            ]
-            XCTAssertTrue(
-                folder.contains(Installer.extensionState().message),
-                "\(tag): \(Installer.extensionState().message) is not one of this catalogue's sentences"
-            )
-        }
-    }
-
     /// **Every sentence that points at a button takes the label as an argument**. A body that
     /// went back to spelling the label out would still read correctly today and drift the moment the
     /// button is renamed or translated differently, so the placeholder is what is pinned.
     func testEverySentenceNamingAButtonTakesItsLabelAsAnArgument() {
         let quoting = [
             "app.automation.notDetermined", "app.automation.targetNotRunning",
-            "app.status.manifest.notRegistered", "app.status.manifest.wrongPath",
-            "app.status.manifest.wrongExtensionID", "app.status.extensionFolder.missing",
         ]
         for tag in populatedLocales {
             for key in quoting {

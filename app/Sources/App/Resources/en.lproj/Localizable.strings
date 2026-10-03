@@ -24,7 +24,6 @@
 "app.baseDir.storedInvalid" = "The stored value is not usable (%@) — please choose it again";
 "app.button.chooseFolder" = "Choose Folder…";
 "app.button.installInChrome" = "Install in Chrome";
-"app.button.registerUpdate" = "Register/Update";
 "app.button.requestAccessibility" = "Request Accessibility Permission";
 "app.button.requestItermPermission" = "Request iTerm2 Permission";
 "app.button.restartNow" = "Restart Now";
@@ -52,8 +51,6 @@
 "app.cmux.placement.name.placeholder" = "Workspace name";
 "app.status.accessibility.denied" = "Not granted — buttons with scheduled claude input are refused";
 "app.status.accessibility.granted" = "Granted";
-"app.status.extensionFolder.missing" = "No extension folder — pressing [%@] prepares it";
-"app.status.extensionFolder.ready" = "Ready";
 "app.status.cmux.notInstalled" = "Not installed";
 "app.status.cmux.notRunning" = "cmux is not running — socket mode cannot be checked; start cmux and check again";
 "app.status.cmux.denied" = "Socket access denied — socket control mode is not \"automation\"";
@@ -64,10 +61,7 @@
 "app.status.cmux.configOpenFailed" = "Automation setting copied, but the cmux configuration target could not be opened";
 "app.status.cmux.configUnavailable" = "Automation setting copied, but cmux.json and its folder could not be opened";
 "app.status.cmux.configClipboardFailed" = "Could not copy the automation setting; the cmux configuration target was not opened";
-"app.status.manifest.notRegistered" = "Not registered — press [%@]";
 "app.status.manifest.registered" = "Registered";
-"app.status.manifest.wrongExtensionID" = "The extension ID differs from the current setting — refresh it with [%@]";
-"app.status.manifest.wrongPath" = "Points at an app in another location — refresh it with [%@]";
 "app.slack.workDirectory.placeholder" = "Absolute work folder (spaces are not supported)";
 "app.slack.instruction.help" = "One line only. Leave it empty to send just the link.";
 "app.slack.hotKey.label" = "Shortcut";

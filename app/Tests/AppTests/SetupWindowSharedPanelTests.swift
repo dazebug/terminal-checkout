@@ -1,4 +1,5 @@
 import AppKit
+import Core
 import XCTest
 @testable import App
 
@@ -163,7 +164,42 @@ final class SetupWindowSharedPanelTests: XCTestCase {
             button.identifier?.rawValue,
             setupWindowControlRole(try XCTUnwrap(button.action), "problem.manifest").rawValue
         )
-        XCTAssertTrue(block.voiceOverLabel.contains(localized("app.setup.severity.error")))
+        XCTAssertTrue(block.voiceOverLabelForTesting.contains(localized("app.setup.severity.error")))
+    }
+
+    func testProblemAndChecklistSentencesUseLocalizedButtonLabels() throws {
+        for tag in supportedLocales {
+            AppLocalization.tagOverrideForTesting = tag
+            let requestedAt = Date(timeIntervalSince1970: 100)
+            let problem = SetupWindowProblem(severity: .error, copy: .cmuxNotInstalled(.stable))
+            let panel = try makePanel(
+                presentation: presentation(
+                    problems: [problem],
+                    showsFirstInstallChecklist: true,
+                    connectionSentence: .requestRecorded(at: requestedAt)
+                ),
+                manifest: .registered,
+                extensionFolder: .present
+            )
+
+            let block = try XCTUnwrap(panel.problemBlockViews.first)
+            let terminalSettings = localized("app.setup.action.openTerminalSettings")
+            XCTAssertEqual(
+                block.paragraphLabels[0].stringValue,
+                localized("app.setup.problem.cmux.notInstalled.cause", terminalSettings),
+                tag
+            )
+
+            let checklist = try XCTUnwrap(panel.installChecklistView)
+            let content = try XCTUnwrap(checklist.subviews.first as? NSStackView)
+            let closeRow = try XCTUnwrap(content.arrangedSubviews.last as? NSStackView)
+            let closeButton = try XCTUnwrap(checklist.closeGuideButton)
+            XCTAssertEqual(
+                closeRow.accessibilityLabel(),
+                localized("app.setup.install.closeGuide.accessibilityLabel", closeButton.title),
+                tag
+            )
+        }
     }
 
     func testActionRolesStayStableAsBlockStateChanges() throws {

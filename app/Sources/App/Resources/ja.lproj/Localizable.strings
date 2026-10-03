@@ -16,7 +16,6 @@
 "app.baseDir.storedInvalid" = "保存されている値は使用できません (%@) — もう一度選び直してください";
 "app.button.chooseFolder" = "フォルダを選択…";
 "app.button.installInChrome" = "Chrome にインストール";
-"app.button.registerUpdate" = "登録 / 更新";
 "app.button.requestAccessibility" = "アクセシビリティ権限を要求";
 "app.button.requestItermPermission" = "iTerm2 の権限を要求";
 "app.button.restartNow" = "今すぐ再起動";
@@ -44,8 +43,6 @@
 "app.cmux.placement.name.placeholder" = "workspace 名";
 "app.status.accessibility.denied" = "許可されていません — claude 入力が予約されたボタンは拒否されます";
 "app.status.accessibility.granted" = "許可済み";
-"app.status.extensionFolder.missing" = "拡張機能フォルダがありません — [%@] を押すと準備します";
-"app.status.extensionFolder.ready" = "準備完了";
 "app.status.cmux.notInstalled" = "未インストール";
 "app.status.cmux.notRunning" = "cmux は実行されていません — ソケットモードは確認できません。cmux を起動してからもう一度確認してください";
 "app.status.cmux.denied" = "ソケットへのアクセスが拒否されました — socket control mode が automation ではありません";
@@ -56,10 +53,7 @@
 "app.status.cmux.configOpenFailed" = "自動化設定をコピーしましたが、cmux設定の対象を開けませんでした";
 "app.status.cmux.configUnavailable" = "自動化設定をコピーしましたが、cmux.jsonとそのフォルダを開けませんでした";
 "app.status.cmux.configClipboardFailed" = "自動化設定をコピーできなかったため、cmux設定の対象を開きませんでした";
-"app.status.manifest.notRegistered" = "未登録 — [%@] を押してください";
 "app.status.manifest.registered" = "登録済み";
-"app.status.manifest.wrongExtensionID" = "拡張機能の ID が現在の設定と異なります — [%@] で更新してください";
-"app.status.manifest.wrongPath" = "別の場所にあるアプリを指しています — [%@] で更新してください";
 "app.slack.workDirectory.placeholder" = "作業フォルダの絶対パス（空白は使用できません）";
 "app.slack.instruction.help" = "指示は 1 行で入力します。空欄ならリンクだけを送ります。";
 "app.slack.hotKey.label" = "ショートカット";
