@@ -87,6 +87,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
                     )
                 ),
                 github: .init(
+                    terminal: .iterm,
                     rowNumbers: [1, 2, 3],
                     destination: .newTabPerRow,
                     effectSentence: .githubRowsOpenNewTabs(rowNumbers: [1, 2, 3])
@@ -245,9 +246,9 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(checklist.steps.count, 3)
         XCTAssertEqual(checklist.steps[0].titleLabel.stringValue, localized("app.setup.install.nativeHost.title"))
         XCTAssertEqual(checklist.steps[0].actionButton?.title, localized("app.setup.action.registerManifest"))
-        XCTAssertEqual(checklist.steps[1].titleLabel.stringValue, localized("app.button.installInChrome"))
+        XCTAssertEqual(checklist.steps[1].titleLabel.stringValue, localized("app.setup.install.chrome.title"))
         XCTAssertEqual(checklist.steps[1].statusLabel.stringValue, localized("app.setup.install.chrome.folderMissing"))
-        XCTAssertEqual(checklist.steps[1].actionButton?.title, localized("app.setup.action.chromeInstall"))
+        XCTAssertEqual(checklist.steps[1].actionButton?.title, localized("app.button.installInChrome"))
         XCTAssertEqual(checklist.steps[1].actionButton?.keyEquivalent, "\r")
         XCTAssertEqual(checklist.steps[2].titleLabel.stringValue, localized("app.setup.install.github.pendingTitle"))
         XCTAssertFalse(checklist.steps[2].isComplete)
@@ -291,6 +292,29 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         ])
         XCTAssertFalse(checklist.feedbackLabel.isHidden)
         XCTAssertEqual(checklist.feedbackLabel.stringValue, localized("app.setup.install.chrome.feedback"))
+    }
+
+    func testChromeChecklistButtonIsTheGreenReturnActionAndStepCopyWraps() throws {
+        let panel = try makePanel(
+            presentation: presentation(showsFirstInstallChecklist: true),
+            manifest: .wrongRelayPath,
+            extensionFolder: .present
+        )
+        let checklist = try XCTUnwrap(panel.installChecklistView)
+        let chromeStep = checklist.steps[1]
+        let button = try XCTUnwrap(chromeStep.actionButton)
+
+        XCTAssertEqual(chromeStep.titleLabel.stringValue, localized("app.setup.install.chrome.title"))
+        XCTAssertEqual(button.title, localized("app.button.installInChrome"))
+        XCTAssertEqual(button.bezelColor, Theme.actionGreen)
+        XCTAssertEqual(button.keyEquivalent, "\r")
+
+        let status = checklist.steps[0].statusLabel
+        status.stringValue = String(repeating: "Native Host points to another application. ", count: 8)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(try XCTUnwrap(panel.window)))
+        XCTAssertGreaterThan(status.frame.height, status.font!.boundingRectForFont.height)
+        XCTAssertTrue(status.cell?.wraps == true)
+        XCTAssertGreaterThan(status.maximumNumberOfLines, 1)
     }
 
     func testReopenedGuideCanBeClosedWithoutChangingRequestEvidence() throws {

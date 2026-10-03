@@ -154,7 +154,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         )
         XCTAssertFalse(controller.cmuxPlacementNameFieldForTesting.isEnabled)
         XCTAssertEqual(
-            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            controller.githubPaneForTesting.effectSentenceForTesting,
             localized("app.setup.github.effect.pane.new")
         )
     }
@@ -209,7 +209,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             return XCTFail("empty fixed name was not parsed as always-new")
         }
         XCTAssertEqual(
-            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            controller.githubPaneForTesting.effectSentenceForTesting,
             localized("app.setup.github.effect.tab.new")
         )
     }
@@ -223,7 +223,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         // The planner cannot give N workspaces one identity, so it creates them untitled.
         // The label has to say that, or a stored name reads as an address that is never used.
         XCTAssertEqual(
-            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            controller.githubPaneForTesting.effectSentenceForTesting,
             localized("app.setup.github.effect.workspace")
         )
     }
@@ -240,7 +240,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             XCTAssertGreaterThan(control.frame.height, 0)
         }
         XCTAssertGreaterThan(controller.cmuxPlacementNameFieldForTesting.frame.width, 0)
-        XCTAssertGreaterThan(controller.githubPaneForTesting.effectSentenceLabel.frame.width, 0)
+        XCTAssertGreaterThan(controller.githubPaneForTesting.previewCaptionWidthForTesting, 0)
     }
 
     func testPlacementNameFieldRebuildKeepsAnUnstoredDraft() throws {

@@ -123,7 +123,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
         XCTAssertFalse(fixture.pane.workspaceNameField.isEnabled)
         XCTAssertTrue(fixture.pane.workspaceNameField.isHidden)
         XCTAssertEqual(fixture.pane.workspaceNameField.stringValue, "named-workspace")
-        XCTAssertEqual(fixture.pane.effectSentenceLabel.stringValue, localized("app.setup.github.effect.workspace"))
+        XCTAssertEqual(fixture.pane.effectSentenceForTesting, localized("app.setup.github.effect.workspace"))
 
         fixture.pane.update(makeState(
             identityMode: "fixed-name",
@@ -166,7 +166,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
                 fixedName: name,
                 arrangement: arrangement
             ))
-            XCTAssertEqual(fixture.pane.effectSentenceLabel.stringValue, expectedSentence())
+            XCTAssertEqual(fixture.pane.effectSentenceForTesting, expectedSentence())
         }
 
         fixture.pane.update(makeState(
@@ -175,14 +175,14 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
             arrangement: CmuxPlacementArrangement.panePerItem.rawValue
         ))
         XCTAssertEqual(
-            fixture.pane.effectSentenceLabel.stringValue,
+            fixture.pane.effectSentenceForTesting,
             localized("app.setup.github.effect.pane.new")
         )
         XCTAssertFalse(fixture.pane.workspaceNameHintIsHidden)
 
         fixture.pane.update(makeState(terminal: .warp))
         XCTAssertEqual(
-            fixture.pane.effectSentenceLabel.stringValue,
+            fixture.pane.effectSentenceForTesting,
             localized("app.setup.github.effect.nonCmux")
         )
     }
@@ -193,8 +193,9 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         XCTAssertTrue(fixture.pane.cmuxSectionIsHiddenForTesting)
+        XCTAssertEqual(fixture.pane.previewView.githubTerminalForTesting, .iterm)
         XCTAssertEqual(
-            fixture.pane.effectSentenceLabel.stringValue,
+            fixture.pane.effectSentenceForTesting,
             localized("app.setup.github.effect.nonCmux")
         )
         XCTAssertEqual(fixture.pane.previewTitleLabel.stringValue, localized("app.setup.preview.github.title.rows"))
@@ -220,10 +221,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
         )
         XCTAssertEqual(
             namedTabDescription,
-            localized(
-                "app.setup.preview.github.accessibility",
-                localized("app.setup.github.effect.tab.named", "named-workspace")
-            )
+            localized("app.setup.github.effect.tab.named", "named-workspace")
         )
 
         fixture.pane.update(makeState(

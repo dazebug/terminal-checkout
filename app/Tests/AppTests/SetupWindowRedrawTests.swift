@@ -196,7 +196,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         let document = try XCTUnwrap(scroll.documentView)
         let panel = controller.sharedPanelForTesting
         let clipHeight = scroll.contentView.bounds.height
-        document.scroll(NSPoint(x: 0, y: document.frame.maxY - clipHeight))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: document.frame.maxY - clipHeight))
         scroll.reflectScrolledClipView(scroll.contentView)
         XCTAssertEqual(panel.frame.maxY, scroll.documentVisibleRect.maxY, accuracy: 0.5)
 

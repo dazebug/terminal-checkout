@@ -327,8 +327,13 @@ final class SetupWindowLayoutTests: XCTestCase {
         let refresh = String(source[refreshStart..<refreshEnd])
         XCTAssertTrue(refresh.contains("let generalState = makeGeneralState(environment)"))
         XCTAssertTrue(refresh.contains("generalPane.update(generalState)"))
-        XCTAssertEqual(source.components(separatedBy: "makeGeneralState(environment)").count - 1, 1)
+        XCTAssertEqual(source.components(separatedBy: "makeGeneralState(environment)").count - 1, 2)
         XCTAssertEqual(source.components(separatedBy: "generalPane.update(generalState)").count - 1, 1)
+        let buildStart = try XCTUnwrap(source.range(of: "private func buildContent(using environment:")?.lowerBound)
+        let buildEnd = try XCTUnwrap(
+            source.range(of: "\n    private func", range: buildStart..<source.endIndex)?.lowerBound
+        )
+        XCTAssertTrue(String(source[buildStart..<buildEnd]).contains("state: makeGeneralState(environment)"))
 
         let statusActionStart = try XCTUnwrap(source.range(of: "@objc private func refreshCmuxStatus() {")?.lowerBound)
         let statusActionEnd = try XCTUnwrap(
@@ -337,6 +342,35 @@ final class SetupWindowLayoutTests: XCTestCase {
         let statusAction = String(source[statusActionStart..<statusActionEnd])
         XCTAssertTrue(statusAction.contains("cmuxFeedback = nil"))
         XCTAssertTrue(statusAction.contains("refresh()"))
+    }
+
+    func testPaneLeftColumnsRetainFixedSectionSpacingAcrossAllThreePanes() throws {
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        func assertFixedGaps(_ column: NSStackView, file: StaticString = #filePath, line: UInt = #line) {
+            let visible = column.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
+                .sorted { $0.frame.minY < $1.frame.minY }
+            for (upper, lower) in zip(visible, visible.dropFirst()) {
+                XCTAssertEqual(
+                    lower.frame.minY - upper.frame.maxY,
+                    column.spacing,
+                    accuracy: 1,
+                    "left sections should retain their fixed stack spacing",
+                    file: file,
+                    line: line
+                )
+            }
+        }
+
+        assertFixedGaps(controller.generalPaneForTesting.leftColumnForTesting)
+        try select("github", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        assertFixedGaps(controller.githubPaneForTesting.leftColumnForTesting)
+        try select("slack", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        assertFixedGaps(controller.slackPaneForTesting.leftColumnForTesting)
     }
 
     func testSlackRequestFailureStaysVisibleAtTheTopOfAShortDocument() throws {
@@ -366,7 +400,7 @@ final class SetupWindowLayoutTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let beforeToolbar = window.toolbar?.items.map(\.label)
         let beforeGeneral = controller.generalPaneForTesting.requestStatusText
-        let beforeGitHub = controller.githubPaneForTesting.effectSentenceLabel.stringValue
+        let beforeGitHub = controller.githubPaneForTesting.previewCaptionForTesting
         let beforeSlack = controller.slackPaneForTesting.previewCaptionLabel.stringValue
         XCTAssertEqual(beforeGeneral, localized("app.setup.general.request.waiting"))
         XCTAssertEqual(beforeGitHub, localized("app.setup.github.effect.nonCmux"))
@@ -378,7 +412,7 @@ final class SetupWindowLayoutTests: XCTestCase {
 
         XCTAssertNotEqual(window.toolbar?.items.map(\.label), beforeToolbar)
         XCTAssertNotEqual(controller.generalPaneForTesting.requestStatusText, beforeGeneral)
-        XCTAssertNotEqual(controller.githubPaneForTesting.effectSentenceLabel.stringValue, beforeGitHub)
+        XCTAssertNotEqual(controller.githubPaneForTesting.previewCaptionForTesting, beforeGitHub)
         XCTAssertNotEqual(controller.slackPaneForTesting.previewCaptionLabel.stringValue, beforeSlack)
         XCTAssertEqual(
             controller.slackPaneForTesting.previewCaptionLabel.stringValue,

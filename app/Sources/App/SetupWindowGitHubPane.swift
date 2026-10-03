@@ -60,7 +60,6 @@ final class SetupWindowGitHubPane: NSView {
     let identitySegment: NSSegmentedControl
     let workspaceNameField: NSTextField
     let emptyWorkspaceNameHint = NSTextField(labelWithString: "")
-    let effectSentenceLabel = NSTextField(wrappingLabelWithString: "")
     let previewTitleLabel = NSTextField(labelWithString: "")
     let previewView: SetupWindowPreviewView
 
@@ -70,6 +69,7 @@ final class SetupWindowGitHubPane: NSView {
     private let baseDirectoryNoticeRow = NSStackView()
     private let cmuxSection = NSStackView()
     private let contentStack = NSStackView()
+    private let leftColumn = NSStackView()
     private var drawnBaseDirectory: String?
     private var drawnCmuxPlacementName: String?
 
@@ -123,9 +123,14 @@ final class SetupWindowGitHubPane: NSView {
     var cmuxSectionIsHiddenForTesting: Bool { cmuxSection.isHidden }
     var isCmuxPlacementVisible: Bool { !cmuxSection.isHidden }
     var workspaceNameHintIsHidden: Bool { emptyWorkspaceNameHint.isHidden }
+    var effectSentenceForTesting: String {
+        setupWindowGitHubEffectSentence(currentGitHubPreview.effectSentence)
+    }
     var previewCaptionForTesting: String { previewCaption.stringValue }
+    var previewCaptionWidthForTesting: CGFloat { previewCaption.frame.width }
+    var leftColumnForTesting: NSStackView { leftColumn }
     var wrappingStatusLabelsForTesting: [NSTextField] {
-        [baseDirectoryNoticeLabel, effectSentenceLabel, previewCaption]
+        [baseDirectoryNoticeLabel, previewCaption]
     }
 
     var actionControlsForTesting: [(NSControl, SetupWindowGitHubAction)] {
@@ -162,9 +167,6 @@ final class SetupWindowGitHubPane: NSView {
         previewView.update(githubModel: currentGitHubPreview)
         updateBaseDirectoryNotice(state)
         updateCmuxControls(state)
-        effectSentenceLabel.stringValue = setupWindowGitHubEffectSentence(
-            currentGitHubPreview.effectSentence
-        )
         updatePreviewTitle(currentGitHubPreview)
     }
 
@@ -316,17 +318,16 @@ final class SetupWindowGitHubPane: NSView {
     }
 
     private func buildLayout() {
-        let leftColumn = NSStackView(views: [folderSection, cmuxSection, effectSentenceLabel])
+        leftColumn.addArrangedSubview(folderSection)
+        leftColumn.addArrangedSubview(cmuxSection)
         leftColumn.orientation = .vertical
         leftColumn.alignment = .leading
         leftColumn.distribution = .fill
         leftColumn.spacing = 17
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
+        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
-
-        effectSentenceLabel.font = Theme.ui(12)
-        effectSentenceLabel.textColor = Theme.text
-        effectSentenceLabel.maximumNumberOfLines = 0
 
         contentStack.orientation = .horizontal
         contentStack.alignment = .top
@@ -398,8 +399,8 @@ final class SetupWindowGitHubPane: NSView {
         identitySegment.selectedSegment = identityDisabled
             ? 0
             : (state.cmuxIdentityMode == "fixed-name" ? 1 : 0)
-        workspaceNameField.isEnabled = !identityDisabled
         let showsName = !identityDisabled && state.cmuxIdentityMode == "fixed-name"
+        workspaceNameField.isEnabled = showsName
         workspaceNameField.isHidden = !showsName
         emptyWorkspaceNameHint.stringValue = localized("app.setup.github.identity.emptyName")
         emptyWorkspaceNameHint.isHidden = !showsName || !workspaceNameField.stringValue.isEmpty

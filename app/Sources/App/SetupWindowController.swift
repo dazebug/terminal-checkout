@@ -336,7 +336,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     var cmuxPlacementIdentitySegmentForTesting: NSSegmentedControl { githubPane.identitySegment }
     var cmuxPlacementArrangementSegmentForTesting: NSSegmentedControl { githubPane.arrangementSegment }
     var cmuxPlacementNameFieldForTesting: NSTextField { githubPane.workspaceNameField }
-    var cmuxPlacementInterpretationLabelForTesting: NSTextField { githubPane.effectSentenceLabel }
 
     private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 

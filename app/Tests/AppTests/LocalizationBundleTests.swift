@@ -89,17 +89,9 @@ final class LocalizationBundleTests: XCTestCase {
         try FileManager.default.createDirectory(at: english, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: japanese, withIntermediateDirectories: true)
         let fixtureKey = "app.test.localization.fallback"
-        let catalog = try PropertyListSerialization.data(
-            fromPropertyList: [fixtureKey: "English fixture value"],
-            format: .openStep,
-            options: 0
-        )
+        let catalog = Data("\"\(fixtureKey)\" = \"English fixture value\";".utf8)
         try catalog.write(to: english.appendingPathComponent("Localizable.strings"))
-        let japaneseCatalog = try PropertyListSerialization.data(
-            fromPropertyList: ["app.test.localization.other": "日本語"],
-            format: .openStep,
-            options: 0
-        )
+        let japaneseCatalog = Data("\"app.test.localization.other\" = \"日本語\";".utf8)
         try japaneseCatalog.write(to: japanese.appendingPathComponent("Localizable.strings"))
 
         XCTAssertEqual(

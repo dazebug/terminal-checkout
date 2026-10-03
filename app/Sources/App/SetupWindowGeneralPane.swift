@@ -113,11 +113,13 @@ final class SetupWindowGeneralPane: NSView {
     private let toolDetailRows: [String: SetupWindowGeneralPopoverRow]
     private let cmuxActionsRow: NSStackView
     private let mainContentStack = NSStackView()
+    private let leftColumn = NSStackView()
     private let languageSection = NSStackView()
     private let identityIcon = NSImageView()
     private let versionLabel = NSTextField(labelWithString: "")
 
     var requestStatusText: String { requestStatusLabel.stringValue }
+    var terminalTestResultTextForTesting: String { terminalTestResultLabel.stringValue }
     var hintTextForTesting: String { hintLabel.stringValue }
     var previewCaptionForTesting: String { previewCaption.stringValue }
     var terminalDetailTitleForTesting: String { terminalDetailRow.titleLabel.stringValue }
@@ -131,6 +133,7 @@ final class SetupWindowGeneralPane: NSView {
     var cmuxActionButtonRoles: [NSUserInterfaceItemIdentifier] {
         cmuxActionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.identifier }
     }
+    var leftColumnForTesting: NSStackView { leftColumn }
 
     init(
         state: SetupWindowGeneralPaneState,
@@ -180,7 +183,7 @@ final class SetupWindowGeneralPane: NSView {
         mainContentStack.distribution = .fill
         mainContentStack.spacing = 14
         mainContentStack.translatesAutoresizingMaskIntoConstraints = false
-        let leftColumn = NSStackView(views: [
+        for view in [
             identityRow,
             requestStatusRow,
             terminalRow,
@@ -188,12 +191,16 @@ final class SetupWindowGeneralPane: NSView {
             activationRow,
             hintLabel,
             languageSection,
-        ])
+        ] {
+            leftColumn.addArrangedSubview(view)
+        }
         leftColumn.orientation = .vertical
         leftColumn.alignment = .leading
         leftColumn.distribution = .fill
         leftColumn.spacing = 13
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
+        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
         previewColumn.orientation = .vertical
         previewColumn.alignment = .leading
@@ -594,10 +601,11 @@ final class SetupWindowGeneralPane: NSView {
             terminalTestResultLabel.textColor = Theme.textDim
             terminalTestResultLabel.isHidden = false
         case .succeeded:
-            let destination = state.terminal.cmuxChannel == nil
-                ? localized("app.setup.preview.general.destination.tab")
-                : localized("app.setup.preview.general.destination.workspace")
-            terminalTestResultLabel.stringValue = localized("app.setup.general.terminalTest.success", destination)
+            if state.terminal.cmuxChannel == nil {
+                terminalTestResultLabel.stringValue = localized("app.setup.general.terminalTest.success.tab")
+            } else {
+                terminalTestResultLabel.stringValue = localized("app.setup.general.terminalTest.success.workspace")
+            }
             terminalTestResultLabel.textColor = Theme.ok
             terminalTestResultLabel.isHidden = false
         case .failed(let reason):

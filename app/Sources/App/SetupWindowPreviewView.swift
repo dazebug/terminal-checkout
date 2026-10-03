@@ -8,6 +8,7 @@ final class SetupWindowPreviewView: NSView {
     private var githubModel: SetupWindowGitHubPreview?
     private var slackModel: SetupWindowSlackPreview?
     private(set) var effectDescription: String
+    var githubTerminalForTesting: Terminal? { githubModel?.terminal }
 
     init(model: SetupWindowGeneralPreview) {
         generalModel = model
@@ -95,22 +96,6 @@ final class SetupWindowPreviewView: NSView {
         frame.lineWidth = 1
         frame.fill()
         frame.stroke()
-
-        let label: String
-        if generalModel != nil {
-            label = localized("app.setup.preview.general.mockWindow")
-        } else if githubModel != nil {
-            label = localized("app.setup.preview.github.windowCaption")
-        } else {
-            label = localized("app.setup.preview.slack.windowCaption")
-        }
-        (label as NSString).draw(
-            in: NSRect(x: 14, y: 10, width: max(0, bounds.width - 28), height: 18),
-            withAttributes: [
-                .font: Theme.ui(11, .semibold),
-                .foregroundColor: Theme.textDim,
-            ]
-        )
 
         if let generalModel {
             if generalModel.frontmostScreen == .existingScreen {
@@ -274,31 +259,29 @@ final class SetupWindowPreviewView: NSView {
     }
 
     private static func description(for model: SetupWindowGeneralPreview) -> String {
-        let destination: String
-        switch model.destination {
-        case .newTab: destination = localized("app.setup.preview.general.destination.tab")
-        case .newWorkspace: destination = localized("app.setup.preview.general.destination.workspace")
+        switch (model.destination, model.frontmostScreen) {
+        case (.newTab, .newTerminalSession):
+            return localized("app.setup.preview.general.tab.terminalFront")
+        case (.newTab, .existingScreen):
+            return localized("app.setup.preview.general.tab.currentFront")
+        case (.newWorkspace, .newTerminalSession):
+            return localized("app.setup.preview.general.workspace.terminalFront")
+        case (.newWorkspace, .existingScreen):
+            return localized("app.setup.preview.general.workspace.currentFront")
         }
-        let frontmost: String
-        switch model.frontmostScreen {
-        case .newTerminalSession: frontmost = localized("app.setup.preview.general.frontmost.terminal")
-        case .existingScreen: frontmost = localized("app.setup.preview.general.frontmost.current")
-        }
-        return localized("app.setup.preview.general.accessibility", destination, frontmost)
     }
 
     private static func description(for model: SetupWindowGitHubPreview) -> String {
-        localized(
-            "app.setup.preview.github.accessibility",
-            setupWindowGitHubEffectSentence(model.effectSentence)
-        )
+        setupWindowGitHubEffectSentence(model.effectSentence)
     }
 
     private static func description(for model: SetupWindowSlackPreview) -> String {
-        let destination = model.destination == .newWorkspace
-            ? localized("app.setup.preview.general.destination.workspace")
-            : localized("app.setup.preview.general.destination.tab")
-        return localized("app.setup.preview.slack.accessibility", destination)
+        switch model.destination {
+        case .newTab:
+            return localized("app.setup.preview.slack.accessibility.tab")
+        case .newWorkspace:
+            return localized("app.setup.preview.slack.accessibility.workspace")
+        }
     }
 
     private func drawSlackPreview(_ model: SetupWindowSlackPreview) {
@@ -392,7 +375,7 @@ final class SetupWindowPreviewView: NSView {
         bar.fill()
         drawWindowLights(at: NSPoint(x: rect.minX + 10, y: rect.minY + 8))
         drawText(
-            localized("app.setup.preview.github.listWindow"),
+            terminalName(model.terminal),
             in: NSRect(x: rect.minX + 42, y: rect.minY + 4, width: rect.width - 50, height: 14),
             color: Theme.textFaint,
             font: Theme.ui(8, .medium)

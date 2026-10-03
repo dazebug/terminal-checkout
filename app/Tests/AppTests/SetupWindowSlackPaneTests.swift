@@ -141,19 +141,13 @@ final class SetupWindowSlackPaneTests: XCTestCase {
         )
         XCTAssertEqual(
             fixture.pane.previewView.effectDescription,
-            localized(
-                "app.setup.preview.slack.accessibility",
-                localized("app.setup.preview.general.destination.tab")
-            )
+            localized("app.setup.preview.slack.accessibility.tab")
         )
 
         fixture.pane.update(makeState(terminal: .cmux))
         XCTAssertEqual(
             fixture.pane.previewView.effectDescription,
-            localized(
-                "app.setup.preview.slack.accessibility",
-                localized("app.setup.preview.general.destination.workspace")
-            )
+            localized("app.setup.preview.slack.accessibility.workspace")
         )
         fixture.pane.update(makeState(terminal: .iterm))
         XCTAssertEqual(

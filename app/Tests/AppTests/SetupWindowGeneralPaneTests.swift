@@ -140,11 +140,23 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         XCTAssertEqual(workspaceBack, fixture.pane.previewView.accessibilityLabel())
         XCTAssertEqual(
             workspaceBack,
-            localized(
-                "app.setup.preview.general.accessibility",
-                localized("app.setup.preview.general.destination.workspace"),
-                localized("app.setup.preview.general.frontmost.current")
-            )
+            localized("app.setup.preview.general.workspace.currentFront")
+        )
+    }
+
+    func testTerminalTestSuccessUsesACompleteLocalizedSentenceForItsDestination() throws {
+        let fixture = makePane(state: makeState(terminalTestResult: .succeeded))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        XCTAssertEqual(
+            fixture.pane.terminalTestResultTextForTesting,
+            localized("app.setup.general.terminalTest.success.tab")
+        )
+
+        fixture.pane.update(makeState(terminal: .cmux, terminalTestResult: .succeeded))
+        XCTAssertEqual(
+            fixture.pane.terminalTestResultTextForTesting,
+            localized("app.setup.general.terminalTest.success.workspace")
         )
     }
 
@@ -268,7 +280,8 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         installed: [Terminal: Bool] = Dictionary(uniqueKeysWithValues: Terminal.allCases.map { ($0, true) }),
         languageChange: SetupWindowGeneralLanguageChange = .unchanged,
         cmuxFeedback: SetupWindowGeneralIndicator? = nil,
-        terminalStatus: SetupWindowGeneralIndicator = .init(text: "Ready", tone: .success)
+        terminalStatus: SetupWindowGeneralIndicator = .init(text: "Ready", tone: .success),
+        terminalTestResult: SetupWindowGeneralTerminalTestResult = .notRun
     ) -> SetupWindowGeneralPaneState {
         let requestDate = requestRecorded ? Date(timeIntervalSince1970: 1_791_000_000) : nil
         let installations = Terminal.allCases.map {
@@ -293,7 +306,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
                 executable: ["claude": true]
             ),
             savedTabActivation: tabActivation,
-            terminalTestResult: .notRun,
+            terminalTestResult: terminalTestResult,
             storedLanguage: automaticLocalePreference,
             resolvedLanguage: "en",
             languageChange: languageChange,

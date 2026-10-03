@@ -54,6 +54,7 @@ final class SetupWindowSlackPane: NSView {
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSlackAction: Selector]
     private let contentStack = NSStackView()
+    private let leftColumn = NSStackView()
     private let workDirectorySection = NSStackView()
     private let instructionSection = NSStackView()
     private let hotKeySection = NSStackView()
@@ -69,6 +70,7 @@ final class SetupWindowSlackPane: NSView {
     var hotKeyStatusTextForTesting: String { hotKeyStatusLabel.stringValue }
     var loginItemStatusTextForTesting: String { loginItemStatusLabel.stringValue }
     var previewTitleForTesting: String { previewTitleLabel.stringValue }
+    var leftColumnForTesting: NSStackView { leftColumn }
     var wrappingStatusLabelsForTesting: [NSTextField] {
         [workDirectoryValidationLabel, instructionValidationLabel, hotKeyStatusLabel,
          loginItemStatusLabel, previewTitleLabel, previewCaptionLabel]
@@ -342,17 +344,21 @@ final class SetupWindowSlackPane: NSView {
     }
 
     private func buildLayout() {
-        let leftColumn = NSStackView(views: [
+        for view in [
             workDirectorySection,
             instructionSection,
             hotKeySection,
             loginItemSection,
-        ])
+        ] {
+            leftColumn.addArrangedSubview(view)
+        }
         leftColumn.orientation = .vertical
         leftColumn.alignment = .leading
         leftColumn.distribution = .fill
         leftColumn.spacing = 15
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
+        leftColumn.setContentHuggingPriority(.required, for: .vertical)
+        leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
 
         contentStack.orientation = .horizontal

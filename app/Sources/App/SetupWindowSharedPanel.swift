@@ -380,7 +380,10 @@ final class SetupWindowSharedPanel: NSView {
         case .cmuxNotInstalled(let channel):
             return SetupWindowSharedPanelBlockCopy(
                 title: localized("app.setup.problem.cmux.notInstalled.title", terminalName(channel)),
-                paragraphs: [localized("app.setup.problem.cmux.notInstalled.cause")],
+                paragraphs: [localized(
+                    "app.setup.problem.cmux.notInstalled.cause",
+                    localized("app.setup.action.openTerminalSettings")
+                )],
                 effects: [localized("app.setup.problem.cmux.notInstalled.effect")],
                 buttons: [button(localized("app.setup.action.openTerminalSettings"), .openTerminalSettings)]
             )
@@ -695,12 +698,18 @@ final class SetupWindowInstallStepView: NSView {
         row.spacing = 10
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let reservedWidth: CGFloat = 22
+            + CGFloat(rowViews.count - 1) * row.spacing
+            + (actionButton?.fittingSize.width ?? 0)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
             row.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
-            textStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+            textStack.widthAnchor.constraint(equalTo: widthAnchor, constant: -reservedWidth),
+            titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+            statusLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
         ])
     }
 
@@ -720,7 +729,8 @@ final class SetupWindowInstallStepView: NSView {
             .withAlphaComponent(0.17).cgColor
         actionButton?.title = buttonTitle ?? ""
         actionButton?.isHidden = !buttonVisible
-        actionButton?.contentTintColor = isPrimary ? Theme.ok : nil
+        actionButton?.bezelColor = isPrimary ? Theme.actionGreen : nil
+        actionButton?.contentTintColor = isPrimary ? .white : nil
         actionButton?.keyEquivalent = isPrimary ? "\r" : ""
     }
 }
@@ -793,11 +803,11 @@ final class SetupWindowInstallChecklistView: NSView {
         )
         let step1 = SetupWindowInstallStepView(
             number: 2,
-            title: localized("app.button.installInChrome"),
+            title: localized("app.setup.install.chrome.title"),
             status: chromeStatus,
             isComplete: requestRecorded && !folderIsMissing,
             button: (
-                localized("app.setup.action.chromeInstall"), .installInChrome, "guide.chrome-install"
+                localized("app.button.installInChrome"), .installInChrome, "guide.chrome-install"
             ),
             target: target,
             selectors: selectors
@@ -889,7 +899,9 @@ final class SetupWindowInstallChecklistView: NSView {
         closeRow.translatesAutoresizingMaskIntoConstraints = false
         closeRow.setAccessibilityElement(true)
         closeRow.setAccessibilityRole(.group)
-        closeRow.setAccessibilityLabel(localized("app.setup.install.closeGuide.accessibilityLabel"))
+        closeRow.setAccessibilityLabel(localized(
+            "app.setup.install.closeGuide.accessibilityLabel", closeGuideButton.title
+        ))
         contentStack.addArrangedSubview(closeRow)
         closeRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
@@ -933,11 +945,11 @@ final class SetupWindowInstallChecklistView: NSView {
             ? localized("app.setup.install.chrome.folderMissing")
             : (requestRecorded ? localized("app.setup.install.chrome.complete") : localized("app.setup.install.chrome.folderReady"))
         steps[1].update(
-            title: localized("app.button.installInChrome"), status: chromeStatus,
+            title: localized("app.setup.install.chrome.title"), status: chromeStatus,
             isComplete: requestRecorded && !folderMissing, isProblem: folderMissing,
-            buttonTitle: localized("app.setup.action.chromeInstall"),
+            buttonTitle: localized("app.button.installInChrome"),
             buttonVisible: !requestRecorded || folderMissing,
-            isPrimary: !requestRecorded
+            isPrimary: !requestRecorded || folderMissing
         )
         steps[2].update(
             title: localized(requestRecorded ? "app.setup.install.github.completeTitle" : "app.setup.install.github.pendingTitle"),

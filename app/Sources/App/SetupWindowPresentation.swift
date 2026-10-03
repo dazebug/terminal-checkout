@@ -255,6 +255,7 @@ enum SetupWindowGitHubPreviewDestination: Equatable {
 }
 
 struct SetupWindowGitHubPreview: Equatable {
+    let terminal: Terminal
     let rowNumbers: [Int]
     let destination: SetupWindowGitHubPreviewDestination
     let effectSentence: SetupWindowEffectSentence
@@ -507,6 +508,7 @@ enum SetupWindowPresentationModel {
         let github: SetupWindowGitHubPreview
         if snapshot.selectedTerminal.cmuxChannel == nil {
             github = SetupWindowGitHubPreview(
+                terminal: snapshot.selectedTerminal,
                 rowNumbers: rowNumbers,
                 destination: .newTabPerRow,
                 effectSentence: .githubRowsOpenNewTabs(rowNumbers: rowNumbers)
@@ -526,6 +528,7 @@ enum SetupWindowPresentationModel {
             }
             let preservesExistingPaneAndTab = identity == .findNamedWorkspace
             github = SetupWindowGitHubPreview(
+                terminal: snapshot.selectedTerminal,
                 rowNumbers: rowNumbers,
                 destination: .cmux(
                     arrangement: preset.arrangement,
