@@ -27,12 +27,6 @@ enum SetupWindowSlackAction: CaseIterable, Hashable {
     case slackLoginItemToggled
 }
 
-func setupWindowSlackPaneRole(
-    _ action: Selector, _ qualifier: String? = nil
-) -> NSUserInterfaceItemIdentifier {
-    NSUserInterfaceItemIdentifier(( ["control", "\(action)"] + [qualifier].compactMap { $0 } ).joined(separator: "."))
-}
-
 func setupWindowSlackPreviewCaption(_ sentence: SetupWindowEffectSentence) -> String {
     switch sentence {
     case .slackClaudeInWorkingFolder:
@@ -221,7 +215,7 @@ final class SetupWindowSlackPane: NSView {
         workDirectoryField.placeholderString = localized("app.slack.workDirectory.placeholder")
         workDirectoryField.target = actionTarget
         workDirectoryField.action = selectors[.slackThreadSettingsEdited]
-        workDirectoryField.identifier = setupWindowSlackPaneRole(
+        workDirectoryField.identifier = setupWindowControlRole(
             selectors[.slackThreadSettingsEdited]!, "workDirectory"
         )
         workDirectoryField.cell?.sendsActionOnEndEditing = true
@@ -231,7 +225,7 @@ final class SetupWindowSlackPane: NSView {
         chooseWorkDirectoryButton.bezelStyle = .rounded
         chooseWorkDirectoryButton.target = actionTarget
         chooseWorkDirectoryButton.action = selectors[.chooseSlackWorkDirectory]
-        chooseWorkDirectoryButton.identifier = setupWindowSlackPaneRole(
+        chooseWorkDirectoryButton.identifier = setupWindowControlRole(
             selectors[.chooseSlackWorkDirectory]!
         )
 
@@ -260,7 +254,7 @@ final class SetupWindowSlackPane: NSView {
         instructionField.placeholderString = localized("app.slack.instruction.help")
         instructionField.target = actionTarget
         instructionField.action = selectors[.slackThreadSettingsEdited]
-        instructionField.identifier = setupWindowSlackPaneRole(
+        instructionField.identifier = setupWindowControlRole(
             selectors[.slackThreadSettingsEdited]!, "instruction"
         )
         instructionField.cell?.sendsActionOnEndEditing = true
@@ -285,13 +279,13 @@ final class SetupWindowSlackPane: NSView {
         hotKeyButton.bezelStyle = .rounded
         hotKeyButton.target = actionTarget
         hotKeyButton.action = selectors[.recordSlackHotKey]
-        hotKeyButton.identifier = setupWindowSlackPaneRole(selectors[.recordSlackHotKey]!)
+        hotKeyButton.identifier = setupWindowControlRole(selectors[.recordSlackHotKey]!)
 
         clearHotKeyButton.title = localized("app.slack.hotKey.clear")
         clearHotKeyButton.bezelStyle = .rounded
         clearHotKeyButton.target = actionTarget
         clearHotKeyButton.action = selectors[.clearSlackHotKey]
-        clearHotKeyButton.identifier = setupWindowSlackPaneRole(selectors[.clearSlackHotKey]!)
+        clearHotKeyButton.identifier = setupWindowControlRole(selectors[.clearSlackHotKey]!)
 
         let row = NSStackView(views: [title, hotKeyButton, clearHotKeyButton])
         row.orientation = .horizontal
@@ -311,7 +305,7 @@ final class SetupWindowSlackPane: NSView {
         loginItemCheckbox.title = localized("app.slack.loginItem.title")
         loginItemCheckbox.target = actionTarget
         loginItemCheckbox.action = selectors[.slackLoginItemToggled]
-        loginItemCheckbox.identifier = setupWindowSlackPaneRole(selectors[.slackLoginItemToggled]!)
+        loginItemCheckbox.identifier = setupWindowControlRole(selectors[.slackLoginItemToggled]!)
 
         let hint = NSTextField(wrappingLabelWithString: localized("app.slack.loginItem.help"))
         hint.font = Theme.ui(10.5)

@@ -123,7 +123,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         for (control, action) in expected {
             let selector = try XCTUnwrap(fixture.selectors[action])
             XCTAssertEqual(control.action, selector)
-            XCTAssertEqual(control.identifier, setupWindowGeneralPaneRole(selector))
+            XCTAssertEqual(control.identifier, setupWindowControlRole(selector))
         }
     }
 
@@ -158,10 +158,34 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         XCTAssertEqual(
             fixture.pane.cmuxActionButtonRoles,
             [
-                setupWindowGeneralPaneRole(try XCTUnwrap(fixture.selectors[.openCmuxConfig])),
-                setupWindowGeneralPaneRole(try XCTUnwrap(fixture.selectors[.refreshCmuxStatus])),
+                setupWindowControlRole(
+                    try XCTUnwrap(fixture.selectors[.openCmuxConfig]), "connection-details.cmux-config"
+                ),
+                setupWindowControlRole(
+                    try XCTUnwrap(fixture.selectors[.refreshCmuxStatus]), "connection-details.cmux-refresh"
+                ),
             ]
         )
+    }
+
+    func testConnectionDetailsUpdatesCmuxFeedbackWithoutReplacingThePane() throws {
+        let fixture = makePane(state: makeState(terminal: .cmux))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let pane = fixture.pane
+        let popover = pane.connectionDetailsPopover
+
+        pane.update(makeState(
+            terminal: .cmux,
+            cmuxFeedback: .init(text: localized("app.status.cmux.configOpened"), tone: .success)
+        ))
+
+        XCTAssertTrue(popover === pane.connectionDetailsPopover)
+        XCTAssertFalse(pane.cmuxFeedbackIsHiddenForTesting)
+        XCTAssertEqual(pane.cmuxFeedbackTextForTesting, localized("app.status.cmux.configOpened"))
+
+        pane.update(makeState(terminal: .cmux))
+        XCTAssertTrue(pane.cmuxFeedbackIsHiddenForTesting)
     }
 
     func testTerminalDetailTitleUsesOneLocalizedSentenceWithTerminalName() throws {
@@ -213,7 +237,8 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         terminal: Terminal = .iterm,
         tabActivation: TabActivation = .foreground,
         installed: [Terminal: Bool] = Dictionary(uniqueKeysWithValues: Terminal.allCases.map { ($0, true) }),
-        languageChange: SetupWindowGeneralLanguageChange = .unchanged
+        languageChange: SetupWindowGeneralLanguageChange = .unchanged,
+        cmuxFeedback: SetupWindowGeneralIndicator? = nil
     ) -> SetupWindowGeneralPaneState {
         let requestDate = requestRecorded ? Date(timeIntervalSince1970: 1_791_000_000) : nil
         let installations = Terminal.allCases.map {
@@ -241,7 +266,8 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
             terminalTestResult: .notRun,
             storedLanguage: automaticLocalePreference,
             resolvedLanguage: "en",
-            languageChange: languageChange
+            languageChange: languageChange,
+            cmuxFeedback: cmuxFeedback
         )
     }
 

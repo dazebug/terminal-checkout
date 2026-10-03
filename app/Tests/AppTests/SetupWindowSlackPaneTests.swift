@@ -170,15 +170,15 @@ final class SetupWindowSlackPaneTests: XCTestCase {
         for (control, action, qualifier) in fixture.pane.actionControlsForTesting {
             let selector = try XCTUnwrap(fixture.selectors[action])
             XCTAssertEqual(control.action, selector)
-            XCTAssertEqual(control.identifier, setupWindowSlackPaneRole(selector, qualifier))
+            XCTAssertEqual(control.identifier, setupWindowControlRole(selector, qualifier))
         }
         XCTAssertEqual(
             fixture.pane.workDirectoryField.identifier,
-            setupWindowSlackPaneRole(try XCTUnwrap(fixture.selectors[.slackThreadSettingsEdited]), "workDirectory")
+            setupWindowControlRole(try XCTUnwrap(fixture.selectors[.slackThreadSettingsEdited]), "workDirectory")
         )
         XCTAssertEqual(
             fixture.pane.instructionField.identifier,
-            setupWindowSlackPaneRole(try XCTUnwrap(fixture.selectors[.slackThreadSettingsEdited]), "instruction")
+            setupWindowControlRole(try XCTUnwrap(fixture.selectors[.slackThreadSettingsEdited]), "instruction")
         )
     }
 

@@ -1,14 +1,14 @@
 import Core
 import Foundation
 
-enum SetupWindowManifestStatus {
+enum SetupWindowManifestStatus: Equatable {
     case registered
     case notRegistered
     case wrongRelayPath
     case wrongExtensionID
 }
 
-enum SetupWindowExtensionFolderStatus {
+enum SetupWindowExtensionFolderStatus: Equatable {
     case present
     case missing
 }
@@ -192,6 +192,17 @@ enum SetupWindowProblemCopy: Equatable {
 struct SetupWindowProblem: Equatable {
     let severity: SetupWindowProblemSeverity
     let copy: SetupWindowProblemCopy
+    let openingReasonOrder: Int?
+
+    init(
+        severity: SetupWindowProblemSeverity,
+        copy: SetupWindowProblemCopy,
+        openingReasonOrder: Int? = nil
+    ) {
+        self.severity = severity
+        self.copy = copy
+        self.openingReasonOrder = openingReasonOrder
+    }
 }
 
 enum SetupWindowConnectionSentence: Equatable {
@@ -352,11 +363,16 @@ enum SetupWindowPresentationModel {
                     }
                     return SetupWindowProblem(
                         severity: .warning,
-                        copy: .claudeInputRejected(blocker)
+                        copy: .claudeInputRejected(blocker),
+                        openingReasonOrder: reason.arrivalOrder
                     )
                 case .slackThreadRequestFailed:
                     guard snapshot.slackRequestFailureIsActive else { return nil }
-                    return SetupWindowProblem(severity: .error, copy: .slackThreadRequestFailed)
+                    return SetupWindowProblem(
+                        severity: .error,
+                        copy: .slackThreadRequestFailed,
+                        openingReasonOrder: reason.arrivalOrder
+                    )
                 }
             }
 
@@ -379,7 +395,8 @@ enum SetupWindowPresentationModel {
             current.append(.init(severity: .error, copy: .appSocketUnavailable))
         }
 
-        if snapshot.isInstalled(snapshot.selectedTerminal) == false {
+        if snapshot.selectedTerminal.cmuxChannel == nil,
+           snapshot.isInstalled(snapshot.selectedTerminal) == false {
             current.append(.init(
                 severity: .error,
                 copy: .selectedTerminalNotInstalled(snapshot.selectedTerminal)
@@ -415,7 +432,8 @@ enum SetupWindowPresentationModel {
         case .wezterm:
             break
         case .warp:
-            guard !snapshot.warpAccessibilityGranted,
+            guard snapshot.isInstalled(.warp) != false,
+                  !snapshot.warpAccessibilityGranted,
                   !snapshot.openingReasons.contains(where: {
                       if case .claudeInputRejected(.warpAccessibility, _) = $0 { return true }
                       return false

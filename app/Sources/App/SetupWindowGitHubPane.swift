@@ -18,10 +18,6 @@ enum SetupWindowGitHubAction: CaseIterable, Hashable {
     case cmuxPlacementNameEdited
 }
 
-func setupWindowGitHubPaneRole(_ action: Selector) -> NSUserInterfaceItemIdentifier {
-    NSUserInterfaceItemIdentifier("control.\(action)")
-}
-
 func setupWindowGitHubEffectSentence(_ sentence: SetupWindowEffectSentence) -> String {
     switch sentence {
     case .githubRowsOpenNewTabs:
@@ -177,7 +173,7 @@ final class SetupWindowGitHubPane: NSView {
         baseDirectoryField.placeholderString = localized("app.baseDir.placeholder")
         baseDirectoryField.target = actionTarget
         baseDirectoryField.action = selectors[.baseDirectoryEdited]
-        baseDirectoryField.identifier = setupWindowGitHubPaneRole(selectors[.baseDirectoryEdited]!)
+        baseDirectoryField.identifier = setupWindowControlRole(selectors[.baseDirectoryEdited]!)
         baseDirectoryField.cell?.sendsActionOnEndEditing = true
         baseDirectoryField.widthAnchor.constraint(equalToConstant: 225).isActive = true
 
@@ -185,7 +181,7 @@ final class SetupWindowGitHubPane: NSView {
         chooseBaseDirectoryButton.bezelStyle = .rounded
         chooseBaseDirectoryButton.target = actionTarget
         chooseBaseDirectoryButton.action = selectors[.chooseBaseDirectory]
-        chooseBaseDirectoryButton.identifier = setupWindowGitHubPaneRole(selectors[.chooseBaseDirectory]!)
+        chooseBaseDirectoryButton.identifier = setupWindowControlRole(selectors[.chooseBaseDirectory]!)
 
         let row = NSStackView(views: [baseDirectoryField, chooseBaseDirectoryButton])
         row.orientation = .horizontal
@@ -243,7 +239,7 @@ final class SetupWindowGitHubPane: NSView {
         arrangementSegment.setWidth(96, forSegment: 2)
         arrangementSegment.target = actionTarget
         arrangementSegment.action = selectors[.cmuxPlacementArrangementChanged]
-        arrangementSegment.identifier = setupWindowGitHubPaneRole(
+        arrangementSegment.identifier = setupWindowControlRole(
             selectors[.cmuxPlacementArrangementChanged]!
         )
         arrangementSegment.setAccessibilityLabel(localized("app.setup.github.batch.arrangement"))
@@ -263,7 +259,7 @@ final class SetupWindowGitHubPane: NSView {
         identitySegment.setWidth(124, forSegment: 1)
         identitySegment.target = actionTarget
         identitySegment.action = selectors[.cmuxPlacementIdentityChanged]
-        identitySegment.identifier = setupWindowGitHubPaneRole(
+        identitySegment.identifier = setupWindowControlRole(
             selectors[.cmuxPlacementIdentityChanged]!
         )
         identitySegment.setAccessibilityLabel(localized("app.setup.github.batch.workspace"))
@@ -272,7 +268,7 @@ final class SetupWindowGitHubPane: NSView {
         workspaceNameField.placeholderString = localized("app.cmux.placement.name.placeholder")
         workspaceNameField.target = actionTarget
         workspaceNameField.action = selectors[.cmuxPlacementNameEdited]
-        workspaceNameField.identifier = setupWindowGitHubPaneRole(
+        workspaceNameField.identifier = setupWindowControlRole(
             selectors[.cmuxPlacementNameEdited]!
         )
         workspaceNameField.cell?.sendsActionOnEndEditing = true

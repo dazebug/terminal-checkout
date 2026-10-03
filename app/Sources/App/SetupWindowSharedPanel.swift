@@ -22,7 +22,7 @@ enum SetupWindowSharedPanelAction: String, CaseIterable, Hashable {
     case dismissSetupGuide
 }
 
-func setupWindowSharedPanelRole(
+func setupWindowControlRole(
     _ action: Selector, _ qualifier: String? = nil
 ) -> NSUserInterfaceItemIdentifier {
     NSUserInterfaceItemIdentifier(
@@ -43,13 +43,14 @@ struct SetupWindowSharedPanelBlockCopy {
 }
 
 final class SetupWindowSharedPanel: NSView {
-    let presentation: SetupWindowPresentation
-    private let manifest: SetupWindowManifestStatus
-    private let extensionFolder: SetupWindowExtensionFolderStatus
-    private let slackFailureDetail: String?
+    private(set) var presentation: SetupWindowPresentation
+    private var manifest: SetupWindowManifestStatus
+    private var extensionFolder: SetupWindowExtensionFolderStatus
+    private var slackFailureDetail: String?
     private weak var actionTarget: AnyObject?
     private let selectors: [SetupWindowSharedPanelAction: Selector]
     private let contentStack = NSStackView()
+    private var blocksByRole: [String: SetupWindowProblemBlockView] = [:]
 
     private(set) var problemBlockViews: [SetupWindowProblemBlockView] = []
     private(set) var installChecklistView: SetupWindowInstallChecklistView?
@@ -91,61 +92,37 @@ final class SetupWindowSharedPanel: NSView {
             contentStack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        let visibleProblems = presentation.problems.filter { problem in
-            guard presentation.showsFirstInstallChecklist else { return true }
-            switch problem.copy {
-            case .manifestNotRegistered, .manifestWrongRelayPath, .manifestWrongExtensionID:
-                return false // The checklist's Native Host step already shows this state and action.
-            default:
-                return true
-            }
-        }
-        problemBlockViews = visibleProblems.map { problem in
-            let copy = Self.copy(
-                for: problem,
-                manifest: manifest,
-                slackFailureDetail: slackFailureDetail
-            )
-            return SetupWindowProblemBlockView(
-                problem: problem,
-                roleQualifier: Self.roleQualifier(for: problem.copy),
-                copy: copy,
+        var createdRoles: Set<String> = []
+        for template in Self.problemTemplates {
+            let role = Self.blockRoleQualifier(for: template)
+            guard createdRoles.insert(role).inserted else { continue }
+            let block = SetupWindowProblemBlockView(
+                problem: template,
+                roleQualifier: role,
+                copy: Self.copy(for: template, manifest: manifest, slackFailureDetail: nil),
                 target: target,
                 selectors: selectors
             )
+            block.isHidden = true
+            blocksByRole[role] = block
+            contentStack.addArrangedSubview(block)
+            block.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
-
-        let openingReasonBlocks = zip(visibleProblems, problemBlockViews)
-            .filter { $0.0.isOpeningReason }
-            .map(\.1)
-        let remainingProblemBlocks = zip(visibleProblems, problemBlockViews)
-            .filter { !$0.0.isOpeningReason }
-            .map(\.1)
-        for block in openingReasonBlocks {
-            addProblemBlock(block)
-        }
-
-        if presentation.showsFirstInstallChecklist {
-            let checklist = SetupWindowInstallChecklistView(
-                manifest: manifest,
-                extensionFolder: extensionFolder,
-                requestRecorded: Self.hasRequestRecord(presentation),
-                guideStepsExpanded: installStepsExpanded,
-                installFeedback: installFeedback,
-                target: target,
-                selectors: selectors
-            )
-            installChecklistView = checklist
-            contentStack.addArrangedSubview(checklist)
-            checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        }
-
-        for block in remainingProblemBlocks {
-            addProblemBlock(block)
-        }
-
-        isHidden = contentStack.arrangedSubviews.isEmpty
-        contentStack.isHidden = isHidden
+        let checklist = SetupWindowInstallChecklistView(
+            manifest: manifest,
+            extensionFolder: extensionFolder,
+            requestRecorded: Self.hasRequestRecord(presentation),
+            guideStepsExpanded: installStepsExpanded,
+            installFeedback: installFeedback,
+            target: target,
+            selectors: selectors
+        )
+        installChecklistView = checklist
+        contentStack.addArrangedSubview(checklist)
+        checklist.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        update(presentation, manifest: manifest, extensionFolder: extensionFolder,
+               slackFailureDetail: slackFailureDetail, installStepsExpanded: installStepsExpanded,
+               installFeedback: installFeedback)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -157,26 +134,125 @@ final class SetupWindowSharedPanel: NSView {
         installChecklistView?.showChromeInstallationSteps()
     }
 
-    private func addProblemBlock(_ block: SetupWindowProblemBlockView) {
-        contentStack.addArrangedSubview(block)
-        block.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+    func update(
+        _ presentation: SetupWindowPresentation,
+        manifest: SetupWindowManifestStatus,
+        extensionFolder: SetupWindowExtensionFolderStatus,
+        slackFailureDetail: String?,
+        installStepsExpanded: Bool,
+        installFeedback: String?
+    ) {
+        self.presentation = presentation
+        self.manifest = manifest
+        self.extensionFolder = extensionFolder
+        self.slackFailureDetail = slackFailureDetail
+        installChecklistView?.update(
+            manifest: manifest,
+            extensionFolder: extensionFolder,
+            requestRecorded: Self.hasRequestRecord(presentation),
+            visible: presentation.showsFirstInstallChecklist,
+            guideStepsExpanded: installStepsExpanded,
+            installFeedback: installFeedback
+        )
+
+        let visibleProblems = presentation.problems.filter { problem in
+            guard presentation.showsFirstInstallChecklist else { return true }
+            switch problem.copy {
+            case .manifestNotRegistered, .manifestWrongRelayPath, .manifestWrongExtensionID:
+                return false
+            default:
+                return true
+            }
+        }
+        var ordered: [SetupWindowProblemBlockView] = []
+        for problem in visibleProblems {
+            let role = Self.blockRoleQualifier(for: problem)
+            let block: SetupWindowProblemBlockView
+            if let retained = blocksByRole[role] {
+                block = retained
+            } else {
+                let created = SetupWindowProblemBlockView(
+                    problem: problem,
+                    roleQualifier: role,
+                    copy: Self.copy(for: problem, manifest: manifest, slackFailureDetail: slackFailureDetail),
+                    target: actionTarget,
+                    selectors: selectors
+                )
+                created.isHidden = true
+                blocksByRole[role] = created
+                contentStack.addArrangedSubview(created)
+                created.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+                block = created
+            }
+            block.update(
+                problem: problem,
+                copy: Self.copy(for: problem, manifest: manifest, slackFailureDetail: slackFailureDetail)
+            )
+            block.isHidden = false
+            ordered.append(block)
+        }
+        for block in blocksByRole.values where !ordered.contains(where: { $0 === block }) {
+            block.isHidden = true
+        }
+        problemBlockViews = ordered
+        let opening = ordered.filter { $0.problem.isOpeningReason }
+        let remaining = ordered.filter { !$0.problem.isOpeningReason }
+        var arranged: [NSView] = opening
+        if presentation.showsFirstInstallChecklist, let installChecklistView { arranged.append(installChecklistView) }
+        arranged += remaining
+        let current = contentStack.arrangedSubviews
+        if current.count != arranged.count || zip(current, arranged).contains(where: { $0 !== $1 }) {
+            for view in current { contentStack.removeArrangedSubview(view) }
+            for view in arranged { contentStack.addArrangedSubview(view) }
+        }
+        isHidden = arranged.isEmpty
+        contentStack.isHidden = isHidden
     }
+
+    private static let problemTemplates: [SetupWindowProblem] = [
+        .init(severity: .error, copy: .manifestNotRegistered),
+        .init(severity: .error, copy: .extensionFolderMissingAfterRequest),
+        .init(severity: .error, copy: .appSocketUnavailable),
+        .init(severity: .error, copy: .selectedTerminalNotInstalled(.iterm)),
+        .init(severity: .error, copy: .iTermAutomation(.denied)),
+        .init(severity: .warning, copy: .cmuxNotRunning(.stable)),
+        .init(severity: .warning, copy: .warpAccessibilityRequired),
+        .init(severity: .warning, copy: .toolUnavailable(name: "zoxide")),
+        .init(severity: .warning, copy: .toolUnavailable(name: "gh")),
+        .init(severity: .error, copy: .criticalToolUnavailable(name: "zoxide")),
+        .init(severity: .error, copy: .claudeUnavailable),
+        .init(severity: .warning, copy: .claudeNotExecutable),
+    ]
 
     private static func roleQualifier(for copy: SetupWindowProblemCopy) -> String {
         switch copy {
-        case .claudeInputRejected(let blocker): return "problem.claude-input-\(blocker)"
+        case .claudeInputRejected: return "problem.opened-claude"
         case .slackThreadRequestFailed: return "problem.slack-request"
         case .manifestNotRegistered, .manifestWrongRelayPath, .manifestWrongExtensionID:
             return "problem.manifest"
         case .extensionFolderMissingAfterRequest: return "problem.extension-folder"
         case .appSocketUnavailable: return "problem.app-socket"
-        case .selectedTerminalNotInstalled: return "problem.terminal-not-installed"
+        case .selectedTerminalNotInstalled: return "problem.selected-terminal"
         case .iTermAutomation: return "problem.iterm-automation"
         case .cmuxNotInstalled, .cmuxNotRunning, .cmuxAccessDenied, .cmuxCheckFailed:
             return "problem.cmux"
         case .warpAccessibilityRequired: return "problem.warp-accessibility"
         case .toolUnavailable(let name), .criticalToolUnavailable(let name): return "problem.tool-\(name)"
         case .claudeUnavailable, .claudeNotExecutable: return "problem.tool-claude"
+        }
+    }
+
+    private static func blockRoleQualifier(for problem: SetupWindowProblem) -> String {
+        guard let order = problem.openingReasonOrder else {
+            return roleQualifier(for: problem.copy)
+        }
+        switch problem.copy {
+        case .claudeInputRejected:
+            return "problem.opened-claude.\(order)"
+        case .slackThreadRequestFailed:
+            return "problem.slack-request.\(order)"
+        default:
+            return roleQualifier(for: problem.copy)
         }
     }
 
@@ -433,14 +509,20 @@ private extension SetupWindowProblem {
 }
 
 final class SetupWindowProblemBlockView: NSView {
-    let problem: SetupWindowProblem
+    private(set) var problem: SetupWindowProblem
     let titleLabel: NSTextField
     let paragraphLabels: [NSTextField]
     let effectLabels: [NSTextField]
     let actionButtons: [NSButton]
-    let voiceOverLabel: String
+    var voiceOverLabel: String { accessibilityLabelText }
 
     private let contentStack = NSStackView()
+    private let severityDot = makeStatusDot(for: .warning)
+    private let actionsStack = NSStackView()
+    private let roleQualifier: String
+    private weak var actionTarget: AnyObject?
+    private let selectors: [SetupWindowSharedPanelAction: Selector]
+    private var accessibilityLabelText = ""
 
     init(
         problem: SetupWindowProblem,
@@ -450,26 +532,16 @@ final class SetupWindowProblemBlockView: NSView {
         selectors: [SetupWindowSharedPanelAction: Selector]
     ) {
         self.problem = problem
+        self.roleQualifier = roleQualifier
+        self.actionTarget = target
+        self.selectors = selectors
         titleLabel = makeSetupPanelLabel(copy.title, font: Theme.ui(13, .semibold), color: Theme.text)
-        paragraphLabels = copy.paragraphs.map {
-            makeSetupPanelLabel($0, font: Theme.ui(12), color: Theme.text)
-        }
-        effectLabels = copy.effects.map {
-            makeSetupPanelLabel($0, font: Theme.ui(11), color: Theme.textDim)
-        }
-        voiceOverLabel = localized(
-            "app.setup.problem.accessibilityLabel",
-            localized(problem.severity == .error ? "app.setup.severity.error" : "app.setup.severity.warning"),
-            copy.title
-        )
-        actionButtons = copy.buttons.map { button in
-            makeSetupPanelButton(
-                title: button.title,
-                action: button.action,
-                qualifier: roleQualifier,
-                target: target,
-                selectors: selectors
-            )
+        paragraphLabels = (0..<2).map { _ in makeSetupPanelLabel("", font: Theme.ui(12), color: Theme.text) }
+        effectLabels = (0..<1).map { _ in makeSetupPanelLabel("", font: Theme.ui(11), color: Theme.textDim) }
+        actionButtons = (0..<2).map { _ in
+            let button = NSButton(title: "", target: nil, action: nil)
+            button.bezelStyle = .rounded
+            return button
         }
         super.init(frame: .zero)
 
@@ -481,7 +553,7 @@ final class SetupWindowProblemBlockView: NSView {
         layer?.cornerRadius = 9
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel(voiceOverLabel)
+        setAccessibilityLabel("")
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -496,7 +568,7 @@ final class SetupWindowProblemBlockView: NSView {
             contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
 
-        let heading = NSStackView(views: [makeStatusDot(for: problem.severity), titleLabel])
+        let heading = NSStackView(views: [severityDot, titleLabel])
         heading.orientation = .horizontal
         heading.alignment = .centerY
         heading.spacing = 8
@@ -509,25 +581,60 @@ final class SetupWindowProblemBlockView: NSView {
             contentStack.addArrangedSubview(label)
             label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
-        if !actionButtons.isEmpty {
-            let actions = NSStackView(views: actionButtons)
-            actions.orientation = .horizontal
-            actions.alignment = .centerY
-            actions.spacing = 8
-            contentStack.addArrangedSubview(actions)
-        }
+        actionsStack.orientation = .horizontal
+        actionsStack.alignment = .centerY
+        actionsStack.spacing = 8
+        for button in actionButtons { actionsStack.addArrangedSubview(button) }
+        contentStack.addArrangedSubview(actionsStack)
+        update(problem: problem, copy: copy)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update(problem: SetupWindowProblem, copy: SetupWindowSharedPanelBlockCopy) {
+        self.problem = problem
+        titleLabel.stringValue = copy.title
+        severityDot.layer?.backgroundColor = (problem.severity == .error ? Theme.err : Theme.warn).cgColor
+        for (index, label) in paragraphLabels.enumerated() {
+            label.stringValue = index < copy.paragraphs.count ? copy.paragraphs[index] : ""
+            label.isHidden = index >= copy.paragraphs.count
+        }
+        for (index, label) in effectLabels.enumerated() {
+            label.stringValue = index < copy.effects.count ? copy.effects[index] : ""
+            label.isHidden = index >= copy.effects.count
+        }
+        for (index, button) in actionButtons.enumerated() {
+            guard index < copy.buttons.count else {
+                button.isHidden = true
+                continue
+            }
+            let model = copy.buttons[index]
+            button.title = model.title
+            if let selector = selectors[model.action] {
+                button.target = actionTarget
+                button.action = selector
+                button.identifier = setupWindowControlRole(selector, roleQualifier)
+            }
+            button.isHidden = false
+        }
+        actionsStack.isHidden = copy.buttons.isEmpty
+        accessibilityLabelText = localized(
+            "app.setup.problem.accessibilityLabel",
+            localized(problem.severity == .error ? "app.setup.severity.error" : "app.setup.severity.warning"),
+            copy.title
+        )
+        setAccessibilityLabel(accessibilityLabelText)
+    }
 }
 
 final class SetupWindowInstallStepView: NSView {
     let titleLabel: NSTextField
     let statusLabel: NSTextField
     let actionButton: NSButton?
-    let isComplete: Bool
+    private(set) var isComplete: Bool
 
     private let marker: NSTextField
+    private let number: Int
 
     init(
         number: Int,
@@ -539,6 +646,7 @@ final class SetupWindowInstallStepView: NSView {
         target: AnyObject?,
         selectors: [SetupWindowSharedPanelAction: Selector]
     ) {
+        self.number = number
         self.isComplete = isComplete
         marker = makeSetupPanelLabel(
             isComplete ? "✓" : (isProblem ? "!" : String(number)),
@@ -590,6 +698,24 @@ final class SetupWindowInstallStepView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update(
+        title: String, status: String, isComplete: Bool, isProblem: Bool,
+        buttonTitle: String? = nil, buttonVisible: Bool = false, isPrimary: Bool = false
+    ) {
+        self.isComplete = isComplete
+        titleLabel.stringValue = title
+        statusLabel.stringValue = status
+        marker.stringValue = isComplete ? "✓" : (isProblem ? "!" : String(number))
+        let color = isComplete ? Theme.ok : (isProblem ? Theme.err : Theme.textDim)
+        marker.textColor = color
+        marker.layer?.backgroundColor = (isComplete ? Theme.ok : (isProblem ? Theme.err : Theme.border))
+            .withAlphaComponent(0.17).cgColor
+        actionButton?.title = buttonTitle ?? ""
+        actionButton?.isHidden = !buttonVisible
+        actionButton?.contentTintColor = isPrimary ? Theme.ok : nil
+        actionButton?.keyEquivalent = isPrimary ? "\r" : ""
+    }
 }
 
 final class SetupWindowInstallChecklistView: NSView {
@@ -597,7 +723,7 @@ final class SetupWindowInstallChecklistView: NSView {
     let guideStepsContainer: NSStackView
     let guideStepLabels: [NSTextField]
     let feedbackLabel: NSTextField
-    let closeGuideButton: NSButton?
+    let closeGuideButton: NSButton
 
     private let contentStack = NSStackView()
     private let chromeInstallButton: NSButton
@@ -654,9 +780,7 @@ final class SetupWindowInstallChecklistView: NSView {
             status: nativeHostStatus,
             isComplete: registered,
             isProblem: manifestProblem,
-            button: registered ? nil : (
-                localized("app.setup.action.registerManifest"), .registerManifest, "guide.native-host"
-            ),
+            button: (localized("app.setup.action.registerManifest"), .registerManifest, "guide.native-host"),
             target: target,
             selectors: selectors
         )
@@ -697,17 +821,13 @@ final class SetupWindowInstallChecklistView: NSView {
             font: Theme.ui(11),
             color: Theme.accent
         )
-        if requestRecorded {
-            closeGuideButton = makeSetupPanelButton(
-                title: localized("app.setup.action.dismissSetupGuide"),
-                action: .dismissSetupGuide,
-                qualifier: "guide.close",
-                target: target,
-                selectors: selectors
-            )
-        } else {
-            closeGuideButton = nil
-        }
+        closeGuideButton = makeSetupPanelButton(
+            title: localized("app.setup.action.dismissSetupGuide"),
+            action: .dismissSetupGuide,
+            qualifier: "guide.close",
+            target: target,
+            selectors: selectors
+        )
         super.init(frame: .zero)
 
         translatesAutoresizingMaskIntoConstraints = false
@@ -756,22 +876,19 @@ final class SetupWindowInstallChecklistView: NSView {
         contentStack.addArrangedSubview(feedbackLabel)
         feedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
-        if let closeGuideButton {
-            let closeRow = NSStackView(views: [closeGuideButton])
-            closeRow.orientation = .horizontal
-            closeRow.alignment = .centerY
-            closeRow.translatesAutoresizingMaskIntoConstraints = false
-            closeRow.setAccessibilityElement(true)
-            closeRow.setAccessibilityRole(.group)
-            closeRow.setAccessibilityLabel(localized("app.setup.install.closeGuide.accessibilityLabel"))
-            contentStack.addArrangedSubview(closeRow)
-            closeRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        }
+        let closeRow = NSStackView(views: [closeGuideButton])
+        closeRow.orientation = .horizontal
+        closeRow.alignment = .centerY
+        closeRow.translatesAutoresizingMaskIntoConstraints = false
+        closeRow.setAccessibilityElement(true)
+        closeRow.setAccessibilityRole(.group)
+        closeRow.setAccessibilityLabel(localized("app.setup.install.closeGuide.accessibilityLabel"))
+        contentStack.addArrangedSubview(closeRow)
+        closeRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
-        if !requestRecorded {
-            chromeInstallButton.keyEquivalent = "\r"
-            chromeInstallButton.contentTintColor = Theme.ok
-        }
+        update(manifest: manifest, extensionFolder: extensionFolder,
+               requestRecorded: requestRecorded, visible: true,
+               guideStepsExpanded: guideStepsExpanded, installFeedback: installFeedback)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -780,6 +897,50 @@ final class SetupWindowInstallChecklistView: NSView {
         guideStepsContainer.isHidden = false
         feedbackLabel.stringValue = localized("app.setup.install.chrome.feedback")
         feedbackLabel.isHidden = false
+    }
+
+    func update(
+        manifest: SetupWindowManifestStatus,
+        extensionFolder: SetupWindowExtensionFolderStatus,
+        requestRecorded: Bool,
+        visible: Bool,
+        guideStepsExpanded: Bool,
+        installFeedback: String?
+    ) {
+        isHidden = !visible
+        let registered = manifest == .registered
+        let manifestStatus: String
+        switch manifest {
+        case .registered: manifestStatus = localized("app.setup.install.nativeHost.complete")
+        case .notRegistered: manifestStatus = localized("app.setup.install.nativeHost.problem.notRegistered")
+        case .wrongRelayPath: manifestStatus = localized("app.setup.install.nativeHost.problem.wrongPath")
+        case .wrongExtensionID: manifestStatus = localized("app.setup.install.nativeHost.problem.wrongExtensionID")
+        }
+        steps[0].update(
+            title: localized("app.setup.install.nativeHost.title"), status: manifestStatus,
+            isComplete: registered, isProblem: !registered,
+            buttonTitle: localized("app.setup.action.registerManifest"), buttonVisible: !registered
+        )
+        let folderMissing = extensionFolder == .missing
+        let chromeStatus = folderMissing
+            ? localized("app.setup.install.chrome.folderMissing")
+            : (requestRecorded ? localized("app.setup.install.chrome.complete") : localized("app.setup.install.chrome.folderReady"))
+        steps[1].update(
+            title: localized("app.button.installInChrome"), status: chromeStatus,
+            isComplete: requestRecorded && !folderMissing, isProblem: folderMissing,
+            buttonTitle: localized("app.setup.action.chromeInstall"),
+            buttonVisible: !requestRecorded || folderMissing,
+            isPrimary: !requestRecorded
+        )
+        steps[2].update(
+            title: localized(requestRecorded ? "app.setup.install.github.completeTitle" : "app.setup.install.github.pendingTitle"),
+            status: localized(requestRecorded ? "app.setup.install.github.complete" : "app.setup.install.github.pending"),
+            isComplete: requestRecorded, isProblem: false
+        )
+        guideStepsContainer.isHidden = !guideStepsExpanded
+        feedbackLabel.stringValue = installFeedback ?? (guideStepsExpanded ? localized("app.setup.install.chrome.feedback") : "")
+        feedbackLabel.isHidden = !guideStepsExpanded
+        closeGuideButton.isHidden = !requestRecorded
     }
 }
 
@@ -795,7 +956,7 @@ private func makeSetupPanelButton(
     }
     let button = NSButton(title: title, target: target, action: selector)
     button.bezelStyle = .rounded
-    button.identifier = setupWindowSharedPanelRole(selector, qualifier)
+    button.identifier = setupWindowControlRole(selector, qualifier)
     return button
 }
 

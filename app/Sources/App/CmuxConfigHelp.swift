@@ -6,7 +6,7 @@ enum CmuxConfigRevealTarget: Equatable {
     case nothing
 }
 
-/// The setup card's non-destructive cmux configuration help.
+/// The settings window's non-destructive cmux configuration help.
 enum CmuxConfigHelp {
     static func defaultConfigURL(homeDirectory: String = NSHomeDirectory()) -> URL {
         URL(fileURLWithPath: homeDirectory)

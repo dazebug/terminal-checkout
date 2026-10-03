@@ -61,7 +61,7 @@ final class CmuxLocalizationTests: XCTestCase {
         }
     }
 
-    func testItem14CmuxCardStringsExistInAllFiveCatalogs() {
+    func testCmuxPaneAndStatusStringsExistInAllFiveCatalogs() {
         let sourceResources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -77,8 +77,8 @@ final class CmuxLocalizationTests: XCTestCase {
         AppLocalization.resourcesPath = sourceResources
 
         let keys = [
-            "app.button.openCmuxConfig", "app.button.refreshCmuxStatus",
-            "app.section.cmux.help", "app.section.cmux.title",
+            "app.setup.action.openCmuxConfig", "app.setup.action.refreshCmuxStatus",
+            "app.setup.github.batch.title", "app.setup.problem.cmux.denied.title",
             "app.status.cmux.configOpened", "app.status.cmux.configDirectoryOpened",
             "app.status.cmux.configOpenFailed", "app.status.cmux.configUnavailable",
             "app.status.cmux.configClipboardFailed",

@@ -125,7 +125,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             controller.select(terminal: terminal)
             SetupWindowTestSupport.settle(window)
             XCTAssertTrue(
-                controller.refillableSectionsForTesting[1].isHidden,
+                controller.githubPaneForTesting.cmuxSectionIsHiddenForTesting,
                 "placement controls were visible for \(terminal)"
             )
         }
@@ -133,11 +133,11 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             controller.select(terminal: terminal)
             SetupWindowTestSupport.settle(window)
             XCTAssertFalse(
-                controller.refillableSectionsForTesting[1].isHidden,
+                controller.githubPaneForTesting.cmuxSectionIsHiddenForTesting,
                 "placement controls were hidden for \(terminal)"
             )
-            XCTAssertEqual(controller.cmuxPlacementIdentityRadiosForTesting.count, 2)
-            XCTAssertEqual(controller.cmuxPlacementArrangementRadiosForTesting.count, 3)
+            XCTAssertEqual(controller.githubPaneForTesting.identitySegment.segmentCount, 2)
+            XCTAssertEqual(controller.githubPaneForTesting.arrangementSegment.segmentCount, 3)
         }
     }
 
@@ -147,26 +147,28 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: 2000)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
-        XCTAssertEqual(controller.cmuxPlacementIdentityRadiosForTesting.map(\.state), [.on, .off])
+        XCTAssertEqual(controller.githubPaneForTesting.identitySegment.selectedSegment, 0)
         XCTAssertEqual(
-            controller.cmuxPlacementArrangementRadiosForTesting.map(\.state),
-            [.on, .off, .off]
+            controller.githubPaneForTesting.arrangementSegment.selectedSegment,
+            0
         )
         XCTAssertFalse(controller.cmuxPlacementNameFieldForTesting.isEnabled)
-        XCTAssertTrue(controller.cmuxPlacementInterpretationLabelForTesting.stringValue.contains("New workspace"))
-        XCTAssertTrue(controller.cmuxPlacementInterpretationLabelForTesting.stringValue.contains("Pane per item"))
+        XCTAssertTrue(controller.githubPaneForTesting.effectSentenceLabel.stringValue.contains("New workspace"))
+        XCTAssertTrue(controller.githubPaneForTesting.effectSentenceLabel.stringValue.contains("Pane per item"))
     }
 
-    func testPlacementRadioChangesSaveImmediately() throws {
+    func testPlacementSegmentsSaveImmediately() throws {
         let controller = try makeController(terminal: .cmux)
-        let fixedName = controller.cmuxPlacementIdentityRadiosForTesting[1]
-        fixedName.performClick(nil)
+        let identity = controller.githubPaneForTesting.identitySegment
+        identity.selectedSegment = 1
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(identity.action), to: identity.target, from: identity))
 
         XCTAssertEqual(Settings.cmuxPlacementIdentityMode, "fixed-name")
         XCTAssertTrue(controller.cmuxPlacementNameFieldForTesting.isEnabled)
 
-        let tab = controller.cmuxPlacementArrangementRadiosForTesting[1]
-        tab.performClick(nil)
+        let arrangement = controller.githubPaneForTesting.arrangementSegment
+        arrangement.selectedSegment = 1
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(arrangement.action), to: arrangement.target, from: arrangement))
         XCTAssertEqual(
             Settings.cmuxPlacementArrangement,
             CmuxPlacementArrangement.tabPerItem.rawValue
@@ -176,8 +178,9 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
     func testPlacementNameUsesBaseDirectoryEditingSaveTiming() throws {
         let controller = try makeController(terminal: .cmux)
         let window = try XCTUnwrap(controller.window)
-        let fixedName = controller.cmuxPlacementIdentityRadiosForTesting[1]
-        fixedName.performClick(nil)
+        let identity = controller.githubPaneForTesting.identitySegment
+        identity.selectedSegment = 1
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(identity.action), to: identity.target, from: identity))
 
         let field = controller.cmuxPlacementNameFieldForTesting
         XCTAssertTrue(field.cell?.sendsActionOnEndEditing == true)
@@ -204,12 +207,8 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             return XCTFail("empty fixed name was not parsed as always-new")
         }
         XCTAssertEqual(
-            controller.cmuxPlacementInterpretationLabelForTesting.stringValue,
-            localized(
-                "app.cmux.placement.interpretation",
-                localized("app.cmux.placement.identity.alwaysNew"),
-                localized("app.cmux.placement.arrangement.tab")
-            )
+            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            localized("app.setup.github.effect.tab.new")
         )
     }
 
@@ -222,12 +221,8 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         // The planner cannot give N workspaces one identity, so it creates them untitled.
         // The label has to say that, or a stored name reads as an address that is never used.
         XCTAssertEqual(
-            controller.cmuxPlacementInterpretationLabelForTesting.stringValue,
-            localized(
-                "app.cmux.placement.interpretation",
-                localized("app.cmux.placement.identity.alwaysNew"),
-                localized("app.cmux.placement.arrangement.workspace")
-            )
+            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            localized("app.setup.github.effect.workspace")
         )
     }
 
@@ -237,13 +232,13 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: 2000)
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
-        for control in controller.cmuxPlacementIdentityRadiosForTesting
-            + controller.cmuxPlacementArrangementRadiosForTesting {
+        for control in [controller.githubPaneForTesting.identitySegment,
+                        controller.githubPaneForTesting.arrangementSegment] {
             XCTAssertGreaterThan(control.frame.width, 0)
             XCTAssertGreaterThan(control.frame.height, 0)
         }
         XCTAssertGreaterThan(controller.cmuxPlacementNameFieldForTesting.frame.width, 0)
-        XCTAssertGreaterThan(controller.cmuxPlacementInterpretationLabelForTesting.frame.width, 0)
+        XCTAssertGreaterThan(controller.githubPaneForTesting.effectSentenceLabel.frame.width, 0)
     }
 
     func testPlacementNameFieldReparentsAndKeepsAnUnstoredDraftAcrossRedraw() throws {

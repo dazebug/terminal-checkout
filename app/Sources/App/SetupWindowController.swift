@@ -2,15 +2,9 @@ import AppKit
 import Carbon.HIToolbox
 import Core
 
-/// The setup window: installation, the terminal choice, the permissions and the test, in one screen.
-/// The design is that the window *is* a terminal session — a section reads as a prompt (❯), and a
-/// state reads the way an exit code does, through colour.
-/// What is on screen follows the state: the card for a step that is done disappears, and that step
-/// stays visible only as a dot on the pipeline strip.
-
-/// Card width. File scope so the status-label factory below can use it before `self` exists.
-let setupContentWidth: CGFloat = 560
-/// Text width inside a card (`setupContentWidth` minus the card's 14pt insets on both sides).
+/// Settings document width. File scope so the status-label factory below can use it before `self` exists.
+let setupContentWidth: CGFloat = 720
+/// Text width for status labels, with the document's horizontal inset removed.
 let setupTextWidth: CGFloat = setupContentWidth - 28
 
 struct FittedContentLayoutPass {
@@ -30,10 +24,10 @@ struct FittedContentLayoutPass {
 /// Why the stack and not the window controller: the size has three preconditions a caller has to
 /// get right *every* time — apply the visibility changes, let the constraint pass settle, then
 /// measure — and one that forgets leaves the window shorter than its content, at which point the
-/// engine breaks a constraint and the cards overlap instead of merely clipping. Measuring at the
-/// end of this view's own `layout()` satisfies all three by construction: that runs after the
-/// pass, and any change to a card, a label or a section's `isHidden` already dirties this view.
-/// A section added later is covered without anyone remembering the rule.
+/// panes overlap instead of merely clipping. Measuring at the end of this view's own `layout()`
+/// satisfies all three by construction: that runs after the pass, and any change to a pane, label
+/// or section's `isHidden` already dirties this view. A section added later is covered without
+/// anyone remembering the rule.
 ///
 /// Why not hook the enclosing scroll view instead: flipping `isHidden` deep in the tree never
 /// marks *it* dirty — its own frame does not change — so its `layout()` simply would not run
@@ -240,13 +234,7 @@ final class FittedContentStackView: NSStackView {
     }
 }
 
-/// Every status line in the window is built here.
-///
-/// Declaring one with `NSTextField(labelWithString:)` and styling it later is how
-/// `accessibilityStatusLabel` ended up in the wrong font and unable to wrap: it sat in the same
-/// property block as its four siblings but was missed by the styling loop in `buildContent`, so a
-/// long status clipped at the card edge instead of flowing onto a second line. Styling at
-/// construction removes the chance to forget.
+/// Creates a status label with wrapping configured before it receives localized values.
 func makeStatusLabel(font: NSFont) -> NSTextField {
     let label = NSTextField(labelWithString: "")
     label.font = font
@@ -258,227 +246,135 @@ func makeStatusLabel(font: NSFont) -> NSTextField {
     return label
 }
 
-final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
-    private let manifestStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let extensionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let installFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
-    private let permissionStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let accessibilityStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let cmuxStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let cmuxFeedbackLabel = makeStatusLabel(font: Theme.ui(11.5))
-    private let testResultLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let slackThreadValidationLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private let slackHotKeyStatusLabel = makeStatusLabel(font: Theme.ui(11.5))
-    private let slackLoginItemStatusLabel = makeStatusLabel(font: Theme.ui(11.5))
-    private let slackRequestFailureLabel = makeStatusLabel(font: Theme.ui(11.5))
-    /// Kept across rebuilds like the other re-parented controls; titles are set where they redraw.
-    private let slackHotKeyButton = NSButton(title: "", target: nil, action: nil)
-    private let slackHotKeyClearButton = NSButton(title: "", target: nil, action: nil)
-    private let slackLoginItemCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    /// Owned by `AppDelegate` — the shortcut works with this window closed.
+func languagePickerIndex(stored: String, drawn: String, entries: [String?]) -> Int {
+    entries.firstIndex { $0 == stored } ?? entries.firstIndex { $0 == drawn } ?? 0
+}
+
+func scrollOrigin(anchorTop: CGFloat, offset: CGFloat, clip: CGFloat) -> CGFloat {
+    max(0, anchorTop - offset - clip)
+}
+
+private enum SetupWindowPane: String, CaseIterable {
+    case general
+    case github
+    case slack
+
+    var toolbarIdentifier: NSToolbarItem.Identifier {
+        NSToolbarItem.Identifier("setup.pane.\(rawValue)")
+    }
+
+    var title: String {
+        switch self {
+        case .general: return localized("app.setup.toolbar.general")
+        case .github: return localized("app.setup.toolbar.github")
+        case .slack: return localized("app.setup.toolbar.slack")
+        }
+    }
+}
+
+private struct SetupWindowEnvironment {
+    let manifest: SetupWindowManifestStatus
+    let extensionFolder: SetupWindowExtensionFolderStatus
+    let snapshot: SetupWindowSnapshot
+    let presentation: SetupWindowPresentation
+}
+
+final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSTextFieldDelegate {
     private var slackHotKey: SlackThreadHotKeyManaging!
     private var slackLoginItem: LoginItemManaging!
     private var hotKeyRecordingMonitor: Any?
     private var isRecordingHotKey = false
-    private var hotKeyRecordingHint: String?
+    private var hotKeyNeedsModifier = false
     private var lastSlackLoginItemFailure: Error?
     private var lastSlackRequestFailure: Error?
-    /// Kept as a list so a test can assert the whole family is styled — the defect this replaces
-    /// was one member silently missing out.
-    /// The three stacks that are **filled** rather than created — a rebuild appends to them unless
-    /// the builders clear first, which is the one way replacing the view tree can double a window
-    /// Keep Accessibility last for the existing transition oracle; cmux sits between the two.
-    var refillableSectionsForTesting: [NSStackView] {
-        [permissionSection, cmuxSection, accessibilitySection]
-    }
-
-    var cmuxPlacementIdentityRadiosForTesting: [NSButton] { cmuxPlacementIdentityRadios }
-    var cmuxPlacementArrangementRadiosForTesting: [NSButton] { cmuxPlacementArrangementRadios }
-    var cmuxPlacementNameFieldForTesting: NSTextField { cmuxPlacementNameField }
-    var cmuxPlacementInterpretationLabelForTesting: NSTextField {
-        cmuxPlacementInterpretationLabel
-    }
-
-    var statusLabelsForTesting: [NSTextField] {
-        [
-            manifestStatusLabel, extensionStatusLabel, installFeedbackLabel,
-            permissionStatusLabel, accessibilityStatusLabel, cmuxStatusLabel, cmuxFeedbackLabel,
-            cmuxPlacementInterpretationLabel, testResultLabel, slackThreadValidationLabel,
-            slackHotKeyStatusLabel, slackLoginItemStatusLabel, slackRequestFailureLabel,
-        ]
-    }
-    var slackHotKeyButtonForTesting: NSButton { slackHotKeyButton }
-    var slackHotKeyClearButtonForTesting: NSButton { slackHotKeyClearButton }
-    var slackHotKeyStatusLabelForTesting: NSTextField { slackHotKeyStatusLabel }
-    var slackLoginItemCheckboxForTesting: NSButton { slackLoginItemCheckbox }
-    var slackLoginItemStatusLabelForTesting: NSTextField { slackLoginItemStatusLabel }
-    var slackThreadValidationLabelForTesting: NSTextField { slackThreadValidationLabel }
-    var slackWorkDirectoryFieldForTesting: NSTextField { slackWorkDirectoryField }
-    var slackInstructionFieldForTesting: NSTextField { slackInstructionField }
-    /// Stored because `refresh()` toggles its enabled state, so the rebuild **re-parents** it and
-    /// a title set here would be the one string in this window that kept its old language. The
-    /// title is set in the builder instead, where a rebuild reads it again — and it lives in
-    /// exactly one place, so a rebuild has one site to update rather than two to keep in step.
-    private let requestPermissionButton = NSButton(title: "", target: nil, action: nil)
-    private let cmuxConfigButton = NSButton(title: "", target: nil, action: nil)
-    private let cmuxRefreshButton = NSButton(title: "", target: nil, action: nil)
-    private var itermRadio: NSButton!
-    private var weztermRadio: NSButton!
-    private var warpRadio: NSButton!
-    private var cmuxRadio: NSButton!
-    private var cmuxNightlyRadio: NSButton!
-    private var terminalNoteLabel: NSTextField!
-    private var backgroundCheckbox: NSButton!
-    /// On screen only while the terminal is iTerm2 **and** the permission is not granted — an
-    /// iTerm2 that is not installed lands there too, so the section stays up. WezTerm needs no TCC
-    /// permission at all, which is why it has no section of its own.
-    private let permissionSection = NSStackView()
-    /// On screen only while the terminal is Warp and the Accessibility permission is not granted
-    private let accessibilitySection = NSStackView()
-    /// On screen only while cmux is selected; the section exposes the live socket mode and the
-    /// non-destructive configuration help action.
-    private let cmuxSection = NSStackView()
-    private var cmuxPlacementIdentityRadios: [NSButton] = []
-    private var cmuxPlacementArrangementRadios: [NSButton] = []
-    private let cmuxPlacementNameField = NSTextField(string: "")
-    private let cmuxPlacementInterpretationLabel = makeStatusLabel(font: Theme.mono(11.5))
-    /// The last stored name this window drew. A different field value is an unsaved edit and must
-    /// survive refreshes just like the base-directory field's draft.
-    private var drawnCmuxPlacementName: String?
-    /// Reparenting an NSTextField can end its edit and synchronously send the end-edit action. That
-    /// action is a user save only outside a language rebuild; the draft itself stays in the stored
-    /// field while `capturePlace`/`restore` carry the edit back to the rebuilt window.
+    private var openingReasons: [SetupWindowOpeningReason] = []
+    private var nextReasonOrder = 0
+    private var selectedPane: SetupWindowPane = .general
+    private var languageChange = SetupWindowGeneralLanguageChange.unchanged
+    private var terminalTestResult = SetupWindowGeneralTerminalTestResult.notRun
+    private var guideWasReopened = false
+    private var guideStepsExpanded = false
+    private var installFeedback: String?
+    private var cmuxFeedback: (String, SetupWindowGeneralStatusTone)?
     private var isRebuildingForLanguageChange = false
-    private enum CmuxPlacementRadioTag {
-        static let alwaysNew = 1
-        static let fixedName = 2
-        static let panePerItem = 1
-        static let tabPerItem = 2
-        static let workspacePerItem = 3
-    }
-    private let pipeline = PipelineStripView()
-    private let cursor = BlinkCursorView()
+    private var hasCenteredMeasuredWindow = false
+    private var windowHasClosed = false
 
-    /// The scroll view's document — what the window height is measured from.
-    private(set) var rootStack: FittedContentStackView!
-    private var chromeCard: NSView!
-    private var extensionCard: NSView!
-    private var toolsCard: NSView!
-    private let toolsList = NSStackView()
-    /// Where repositories are cloned. Stays visible like the terminal card — it is a setting the
-    /// user may want to change, not an install step that completes and disappears.
-    private var baseDirCard: NSView!
-    private let baseDirField = NSTextField(string: "")
-    /// **What this window last put in that field**, which is how it can tell its own text from the
-    /// user's. Anything else in there is a draft — typed and not stored, because an unusable path is
-    /// deliberately never stored — and a draft is not something a redraw may throw away. `nil` until
-    /// the first draw, so the first one happens.
-    private var drawnBaseDirectory: String?
-    private let baseDirStatusLabel = makeStatusLabel(font: Theme.mono(11.5))
-    private var slackThreadCard: NSView!
-    private let slackWorkDirectoryField = NSTextField(string: "")
-    private let slackInstructionField = NSTextField(string: "")
-    private var drawnSlackWorkDirectory: String?
-    private var drawnSlackInstruction: String?
-    private var guideBlock: NSView!
-    private var utilityRow: NSView!
-    private var languagePopUp: NSPopUpButton!
-    private var languageRestartButton: NSButton!
-    private var languageNoteLabel: NSTextField!
     private var languageObserver: NSObjectProtocol?
     private var screenParametersObserver: NSObjectProtocol?
-    private var windowHasClosed = false
-    /// This belongs to the window's lifetime, not to a document stack that language changes replace.
-    private var hasCenteredMeasuredWindow = false
-    /// `reshowInstall` forces the extension card back on screen. Closing the window clears it
-    /// (`windowWillClose`), so the next time the window opens the state decides again.
-    private var forceShowInstall = false
-    private var requestObserver: (any NSObjectProtocol)?
-    private var toolsObserver: (any NSObjectProtocol)?
+    private var requestObserver: NSObjectProtocol?
+    private var toolsObserver: NSObjectProtocol?
+    private var toolbar: NSToolbar!
+    private var slackToolbarItem: NSToolbarItem?
+    private var helpPopover: NSPopover?
 
-    /// What breaks without the tool — the sentence a user judges "do I need to install this?" by.
-    /// Only `zoxide` splits on whether a base directory is configured: with one, the entry clause falls
-    /// back to `cd`/`clone`, so "every button fails" stops being true. The severity verdict itself
-    /// lives in Core (`toolIsCritical`) so it can be pinned by a test; only the copy is here.
-    private func toolAdvice(
-        baseDirectoryConfigured: Bool
-    ) -> [(name: String, critical: Bool, advice: String)] {
-        [
-            (
-                "zoxide", toolIsCritical("zoxide", baseDirectoryConfigured: baseDirectoryConfigured),
-                // Two complete messages rather than a shared opening plus two tails: a
-                // sentence assembled from pieces cannot be reordered by a translator, and three of
-                // these did share an opening clause
-                localized(
-                    baseDirectoryConfigured
-                        ? "app.tools.zoxide.adviceWithBaseDir" : "app.tools.zoxide.adviceNoBaseDir"
-                )
-            ),
-            (
-                "gh", false,
-                localized("app.tools.gh.advice")
-            ),
-            (
-                "claude", false,
-                localized("app.tools.claude.advice")
-            ),
-        ]
-    }
+    private(set) var rootStack: FittedContentStackView!
+    private(set) var sharedPanel: SetupWindowSharedPanel!
+    private(set) var generalPane: SetupWindowGeneralPane!
+    private(set) var githubPane: SetupWindowGitHubPane!
+    private(set) var slackPane: SetupWindowSlackPane!
 
-    private let terminalRadioWidth: CGFloat = 120
-    /// Shown on screen **and** run in the user's terminal, which is why it is a `ShellPayload`
-    /// and not a catalogue key: a translated apostrophe breaks the `echo '…'` quoting and the test
-    /// button reports a shell error instead of opening a tab. The type is what enforces it —
-    /// `localized(…)` returns a `String`, and `ShellPayload` cannot be built from one.
+    var onClose: (() -> Void)?
+    var selectedPaneForTesting: String { selectedPane.rawValue }
+    var sharedPanelForTesting: SetupWindowSharedPanel { sharedPanel }
+    var generalPaneForTesting: SetupWindowGeneralPane { generalPane }
+    var githubPaneForTesting: SetupWindowGitHubPane { githubPane }
+    var slackPaneForTesting: SetupWindowSlackPane { slackPane }
+    var cmuxPlacementIdentitySegmentForTesting: NSSegmentedControl { githubPane.identitySegment }
+    var cmuxPlacementArrangementSegmentForTesting: NSSegmentedControl { githubPane.arrangementSegment }
+    var cmuxPlacementNameFieldForTesting: NSTextField { githubPane.workspaceNameField }
+    var cmuxPlacementInterpretationLabelForTesting: NSTextField { githubPane.effectSentenceLabel }
+
     private let testCommand: ShellPayload = "echo 'Terminal Checkout: connection OK'"
 
-    /// Called when the window closes — `AppDelegate` uses it to hide the app from the Dock again
-    var onClose: (() -> Void)?
-
-    convenience init(slackHotKey: SlackThreadHotKeyManaging, loginItem: LoginItemManaging) {
+    convenience init(
+        slackHotKey: SlackThreadHotKeyManaging,
+        loginItem: LoginItemManaging,
+        openingBlocker: ClaudeInputBlocker? = nil,
+        slackRequestFailure: Error? = nil
+    ) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 640),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
-            backing: .buffered, defer: false
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
         )
-        // The initial content rect starts at (0,0), so asking window.screen before placement can
-        // select whichever display happens to own that point. Read NSScreen.main once as the
-        // launch placement policy, put the placeholder inside that screen before measuring, and
-        // let later layout passes use window.screen rather than independently reading main again.
         let launchVisibleFrame = NSScreen.main?.visibleFrame
-        window.title = localized("app.window.title")
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        // A terminal is dark, so this window is pinned to dark whatever the system appearance is.
-        // Not a preference: `Theme`'s colours are fixed values rather than dynamic ones, and in a
-        // light appearance they would not follow
+        window.title = localized("app.setup.toolbar.general")
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Theme.bg
         window.isMovableByWindowBackground = true
         self.init(window: window)
         self.slackHotKey = slackHotKey
         self.slackLoginItem = loginItem
-        slackHotKey.onStateChange = { [weak self] _ in self?.updateSlackHotKeyPresentation() }
+        if let openingBlocker { appendOpeningReason(.claudeInputRejected(blocker: openingBlocker, arrivalOrder: nextArrival())) }
+        if let slackRequestFailure {
+            lastSlackRequestFailure = slackRequestFailure
+            appendOpeningReason(.slackThreadRequestFailed(arrivalOrder: nextArrival()))
+            selectedPane = .slack
+        } else if openingBlocker != nil {
+            selectedPane = .general
+        }
+        slackHotKey.onStateChange = { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
+        }
         window.delegate = self
         if let launchVisibleFrame {
             FittedContentStackView.centerInside(launchVisibleFrame, window)
             FittedContentStackView.moveInside(launchVisibleFrame, window)
         }
-        window.contentView = buildContent()
-        updateTerminalControls()
+        configureToolbar()
+        let environment = currentEnvironment()
+        window.contentView = buildContent(using: environment)
         refresh()
         observeScreenParameters()
-        // Let the stack measure once so the deferred update has a target.
         window.contentView?.layoutSubtreeIfNeeded()
-        cursor.start()
         requestObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutRequestHandled, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // The tool check opens a login shell, so it finishes after this window is already up
         toolsObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutToolsChecked, object: nil, queue: .main
         ) { [weak self] _ in self?.refresh() }
-        // Our own strings do not wait for a restart — a language change redraws this window
         languageObserver = NotificationCenter.default.addObserver(
             forName: .terminalCheckoutLanguageChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.rebuildForLanguageChange() }
@@ -489,14 +385,106 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         for observer in [requestObserver, toolsObserver, languageObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let hotKeyRecordingMonitor { NSEvent.removeMonitor(hotKeyRecordingMonitor) }
+    }
+
+    private func configureToolbar() {
+        toolbar = NSToolbar(identifier: "terminal-checkout.setup-window")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        window?.toolbar = toolbar
+        window?.toolbarStyle = .preference
+        toolbar.selectedItemIdentifier = selectedPane.toolbarIdentifier
+        updateWindowTitle()
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SetupWindowPane.allCases.map(\.toolbarIdentifier)
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SetupWindowPane.allCases.map(\.toolbarIdentifier)
+    }
+
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SetupWindowPane.allCases.map(\.toolbarIdentifier)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard let pane = SetupWindowPane.allCases.first(where: { $0.toolbarIdentifier == itemIdentifier }) else {
+            return nil
+        }
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = pane.title
+        item.paletteLabel = pane.title
+        item.target = self
+        item.action = #selector(selectToolbarPane(_:))
+        switch pane {
+        case .general:
+            item.image = NSApp.applicationIconImage
+        case .github:
+            item.image = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: pane.title)
+        case .slack:
+            slackToolbarItem = item
+            item.image = slackToolbarImage(hasFailure: lastSlackRequestFailure != nil)
+            item.toolTip = lastSlackRequestFailure == nil
+                ? pane.title : localized("app.setup.toolbar.slack.failure")
+        }
+        return item
+    }
+
+    @objc private func selectToolbarPane(_ sender: NSToolbarItem) {
+        guard let pane = SetupWindowPane.allCases.first(where: { $0.toolbarIdentifier == sender.itemIdentifier }) else { return }
+        selectPane(pane)
+    }
+
+    private func selectPane(_ pane: SetupWindowPane) {
+        selectedPane = pane
+        toolbar?.selectedItemIdentifier = pane.toolbarIdentifier
+        updateWindowTitle()
+        applyPaneVisibility()
+    }
+
+    private func updateWindowTitle() {
+        window?.title = selectedPane.title
+    }
+
+    private func slackToolbarImage(hasFailure: Bool) -> NSImage? {
+        let accessibility = hasFailure
+            ? localized("app.setup.toolbar.slack.failure")
+            : localized("app.setup.toolbar.slack")
+        // NSToolbarItem.badge is macOS 26-only; the app targets macOS 13, so draw the dot into this image.
+        guard let symbol = NSImage(
+            systemSymbolName: "bubble.left.and.bubble.right",
+            accessibilityDescription: accessibility
+        ) else { return nil }
+        guard hasFailure else { return symbol }
+        let image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { rect in
+            symbol.draw(in: rect.insetBy(dx: 2, dy: 2))
+            let dot = NSBezierPath(ovalIn: NSRect(x: rect.maxX - 8, y: rect.minY, width: 8, height: 8))
+            Theme.err.setFill()
+            dot.fill()
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = accessibility
+        return image
+    }
+
+    private func updateSlackToolbarIndicator(_ presentation: SetupWindowPresentation) {
+        guard let item = slackToolbarItem else { return }
+        item.image = slackToolbarImage(hasFailure: presentation.slackToolbarHasFailureDot)
+        item.toolTip = presentation.slackToolbarHasFailureDot
+            ? localized("app.setup.toolbar.slack.failure") : localized("app.setup.toolbar.slack")
     }
 
     private func observeScreenParameters() {
         guard screenParametersObserver == nil else { return }
         screenParametersObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self, !self.windowHasClosed else { return }
             self.rootStack?.invalidateVisibleFrame()
@@ -504,9 +492,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     private func stopObservingScreenParameters() {
-        if let observer = screenParametersObserver {
-            NotificationCenter.default.removeObserver(observer)
-            screenParametersObserver = nil
+        if let screenParametersObserver {
+            NotificationCenter.default.removeObserver(screenParametersObserver)
+            self.screenParametersObserver = nil
         }
     }
 
@@ -516,12 +504,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
             observeScreenParameters()
             rootStack?.resumeDeferredWindowUpdates()
         }
-        cursor.start()
         refresh()
     }
 
-    /// Recording ends when the window stops taking keys — the app's shortcut stays suspended for as
-    /// long as recording lasts, and the user may have gone to Slack to use it.
     func windowDidResignKey(_ notification: Notification) {
         if isRecordingHotKey { endHotKeyRecording() }
     }
@@ -531,890 +516,364 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         windowHasClosed = true
         stopObservingScreenParameters()
         rootStack?.suspendDeferredWindowUpdates()
-        cursor.stop()
-        forceShowInstall = false
-        guideBlock.isHidden = true
-        installFeedbackLabel.isHidden = true
-        testResultLabel.isHidden = true
+        guideWasReopened = false
+        guideStepsExpanded = false
+        installFeedback = nil
+        openingReasons.removeAll {
+            if case .claudeInputRejected = $0 { return true }
+            return false
+        }
         onClose?()
     }
 
-    /// **The window is built once, and `refresh()` rewrites only the status lines.** Everything
-    /// else — card titles, section headings, help paragraphs, button and radio titles, the picker's
-    /// `auto` entry — is created in `buildContent()` and never touched again, so a language change
-    /// would leave the whole window in the old language while three labels moved. A lookup function
-    /// alone does not switch anything: the lookup has to be reached again, and nothing reaches it.
-    ///
-    /// Rebuilding the content is the mechanism, rather than a second pass that re-sets each string:
-    /// a re-set pass has to name every string, so it is wrong the moment a new string is added,
-    /// and it would be wrong silently. This is correct for strings that do not exist yet.
-    ///
-    /// It runs **only on a language change**, not on every `refresh()` — refresh runs on window
-    /// activation and on every socket request, and replacing the view tree that often would fight
-    /// the user for focus and for their place in the window.
-    ///
-    /// State survives because the views that hold it are stored properties: the base-directory and
-    /// placement-name fields, the status labels and the pipeline strip are re-parented into the new
-    /// stack rather than recreated, so what the user has typed is still there afterwards.
-    ///
-    /// **What does not survive on its own is where the user was.** The scroll origin lives in the
-    /// scroll view being replaced, and the first responder is dropped the moment its view leaves
-    /// the window — so a language change scrolled the window back to the top and took the focus
-    /// away, in the one interaction this whole feature is entered through. `SetupWindowPlace`
-    /// carries both across in terms that a rebuilt tree can still answer.
-    func rebuildForLanguageChange() {
-        guard let window = window else { return }
-        let place = capturePlace(in: window)
-        isRebuildingForLanguageChange = true
-        defer { isRebuildingForLanguageChange = false }
-        window.contentView = buildContent()
-        window.contentView?.layoutSubtreeIfNeeded()
-        refresh()
-        // Restored after `refresh()`, not before: refresh rewrites the status lines, and one that
-        // wraps onto a second line moves every card below it. Measuring against a document that is
-        // about to change height would put the user a status line away from where they were.
-        window.contentView?.layoutSubtreeIfNeeded()
-        rootStack?.afterNextWindowUpdate { [weak self, weak window] in
-            guard let self, let window, let currentWindow = self.window,
-                  currentWindow === window else { return }
-            self.restore(place, in: window)
+    private func currentEnvironment() -> SetupWindowEnvironment {
+        let manifest = Installer.setupWindowManifestStatus()
+        let folder = Installer.setupWindowExtensionFolderStatus()
+        let terminal = Settings.terminal
+        let installations = [
+            SetupWindowTerminalInstallation(terminal: .iterm, isInstalled: PermissionChecker.isITermInstalled),
+            SetupWindowTerminalInstallation(terminal: .wezterm, isInstalled: PermissionChecker.isWezTermInstalled),
+            SetupWindowTerminalInstallation(terminal: .warp, isInstalled: PermissionChecker.isWarpInstalled),
+            SetupWindowTerminalInstallation(terminal: .cmux, isInstalled: PermissionChecker.isCmuxInstalled(channel: .stable)),
+            SetupWindowTerminalInstallation(terminal: .cmuxNightly, isInstalled: PermissionChecker.isCmuxInstalled(channel: .nightly)),
+        ]
+        let iTermStatus = terminal == .iterm ? PermissionChecker.iTermAutomationStatus() : nil
+        let stableSocket = terminal == .cmux ? PermissionChecker.cmuxSocketStatus(channel: .stable) : nil
+        let nightlySocket = terminal == .cmuxNightly ? PermissionChecker.cmuxSocketStatus(channel: .nightly) : nil
+        let rawBaseDirectory = Settings.baseDirectory
+        let baseDirectory: SetupWindowBaseDirectoryStatus
+        do {
+            if let normalized = try normalizedBaseDirectory(rawBaseDirectory) {
+                var isDirectory: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory)
+                baseDirectory = .normalized(normalized, directoryExists: exists && isDirectory.boolValue)
+            } else {
+                baseDirectory = .unconfigured
+            }
+        } catch {
+            baseDirectory = .invalidStoredValue
+        }
+        let tools = Settings.toolAvailability.map {
+            SetupWindowToolResults(available: $0, executable: Settings.toolExecutables ?? [:])
+        }
+        let socket: SetupWindowAppSocketStatus = FileManager.default.fileExists(atPath: defaultSocketPath())
+            ? .listening : .unavailable
+        let snapshot = SetupWindowSnapshot(
+            manifest: manifest,
+            extensionFolder: folder,
+            lastRequestAt: Settings.lastRequestAt,
+            appSocket: socket,
+            selectedTerminal: terminal,
+            terminalInstallations: installations,
+            iTermAutomation: iTermStatus,
+            cmuxStableSocket: stableSocket,
+            cmuxNightlySocket: nightlySocket,
+            warpAccessibilityGranted: PermissionChecker.isAccessibilityGranted,
+            wezTermSessionAvailable: true,
+            tools: tools,
+            baseDirectory: baseDirectory,
+            openingReasons: openingReasons,
+            slackRequestFailureIsActive: lastSlackRequestFailure != nil,
+            tabActivation: Settings.tabActivation,
+            cmuxIdentityMode: Settings.cmuxPlacementIdentityMode,
+            cmuxFixedName: Settings.cmuxPlacementFixedName,
+            cmuxArrangement: Settings.cmuxPlacementArrangement,
+            guideWasReopened: guideWasReopened
+        )
+        return SetupWindowEnvironment(
+            manifest: manifest,
+            extensionFolder: folder,
+            snapshot: snapshot,
+            presentation: SetupWindowPresentationModel.make(from: snapshot)
+        )
+    }
+
+    private func refresh() {
+        guard sharedPanel != nil else { return }
+        var environment = currentEnvironment()
+        openingReasons.removeAll { reason in
+            guard case .claudeInputRejected(let blocker, _) = reason else { return false }
+            return !environment.snapshot.isClaudeBlockerActive(blocker) || !blocker.setupWindowCanHelp
+        }
+        if environment.snapshot.openingReasons.count != openingReasons.count {
+            environment = currentEnvironment()
+        }
+        let presentation = environment.presentation
+        sharedPanel.update(
+            presentation,
+            manifest: environment.manifest,
+            extensionFolder: environment.extensionFolder,
+            slackFailureDetail: lastSlackRequestFailure.map(slackThreadRequestErrorMessage),
+            installStepsExpanded: guideStepsExpanded,
+            installFeedback: installFeedback
+        )
+        let generalState = makeGeneralState(environment)
+        generalPane.update(generalState)
+        githubPane.update(makeGitHubState(environment))
+        slackPane.update(makeSlackState(environment))
+        updateSlackToolbarIndicator(presentation)
+        applyPaneVisibility()
+        updateWindowTitle()
+    }
+
+    private func makeGeneralState(_ environment: SetupWindowEnvironment) -> SetupWindowGeneralPaneState {
+        let snapshot = environment.snapshot
+        let manifestStatus: SetupWindowGeneralIndicator
+        switch snapshot.manifest {
+        case .registered:
+            manifestStatus = .init(text: localized("app.status.manifest.registered"), tone: .success)
+        case .notRegistered:
+            manifestStatus = .init(text: localized("app.setup.install.nativeHost.problem.notRegistered"), tone: .error)
+        case .wrongRelayPath:
+            manifestStatus = .init(text: localized("app.setup.install.nativeHost.problem.wrongPath"), tone: .warning)
+        case .wrongExtensionID:
+            manifestStatus = .init(text: localized("app.setup.install.nativeHost.problem.wrongExtensionID"), tone: .warning)
+        }
+        let socketStatus = snapshot.appSocket == .listening
+            ? SetupWindowGeneralIndicator(text: localized("app.setup.severity.success"), tone: .success)
+            : SetupWindowGeneralIndicator(text: localized("app.setup.problem.socket.cause"), tone: .error)
+        return SetupWindowGeneralPaneState(
+            presentation: environment.presentation,
+            appVersion: appVersion,
+            requestRelativeTime: snapshot.lastRequestAt.map(relative),
+            terminalInstallations: snapshot.terminalInstallations,
+            nativeHostStatus: manifestStatus,
+            appSocketStatus: socketStatus,
+            terminalStatus: terminalIndicator(snapshot),
+            tools: snapshot.tools,
+            savedTabActivation: Settings.tabActivation,
+            terminalTestResult: terminalTestResult,
+            storedLanguage: Settings.language,
+            resolvedLanguage: AppLocalization.resolvedTag(),
+            languageChange: languageChange,
+            cmuxFeedback: cmuxFeedback.map { .init(text: $0.0, tone: $0.1) }
+        )
+    }
+
+    private func terminalIndicator(_ snapshot: SetupWindowSnapshot) -> SetupWindowGeneralIndicator {
+        let terminal = snapshot.selectedTerminal
+        guard snapshot.isInstalled(terminal) != false else {
+            return .init(text: localized("app.terminal.notInstalled", terminalName(terminal)), tone: .error)
+        }
+        switch terminal {
+        case .iterm:
+            guard let status = snapshot.iTermAutomation else {
+                return .init(text: localized("app.setup.severity.unknown"), tone: .neutral)
+            }
+            let tone: SetupWindowGeneralStatusTone
+            switch status {
+            case .granted: tone = .success
+            case .denied: tone = .error
+            case .notDetermined, .targetNotRunning, .unknown: tone = .warning
+            }
+            return .init(text: status.label, tone: tone)
+        case .wezterm:
+            return .init(text: localized("app.setup.severity.success"), tone: .success)
+        case .warp:
+            return snapshot.warpAccessibilityGranted
+                ? .init(text: localized("app.status.accessibility.granted"), tone: .success)
+                : .init(text: localized("app.status.accessibility.denied"), tone: .warning)
+        case .cmux, .cmuxNightly:
+            guard let channel = terminal.cmuxChannel,
+                  let status = snapshot.cmuxSocketStatus(for: channel) else {
+                return .init(text: localized("app.setup.severity.unknown"), tone: .neutral)
+            }
+            switch status {
+            case .reachable: return .init(text: status.label, tone: .success)
+            case .notInstalled: return .init(text: status.label, tone: .error)
+            case .denied: return .init(text: status.label, tone: .error)
+            case .notRunning, .failed: return .init(text: status.label, tone: .warning)
+            }
         }
     }
 
-    /// Where the user was, in terms that outlive the views that held it: **a role and a card**,
-    /// never a view and never a bare number of points from the top.
-    private struct SetupWindowPlace {
-        /// The control that had focus. A field being edited answers with its field editor, so the
-        /// selection is carried too — `makeFirstResponder` on a text field selects the whole value,
-        /// and restoring focus without the range would leave the next keystroke replacing the path
-        /// the user was halfway through fixing.
-        var focusedRole: NSUserInterfaceItemIdentifier?
-        var selection: NSRange?
-        /// The card at the top of the viewport, and how far into it the viewport began.
-        var anchorRole: NSUserInterfaceItemIdentifier?
-        var anchorOffset: CGFloat = 0
+    private func makeGitHubState(_ environment: SetupWindowEnvironment) -> SetupWindowGitHubPaneState {
+        let draftProblem = baseDirectoryProblem(githubPane?.baseDirectoryField.stringValue ?? Settings.baseDirectory)
+        let storedProblem = baseDirectoryProblem(Settings.baseDirectory)
+        return SetupWindowGitHubPaneState(
+            presentation: environment.presentation,
+            baseDirectory: Settings.baseDirectory,
+            baseDirectoryDraftProblem: draftProblem,
+            storedBaseDirectoryProblem: storedProblem,
+            cmuxIdentityMode: Settings.cmuxPlacementIdentityMode,
+            cmuxFixedName: Settings.cmuxPlacementFixedName
+        )
     }
 
-    /// The card to measure from, which is the captured one unless `refresh()` has just collapsed it.
-    ///
-    /// **A hidden card keeps the frame it last had**, so it cannot be measured from — and skipping
-    /// the restore because of that leaves the window at its first line, which is the whole defect
-    /// this machinery exists for, in the one case it did not cover. So the search
-    /// falls through to the next card **down the stack**, and "next" means next in the order the
-    /// cards are added rather than nearest in points: when a card collapses, the one below it moves
-    /// up into the space, so its top edge is about where the measurement was taken. Falling upwards
-    /// is the last resort, for an anchor that was the last visible card.
-    private func anchorToRestore(_ role: NSUserInterfaceItemIdentifier) -> NSView? {
-        let cards = rootStack?.arrangedSubviews ?? []
-        guard let index = cards.firstIndex(where: { $0.identifier == role }) else { return nil }
-        return cards[index...].first(where: { !$0.isHidden && $0.frame.height > 0 })
-            ?? cards[..<index].last(where: { !$0.isHidden && $0.frame.height > 0 })
+    private func makeSlackState(_ environment: SetupWindowEnvironment) -> SetupWindowSlackPaneState {
+        let workDirectory = slackPane?.workDirectoryField.stringValue ?? Settings.slackThreadWorkDirectory
+        let instruction = slackPane?.instructionField.stringValue ?? Settings.slackThreadInstruction
+        let notice = slackValidationNotice(workDirectory: workDirectory, instruction: instruction)
+        let combination = slackHotKey.combination
+        let display = combination?.displayString(keyLabel: hotKeyKeyLabel(combination!.keyCode))
+        let status: Int32?
+        if case .failed(_, let code) = slackHotKey.state { status = code } else { status = nil }
+        return SetupWindowSlackPaneState(
+            presentation: environment.presentation,
+            storedWorkDirectory: Settings.slackThreadWorkDirectory,
+            storedInstruction: Settings.slackThreadInstruction,
+            validationNotice: notice,
+            hotKeyDisplayString: display,
+            isRecordingHotKey: isRecordingHotKey,
+            needsModifierWarning: hotKeyNeedsModifier,
+            registrationFailureStatus: status,
+            loginItemStatus: slackLoginItem.status,
+            loginItemFailureMessage: lastSlackLoginItemFailure.map(slackLoginItemFailureMessage)
+        )
     }
 
-    private func capturePlace(in window: NSWindow) -> SetupWindowPlace {
-        var place = SetupWindowPlace()
-        let editor = window.firstResponder as? NSTextView
-        let focused = (editor?.delegate as? NSView) ?? (window.firstResponder as? NSView)
-        place.focusedRole = focused?.identifier
-        place.selection = editor?.selectedRange
-
-        guard let scroll = window.contentView as? NSScrollView, let stack = rootStack else { return place }
-        let top = scroll.documentVisibleRect.maxY
-        // The document view is **not flipped**, so the first card has the largest `y` and the top of
-        // the viewport is `maxY` rather than `minY`. The anchor is the lowest card whose own top is
-        // still at or above that line — the card the reader's eye is in. Hidden cards are skipped:
-        // a collapsed one keeps a stale frame, and the rebuilt tree would put it somewhere else.
-        let cards = stack.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
-        let anchor = cards.filter { $0.frame.maxY >= top }.min(by: { $0.frame.maxY < $1.frame.maxY })
-            ?? cards.max(by: { $0.frame.maxY < $1.frame.maxY })
-        guard let anchor else { return place }
-        place.anchorRole = anchor.identifier
-        place.anchorOffset = anchor.frame.maxY - top
-        return place
-    }
-
-    /// **What comes back is the anchor card's top edge and the distance below it**, not the line of
-    /// text the reader was on: the words inside the card reflowed too, and nothing here can say
-    /// where a particular sentence went. A translation is longer or shorter than the one it
-    /// replaced, so the cards above the viewport are a different height afterwards and the old
-    /// origin points at different content — which is why the measurement is taken from a card edge.
-    /// `scrollOrigin` answers the one position the document may not have, above its first line.
-    private func restore(_ place: SetupWindowPlace, in window: NSWindow) {
-        if let scroll = window.contentView as? NSScrollView,
-           let document = scroll.documentView,
-           let role = place.anchorRole,
-           let anchor = anchorToRestore(role) {
-            let origin = scrollOrigin(
-                anchorTop: anchor.frame.maxY, offset: place.anchorOffset,
-                clip: scroll.contentView.bounds.height
-            )
-            document.scroll(NSPoint(x: 0, y: origin))
-            scroll.reflectScrolledClipView(scroll.contentView)
+    private func slackValidationNotice(workDirectory: String, instruction: String) -> SetupWindowSlackValidationNotice? {
+        do {
+            _ = try validateSlackThreadSettings(workDirectory: workDirectory, instruction: instruction)
+            return nil
+        } catch let error as SlackThreadRequestError {
+            switch error {
+            case .invalidInstruction:
+                return .instruction(slackThreadRequestErrorMessage(error))
+            default:
+                return .workDirectory(slackThreadRequestErrorMessage(error))
+            }
+        } catch {
+            return .workDirectory(slackThreadRequestErrorMessage(error))
         }
-
-        guard let role = place.focusedRole,
-              let control = window.contentView?.firstDescendant(withRole: role),
-              window.makeFirstResponder(control) else { return }
-        guard let selection = place.selection, let editor = (control as? NSControl)?.currentEditor() else { return }
-        // The text can have changed under the cursor — a stored value drawn over a field that held
-        // this window's own text — so the range is clamped to what is there now.
-        //
-        // **In the units `NSRange` is written in, which are UTF-16 and not characters.** `String.count`
-        // counts what a reader would call characters, so for a path with an
-        // emoji or a decomposed vowel in it the two disagree and clamping against the wrong one
-        // moves the cursor to before where it was. Decomposition is not exotic here: this
-        // repository already carries what re-encodes to NFD and what does not.
-        let length = editor.string.utf16.count
-        let location = min(selection.location, length)
-        editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
     }
 
-    // MARK: - Building the UI
+    private func baseDirectoryProblem(_ value: String) -> BaseDirectoryProblem? {
+        do {
+            _ = try normalizedBaseDirectory(value)
+            return nil
+        } catch CommandError.invalidBaseDirectory(let problem, _) {
+            return problem
+        } catch {
+            return nil
+        }
+    }
 
-    private func buildContent() -> NSView {
+    private func buildContent(using environment: SetupWindowEnvironment) -> NSView {
         let stack = FittedContentStackView()
-        // The first measured center belongs to this window, not this stack: language rebuilds make
-        // a new stack but must preserve the position the user chose for the existing window.
-        stack.shouldCenterAfterFirstWindowUpdate = { [weak self] in
-            guard let self else { return false }
-            return !self.hasCenteredMeasuredWindow
-        }
-        stack.didCenterAfterFirstWindowUpdate = { [weak self] in
-            self?.hasCenteredMeasuredWindow = true
-        }
+        stack.shouldCenterAfterFirstWindowUpdate = { [weak self] in self.map { !$0.hasCenteredMeasuredWindow } ?? false }
+        stack.didCenterAfterFirstWindowUpdate = { [weak self] in self?.hasCenteredMeasuredWindow = true }
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 38, left: 20, bottom: 18, right: 20)
+        // A standard title bar and preference toolbar own the chrome above this document; 12pt is the content separation after them.
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 16, right: 0)
         stack.wantsLayer = true
         stack.layer?.backgroundColor = Theme.bg.cgColor
-        // The stand-in for the screen belongs to the display, not to this instance of the stack:
-        // the screen does not change because the language did, and a rebuild that dropped it would
-        // measure the next layout against the real display in the middle of a test that pinned one
         stack.visibleFrameOverride = rootStack?.visibleFrameOverride
+        stack.widthAnchor.constraint(equalToConstant: setupContentWidth).isActive = true
 
-        chromeCard = buildChromeCard()
-        extensionCard = buildExtensionCard()
-        baseDirCard = buildBaseDirCard()
-        slackThreadCard = buildSlackThreadCard()
-        toolsCard = buildToolsCard()
-        utilityRow = buildUtilityRow()
-
-        // **Named, because a rebuild has to be able to find them again.** The scroll anchor is a
-        // card, and a card's own text is the one thing a language change rewrites — so the name is
-        // declared here rather than derived from anything drawn. Reordering this list moves the
-        // cards and carries their names with them, which is what an index could not do.
-        for (name, card) in [
-            ("header", header()), ("pipeline", pipeline), ("chrome", chromeCard!),
-            ("extension", extensionCard!), ("language", languageCard()), ("terminal", terminalCard()),
-            ("baseDir", baseDirCard!), ("slackThread", slackThreadCard!),
-            ("tools", toolsCard!), ("test", testCard()),
-            ("utility", utilityRow!),
+        sharedPanel = SetupWindowSharedPanel(
+            presentation: environment.presentation,
+            manifest: environment.manifest,
+            extensionFolder: environment.extensionFolder,
+            target: self,
+            selectors: sharedPanelSelectors
+        )
+        generalPane = SetupWindowGeneralPane(
+            state: makeGeneralState(environment), target: self, selectors: generalPaneSelectors
+        )
+        githubPane = SetupWindowGitHubPane(
+            state: makeGitHubState(environment), target: self, selectors: githubPaneSelectors
+        )
+        slackPane = SetupWindowSlackPane(
+            state: makeSlackState(environment), target: self, selectors: slackPaneSelectors
+        )
+        for (identifier, view) in [
+            ("panel.shared", sharedPanel as NSView),
+            ("pane.general", generalPane as NSView),
+            ("pane.github", githubPane as NSView),
+            ("pane.slack", slackPane as NSView),
         ] {
-            card.identifier = NSUserInterfaceItemIdentifier("card.\(name)")
-            stack.addArrangedSubview(card)
-            if card === pipeline { stack.setCustomSpacing(16, after: pipeline) }
+            view.identifier = NSUserInterfaceItemIdentifier(identifier)
+            stack.addArrangedSubview(view)
         }
-
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: setupContentWidth + 40).isActive = true
+        rootStack = stack
+        applyPaneVisibility()
 
         let scroll = NSScrollView()
         scroll.drawsBackground = true
         scroll.backgroundColor = Theme.bg
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay // no gutter, so the stack keeps its full width
-        // This full-size-content window already clears the title bar with the stack's 38pt top
-        // edge inset. AppKit's automatic title-bar inset adds another 32pt (measured: with auto
-        // insets on, shrink left the same 32pt origin; off kept the origin at 0), so it is
-        // redundant here and turns a resize into a blank band above the document.
+        scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
         scroll.documentView = stack
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
         ])
-        rootStack = stack
         return scroll
     }
 
-    private func header() -> NSView {
-        let glyph = NSTextField(labelWithString: "❯_")
-        glyph.font = Theme.mono(15, .semibold)
-        glyph.textColor = Theme.accent
-
-        let title = NSTextField(labelWithString: "Terminal Checkout")
-        title.font = Theme.mono(16, .semibold)
-        title.textColor = Theme.text
-
-        let version = NSTextField(labelWithString: appVersion)
-        version.font = Theme.mono(11)
-        version.textColor = Theme.textFaint
-
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 7
-        row.addView(glyph, in: .leading)
-        row.addView(title, in: .leading)
-        row.addView(cursor, in: .leading)
-        row.addView(version, in: .trailing)
-        row.widthAnchor.constraint(equalToConstant: setupContentWidth).isActive = true
-        return row
-    }
-
-    // MARK: Cards — the setup steps (hidden once done)
-
-    private func buildChromeCard() -> NSView {
-        card(localized("app.card.chrome.title"), [
-            manifestStatusLabel,
-            buttonRow([button(localized("app.button.registerUpdate"), #selector(registerManifest))]),
-        ])
-    }
-
-    private func buildExtensionCard() -> NSView {
-        let installButton = button(localized("app.button.installInChrome"), #selector(installInChrome))
-        installButton.keyEquivalent = "\r"
-        installButton.bezelColor = Theme.actionGreen
-        installButton.toolTip = Installer.extensionDirectory
-
-        guideBlock = quoteBlock([
-            localized("app.guide.step1"),
-            localized("app.guide.step2"),
-            localized("app.guide.step3"),
-            localized("app.guide.step4"),
-        ])
-        guideBlock.isHidden = true
-        installFeedbackLabel.isHidden = true
-
-        return card(localized("app.card.extension.title"), [
-            extensionStatusLabel,
-            // The button's own label, not a second copy of it: quoting a label by hand is how a
-            // body ends up naming a button that has since been renamed, and in five locales at once
-            helpLabel(localized("app.card.extension.help", localized("app.button.installInChrome"))),
-            buttonRow([installButton]),
-            guideBlock,
-            installFeedbackLabel,
-        ])
-    }
-
-    /// Where repositories live. The zoxide jump fails when zoxide has never recorded that
-    /// repository (issue #30); with this set, the command falls back to
-    /// `cd <base>/<repo>` and then to cloning. Validation, `~` expansion, and clause assembly all
-    /// live in Core — this card stores the **normalized** result (echoed back into the field) and
-    /// only words the rejection reasons.
-    private func buildBaseDirCard() -> NSView {
-        baseDirField.placeholderString = localized("app.baseDir.placeholder")
-        baseDirField.font = Theme.mono(11.5)
-        baseDirField.target = self
-        baseDirField.action = #selector(baseDirectoryEdited)
-        baseDirField.identifier = role(#selector(baseDirectoryEdited))
-        // Save on focus loss as well as Enter — nobody should close the window wondering
-        // whether it was saved
-        baseDirField.cell?.sendsActionOnEndEditing = true
-        baseDirField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
-
-        let row = NSStackView(views: [baseDirField, button(localized("app.button.chooseFolder"), #selector(chooseBaseDirectory))])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-
-        return card(localized("app.card.baseDir.title"), [
-            helpLabel(
-                localized("app.card.baseDir.help")
-            ),
-            row,
-            baseDirStatusLabel,
-            // Saved button commands are never rewritten for the user, so someone upgrading from an
-            // earlier version gets no fallback from setting the folder alone. The options page now
-            // offers that rewrite itself (issue #31), so point at the notice rather than asking for
-            // the old by-hand re-apply
-            helpLabel(
-                localized("app.card.baseDir.legacyNote")
-            ),
-        ])
-    }
-
-    private func buildSlackThreadCard() -> NSView {
-        slackWorkDirectoryField.placeholderString = localized("app.slack.workDirectory.placeholder")
-        slackWorkDirectoryField.font = Theme.mono(11.5)
-        slackWorkDirectoryField.target = self
-        slackWorkDirectoryField.action = #selector(slackThreadSettingsEdited)
-        slackWorkDirectoryField.delegate = self
-        slackWorkDirectoryField.identifier = role(#selector(slackThreadSettingsEdited), "workDirectory")
-        slackWorkDirectoryField.cell?.sendsActionOnEndEditing = true
-        slackWorkDirectoryField.widthAnchor.constraint(equalToConstant: setupTextWidth).isActive = true
-
-        slackInstructionField.placeholderString = localized("app.slack.instruction.placeholder")
-        slackInstructionField.font = Theme.mono(11.5)
-        slackInstructionField.target = self
-        slackInstructionField.action = #selector(slackThreadSettingsEdited)
-        slackInstructionField.delegate = self
-        slackInstructionField.identifier = role(#selector(slackThreadSettingsEdited), "instruction")
-        slackInstructionField.cell?.sendsActionOnEndEditing = true
-        slackInstructionField.widthAnchor.constraint(equalToConstant: setupTextWidth).isActive = true
-
-        slackHotKeyButton.target = self
-        slackHotKeyButton.action = #selector(recordSlackHotKey)
-        slackHotKeyButton.identifier = role(#selector(recordSlackHotKey))
-        slackHotKeyButton.bezelStyle = .rounded
-        slackHotKeyClearButton.title = localized("app.slack.hotKey.clear")
-        slackHotKeyClearButton.target = self
-        slackHotKeyClearButton.action = #selector(clearSlackHotKey)
-        slackHotKeyClearButton.identifier = role(#selector(clearSlackHotKey))
-        slackHotKeyClearButton.bezelStyle = .rounded
-        slackLoginItemCheckbox.title = localized("app.slack.loginItem.title")
-        slackLoginItemCheckbox.target = self
-        slackLoginItemCheckbox.action = #selector(slackLoginItemToggled)
-        slackLoginItemCheckbox.identifier = role(#selector(slackLoginItemToggled))
-        updateSlackHotKeyPresentation()
-        updateSlackLoginItemPresentation()
-
-        let hotKeyLabel = NSTextField(labelWithString: localized("app.slack.hotKey.label"))
-        hotKeyLabel.font = Theme.ui(12)
-        hotKeyLabel.textColor = Theme.text
-        let hotKeyRow = NSStackView(views: [hotKeyLabel, slackHotKeyButton, slackHotKeyClearButton])
-        hotKeyRow.orientation = .horizontal
-        hotKeyRow.alignment = .centerY
-        hotKeyRow.spacing = 8
-
-        return card(localized("app.card.slack.title"), [
-            helpLabel(localized("app.card.slack.help")),
-            slackWorkDirectoryField,
-            slackThreadValidationLabel,
-            slackInstructionField,
-            helpLabel(localized("app.slack.instruction.help")),
-            hotKeyRow,
-            slackHotKeyStatusLabel,
-            helpLabel(localized("app.slack.hotKey.help")),
-            slackLoginItemCheckbox,
-            helpLabel(localized("app.slack.loginItem.help")),
-            slackLoginItemStatusLabel,
-            slackRequestFailureLabel,
-        ])
-    }
-
-    /// The check on the tools a command calls. The login shell has to be asked rather than the
-    /// app's own PATH — a GUI app's PATH is not the login shell's, and a name can be a function or
-    /// alias defined in an rc file.
-    private func buildToolsCard() -> NSView {
-        toolsList.orientation = .vertical
-        toolsList.alignment = .leading
-        toolsList.spacing = 6
-        return card(localized("app.card.tools.title"), [
-            helpLabel(localized("app.card.tools.help")),
-            toolsList,
-        ])
-    }
-
-    // MARK: Cards — always on screen (terminal choice, test)
-
-    // MARK: Cards — language
-
-    /// **This picker controls the app; Chrome controls the extension**: the setup window is here
-    /// because it is what a user sees *before* the extension exists. The app defaults to macOS's
-    /// language (or uses an explicit choice), while the extension reads Chrome's catalogue and is
-    /// not synchronized with this picker.
-    ///
-    /// The entries are each written in their own language, which is what a language menu does
-    /// everywhere: a user who has landed in a language they cannot read has to be able to find
-    /// their way out of it. Only the `auto` line is in the window's language, and the catalogue
-    /// provides it with the rest of this window.
-    /// into the catalogue with the rest of this window.
-    private func languageCard() -> NSView {
-        languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        languagePopUp.addItem(withTitle: localized("app.language.followSystem"))
-        languagePopUp.lastItem?.representedObject = automaticLocalePreference
-        for tag in supportedLocales {
-            languagePopUp.addItem(withTitle: languageMenuTitles[tag] ?? tag)
-            languagePopUp.lastItem?.representedObject = tag
-        }
-        languagePopUp.target = self
-        languagePopUp.action = #selector(languageChanged)
-        languagePopUp.identifier = role(#selector(languageChanged))
-
-        // Half of the change lands now and half on the next launch, so the button that closes
-        // that gap sits next to the control that opens it rather than in a menu somewhere
-        languageRestartButton = button(localized("app.button.restartNow"), #selector(restartForLanguage))
-        languageNoteLabel = helpLabel("", width: setupContentWidth - 28)
-
-        let row = NSStackView(views: [languagePopUp, languageRestartButton])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 10
-        return card(localized("app.card.language.title"), [row, languageNoteLabel])
-    }
-
-    /// Each language in its own script. Not a catalogue lookup on purpose — these read the same
-    /// whatever language the window is in, which is the point of a language menu.
-    private var languageMenuTitles: [String: String] {
-        ["en": "English", "ko": "한국어", "ja": "日本語", "zh-Hans": "简体中文", "zh-Hant": "繁體中文"]
-    }
-
-    @objc private func languageChanged() {
-        guard let choice = languagePopUp.selectedItem?.representedObject as? String else { return }
-        Settings.language = choice
-        refresh()
-    }
-
-    /// **The picker asks, it does not decide.** Whether a restart is safe right now is
-    /// `LocaleRestartGate`'s question, and its answer is "no claude input delivery is in flight" —
-    /// restarting through one would cut it off and orphan a Warp helper whose only defence is its
-    /// lifetime.
-    ///
-    /// A refusal is **not** a deferral: it changes the note and stops, leaving the user holding the
-    /// trigger. Queueing the restart would need the queue to outlive a delivery that may never end,
-    /// which is the same self-lifetime problem this gate exists to avoid.
-    ///
-    @objc private func restartForLanguage() {
-        guard LocaleRestartGate.admitRestart() else {
-            languageNoteLabel.stringValue = languageNote(.restartBlocked)
-            return
-        }
-        let app = Bundle.main.bundlePath
-        // A detached `open` after this process exits: relaunching from inside a terminating app
-        // races the old instance's socket, and the new one would fail to bind
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", app]
-        do {
-            try task.run()
-        } catch {
-            // Nothing will come back to lift the admission, and an app that refuses every claude
-            // input for the rest of its life is a worse outcome than the restart not happening
-            LocaleRestartGate.withdrawAdmission()
-            checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
-            languageNoteLabel.stringValue = languageNote(.restartFailed)
-            return
-        }
-        NSApp.terminate(nil)
-    }
-
-    /// The note is a closed state, so a blocked restart and a failed relaunch cannot be requested
-    /// together or silently collapse into the ordinary note.
-    private enum LanguageNoteState {
-        case ordinary
-        case restartBlocked
-        case restartFailed
-    }
-
-    private func languageNote(_ state: LanguageNoteState = .ordinary) -> String {
-        switch state {
-        case .restartFailed:
-            return localized("app.language.restartFailed")
-        case .restartBlocked:
-            return localized("app.language.restartDeferred")
-        case .ordinary:
-            return localized("app.language.note")
-        }
-    }
-
-    private func terminalCard() -> NSView {
-        itermRadio = radio("iTerm2", installed: PermissionChecker.isITermInstalled)
-        weztermRadio = radio("WezTerm", installed: PermissionChecker.isWezTermInstalled)
-        warpRadio = radio("Warp", installed: PermissionChecker.isWarpInstalled)
-        cmuxRadio = radio("cmux", installed: PermissionChecker.isCmuxInstalled(channel: .stable))
-        cmuxNightlyRadio = radio("cmux NIGHTLY", installed: PermissionChecker.isCmuxInstalled(channel: .nightly))
-
-        // Stacked vertically: the radios do not fit side by side in the card's width
-        let radioColumn = NSStackView(views: [itermRadio, weztermRadio, warpRadio, cmuxRadio, cmuxNightlyRadio])
-        radioColumn.orientation = .vertical
-        radioColumn.alignment = .leading
-        radioColumn.spacing = 7
-        radioColumn.widthAnchor.constraint(equalToConstant: terminalRadioWidth).isActive = true
-
-        terminalNoteLabel = helpLabel("", width: setupContentWidth - 28 - terminalRadioWidth - 18)
-        let radioRow = NSStackView(views: [radioColumn, terminalNoteLabel])
-        radioRow.orientation = .horizontal
-        radioRow.alignment = .top
-        radioRow.spacing = 18
-
-        backgroundCheckbox = NSButton(
-            checkboxWithTitle: localized("app.terminal.openInBackground"),
-            target: self, action: #selector(tabActivationChanged)
-        )
-        backgroundCheckbox.identifier = role(#selector(tabActivationChanged))
-        let backgroundColumn = NSStackView(views: [
-            backgroundCheckbox, helpLabel(localized("app.terminal.openInBackground.note")),
-        ])
-        backgroundColumn.orientation = .vertical
-        backgroundColumn.alignment = .leading
-        backgroundColumn.spacing = 4
-
-        buildPermissionSection()
-        buildCmuxSection()
-        buildAccessibilitySection()
-        return card(
-            localized("app.card.terminal.title"),
-            [radioRow, backgroundColumn, permissionSection, cmuxSection, accessibilitySection]
-        )
-    }
-
-    private func radio(_ title: String, installed: Bool) -> NSButton {
-        let button = NSButton(
-            radioButtonWithTitle: installed ? title : localized("app.terminal.notInstalled", title),
-            target: self, action: #selector(terminalChanged)
-        )
-        button.isEnabled = installed
-        // The untranslated argument, not the drawn title: the drawn one is wrapped in a sentence
-        // when the terminal is missing, and that sentence is in whatever language the window is in
-        button.identifier = role(#selector(terminalChanged), title)
-        return button
-    }
-
-    private func buildPermissionSection() {
-        // Idempotent: it fills a **stored** stack, so building a second time would append a second
-        // copy of everything rather than replace it. `toolsList` already clears for the same reason
-        permissionSection.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        permissionSection.orientation = .vertical
-        permissionSection.alignment = .leading
-        permissionSection.spacing = 9
-        permissionSection.addArrangedSubview(hairline())
-        permissionSection.addArrangedSubview(sectionTitle(localized("app.section.itermPermission.title")))
-        permissionSection.addArrangedSubview(helpLabel(
-            localized("app.section.itermPermission.help")
-        ))
-        permissionSection.addArrangedSubview(permissionStatusLabel)
-        requestPermissionButton.title = localized("app.button.requestItermPermission")
-        requestPermissionButton.target = self
-        requestPermissionButton.action = #selector(requestPermission)
-        requestPermissionButton.identifier = role(#selector(requestPermission))
-        requestPermissionButton.bezelStyle = .rounded
-        permissionSection.addArrangedSubview(buttonRow([
-            requestPermissionButton,
-            button(localized("app.button.openSystemSettings"), #selector(openAutomationSettings)),
-        ]))
-    }
-
-    /// The permission is what lets the app read the screen and check whether claude received the
-    /// input. Submitting without that check records an input claude discarded during its
-    /// initialisation as "delivered" (measured), so without the permission claude input is not
-    /// delivered at all — and the wording keeps that apart from running a command, which needs
-    /// nothing.
-    private func buildAccessibilitySection() {
-        // Idempotent: it fills a **stored** stack, so building a second time would append a second
-        // copy of everything rather than replace it. `toolsList` already clears for the same reason
-        accessibilitySection.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        accessibilitySection.orientation = .vertical
-        accessibilitySection.alignment = .leading
-        accessibilitySection.spacing = 9
-        accessibilitySection.addArrangedSubview(hairline())
-        accessibilitySection.addArrangedSubview(sectionTitle(localized("app.section.accessibility.title")))
-        accessibilitySection.addArrangedSubview(helpLabel(warpAccessibilityHelpText()))
-        accessibilitySection.addArrangedSubview(accessibilityStatusLabel)
-        accessibilitySection.addArrangedSubview(buttonRow([
-            button(localized("app.button.requestAccessibility"), #selector(requestAccessibility)),
-            button(localized("app.button.openSystemSettings"), #selector(openAccessibilitySettings)),
-        ]))
-    }
-
-    private func buildCmuxSection() {
-        // Idempotent: this stack survives language redraws just like the permission sections.
-        cmuxSection.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        cmuxSection.orientation = .vertical
-        cmuxSection.alignment = .leading
-        cmuxSection.spacing = 9
-        cmuxSection.addArrangedSubview(hairline())
-        cmuxSection.addArrangedSubview(sectionTitle(localized("app.section.cmux.title")))
-        cmuxSection.addArrangedSubview(helpLabel(localized("app.section.cmux.help")))
-        cmuxSection.addArrangedSubview(cmuxStatusLabel)
-        cmuxSection.addArrangedSubview(cmuxFeedbackLabel)
-        cmuxSection.addArrangedSubview(buildCmuxPlacementSection())
-
-        cmuxConfigButton.title = localized("app.button.openCmuxConfig")
-        cmuxConfigButton.target = self
-        cmuxConfigButton.action = #selector(openCmuxConfig)
-        cmuxConfigButton.identifier = role(#selector(openCmuxConfig))
-        cmuxConfigButton.bezelStyle = .rounded
-        cmuxConfigButton.isEnabled = true
-
-        cmuxRefreshButton.title = localized("app.button.refreshCmuxStatus")
-        cmuxRefreshButton.target = self
-        cmuxRefreshButton.action = #selector(refreshCmuxStatus)
-        cmuxRefreshButton.identifier = role(#selector(refreshCmuxStatus))
-        cmuxRefreshButton.bezelStyle = .rounded
-
-        cmuxSection.addArrangedSubview(buttonRow([cmuxConfigButton, cmuxRefreshButton]))
-    }
-
-    private func buildCmuxPlacementSection() -> NSView {
-        cmuxPlacementIdentityRadios = [
-            placementRadio(
-                localized("app.cmux.placement.identity.alwaysNew"),
-                tag: CmuxPlacementRadioTag.alwaysNew,
-                action: #selector(cmuxPlacementIdentityChanged(_:)),
-                qualifier: "always-new"
-            ),
-            placementRadio(
-                localized("app.cmux.placement.identity.fixedName"),
-                tag: CmuxPlacementRadioTag.fixedName,
-                action: #selector(cmuxPlacementIdentityChanged(_:)),
-                qualifier: "fixed-name"
-            ),
+    private var sharedPanelSelectors: [SetupWindowSharedPanelAction: Selector] {
+        [
+            .registerManifest: #selector(registerManifest),
+            .installInChrome: #selector(installInChrome),
+            .requestPermission: #selector(requestPermission),
+            .openAutomationSettings: #selector(openAutomationSettings),
+            .requestAccessibility: #selector(requestAccessibility),
+            .openAccessibilitySettings: #selector(openAccessibilitySettings),
+            .openCmuxConfig: #selector(openCmuxConfig),
+            .refreshCmuxStatus: #selector(refreshCmuxStatus),
+            .restartApp: #selector(restartApp),
+            .openTerminalSettings: #selector(openTerminalSettings),
+            .openSlackSettings: #selector(openSlackSettings),
+            .openBaseDirectorySettings: #selector(openBaseDirectorySettings),
+            .showZoxideInstallHelp: #selector(showZoxideInstallHelp(_:)),
+            .showGhInstallHelp: #selector(showGhInstallHelp(_:)),
+            .showClaudeInstallHelp: #selector(showClaudeInstallHelp(_:)),
+            .showAppInstallHelp: #selector(showAppInstallHelp(_:)),
+            .dismissSetupGuide: #selector(dismissSetupGuide),
         ]
-        let identityColumn = NSStackView(views: cmuxPlacementIdentityRadios)
-        identityColumn.orientation = .vertical
-        identityColumn.alignment = .leading
-        identityColumn.spacing = 7
+    }
 
-        cmuxPlacementNameField.placeholderString = localized("app.cmux.placement.name.placeholder")
-        cmuxPlacementNameField.font = Theme.mono(11.5)
-        cmuxPlacementNameField.target = self
-        cmuxPlacementNameField.action = #selector(cmuxPlacementNameEdited)
-        cmuxPlacementNameField.identifier = role(#selector(cmuxPlacementNameEdited))
-        cmuxPlacementNameField.cell?.sendsActionOnEndEditing = true
-        cmuxPlacementNameField.widthAnchor.constraint(equalToConstant: setupTextWidth - 110).isActive = true
-
-        cmuxPlacementArrangementRadios = [
-            placementRadio(
-                localized("app.cmux.placement.arrangement.pane"),
-                tag: CmuxPlacementRadioTag.panePerItem,
-                action: #selector(cmuxPlacementArrangementChanged(_:)),
-                qualifier: CmuxPlacementArrangement.panePerItem.rawValue
-            ),
-            placementRadio(
-                localized("app.cmux.placement.arrangement.tab"),
-                tag: CmuxPlacementRadioTag.tabPerItem,
-                action: #selector(cmuxPlacementArrangementChanged(_:)),
-                qualifier: CmuxPlacementArrangement.tabPerItem.rawValue
-            ),
-            placementRadio(
-                localized("app.cmux.placement.arrangement.workspace"),
-                tag: CmuxPlacementRadioTag.workspacePerItem,
-                action: #selector(cmuxPlacementArrangementChanged(_:)),
-                qualifier: CmuxPlacementArrangement.workspacePerItem.rawValue
-            ),
+    private var generalPaneSelectors: [SetupWindowGeneralAction: Selector] {
+        [
+            .terminalChanged: #selector(terminalChanged(_:)),
+            .tabActivationChanged: #selector(tabActivationChanged(_:)),
+            .testTerminal: #selector(testTerminal),
+            .languageChanged: #selector(languageChanged(_:)),
+            .restartForLanguage: #selector(restartForLanguage),
+            .openOptionsPage: #selector(openOptionsPage),
+            .reshowInstall: #selector(reshowInstall),
+            .openCmuxConfig: #selector(openCmuxConfig),
+            .refreshCmuxStatus: #selector(refreshCmuxStatus),
         ]
-        let arrangementColumn = NSStackView(views: cmuxPlacementArrangementRadios)
-        arrangementColumn.orientation = .vertical
-        arrangementColumn.alignment = .leading
-        arrangementColumn.spacing = 7
-
-        let section = NSStackView(views: [
-            sectionTitle(localized("app.section.cmux.placement.title")),
-            helpLabel(localized("app.section.cmux.placement.help")),
-            identityColumn,
-            cmuxPlacementNameField,
-            arrangementColumn,
-            cmuxPlacementInterpretationLabel,
-        ])
-        section.orientation = .vertical
-        section.alignment = .leading
-        section.spacing = 7
-        return section
     }
 
-    private func placementRadio(
-        _ title: String, tag: Int, action: Selector, qualifier: String
-    ) -> NSButton {
-        let button = NSButton(radioButtonWithTitle: title, target: self, action: action)
-        button.tag = tag
-        button.identifier = role(action, qualifier)
-        return button
+    private var githubPaneSelectors: [SetupWindowGitHubAction: Selector] {
+        [
+            .chooseBaseDirectory: #selector(chooseBaseDirectory),
+            .baseDirectoryEdited: #selector(baseDirectoryEdited),
+            .cmuxPlacementArrangementChanged: #selector(cmuxPlacementArrangementChanged(_:)),
+            .cmuxPlacementIdentityChanged: #selector(cmuxPlacementIdentityChanged(_:)),
+            .cmuxPlacementNameEdited: #selector(cmuxPlacementNameEdited),
+        ]
     }
 
-    private func sectionTitle(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = Theme.ui(12, .semibold)
-        label.textColor = Theme.text
-        return label
+    private var slackPaneSelectors: [SetupWindowSlackAction: Selector] {
+        [
+            .slackThreadSettingsEdited: #selector(slackThreadSettingsEdited),
+            .chooseSlackWorkDirectory: #selector(chooseSlackWorkDirectory),
+            .recordSlackHotKey: #selector(recordSlackHotKey),
+            .clearSlackHotKey: #selector(clearSlackHotKey),
+            .slackLoginItemToggled: #selector(slackLoginItemToggled),
+        ]
     }
 
-    private func testCard() -> NSView {
-        let command = NSMutableAttributedString(
-            string: "$ ", attributes: [.font: Theme.mono(11), .foregroundColor: Theme.textFaint]
-        )
-        command.append(NSAttributedString(
-            string: testCommand.command,
-            attributes: [.font: Theme.mono(11), .foregroundColor: Theme.text]
-        ))
-        let commandLabel = NSTextField(labelWithString: "")
-        commandLabel.attributedStringValue = command
-
-        let row = NSStackView(views: [chip(commandLabel), button(localized("app.button.runInTerminal"), #selector(testTerminal))])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-
-        testResultLabel.isHidden = true
-
-        return card(localized("app.card.test.title"), [row, testResultLabel])
-    }
-
-    /// Utilities that appear only once setup is done — before that the extension is not loaded and
-    /// there is no options page to open. `refresh()` ties this row to the extension card, so it
-    /// also goes away while the setup guide is deliberately back on screen.
-    private func buildUtilityRow() -> NSView {
-        buttonRow([
-            button(localized("app.button.openOptionsPage"), #selector(openOptionsPage)),
-            button(localized("app.button.showSetupGuide"), #selector(reshowInstall)),
-        ])
-    }
-
-    // MARK: View factories
-
-    private func card(_ title: String, _ content: [NSView]) -> NSView {
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = Theme.panel.cgColor
-        box.layer?.cornerRadius = 10
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = Theme.border.cgColor
-        box.translatesAutoresizingMaskIntoConstraints = false
-
-        let inner = NSStackView()
-        inner.orientation = .vertical
-        inner.alignment = .leading
-        inner.spacing = 9
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        inner.addArrangedSubview(promptRow(title))
-        content.forEach { inner.addArrangedSubview($0) }
-
-        box.addSubview(inner)
-        NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
-            inner.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
-            inner.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
-            inner.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
-            box.widthAnchor.constraint(equalToConstant: setupContentWidth),
-        ])
-        return box
-    }
-
-    private func promptRow(_ title: String) -> NSView {
-        let glyph = NSTextField(labelWithString: "❯")
-        glyph.font = Theme.mono(13, .bold)
-        glyph.textColor = Theme.accent
-        let label = NSTextField(labelWithString: title)
-        label.font = Theme.ui(13, .semibold)
-        label.textColor = Theme.text
-        let row = NSStackView(views: [glyph, label])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 7
-        return row
-    }
-
-    private func helpLabel(_ text: String, width: CGFloat? = nil) -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = Theme.ui(11.5)
-        label.textColor = Theme.textDim
-        label.preferredMaxLayoutWidth = width ?? (setupContentWidth - 28)
-        if let width {
-            label.widthAnchor.constraint(equalToConstant: width).isActive = true
-        }
-        return label
-    }
-
-    /// The name a control answers to after the window has been rebuilt around it.
-    ///
-    /// **Derived from the action rather than declared**, so it cannot go stale on its own: a
-    /// control that stopped having this action stopped being this control, and one that never had
-    /// an action does nothing for anyone to focus. The qualifier is for the one case where a single
-    /// action serves several controls — the terminal radios, told apart by a product name, which no
-    /// language rewrites either. A control with no action is not one this window owns, and
-    /// `testEveryControlTheWindowOwnsCarriesTheRoleItsActionNames` is the enumeration of the ones
-    /// it does.
-    private func role(_ action: Selector, _ qualifier: String? = nil) -> NSUserInterfaceItemIdentifier {
-        NSUserInterfaceItemIdentifier((["control", "\(action)"] + [qualifier].compactMap { $0 }).joined(separator: "."))
-    }
-
-    private func button(_ title: String, _ action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
-        button.identifier = role(action)
-        return button
-    }
-
-    private func buttonRow(_ buttons: [NSButton]) -> NSStackView {
-        let row = NSStackView(views: buttons)
-        row.orientation = .horizontal
-        row.spacing = 8
-        return row
-    }
-
-    private func chip(_ label: NSTextField) -> NSView {
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = Theme.chipBg.cgColor
-        box.layer?.cornerRadius = 6
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = Theme.border.cgColor
-        box.translatesAutoresizingMaskIntoConstraints = false
-        label.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
-            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 9),
-            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -9),
-            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5),
-        ])
-        return box
-    }
-
-    /// The quote block the setup steps are drawn in — a thin vertical bar down the left, so it
-    /// reads like a heredoc
-    private func quoteBlock(_ lines: [String]) -> NSView {
-        let bar = NSView()
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = Theme.accent.withAlphaComponent(0.4).cgColor
-        bar.layer?.cornerRadius = 1
-        bar.translatesAutoresizingMaskIntoConstraints = false
-
-        let text = NSStackView()
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 4
-        text.translatesAutoresizingMaskIntoConstraints = false
-        for line in lines {
-            let label = NSTextField(wrappingLabelWithString: line)
-            label.font = Theme.ui(11.5)
-            label.textColor = Theme.textDim
-            label.preferredMaxLayoutWidth = setupContentWidth - 28 - 14
-            text.addArrangedSubview(label)
-        }
-
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bar)
-        container.addSubview(text)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bar.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
-            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -1),
-            bar.widthAnchor.constraint(equalToConstant: 2),
-            text.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
-            text.topAnchor.constraint(equalTo: container.topAnchor),
-            text.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            text.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
-    }
-
-    private func hairline() -> NSView {
-        let line = NSView()
-        line.wantsLayer = true
-        line.layer?.backgroundColor = Theme.border.cgColor
-        line.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            line.heightAnchor.constraint(equalToConstant: 1),
-            line.widthAnchor.constraint(equalToConstant: setupContentWidth - 28),
-        ])
-        return line
+    private func applyPaneVisibility() {
+        guard rootStack != nil else { return }
+        generalPane?.isHidden = selectedPane != .general
+        githubPane?.isHidden = selectedPane != .github
+        slackPane?.isHidden = selectedPane != .slack
+        rootStack?.needsLayout = true
     }
 
     private var appVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String).map { "v\($0)" } ?? "dev"
     }
 
-    /// A formatter is expensive enough to keep, and keeping one is exactly how this line stayed
-    /// Korean: it was a `static let` built once with `Locale(identifier: "ko_KR")`, so the language
-    /// was frozen into the value and no lookup function could ever have thawed it. **The language
-    /// is now part of the key.** A cache whose key omits the thing that varies is not a cache.
-    ///
-    /// Measured: `Locale(identifier:)` takes the tags we resolve as they are — `zh-Hans` gives
-    /// 1小时前 and `zh-Hant` 1小時前, so no ICU-style rewriting is needed on the way in.
     private static var relativeFormatterCache: (tag: String, formatter: RelativeDateTimeFormatter)?
 
     static func relativeFormatter(for tag: String) -> RelativeDateTimeFormatter {
@@ -1427,622 +886,187 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
     }
 
     private func relative(_ date: Date) -> String {
-        Self.relativeFormatter(for: AppLocalization.resolvedTag())
-            .localizedString(for: date, relativeTo: Date())
+        Self.relativeFormatter(for: AppLocalization.resolvedTag()).localizedString(for: date, relativeTo: Date())
     }
 
-    // MARK: - The terminal choice
-
-    @objc private func terminalChanged() {
-        if cmuxRadio.state == .on {
-            select(terminal: .cmux)
-        } else if cmuxNightlyRadio.state == .on {
-            select(terminal: .cmuxNightly)
-        } else if weztermRadio.state == .on {
-            select(terminal: .wezterm)
-        } else if warpRadio.state == .on {
-            select(terminal: .warp)
-        } else {
-            select(terminal: .iterm)
+    private func terminalName(_ terminal: Terminal) -> String {
+        switch terminal {
+        case .iterm: return "iTerm2"
+        case .wezterm: return "WezTerm"
+        case .warp: return "Warp"
+        case .cmux: return "cmux"
+        case .cmuxNightly: return "cmux NIGHTLY"
         }
     }
 
-    /// Stores the choice and brings every dependent control back in sync. `terminalChanged` maps
-    /// radio → terminal and `updateTerminalControls` maps terminal → radio, so this is the single
-    /// place the two directions meet — and the seam tests drive the window through.
-    func select(terminal: Terminal) {
-        Settings.terminal = terminal
-        updateTerminalControls()
+    private func nextArrival() -> Int {
+        defer { nextReasonOrder += 1 }
+        return nextReasonOrder
+    }
+
+    private func appendOpeningReason(_ reason: SetupWindowOpeningReason) {
+        openingReasons.append(reason)
+    }
+
+    func presentClaudeInputRejection(_ blocker: ClaudeInputBlocker) {
+        guard blocker.setupWindowCanHelp else { return }
+        appendOpeningReason(.claudeInputRejected(blocker: blocker, arrivalOrder: nextArrival()))
+        selectPane(.general)
         refresh()
     }
 
-    @objc private func cmuxPlacementIdentityChanged(_ sender: NSButton) {
-        switch sender.tag {
-        case CmuxPlacementRadioTag.alwaysNew:
-            Settings.cmuxPlacementIdentityMode = "always-new"
-        case CmuxPlacementRadioTag.fixedName:
-            Settings.cmuxPlacementIdentityMode = "fixed-name"
-        default:
-            return
-        }
-        refresh()
-    }
-
-    @objc private func cmuxPlacementArrangementChanged(_ sender: NSButton) {
-        let rawValue: String
-        switch sender.tag {
-        case CmuxPlacementRadioTag.panePerItem:
-            rawValue = CmuxPlacementArrangement.panePerItem.rawValue
-        case CmuxPlacementRadioTag.tabPerItem:
-            rawValue = CmuxPlacementArrangement.tabPerItem.rawValue
-        case CmuxPlacementRadioTag.workspacePerItem:
-            rawValue = CmuxPlacementArrangement.workspacePerItem.rawValue
-        default:
-            return
-        }
-        Settings.cmuxPlacementArrangement = rawValue
-        refresh()
-    }
-
-    @objc private func cmuxPlacementNameEdited() {
-        guard !isRebuildingForLanguageChange else { return }
-        let typed = cmuxPlacementNameField.stringValue
-        Settings.cmuxPlacementFixedName = typed
-        drawnCmuxPlacementName = typed
-        refresh()
-    }
-
-    private func updateTerminalControls() {
-        switch Settings.terminal {
-        case .iterm: itermRadio.state = .on
-        case .wezterm: weztermRadio.state = .on
-        case .warp: warpRadio.state = .on
-        case .cmux: cmuxRadio.state = .on
-        case .cmuxNightly: cmuxNightlyRadio.state = .on
-        }
-        // Scheduled claude input is delivered only once claude is up, so it takes a while — and
-        // anything the user types in the meantime mixes into it
-        // Two complete sentences, joined as sentences. Each part is a message
-        // each part is a message a translator can write on its own, and neither is a clause of the other
-        var note = localized("app.terminal.note.common")
-        // Warp shows only the focused tab, so the app submits only while it can see its own
-        if Settings.terminal == .warp {
-            note += localized("app.terminal.note.warp")
-        }
-        terminalNoteLabel.stringValue = note
-        // Warp always opens in front — its delivery can only confirm the tab being looked at — so
-        // there the box is unticked and disabled, and the stored choice waits for the next terminal
-        let offered = Settings.terminal != .warp
-        backgroundCheckbox.isEnabled = offered
-        backgroundCheckbox.state = offered && Settings.tabActivation == .background ? .on : .off
-    }
-
-    @objc private func tabActivationChanged() {
-        Settings.tabActivation = backgroundCheckbox.state == .on ? .background : .foreground
-    }
-
-    // MARK: - Refreshing the state
-
-    private func refresh() {
-        // The picker follows the stored value rather than its own last click: a second window, or a
-        // value written before this launch, has to show through
-        languagePopUp.selectItem(at: languagePickerIndex(
-            stored: Settings.language, drawn: AppLocalization.resolvedTag(),
-            entries: languagePopUp.itemArray.map { $0.representedObject as? String }
-        ))
-        // Any window may change the shared preference. Restart itself remains guarded by
-        // `LocaleRestartGate`, which protects in-flight delivery rather than socket ownership.
-        languagePopUp.isEnabled = true
-        languageRestartButton.isEnabled = true
-        languageNoteLabel.stringValue = languageNote()
-
-        let manifest = Installer.manifestState()
-        let folder = Installer.extensionState()
-        let evidence = Settings.lastRequestAt
-
-        // The Chrome connection: the card is hidden when it is fine — the app registers the
-        // manifest on launch and heals it when the app has moved, so there is nothing to press
-        if case .ok = manifest {
-            chromeCard.isHidden = true
-        } else {
-            chromeCard.isHidden = false
-            apply(manifest, to: manifestStatusLabel)
-        }
-
-        // The extension counts as done only when a request has actually arrived on the socket
-        let extensionState: SetupState
-        if case .error = folder {
-            extensionState = folder
-        } else if let evidence {
-            extensionState = .ok(localized("app.status.extension.connected", relative(evidence)))
-        } else {
-            extensionState = .warning(localized("app.status.extension.waiting"))
-        }
-        apply(extensionState, to: extensionStatusLabel)
-        extensionCard.isHidden = evidence != nil && !forceShowInstall
-        utilityRow.isHidden = !extensionCard.isHidden
-
-        updateBaseDirCard()
-        updateSlackThreadSettingsCard()
-        updateToolsCard()
-
-        let socketAlive = FileManager.default.fileExists(atPath: defaultSocketPath())
-
-        var permission: SetupState?
-        var cmuxStatus: CmuxSocketStatus?
-        // A command still runs without Accessibility — only the claude input delivery is refused —
-        // so this is a warning and not an error
-        let accessibilityGranted = PermissionChecker.isAccessibilityGranted
-        // The permission UI, per terminal. There is no `default`, so adding a terminal makes
-        // "does this one need a permission section" a compile error here rather than a question
-        // somebody has to remember to ask
-        switch Settings.terminal {
-        case .iterm:
-            if PermissionChecker.isITermInstalled {
-                let status = PermissionChecker.iTermAutomationStatus()
-                permission = status.isGranted ? .ok(status.label) : .warning(status.label)
-            } else {
-                permission = .warning(localized("app.status.iterm.notInstalled"))
-            }
-            apply(permission!, to: permissionStatusLabel, format: "app.status.itermAutomation.format")
-        case .wezterm:
-            break // driven through the CLI, so no TCC permission is involved
-        case .warp:
-            apply(
-                accessibilityGranted
-                    ? .ok(localized("app.status.accessibility.granted"))
-                    : .warning(localized("app.status.accessibility.denied")),
-                to: accessibilityStatusLabel, format: "app.status.accessibility.format"
-            )
-        case .cmux:
-            cmuxStatus = updateCmuxStatus(channel: .stable)
-        case .cmuxNightly:
-            cmuxStatus = updateCmuxStatus(channel: .nightly)
-        }
-        var granted = false
-        if let permission, case .ok = permission { granted = true }
-        permissionSection.isHidden = Settings.terminal != .iterm || granted
-        cmuxSection.isHidden = Settings.terminal.cmuxChannel == nil
-        updateCmuxPlacementControls()
-        accessibilitySection.isHidden = Settings.terminal != .warp || accessibilityGranted
-
-        pipeline.update(pipelineNodes(
-            manifest: manifest, extensionState: extensionState,
-            socketAlive: socketAlive, permission: permission,
-            accessibilityGranted: accessibilityGranted, cmuxStatus: cmuxStatus
-        ))
-        // No resize call here on purpose: the content view resizes the window from inside its
-        // own layout pass, which is the only moment the measurement is valid.
-    }
-
-    private func updateCmuxPlacementControls() {
-        guard !cmuxPlacementIdentityRadios.isEmpty,
-              !cmuxPlacementArrangementRadios.isEmpty else { return }
-
-        let rawIdentityMode = Settings.cmuxPlacementIdentityMode
-        let rawFixedName = Settings.cmuxPlacementFixedName
-        let rawArrangement = Settings.cmuxPlacementArrangement
-        let parsed = CmuxPlacementPreset.parse(
-            rawIdentityMode: rawIdentityMode,
-            rawFixedName: rawFixedName,
-            rawArrangement: rawArrangement
-        )
-
-        // The radio state preserves the user's raw identity choice so an empty fixed name can be
-        // filled in here; the label below shows the effective Core interpretation separately.
-        let fixedNameSelected = rawIdentityMode == "fixed-name"
-        cmuxPlacementIdentityRadios[0].state = fixedNameSelected ? .off : .on
-        cmuxPlacementIdentityRadios[1].state = fixedNameSelected ? .on : .off
-        cmuxPlacementNameField.isEnabled = fixedNameSelected
-
-        let arrangementIndex: Int
-        switch parsed.arrangement {
-        case .panePerItem:
-            arrangementIndex = 0
-        case .tabPerItem:
-            arrangementIndex = 1
-        case .workspacePerItem:
-            arrangementIndex = 2
-        }
-        for (index, button) in cmuxPlacementArrangementRadios.enumerated() {
-            button.state = index == arrangementIndex ? .on : .off
-        }
-
-        let storedName = rawFixedName
-        let ours = drawnCmuxPlacementName == nil
-            || cmuxPlacementNameField.stringValue == drawnCmuxPlacementName
-        if window?.firstResponder !== cmuxPlacementNameField.currentEditor(), ours {
-            cmuxPlacementNameField.stringValue = storedName
-            drawnCmuxPlacementName = storedName
-        }
-
-        let identityText: String
-        switch parsed.effectiveIdentityMode {
-        case .alwaysNew:
-            identityText = localized("app.cmux.placement.identity.alwaysNew")
-        case .fixedName(let name):
-            identityText = localized("app.cmux.placement.identity.fixedNameValue", name)
-        }
-        let arrangementText: String
-        switch parsed.arrangement {
-        case .panePerItem:
-            arrangementText = localized("app.cmux.placement.arrangement.pane")
-        case .tabPerItem:
-            arrangementText = localized("app.cmux.placement.arrangement.tab")
-        case .workspacePerItem:
-            arrangementText = localized("app.cmux.placement.arrangement.workspace")
-        }
-        cmuxPlacementInterpretationLabel.stringValue = localized(
-            "app.cmux.placement.interpretation", identityText, arrangementText
-        )
-    }
-
-    private func updateCmuxStatus(channel: CmuxChannel) -> CmuxSocketStatus {
-        let status = PermissionChecker.cmuxSocketStatus(channel: channel)
-        apply(cmuxSetupState(status), to: cmuxStatusLabel)
-        // A refresh is the live-status oracle. Clear transient click feedback so an old
-        // action is not mistaken for the current diagnosis after a redraw.
-        cmuxFeedbackLabel.stringValue = ""
-        cmuxFeedbackLabel.textColor = Theme.textDim
-        cmuxConfigButton.isEnabled = true
-        cmuxRefreshButton.isEnabled = true
-        return status
-    }
-
-    /// Redraws the base directory card from what is stored. The field is not touched while the
-    /// user is typing in it — refresh() runs on every window activation and on every socket
-    /// request, and overwriting a half-typed path would be maddening.
-    ///
-    /// **"Is being typed into" was a proxy for "holds the user's text", and the two came apart on
-    /// the current path**. A language change through the picker ends the
-    /// edit *before* the rebuild, so the field editor is gone by the time this runs and the
-    /// condition let the stored value overwrite a draft the user had just been refused — type a
-    /// path, change the language, lose the typing. The condition asks the question it meant to ask
-    /// now: the field is redrawn only while it still holds **what this window put there**, which is
-    /// true on every path rather than on the two it was written for.
-    ///
-    /// The original condition stays, and what it is left covering is narrow and real: the stored
-    /// value changing *while* the field is open and untouched — a hand-edited plist, another
-    /// instance — where the write would land in a live edit. It is not what protects the cursor;
-    /// measured, writing the **same** value into a field being edited leaves the selection where it
-    /// was.
-    private func updateBaseDirCard() {
-        let stored = Settings.baseDirectory
-        let ours = drawnBaseDirectory == nil || baseDirField.stringValue == drawnBaseDirectory
-        if window?.firstResponder !== baseDirField.currentEditor(), ours {
-            baseDirField.stringValue = stored
-            drawnBaseDirectory = stored
-        }
-        // A stored value can only be invalid if it was edited outside this window (a hand-edited
-        // plist, an older build). Say so here rather than let every button fail unexplained.
-        // `try?` would fold "threw" and "not configured" into the same nil, so catch explicitly.
-        let resolved: String?
-        do {
-            resolved = try normalizedBaseDirectory(stored)
-        } catch {
-            apply(
-                .error(localized("app.baseDir.storedInvalid", baseDirectoryReason(error))),
-                to: baseDirStatusLabel
-            )
-            return
-        }
-        guard let normalized = resolved else {
-            apply(
-                .warning(localized("app.baseDir.notConfigured")),
-                to: baseDirStatusLabel
-            )
-            return
-        }
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isDirectory)
-        if exists && isDirectory.boolValue {
-            apply(.ok(localized("app.baseDir.ok", normalized)), to: baseDirStatusLabel)
-        } else {
-            // clone creates the leading directories (measured), so a missing folder still works —
-            // this only says so out loud, which is how a typo gets noticed
-            apply(.warning(localized("app.baseDir.missingFolder", normalized)), to: baseDirStatusLabel)
-        }
-    }
-
-    private func updateSlackThreadSettingsCard() {
-        let storedWorkDirectory = Settings.slackThreadWorkDirectory
-        let storedInstruction = Settings.slackThreadInstruction
-        let isEditingWorkDirectory = window?.firstResponder === slackWorkDirectoryField.currentEditor()
-        let isEditingInstruction = window?.firstResponder === slackInstructionField.currentEditor()
-        if !isEditingWorkDirectory,
-           drawnSlackWorkDirectory == nil || slackWorkDirectoryField.stringValue == drawnSlackWorkDirectory {
-            slackWorkDirectoryField.stringValue = storedWorkDirectory
-            drawnSlackWorkDirectory = storedWorkDirectory
-        }
-        if !isEditingInstruction,
-           drawnSlackInstruction == nil || slackInstructionField.stringValue == drawnSlackInstruction {
-            slackInstructionField.stringValue = storedInstruction
-            drawnSlackInstruction = storedInstruction
-        }
-
-        do {
-            _ = try validateSlackThreadSettings(
-                workDirectory: slackWorkDirectoryField.stringValue,
-                instruction: slackInstructionField.stringValue
-            )
-            apply(.ok(localized("app.slack.validation.ready")), to: slackThreadValidationLabel)
-        } catch let error as SlackThreadRequestError {
-            apply(.error(slackThreadRequestErrorMessage(error)), to: slackThreadValidationLabel)
-        } catch {
-            apply(.error(localized("app.slack.error.unexpectedRequest")), to: slackThreadValidationLabel)
-        }
-
-        updateSlackHotKeyPresentation()
-        updateSlackLoginItemPresentation()
-        if let lastSlackRequestFailure {
-            slackRequestFailureLabel.stringValue = "● \(slackThreadRequestErrorMessage(lastSlackRequestFailure))"
-            slackRequestFailureLabel.textColor = Theme.err
-            slackRequestFailureLabel.isHidden = false
-        } else {
-            slackRequestFailureLabel.stringValue = ""
-            slackRequestFailureLabel.isHidden = true
-        }
-    }
-
-    private func revealSlackRequestFailure() {
-        guard let window,
-              let scroll = window.contentView as? NSScrollView,
-              let document = scroll.documentView else { return }
-
-        window.contentView?.layoutSubtreeIfNeeded()
-        rootStack.afterNextWindowUpdate { [weak self, weak scroll, weak document] in
-            guard let self, let scroll, let document,
-                  !self.slackRequestFailureLabel.isHidden else { return }
-            let frame = self.slackRequestFailureLabel.convert(
-                self.slackRequestFailureLabel.bounds, to: document
-            )
-            let origin = scrollOrigin(
-                anchorTop: frame.maxY, offset: 0, clip: scroll.contentView.bounds.height
-            )
-            document.scroll(NSPoint(x: 0, y: origin))
-            scroll.reflectScrolledClipView(scroll.contentView)
-        }
-    }
-
-    private func updateSlackHotKeyPresentation() {
-        guard let slackHotKey else { return }
-        if isRecordingHotKey {
-            slackHotKeyButton.title = localized("app.slack.hotKey.recording")
-        } else if let combination = slackHotKey.combination {
-            slackHotKeyButton.title = combination.displayString(keyLabel: hotKeyKeyLabel(combination.keyCode))
-        } else {
-            slackHotKeyButton.title = localized("app.slack.hotKey.set")
-        }
-        slackHotKeyClearButton.isHidden = isRecordingHotKey || slackHotKey.combination == nil
-        let hint = isRecordingHotKey ? hotKeyRecordingHint : nil
-        let failure = isRecordingHotKey ? "" : slackThreadHotKeyStateMessage(slackHotKey.state)
-        if let hint {
-            slackHotKeyStatusLabel.stringValue = "● \(hint)"
-            slackHotKeyStatusLabel.textColor = Theme.warn
-            slackHotKeyStatusLabel.isHidden = false
-        } else if !failure.isEmpty {
-            slackHotKeyStatusLabel.stringValue = "● \(failure)"
-            slackHotKeyStatusLabel.textColor = Theme.err
-            slackHotKeyStatusLabel.isHidden = false
-        } else {
-            slackHotKeyStatusLabel.stringValue = ""
-            slackHotKeyStatusLabel.isHidden = true
-        }
-    }
-
-    /// The box shows what ServiceManagement reports, never just the click: a refused change leaves
-    /// it where the service still is, with the reason underneath.
-    private func updateSlackLoginItemPresentation() {
-        guard let slackLoginItem else { return }
-        let status = slackLoginItem.status
-        slackLoginItemCheckbox.state = status == .disabled ? .off : .on
-        let message: String
-        if let lastSlackLoginItemFailure {
-            message = slackLoginItemFailureMessage(lastSlackLoginItemFailure)
-            slackLoginItemStatusLabel.textColor = Theme.err
-        } else {
-            message = slackLoginItemStatusMessage(status)
-            slackLoginItemStatusLabel.textColor = Theme.warn
-        }
-        slackLoginItemStatusLabel.stringValue = message.isEmpty ? "" : "● \(message)"
-        slackLoginItemStatusLabel.isHidden = message.isEmpty
-    }
-
-    /// Presents a failure from the Slack shortcut, which has no other place to report one.
     func presentSlackThreadRequestFailure(_ error: Error) {
-        let present = { [weak self] in
-            self?.lastSlackRequestFailure = error
-            self?.updateSlackThreadSettingsCard()
-            self?.revealSlackRequestFailure()
-        }
-        if Thread.isMainThread {
-            present()
-        } else {
-            DispatchQueue.main.async(execute: present)
-        }
+        lastSlackRequestFailure = error
+        appendOpeningReason(.slackThreadRequestFailed(arrivalOrder: nextArrival()))
+        selectPane(.slack)
+        refresh()
     }
 
     func clearSlackThreadRequestFailure() {
-        let clear = { [weak self] in
-            self?.lastSlackRequestFailure = nil
-            self?.updateSlackThreadSettingsCard()
-        }
-        if Thread.isMainThread {
-            clear()
-        } else {
-            DispatchQueue.main.async(execute: clear)
-        }
-    }
-
-    /// Only the missing tools get a line. Listing the ones that are there too would leave the card
-    /// on screen in the state where nothing is wrong.
-    private func updateToolsCard() {
-        guard let availability = Settings.toolAvailability else {
-            // No answer yet. The check runs in the background on every launch, and one that fails
-            // leaves this nil rather than writing something — so "not yet" and "it did not answer"
-            // arrive here as the same value
-            toolsCard.isHidden = true
-            return
-        }
-        // nil covers both "not configured" and "stored value is unusable" — in either case the
-        // fallback cannot run, so zoxide is back to being critical
-        let configured = (try? normalizedBaseDirectory(Settings.baseDirectory)) != nil
-        let missing = toolAdvice(baseDirectoryConfigured: configured)
-            .filter { availability[$0.name] == false }
-        let wrapperAdvice = claudeWrapperAdvice(
-            available: availability, executable: Settings.toolExecutables
-        )
-        toolsCard.isHidden = missing.isEmpty && wrapperAdvice == nil
-        toolsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for tool in missing {
-            addToolLine("● \(tool.name) \(tool.advice)", critical: tool.critical)
-        }
-        if let wrapperAdvice { addToolLine("● \(wrapperAdvice)", critical: false) }
-    }
-
-    private func addToolLine(_ text: String, critical: Bool) {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = Theme.mono(11.5)
-        label.textColor = critical ? Theme.err : Theme.warn
-        label.preferredMaxLayoutWidth = setupContentWidth - 28
-        toolsList.addArrangedSubview(label)
-    }
-
-    private func cmuxSetupState(_ status: CmuxSocketStatus) -> SetupState {
-        switch status {
-        case .reachable:
-            return .ok(status.label)
-        case .notRunning, .failed:
-            return .warning(status.label)
-        case .denied, .notInstalled:
-            return .error(status.label)
-        }
-    }
-
-    /// Internal rather than private so `testPipelineNodesAreLocalized` can read the strings this
-    /// produces. Reaching them through the drawn view would mean walking a stack of labels, and a
-    /// walk that stopped finding them would go quiet instead of failing.
-    func pipelineNodes(
-        manifest: SetupState, extensionState: SetupState,
-        socketAlive: Bool, permission: SetupState?, accessibilityGranted: Bool,
-        cmuxStatus: CmuxSocketStatus?
-    ) -> [PipelineStripView.Node] {
-        func color(_ state: SetupState) -> NSColor {
-            switch state {
-            case .ok: return Theme.ok
-            case .warning: return Theme.warn
-            case .error: return Theme.err
-            }
-        }
-        func cmuxPipelineState(_ status: CmuxSocketStatus?) -> (NSColor, String) {
-            guard let status else { return (Theme.warn, localized("app.status.unknown")) }
-            let color: NSColor
-            switch status {
-            case .reachable:
-                color = Theme.ok
-            case .notRunning, .failed:
-                color = Theme.warn
-            case .denied, .notInstalled:
-                color = Theme.err
-            }
-            return (color, status.label)
-        }
-        let terminalName: String
-        let terminalColor: NSColor
-        let terminalDetail: String
-        switch Settings.terminal {
-        case .iterm:
-            terminalName = "iTerm2"
-            terminalColor = permission.map(color) ?? Theme.warn
-            terminalDetail = localized(
-                "app.status.itermAutomation.format", permission?.message ?? localized("app.status.unknown")
-            )
-        case .wezterm:
-            terminalName = "WezTerm"
-            let installed = PermissionChecker.isWezTermInstalled
-            terminalColor = installed ? Theme.ok : Theme.err
-            terminalDetail = localized(
-                installed ? "app.pipeline.wezterm.available" : "app.pipeline.wezterm.notInstalled"
-            )
-        case .warp:
-            terminalName = "Warp"
-            if !PermissionChecker.isWarpInstalled {
-                terminalColor = Theme.err
-                terminalDetail = localized("app.pipeline.warp.notInstalled")
-            } else if accessibilityGranted {
-                terminalColor = Theme.ok
-                terminalDetail = localized("app.pipeline.warp.ready")
-            } else {
-                // Buttons that schedule no claude input still work, so this is a warning
-                terminalColor = Theme.warn
-                terminalDetail = localized("app.pipeline.warp.noAccessibility")
-            }
-        case .cmux:
-            terminalName = "cmux"
-            let state = cmuxPipelineState(cmuxStatus)
-            terminalColor = state.0
-            terminalDetail = state.1
-        case .cmuxNightly:
-            terminalName = "cmux NIGHTLY"
-            let state = cmuxPipelineState(cmuxStatus)
-            terminalColor = state.0
-            terminalDetail = state.1
-        }
-        return [
-            .init(
-                label: localized("app.pipeline.node.extension"), color: color(extensionState),
-                detail: extensionState.message
-            ),
-            .init(
-                label: localized("app.pipeline.node.relay"), color: color(manifest),
-                // The frame comes from the catalogue and only the payload is free. This one
-                // was assembled here — `"Native Host: \(manifest.message)"` — which put an English
-                // word in front of a translated status and, being a literal, was invisible to
-                // the source gate: it counts `localized(…)` calls, not strings nobody localised.
-                detail: localized("app.pipeline.relay.detail", manifest.message)
-            ),
-            .init(
-                label: localized("app.pipeline.node.app"), color: socketAlive ? Theme.ok : Theme.err,
-                detail: localized(
-                    socketAlive ? "app.pipeline.socket.listening" : "app.pipeline.socket.missing"
-                )
-            ),
-            .init(label: terminalName, color: terminalColor, detail: terminalDetail),
-        ]
-    }
-
-    /// `format` is a **key**, not a prefix. Gluing a translated label in front of a translated
-    /// status is the assembly rule against — in a language that puts the subject last, the pieces
-    /// end up in the wrong order and no translator can fix it from inside either half. A whole
-    /// message with `%@` can be written the way the language wants.
-    private func apply(_ state: SetupState, to label: NSTextField, format: StaticString? = nil) {
-        let body = format.map { localized($0, state.message) } ?? state.message
-        label.stringValue = "● \(body)"
-        switch state {
-        case .ok: label.textColor = Theme.ok
-        case .warning: label.textColor = Theme.warn
-        case .error: label.textColor = Theme.err
-        }
-    }
-
-    // MARK: - Actions
-
-    @objc private func registerManifest() {
-        do {
-            try Installer.installManifest()
-        } catch {
-            showError(localized("app.alert.manifestFailed"), error)
+        lastSlackRequestFailure = nil
+        openingReasons.removeAll {
+            if case .slackThreadRequestFailed = $0 { return true }
+            return false
         }
         refresh()
     }
 
-    /// The install helper: prepare the folder (copy again when the copy is missing or stale) → put
-    /// the path on the clipboard → open chrome://extensions
+    func refreshForTesting() { refresh() }
+
+    func select(terminal: Terminal) {
+        Settings.terminal = terminal
+        refresh()
+    }
+
+    private func anchorToRestore(_ role: NSUserInterfaceItemIdentifier) -> NSView? {
+        let views = rootStack?.arrangedSubviews ?? []
+        guard let index = views.firstIndex(where: { $0.identifier == role }) else { return nil }
+        return views[index...].first(where: { !$0.isHidden && $0.frame.height > 0 })
+            ?? views[..<index].last(where: { !$0.isHidden && $0.frame.height > 0 })
+    }
+
+    private struct SetupWindowPlace {
+        var focusedRole: NSUserInterfaceItemIdentifier?
+        var selection: NSRange?
+        var anchorRole: NSUserInterfaceItemIdentifier?
+        var anchorOffset: CGFloat = 0
+    }
+
+    private func capturePlace(in window: NSWindow) -> SetupWindowPlace {
+        var place = SetupWindowPlace()
+        let editor = window.firstResponder as? NSTextView
+        let focused = (editor?.delegate as? NSView) ?? (window.firstResponder as? NSView)
+        place.focusedRole = focused?.identifier
+        place.selection = editor?.selectedRange
+        guard let scroll = window.contentView as? NSScrollView,
+              let rootStack else { return place }
+        let top = scroll.documentVisibleRect.maxY
+        let visible = rootStack.arrangedSubviews.filter { !$0.isHidden && $0.frame.height > 0 }
+        let anchor = visible.filter { $0.frame.maxY >= top }.min { $0.frame.maxY < $1.frame.maxY }
+            ?? visible.max { $0.frame.maxY < $1.frame.maxY }
+        if let anchor {
+            place.anchorRole = anchor.identifier
+            place.anchorOffset = anchor.frame.maxY - top
+        }
+        return place
+    }
+
+    private func restore(_ place: SetupWindowPlace, in window: NSWindow) {
+        if let scroll = window.contentView as? NSScrollView,
+           let document = scroll.documentView,
+           let role = place.anchorRole,
+           let anchor = anchorToRestore(role) {
+            let origin = scrollOrigin(anchorTop: anchor.frame.maxY, offset: place.anchorOffset,
+                                      clip: scroll.contentView.bounds.height)
+            document.scroll(NSPoint(x: 0, y: origin))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        guard let role = place.focusedRole,
+              let control = window.contentView?.firstDescendant(withRole: role),
+              window.makeFirstResponder(control) else { return }
+        guard let selection = place.selection,
+              let editor = (control as? NSControl)?.currentEditor() else { return }
+        let length = editor.string.utf16.count
+        let location = min(selection.location, length)
+        editor.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
+    }
+
+    func rebuildForLanguageChange() {
+        guard let window else { return }
+        let place = capturePlace(in: window)
+        let drafts = (githubPane.baseDirectoryField.stringValue,
+                      githubPane.workspaceNameField.stringValue,
+                      slackPane.workDirectoryField.stringValue,
+                      slackPane.instructionField.stringValue)
+        let oldStack = rootStack
+        let environment = currentEnvironment()
+        isRebuildingForLanguageChange = true
+        defer { isRebuildingForLanguageChange = false }
+        window.contentView = buildContent(using: environment)
+        githubPane.baseDirectoryField.stringValue = drafts.0
+        githubPane.workspaceNameField.stringValue = drafts.1
+        slackPane.workDirectoryField.stringValue = drafts.2
+        slackPane.instructionField.stringValue = drafts.3
+        configureToolbar()
+        refresh()
+        window.contentView?.layoutSubtreeIfNeeded()
+        rootStack.visibleFrameOverride = oldStack?.visibleFrameOverride
+        rootStack.afterNextWindowUpdate { [weak self, weak window] in
+            guard let self, let window, self.window === window else { return }
+            self.restore(place, in: window)
+        }
+    }
+
+    @objc private func terminalChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String else { return }
+        Settings.terminal = Terminal(storedValue: raw)
+        refresh()
+    }
+
+    @objc private func tabActivationChanged(_ sender: NSSegmentedControl) {
+        guard Settings.terminal != .warp else { return }
+        Settings.tabActivation = sender.selectedSegment == 1 ? .background : .foreground
+        refresh()
+    }
+
+    @objc private func languageChanged(_ sender: NSPopUpButton) {
+        guard let choice = sender.selectedItem?.representedObject as? String else { return }
+        guard choice != Settings.language else { return }
+        languageChange = .changed
+        Settings.language = choice
+    }
+
+    @objc private func restartForLanguage() {
+        guard LocaleRestartGate.admitRestart() else {
+            languageChange = .restartBlocked
+            refresh()
+            return
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$1\"", "sh", Bundle.main.bundlePath]
+        do {
+            try task.run()
+        } catch {
+            LocaleRestartGate.withdrawAdmission()
+            checkoutLog("the relaunch could not be started, so the app is not restarting — \(errorMessage(error))")
+            languageChange = .restartFailed
+            refresh()
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    @objc private func registerManifest() {
+        do { try Installer.installManifest() }
+        catch { showError(localized("app.alert.manifestFailed"), error) }
+        refresh()
+    }
+
     @objc private func installInChrome() {
         if Installer.extensionCopyNeedsUpdate() {
-            do {
-                try Installer.installExtensionCopy()
-            } catch {
+            do { try Installer.installExtensionCopy() }
+            catch {
                 showError(localized("app.alert.extensionFolderFailed"), error)
                 return
             }
@@ -2051,277 +1075,304 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         pasteboard.clearContents()
         pasteboard.setString(Installer.extensionDirectory, forType: .string)
         openInChrome("chrome://extensions")
-        guideBlock.isHidden = false
-        installFeedbackLabel.stringValue = localized("app.install.feedback")
-        installFeedbackLabel.textColor = Theme.accent
-        installFeedbackLabel.isHidden = false
+        guideStepsExpanded = true
+        installFeedback = localized("app.setup.install.chrome.feedback")
         refresh()
     }
 
-    /// The localized wording for a rejection. Core hands back only the reason so each surface can
-    /// word it its own way — the button response remains an English protocol diagnostic.
-    private func baseDirectoryReason(_ error: Error) -> String {
-        guard case CommandError.invalidBaseDirectory(let problem, _) = error else {
-            return errorMessage(error)
-        }
-        switch problem {
-        case .notAbsolute: return localized("app.baseDir.reason.notAbsolute")
-        case .invalidCharacters: return localized("app.baseDir.reason.invalidCharacters")
-        }
+    @objc private func dismissSetupGuide() {
+        guideWasReopened = false
+        guideStepsExpanded = false
+        installFeedback = nil
+        refresh()
     }
 
-    @objc private func slackThreadSettingsEdited() {
-        Settings.slackThreadWorkDirectory = slackWorkDirectoryField.stringValue
-        Settings.slackThreadInstruction = slackInstructionField.stringValue
-        drawnSlackWorkDirectory = slackWorkDirectoryField.stringValue
-        drawnSlackInstruction = slackInstructionField.stringValue
-        updateSlackThreadSettingsCard()
+    @objc private func reshowInstall() {
+        guideWasReopened = true
+        guideStepsExpanded = false
+        refresh()
     }
 
-    func controlTextDidChange(_ notification: Notification) {
-        guard let field = notification.object as? NSTextField else { return }
-        if field === slackWorkDirectoryField {
-            Settings.slackThreadWorkDirectory = field.stringValue
-            drawnSlackWorkDirectory = field.stringValue
-            updateSlackThreadSettingsCard()
-        } else if field === slackInstructionField {
-            Settings.slackThreadInstruction = field.stringValue
-            drawnSlackInstruction = field.stringValue
-            updateSlackThreadSettingsCard()
-        }
-    }
+    @objc private func openOptionsPage() { openInChrome(Installer.optionsPageURL) }
 
-    @objc private func recordSlackHotKey() {
-        guard !isRecordingHotKey else {
-            endHotKeyRecording()
-            return
-        }
-        isRecordingHotKey = true
-        hotKeyRecordingHint = nil
-        slackHotKey.suspend()
-        hotKeyRecordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            return self.handleHotKeyRecordingEvent(event)
-        }
-        updateSlackHotKeyPresentation()
-    }
-
-    /// While recording, a key press becomes the shortcut instead of reaching the window; outside
-    /// recording every event passes through untouched. Esc alone cancels.
-    func handleHotKeyRecordingEvent(_ event: NSEvent) -> NSEvent? {
-        guard isRecordingHotKey else { return event }
-        let modifiers = hotKeyModifiers(from: event.modifierFlags)
-        if Int(event.keyCode) == kVK_Escape && modifiers.isEmpty {
-            endHotKeyRecording()
-            return nil
-        }
-        guard let combination = HotKeyCombination(keyCode: UInt32(event.keyCode), modifiers: modifiers) else {
-            hotKeyRecordingHint = localized("app.slack.hotKey.needsModifier")
-            updateSlackHotKeyPresentation()
-            return nil
-        }
-        Settings.slackThreadHotKey = combination
-        slackHotKey.apply(combination)
-        endHotKeyRecording()
-        return nil
-    }
-
-    private func endHotKeyRecording() {
-        if let hotKeyRecordingMonitor {
-            NSEvent.removeMonitor(hotKeyRecordingMonitor)
-        }
-        hotKeyRecordingMonitor = nil
-        isRecordingHotKey = false
-        hotKeyRecordingHint = nil
-        slackHotKey.resume()
-        updateSlackHotKeyPresentation()
-    }
-
-    @objc private func clearSlackHotKey() {
-        Settings.slackThreadHotKey = nil
-        slackHotKey.apply(nil)
-        updateSlackHotKeyPresentation()
-    }
-
-    @objc private func slackLoginItemToggled() {
-        do {
-            try slackLoginItem.setEnabled(slackLoginItemCheckbox.state == .on)
-            lastSlackLoginItemFailure = nil
-        } catch {
-            lastSlackLoginItemFailure = error
-            checkoutLog("login item change failed — \((error as NSError).localizedDescription)")
-        }
-        updateSlackLoginItemPresentation()
-    }
-
-    /// Saves what was typed. An unusable path is **not** stored — the text stays in the field so it
-    /// can be fixed, and the status line says it wasn't saved. A valid one is stored normalized
-    /// (`~` expanded, trailing slash gone) and echoed back, so the field shows what will actually
-    /// run rather than what was typed.
     @objc private func baseDirectoryEdited() {
-        let typed = baseDirField.stringValue
+        let typed = githubPane.baseDirectoryField.stringValue
         do {
             let normalized = try normalizedBaseDirectory(typed)
             Settings.baseDirectory = normalized ?? ""
-            baseDirField.stringValue = normalized ?? ""
-            // Stored and echoed back, so what is in the field is this window's text again and a
-            // redraw may replace it. The failure path below leaves it a draft on purpose
-            drawnBaseDirectory = normalized ?? ""
+            githubPane.baseDirectoryField.stringValue = normalized ?? ""
         } catch {
-            apply(
-                .error(localized("app.baseDir.notSaved", baseDirectoryReason(error))),
-                to: baseDirStatusLabel
-            )
-            // FittedContentStackView.layout() re-measures on the label change — no manual resize
+            refresh()
             return
         }
         refresh()
     }
 
     @objc private func chooseBaseDirectory() {
+        chooseDirectory { [weak self] path in
+            guard let self else { return }
+            self.githubPane.baseDirectoryField.stringValue = path
+            self.baseDirectoryEdited()
+        }
+    }
+
+    @objc private func chooseSlackWorkDirectory() {
+        chooseDirectory { [weak self] path in
+            guard let self else { return }
+            self.slackPane.workDirectoryField.stringValue = path
+            Settings.slackThreadWorkDirectory = path
+            self.refresh()
+        }
+    }
+
+    private func chooseDirectory(_ completion: @escaping (String) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = localized("app.panel.choosePrompt")
-        let apply: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            self.baseDirField.stringValue = url.path
-            self.baseDirectoryEdited()
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            completion(url.path)
         }
-        if let window {
-            panel.beginSheetModal(for: window, completionHandler: apply)
-        } else {
-            apply(panel.runModal())
+        if let window { panel.beginSheetModal(for: window, completionHandler: finish) }
+        else { finish(panel.runModal()) }
+    }
+
+    @objc private func cmuxPlacementArrangementChanged(_ sender: NSSegmentedControl) {
+        let values: [CmuxPlacementArrangement] = [.panePerItem, .tabPerItem, .workspacePerItem]
+        guard values.indices.contains(sender.selectedSegment) else { return }
+        Settings.cmuxPlacementArrangement = values[sender.selectedSegment].rawValue
+        refresh()
+    }
+
+    @objc private func cmuxPlacementIdentityChanged(_ sender: NSSegmentedControl) {
+        guard sender.selectedSegment == 0 || sender.selectedSegment == 1 else { return }
+        Settings.cmuxPlacementIdentityMode = sender.selectedSegment == 1 ? "fixed-name" : "always-new"
+        refresh()
+    }
+
+    @objc private func cmuxPlacementNameEdited() {
+        guard !isRebuildingForLanguageChange else { return }
+        Settings.cmuxPlacementFixedName = githubPane.workspaceNameField.stringValue
+        refresh()
+    }
+
+    @objc private func slackThreadSettingsEdited() {
+        Settings.slackThreadWorkDirectory = slackPane.workDirectoryField.stringValue
+        Settings.slackThreadInstruction = slackPane.instructionField.stringValue
+        refresh()
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard !isRebuildingForLanguageChange, let field = notification.object as? NSTextField else { return }
+        if field === slackPane.workDirectoryField {
+            Settings.slackThreadWorkDirectory = field.stringValue
+            refresh()
+        } else if field === slackPane.instructionField {
+            Settings.slackThreadInstruction = field.stringValue
+            refresh()
         }
     }
 
-    @objc private func openOptionsPage() {
-        openInChrome(Installer.optionsPageURL)
+    @objc private func recordSlackHotKey() {
+        guard !isRecordingHotKey else { endHotKeyRecording(); refresh(); return }
+        isRecordingHotKey = true
+        hotKeyNeedsModifier = false
+        slackHotKey.suspend()
+        hotKeyRecordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleHotKeyRecordingEvent(event)
+        }
+        refresh()
     }
 
-    @objc private func reshowInstall() {
-        forceShowInstall = true
-        guideBlock.isHidden = false
+    func handleHotKeyRecordingEvent(_ event: NSEvent) -> NSEvent? {
+        guard isRecordingHotKey else { return event }
+        let modifiers = hotKeyModifiers(from: event.modifierFlags)
+        if Int(event.keyCode) == kVK_Escape && modifiers.isEmpty {
+            endHotKeyRecording()
+            refresh()
+            return nil
+        }
+        guard let combination = HotKeyCombination(keyCode: UInt32(event.keyCode), modifiers: modifiers) else {
+            hotKeyNeedsModifier = true
+            refresh()
+            return nil
+        }
+        Settings.slackThreadHotKey = combination
+        slackHotKey.apply(combination)
+        endHotKeyRecording()
+        refresh()
+        return nil
+    }
+
+    private func endHotKeyRecording() {
+        if let hotKeyRecordingMonitor { NSEvent.removeMonitor(hotKeyRecordingMonitor) }
+        hotKeyRecordingMonitor = nil
+        isRecordingHotKey = false
+        slackHotKey.resume()
+    }
+
+    @objc private func clearSlackHotKey() {
+        Settings.slackThreadHotKey = nil
+        slackHotKey.apply(nil)
+        refresh()
+    }
+
+    @objc private func slackLoginItemToggled() {
+        do {
+            try slackLoginItem.setEnabled(slackPane.loginItemCheckbox.state == .on)
+            lastSlackLoginItemFailure = nil
+        } catch {
+            lastSlackLoginItemFailure = error
+            checkoutLog("login item change failed — \((error as NSError).localizedDescription)")
+        }
         refresh()
     }
 
     @objc private func requestPermission() {
-        requestPermissionButton.isEnabled = false
-        permissionStatusLabel.stringValue = "● " + localized("app.status.itermAutomation.waiting")
-        permissionStatusLabel.textColor = Theme.textDim
         PermissionChecker.requestITermAutomation { [weak self] result in
             guard let self else { return }
-            self.requestPermissionButton.isEnabled = true
-            if case .failure(let error) = result {
-                self.showError(localized("app.alert.permissionRequestFailed"), error)
-            }
+            if case .failure(let error) = result { self.showError(localized("app.alert.permissionRequestFailed"), error) }
             self.refresh()
         }
     }
 
-    @objc private func openAutomationSettings() {
-        PermissionChecker.openAutomationSettings()
-    }
-
-    /// The Accessibility prompt grants nothing on the spot — it only points at System Settings —
-    /// and it has no completion callback, so the state is read again when the window becomes key
-    /// (`windowDidBecomeKey` → `refresh()`).
-    @objc private func requestAccessibility() {
-        PermissionChecker.requestAccessibility()
-        refresh()
-    }
-
-    @objc private func openAccessibilitySettings() {
-        PermissionChecker.openAccessibilitySettings()
-    }
-
+    @objc private func openAutomationSettings() { PermissionChecker.openAutomationSettings() }
+    @objc private func requestAccessibility() { PermissionChecker.requestAccessibility(); refresh() }
+    @objc private func openAccessibilitySettings() { PermissionChecker.openAccessibilitySettings() }
     @objc private func refreshCmuxStatus() {
+        cmuxFeedback = nil
         refresh()
     }
 
-    /// Copies the suggested JSON member and opens the existing config or its containing folder.
-    /// This action never creates or writes a user file; cmux itself watches the file for changes.
     @objc private func openCmuxConfig() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        guard pasteboard.setString(
-            CmuxConfigHelp.cmuxConfigClipboardFragment(), forType: .string
-        ) else {
-            cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configClipboardFailed")
-            cmuxFeedbackLabel.textColor = Theme.warn
+        guard pasteboard.setString(CmuxConfigHelp.cmuxConfigClipboardFragment(), forType: .string) else {
+            cmuxFeedback = (localized("app.status.cmux.configClipboardFailed"), .warning)
+            refresh()
             return
         }
-
         let configURL = CmuxConfigHelp.defaultConfigURL()
         let fileManager = FileManager.default
         let target = CmuxConfigHelp.cmuxConfigRevealTarget(
             configURL: configURL,
             fileExists: fileManager.fileExists(atPath: configURL.path),
-            directoryExists: fileManager.fileExists(
-                atPath: configURL.deletingLastPathComponent().path
-            )
+            directoryExists: fileManager.fileExists(atPath: configURL.deletingLastPathComponent().path)
         )
-
         switch target {
         case .file(let url):
-            if NSWorkspace.shared.open(url) {
-                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpened")
-                cmuxFeedbackLabel.textColor = Theme.accent
-            } else {
-                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
-                cmuxFeedbackLabel.textColor = Theme.warn
-            }
+            let opened = NSWorkspace.shared.open(url)
+            cmuxFeedback = (opened ? localized("app.status.cmux.configOpened") : localized("app.status.cmux.configOpenFailed"),
+                            opened ? .success : .warning)
         case .directory(let url):
-            if NSWorkspace.shared.open(url) {
-                cmuxFeedbackLabel.stringValue = "● " + localized(
-                    "app.status.cmux.configDirectoryOpened"
-                )
-                cmuxFeedbackLabel.textColor = Theme.accent
-            } else {
-                cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configOpenFailed")
-                cmuxFeedbackLabel.textColor = Theme.warn
-            }
+            let opened = NSWorkspace.shared.open(url)
+            cmuxFeedback = (opened ? localized("app.status.cmux.configDirectoryOpened") : localized("app.status.cmux.configOpenFailed"),
+                            opened ? .success : .warning)
         case .nothing:
-            cmuxFeedbackLabel.stringValue = "● " + localized("app.status.cmux.configUnavailable")
-            cmuxFeedbackLabel.textColor = Theme.warn
+            cmuxFeedback = (localized("app.status.cmux.configUnavailable"), .warning)
         }
+        refresh()
     }
 
     @objc private func testTerminal() {
         let terminal = Settings.terminal
         let command = testCommand.command
-        testResultLabel.stringValue = localized("app.test.running")
-        testResultLabel.textColor = Theme.textDim
-        testResultLabel.isHidden = false
+        terminalTestResult = .running
+        refresh()
         DispatchQueue.global().async { [weak self] in
             var failure: Error?
-            do {
-                try runInTerminal(command: command, terminal: terminal)
-            } catch {
-                failure = error
-            }
+            do { try runInTerminal(command: command, terminal: terminal) } catch { failure = error }
             DispatchQueue.main.async {
-                if let failure {
-                    self?.testResultLabel.stringValue = localized("app.test.failed", localizedErrorMessage(failure))
-                    self?.testResultLabel.textColor = Theme.err
-                } else {
-                    self?.testResultLabel.stringValue = localized("app.test.succeeded")
-                    self?.testResultLabel.textColor = Theme.textDim
-                }
-                self?.refresh()
+                guard let self else { return }
+                if let failure { self.terminalTestResult = .failed(localizedErrorMessage(failure)) }
+                else { self.terminalTestResult = .succeeded }
+                self.refresh()
             }
         }
     }
 
-    // MARK: - Helpers
+    @objc private func openTerminalSettings() {
+        selectPane(.general)
+        window?.makeFirstResponder(generalPane.terminalPopup)
+    }
+
+    @objc private func openSlackSettings() {
+        selectPane(.slack)
+        window?.makeFirstResponder(slackPane.workDirectoryField)
+    }
+
+    @objc private func openBaseDirectorySettings() {
+        selectPane(.github)
+        window?.makeFirstResponder(githubPane.baseDirectoryField)
+    }
+
+    @objc private func restartApp() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", Bundle.main.bundlePath]
+        do { try task.run(); NSApp.terminate(nil) }
+        catch { showError(localized("app.language.restartFailed"), error) }
+    }
+
+    @objc private func showZoxideInstallHelp(_ sender: NSButton) {
+        showInstallHelp(from: sender, command: "brew install zoxide",
+                        detail: localized("app.setup.problem.zoxide.effect"))
+    }
+
+    @objc private func showGhInstallHelp(_ sender: NSButton) {
+        showInstallHelp(from: sender, command: "brew install gh",
+                        detail: localized("app.setup.problem.gh.effect"))
+    }
+
+    @objc private func showClaudeInstallHelp(_ sender: NSButton) {
+        showInstallHelp(from: sender, command: "brew install --cask claude-code",
+                        detail: localized("app.setup.problem.claudeUnavailable.cause"))
+    }
+
+    @objc private func showAppInstallHelp(_ sender: NSButton) {
+        showInstallHelp(from: sender, command: "./install.sh",
+                        detail: localized("app.setup.problem.warpHelperUnavailable.cause"))
+    }
+
+    private func showInstallHelp(from sender: NSButton, command: String, detail: String) {
+        let controller = NSViewController()
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        let description = NSTextField(wrappingLabelWithString: detail)
+        description.font = Theme.ui(12)
+        description.textColor = Theme.text
+        description.maximumNumberOfLines = 0
+        let commandLabel = NSTextField(labelWithString: command)
+        commandLabel.font = Theme.mono(12)
+        commandLabel.textColor = Theme.text
+        stack.addArrangedSubview(description)
+        stack.addArrangedSubview(commandLabel)
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 92))
+        root.addSubview(stack)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
+        ])
+        controller.view = root
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.contentSize = root.frame.size
+        helpPopover = popover
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
 
     private func openInChrome(_ urlString: String) {
         guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
-              let url = URL(string: urlString) else {
-            NSSound.beep()
-            return
-        }
+              let url = URL(string: urlString) else { NSSound.beep(); return }
         NSWorkspace.shared.open([url], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
     }
 
@@ -2330,79 +1381,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSTextF
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = localizedErrorMessage(error)
-        if let window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
 }
 
-/// Where the viewport goes so the anchor card's **top edge** returns to the same line of the
-/// window: `anchorTop` is that edge and `offset` is how far below it the viewport began. What that
-/// preserves is the edge and the distance, which is all that survives a reflow — the text inside
-/// the card was rewritten too, so no sentence has a place to be put back to.
-///
-/// **A free function because the arithmetic is the part worth testing**, and it needs no window.
-/// Only the near end is clamped, and only that end can be reached: an anchor is a visible card
-/// *inside* this document, so `anchorTop` never passes the document's own height and the answer
-/// never passes its last scrollable line. Wanting to see above the first line is ordinary — any
-/// card within one viewport of the top asks for it. Measured, and the reason this is arithmetic we
-/// do rather than a request we make: `NSView.scroll(_:)` keeps a point past the end instead of
-/// correcting it, so a target that could pass the end would leave the window on blank space.
-func scrollOrigin(anchorTop: CGFloat, offset: CGFloat, clip: CGFloat) -> CGFloat {
-    max(0, anchorTop - offset - clip)
-}
-
-/// What to say when claude can be called but does **not** resolve to an executable — an install
-/// that is only a shell function or an alias.
-///
-/// The merge path launches `command claude`, which skips functions and aliases, so those setups
-/// take the typed route instead. All the user sees otherwise is that delivery got slower, or — on
-/// Warp without the Accessibility permission — that the button now refuses outright, with the
-/// reason nowhere on screen.
-///
-/// Silent before the first check (nil) and silent when claude is missing altogether: the "missing"
-/// line already says that one, and saying it twice reads as two different problems.
-///
-/// It does **not** name the cause as "a function or an alias": the same answer comes from a
-/// relative `PATH` entry and from a file without the executable bit (both measured), and a card
-/// that asserts the wrong cause sends people to fix the wrong thing.
-/// Which entry the language picker points at.
-///
-/// Three cases, and the third is the one that had a defect. A stored preference that matches an
-  /// entry selects it. A stored preference that matches nothing is a **third state** —
-/// not `auto`, not a language we ship — and pointing at the first entry there would have the picker
-/// claim "follow the system" while the window draws English. It points at the language actually
-/// being drawn instead, which `resolveLocale` has already decided; picking anything writes a clean
-/// value and the state is gone.
-///
-/// It takes the entries rather than reading the control so the three rows can be enumerated in a
-/// test without a window, a `UserDefaults` write, or a language change on this machine.
-func languagePickerIndex(stored: String, drawn: String, entries: [String?]) -> Int {
-    entries.firstIndex { $0 == stored } ?? entries.firstIndex { $0 == drawn } ?? 0
-}
-
-func claudeWrapperAdvice(available: [String: Bool]?, executable: [String: Bool]?) -> String? {
-    guard available?["claude"] == true, executable?["claude"] == false else { return nil }
-    return localized("app.tools.claudeWrapper.advice")
-}
-
-/// What the Accessibility card says. It used to promise that the command would still run without
-/// the permission and only the claude input would be missing — the app does the opposite: a button
-/// whose inputs have to be typed is **refused before the tab is created** (`claudeInputBlocker`).
-/// A card that contradicts the behaviour sends people looking for the wrong problem.
-func warpAccessibilityHelpText() -> String {
-    // The `**…**` and the backticks are gone: `NSTextField` renders neither, so they were
-    // showing up as literal asterisks on screen — and translating them would have copied that into
-    // five catalogues
-    localized("app.section.accessibility.help")
-}
-
 private extension NSView {
-    /// The view here that answers to a role — the question a rebuild asks about a control it has
-    /// just replaced. Depth first, so a control inside a card is found without the caller knowing
-    /// which card that is.
     func firstDescendant(withRole role: NSUserInterfaceItemIdentifier) -> NSView? {
         for view in subviews {
             if view.identifier == role { return view }

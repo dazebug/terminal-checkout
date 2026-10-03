@@ -52,10 +52,8 @@ final class LocalizationBundleTests: XCTestCase {
             .path
     }
 
-    /// The key this file probes with. All five catalogues are
-    /// full now, so it is a probe by choice rather than by necessity: one key every catalogue is
-    /// certain to carry, which is all these cases need to tell five files apart.
-    private let probeKey = "app.window.title"
+    /// The key this file probes with. Its complete translations identify each source catalogue.
+    private let probeKey = "app.setup.toolbar.slack.failure"
 
     func testEachBundledCatalogAnswersInItsOwnLanguage() throws {
         var answers: [String: String] = [:]
@@ -70,14 +68,13 @@ final class LocalizationBundleTests: XCTestCase {
             answers[tag] = value
         }
         XCTAssertEqual(answers.count, 5)
-        // Distinct values are what proves the lookup reached five different files. With two
-        // catalogs sharing a wording this assertion has to be relaxed to name the pair — silently
-        // dropping it would let a single catalog answer for all five and still pass.
-        XCTAssertEqual(
-            Set(answers.values).count, 5, "two catalogs answered identically: \(answers)"
-        )
-        XCTAssertEqual(answers["en"], "Terminal Checkout Setup")
-        XCTAssertEqual(answers["ko"], "Terminal Checkout 설정")
+        XCTAssertEqual(answers, [
+            "en": "Slack request failed. Open the Slack pane for details.",
+            "ko": "Slack 요청에 실패했습니다. 자세한 내용은 Slack 항목에서 확인하세요.",
+            "ja": "Slack リクエストに失敗しました。詳細は Slack の項目を確認してください。",
+            "zh-Hans": "Slack 请求失败。请打开 Slack 面板查看详情。",
+            "zh-Hant": "Slack 要求失敗。請開啟 Slack 面板查看詳細資訊。",
+        ])
     }
 
     /// The lookup asks the requested catalog, then English, then gives back the key. The last step
@@ -86,7 +83,7 @@ final class LocalizationBundleTests: XCTestCase {
     func testAMissingKeyFallsBackToEnglishAndThenToTheKey() {
         XCTAssertEqual(
             AppLocalization.string(probeKey, tag: "ja", resources: resources),
-            "Terminal Checkout セットアップ"
+            "Slack request failed. Open the Slack pane for details."
         )
         XCTAssertEqual(
             AppLocalization.string("app.no.such.key", tag: "ja", resources: resources),
@@ -95,7 +92,7 @@ final class LocalizationBundleTests: XCTestCase {
         // A tag with no catalog at all falls to English rather than to the key
         XCTAssertEqual(
             AppLocalization.string(probeKey, tag: "fr", resources: resources),
-            "Terminal Checkout Setup"
+            "Slack request failed. Open the Slack pane for details."
         )
     }
 

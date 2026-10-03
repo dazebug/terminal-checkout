@@ -27,6 +27,22 @@ final class SetupWindowPresentationTests: XCTestCase {
         XCTAssertEqual(problems[0].copy, .slackThreadRequestFailed)
         XCTAssertEqual(problems[1].copy, .claudeInputRejected(.warpHelperUnavailable))
         XCTAssertEqual(problems[2].copy, .manifestNotRegistered)
+        XCTAssertEqual(problems.map(\.openingReasonOrder), [2, 1, nil])
+    }
+
+    func testRepeatedOpeningFailuresKeepDistinctArrivalOrders() {
+        let state = snapshot {
+            $0.slackRequestFailureIsActive = true
+            $0.openingReasons = [
+                .slackThreadRequestFailed(arrivalOrder: 1),
+                .slackThreadRequestFailed(arrivalOrder: 4),
+            ]
+        }
+
+        let problems = SetupWindowPresentationModel.make(from: state).problems
+
+        XCTAssertEqual(problems.map(\.openingReasonOrder), [4, 1])
+        XCTAssertTrue(problems.allSatisfy { $0.copy == .slackThreadRequestFailed })
     }
 
     func testResolvedClaudeOpeningReasonIsRemoved() {
@@ -107,6 +123,7 @@ final class SetupWindowPresentationTests: XCTestCase {
 
     func testCmuxNotInstalledIsAnErrorAndCheckFailureIsAWarning() {
         let notInstalled = snapshot(selectedTerminal: .cmux) {
+            $0.terminalInstallations = [.init(terminal: .cmux, isInstalled: false)]
             $0.cmuxStableSocket = .notInstalled
         }
         let failed = snapshot(selectedTerminal: .cmux) {
@@ -117,10 +134,26 @@ final class SetupWindowPresentationTests: XCTestCase {
             severity: .error,
             copy: .cmuxNotInstalled(.stable)
         ))
+        XCTAssertEqual(
+            SetupWindowPresentationModel.make(from: notInstalled).problems.map(\.copy),
+            [.cmuxNotInstalled(.stable)]
+        )
         XCTAssertEqual(SetupWindowPresentationModel.make(from: failed).problems.first, .init(
             severity: .warning,
             copy: .cmuxCheckFailed(.stable, detail: "unexpected response")
         ))
+    }
+
+    func testMissingWarpDoesNotAlsoShowItsAccessibilityWarning() {
+        let state = snapshot(selectedTerminal: .warp) {
+            $0.terminalInstallations = [.init(terminal: .warp, isInstalled: false)]
+            $0.warpAccessibilityGranted = false
+        }
+
+        let problems = SetupWindowPresentationModel.make(from: state).problems
+
+        XCTAssertEqual(problems.map(\.severity), [.error])
+        XCTAssertEqual(problems.map(\.copy), [.selectedTerminalNotInstalled(.warp)])
     }
 
     func testSelectedTerminalNotInstalledIsAnError() {

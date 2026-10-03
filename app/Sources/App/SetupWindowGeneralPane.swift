@@ -62,6 +62,7 @@ struct SetupWindowGeneralPaneState {
     let storedLanguage: String
     let resolvedLanguage: String
     let languageChange: SetupWindowGeneralLanguageChange
+    let cmuxFeedback: SetupWindowGeneralIndicator?
 
     var terminal: Terminal { presentation.previews.general.terminal }
 
@@ -80,10 +81,6 @@ enum SetupWindowGeneralAction: CaseIterable, Hashable {
     case reshowInstall
     case openCmuxConfig
     case refreshCmuxStatus
-}
-
-func setupWindowGeneralPaneRole(_ action: Selector) -> NSUserInterfaceItemIdentifier {
-    NSUserInterfaceItemIdentifier("control.\(action)")
 }
 
 final class SetupWindowGeneralPane: NSView {
@@ -109,6 +106,7 @@ final class SetupWindowGeneralPane: NSView {
     private let terminalStatusLabel = NSTextField(labelWithString: "")
     private let terminalTestResultLabel = NSTextField(wrappingLabelWithString: "")
     private let extensionStatusExplanation = NSTextField(wrappingLabelWithString: "")
+    private let cmuxFeedbackLabel = NSTextField(wrappingLabelWithString: "")
     private let nativeHostDetailRow: SetupWindowGeneralPopoverRow
     private let appSocketDetailRow: SetupWindowGeneralPopoverRow
     private let terminalDetailRow: SetupWindowGeneralPopoverRow
@@ -122,6 +120,8 @@ final class SetupWindowGeneralPane: NSView {
     var requestStatusText: String { requestStatusLabel.stringValue }
     var hintTextForTesting: String { hintLabel.stringValue }
     var terminalDetailTitleForTesting: String { terminalDetailRow.titleLabel.stringValue }
+    var cmuxFeedbackTextForTesting: String { cmuxFeedbackLabel.stringValue }
+    var cmuxFeedbackIsHiddenForTesting: Bool { cmuxFeedbackLabel.isHidden }
     var cmuxActionButtonRoles: [NSUserInterfaceItemIdentifier] {
         cmuxActionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.identifier }
     }
@@ -272,7 +272,7 @@ final class SetupWindowGeneralPane: NSView {
         connectionDetailsButton.bezelStyle = .rounded
         connectionDetailsButton.target = self
         connectionDetailsButton.action = #selector(presentConnectionDetails(_:))
-        connectionDetailsButton.identifier = setupWindowGeneralPaneRole(#selector(presentConnectionDetails(_:)))
+        connectionDetailsButton.identifier = setupWindowControlRole(#selector(presentConnectionDetails(_:)))
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -291,7 +291,7 @@ final class SetupWindowGeneralPane: NSView {
         title.textColor = Theme.text
         terminalPopup.target = actionTarget
         terminalPopup.action = selectors[.terminalChanged]
-        terminalPopup.identifier = setupWindowGeneralPaneRole(selectors[.terminalChanged]!)
+        terminalPopup.identifier = setupWindowControlRole(selectors[.terminalChanged]!)
         terminalPopup.widthAnchor.constraint(equalToConstant: 137).isActive = true
         for terminal in Terminal.allCases {
             terminalPopup.addItem(withTitle: terminalName(terminal))
@@ -306,7 +306,7 @@ final class SetupWindowGeneralPane: NSView {
         terminalStatusLabel.lineBreakMode = .byTruncatingTail
         terminalTestButton.title = localized("app.setup.general.terminalTest.title")
         terminalTestButton.bezelStyle = .rounded
-        terminalTestButton.identifier = setupWindowGeneralPaneRole(selectors[.testTerminal]!)
+        terminalTestButton.identifier = setupWindowControlRole(selectors[.testTerminal]!)
         terminalTestResultLabel.font = Theme.ui(11)
         terminalTestResultLabel.textColor = Theme.textDim
         terminalTestResultLabel.isHidden = true
@@ -334,7 +334,7 @@ final class SetupWindowGeneralPane: NSView {
         activationSegment.segmentStyle = .rounded
         activationSegment.setWidth(118, forSegment: 0)
         activationSegment.setWidth(130, forSegment: 1)
-        activationSegment.identifier = setupWindowGeneralPaneRole(selectors[.tabActivationChanged]!)
+        activationSegment.identifier = setupWindowControlRole(selectors[.tabActivationChanged]!)
         activationSegment.setAccessibilityLabel(localized("app.setup.general.afterAction.title"))
         activationRow.orientation = .horizontal
         activationRow.alignment = .centerY
@@ -355,20 +355,20 @@ final class SetupWindowGeneralPane: NSView {
         }
         languagePopup.target = actionTarget
         languagePopup.action = selectors[.languageChanged]
-        languagePopup.identifier = setupWindowGeneralPaneRole(selectors[.languageChanged]!)
+        languagePopup.identifier = setupWindowControlRole(selectors[.languageChanged]!)
         languagePopup.widthAnchor.constraint(equalToConstant: 185).isActive = true
         languageRestartButton.title = localized("app.button.restartNow")
         languageRestartButton.bezelStyle = .rounded
-        languageRestartButton.identifier = setupWindowGeneralPaneRole(selectors[.restartForLanguage]!)
+        languageRestartButton.identifier = setupWindowControlRole(selectors[.restartForLanguage]!)
         languageNoteLabel.font = Theme.ui(11)
         languageNoteLabel.textColor = Theme.textDim
 
         optionsButton.title = localized("app.setup.general.editGitHubButton")
         optionsButton.bezelStyle = .rounded
-        optionsButton.identifier = setupWindowGeneralPaneRole(selectors[.openOptionsPage]!)
+        optionsButton.identifier = setupWindowControlRole(selectors[.openOptionsPage]!)
         guideButton.title = localized("app.button.showSetupGuide")
         guideButton.bezelStyle = .rounded
-        guideButton.identifier = setupWindowGeneralPaneRole(selectors[.reshowInstall]!)
+        guideButton.identifier = setupWindowControlRole(selectors[.reshowInstall]!)
 
         let languageTitle = NSTextField(labelWithString: localized("app.card.language.title"))
         languageTitle.font = Theme.ui(12, .medium)
@@ -413,12 +413,17 @@ final class SetupWindowGeneralPane: NSView {
         extensionStatusExplanation.textColor = Theme.textDim
         extensionStatusExplanation.maximumNumberOfLines = 0
         extensionStatusExplanation.preferredMaxLayoutWidth = 320
+        cmuxFeedbackLabel.font = Theme.ui(11)
+        cmuxFeedbackLabel.maximumNumberOfLines = 0
+        cmuxFeedbackLabel.preferredMaxLayoutWidth = 320
 
         let cmuxConfig = generalButton(
-            localized("app.setup.action.openCmuxConfig"), action: .openCmuxConfig
+            localized("app.setup.action.openCmuxConfig"), action: .openCmuxConfig,
+            roleQualifier: "connection-details.cmux-config"
         )
         let cmuxRefresh = generalButton(
-            localized("app.setup.action.refreshCmuxStatus"), action: .refreshCmuxStatus
+            localized("app.setup.action.refreshCmuxStatus"), action: .refreshCmuxStatus,
+            roleQualifier: "connection-details.cmux-refresh"
         )
         cmuxActionsRow.orientation = .horizontal
         cmuxActionsRow.alignment = .centerY
@@ -439,9 +444,10 @@ final class SetupWindowGeneralPane: NSView {
         for tool in ["zoxide", "gh", "claude"] {
             content.addArrangedSubview(toolDetailRows[tool]!)
         }
+        content.addArrangedSubview(cmuxFeedbackLabel)
         content.addArrangedSubview(cmuxActionsRow)
 
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 356, height: 340))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 356, height: 370))
         root.addSubview(content)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 15),
@@ -451,13 +457,17 @@ final class SetupWindowGeneralPane: NSView {
         ])
         controller.view = root
         connectionDetailsPopover.contentViewController = controller
-        connectionDetailsPopover.contentSize = NSSize(width: 356, height: 340)
+        connectionDetailsPopover.contentSize = NSSize(width: 356, height: 370)
     }
 
-    private func generalButton(_ title: String, action: SetupWindowGeneralAction) -> NSButton {
+    private func generalButton(
+        _ title: String,
+        action: SetupWindowGeneralAction,
+        roleQualifier: String
+    ) -> NSButton {
         let button = NSButton(title: title, target: actionTarget, action: selectors[action]!)
         button.bezelStyle = .rounded
-        button.identifier = setupWindowGeneralPaneRole(selectors[action]!)
+        button.identifier = setupWindowControlRole(selectors[action]!, roleQualifier)
         return button
     }
 
@@ -536,6 +546,14 @@ final class SetupWindowGeneralPane: NSView {
             "app.setup.general.connection.terminal", terminalName(state.terminal)
         )
         terminalDetailRow.update(state.terminalStatus)
+        if let feedback = state.cmuxFeedback {
+            cmuxFeedbackLabel.stringValue = feedback.text
+            cmuxFeedbackLabel.textColor = feedback.tone.color
+            cmuxFeedbackLabel.isHidden = false
+        } else {
+            cmuxFeedbackLabel.stringValue = ""
+            cmuxFeedbackLabel.isHidden = true
+        }
         for name in ["zoxide", "gh", "claude"] {
             let status: SetupWindowGeneralIndicator
             guard let tools = state.tools, let available = tools.available[name] else {

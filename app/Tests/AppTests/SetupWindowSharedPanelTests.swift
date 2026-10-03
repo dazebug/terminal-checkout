@@ -124,6 +124,30 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(arrangedBlocks.map(\.problem), problems)
     }
 
+    func testRepeatedOpeningReasonsKeepSeparateBlocksAndActionRoles() throws {
+        let problems = [
+            SetupWindowProblem(
+                severity: .error,
+                copy: .slackThreadRequestFailed,
+                openingReasonOrder: 4
+            ),
+            SetupWindowProblem(
+                severity: .error,
+                copy: .slackThreadRequestFailed,
+                openingReasonOrder: 1
+            ),
+        ]
+        let panel = try makePanel(presentation: presentation(problems: problems))
+
+        XCTAssertEqual(panel.problemBlockViews.map(\.problem), problems)
+        let roles = try panel.problemBlockViews.map { block in
+            try XCTUnwrap(block.actionButtons.first?.identifier?.rawValue)
+        }
+        XCTAssertNotEqual(roles[0], roles[1])
+        XCTAssertTrue(roles[0].hasSuffix("problem.slack-request.4"))
+        XCTAssertTrue(roles[1].hasSuffix("problem.slack-request.1"))
+    }
+
     func testProblemBlockHasTitleCauseActionAndActionDerivedRole() throws {
         let problem = SetupWindowProblem(severity: .error, copy: .manifestNotRegistered)
         let panel = try makePanel(presentation: presentation(problems: [problem]), manifest: .notRegistered)
@@ -136,7 +160,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(NSStringFromSelector(try XCTUnwrap(button.action)), "registerManifest")
         XCTAssertEqual(
             button.identifier?.rawValue,
-            setupWindowSharedPanelRole(try XCTUnwrap(button.action), "problem.manifest").rawValue
+            setupWindowControlRole(try XCTUnwrap(button.action), "problem.manifest").rawValue
         )
         XCTAssertTrue(block.voiceOverLabel.contains(localized("app.setup.severity.error")))
     }

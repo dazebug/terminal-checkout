@@ -246,7 +246,7 @@ final class SetupWindowGitHubPaneTests: XCTestCase {
         for (control, action) in fixture.pane.actionControlsForTesting {
             let selector = try XCTUnwrap(fixture.selectors[action])
             XCTAssertEqual(control.action, selector)
-            XCTAssertEqual(control.identifier, setupWindowGitHubPaneRole(selector))
+            XCTAssertEqual(control.identifier, setupWindowControlRole(selector))
         }
     }
 
