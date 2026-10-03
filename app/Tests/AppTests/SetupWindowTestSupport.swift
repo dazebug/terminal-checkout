@@ -54,6 +54,13 @@ enum SetupWindowTestSupport {
     private static let maximumRunLoopSamples = 20
     private static let runLoopPumpDuration: TimeInterval = 0.001
 
+    static func wrappedTextHeight(_ label: NSTextField) -> CGFloat? {
+        guard let cell = label.cell, label.bounds.width > 0 else { return nil }
+        return cell.cellSize(forBounds: NSRect(
+            x: 0, y: 0, width: label.bounds.width, height: 10_000
+        )).height
+    }
+
     @discardableResult
     static func settle(
         _ window: NSWindow, file: StaticString = #filePath, line: UInt = #line

@@ -94,7 +94,7 @@ final class SetupWindowGeneralPane: NSView {
     let guideButton: NSButton
     let previewView: SetupWindowPreviewView
     let connectionDetailsPopover: NSPopover
-    let requestStatusLabel = NSTextField(labelWithString: "")
+    let requestStatusLabel = makeSetupWindowWrappingLabel()
     let languageNoteLabel = makeSetupWindowWrappingLabel()
     private(set) var savedTabActivationForTesting: TabActivation = .foreground
 
@@ -119,6 +119,7 @@ final class SetupWindowGeneralPane: NSView {
     private let versionLabel = NSTextField(labelWithString: "")
 
     var requestStatusTextForTesting: String { requestStatusLabel.stringValue }
+    var terminalStatusTextForTesting: String { terminalStatusLabel.stringValue }
     var terminalTestResultTextForTesting: String { terminalTestResultLabel.stringValue }
     var hintTextForTesting: String { hintLabel.stringValue }
     var previewCaptionForTesting: String { previewCaption.stringValue }
@@ -134,6 +135,20 @@ final class SetupWindowGeneralPane: NSView {
         cmuxActionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.identifier }
     }
     var leftColumnForTesting: NSStackView { leftColumn }
+    var statusDotFramesForTesting: [NSRect] {
+        [requestDot.frame, popoverRequestDot.frame, terminalDot.frame,
+         nativeHostDetailRow.statusDotForTesting.frame, appSocketDetailRow.statusDotForTesting.frame,
+         terminalDetailRow.statusDotForTesting.frame]
+            + toolDetailRows.values.map { $0.statusDotForTesting.frame }
+    }
+    var statusDotsAreAccessibilityElementsForTesting: [Bool] {
+        [requestDot.isAccessibilityElementForTesting, popoverRequestDot.isAccessibilityElementForTesting,
+         terminalDot.isAccessibilityElementForTesting,
+         nativeHostDetailRow.statusDotIsAccessibilityElementForTesting,
+         appSocketDetailRow.statusDotIsAccessibilityElementForTesting,
+         terminalDetailRow.statusDotIsAccessibilityElementForTesting]
+            + toolDetailRows.values.map(\.statusDotIsAccessibilityElementForTesting)
+    }
 
     init(
         state: SetupWindowGeneralPaneState,
@@ -275,11 +290,6 @@ final class SetupWindowGeneralPane: NSView {
     }
 
     private func buildRequestStatusRow() {
-        requestDot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            requestDot.widthAnchor.constraint(equalToConstant: 8),
-            requestDot.heightAnchor.constraint(equalToConstant: 8),
-        ])
         requestStatusLabel.font = Theme.ui(12, .medium)
         requestStatusLabel.textColor = Theme.text
         connectionDetailsButton.title = localized("app.setup.general.connectionDetails")
@@ -303,19 +313,15 @@ final class SetupWindowGeneralPane: NSView {
         let title = NSTextField(labelWithString: localized("app.setup.general.terminal.title"))
         title.font = Theme.ui(12, .medium)
         title.textColor = Theme.text
+        title.setContentCompressionResistancePriority(.required, for: .horizontal)
         terminalPopup.target = actionTarget
         terminalPopup.action = selectors[.terminalChanged]
         terminalPopup.identifier = setupWindowControlRole(selectors[.terminalChanged]!)
-        terminalPopup.widthAnchor.constraint(equalToConstant: 137).isActive = true
+        terminalPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 139).isActive = true
         for terminal in Terminal.allCases {
             terminalPopup.addItem(withTitle: terminalName(terminal))
             terminalPopup.lastItem?.representedObject = terminal.rawValue
         }
-        terminalDot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            terminalDot.widthAnchor.constraint(equalToConstant: 8),
-            terminalDot.heightAnchor.constraint(equalToConstant: 8),
-        ])
         terminalStatusLabel.font = Theme.ui(11)
         terminalStatusLabel.lineBreakMode = .byTruncatingTail
         terminalTestButton.title = localized("app.setup.general.terminalTest.title")
@@ -370,7 +376,7 @@ final class SetupWindowGeneralPane: NSView {
         languagePopup.target = actionTarget
         languagePopup.action = selectors[.languageChanged]
         languagePopup.identifier = setupWindowControlRole(selectors[.languageChanged]!)
-        languagePopup.widthAnchor.constraint(equalToConstant: 185).isActive = true
+        languagePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 185).isActive = true
         languageRestartButton.title = localized("app.button.restartNow")
         languageRestartButton.bezelStyle = .rounded
         languageRestartButton.identifier = setupWindowControlRole(selectors[.restartForLanguage]!)
@@ -439,8 +445,8 @@ final class SetupWindowGeneralPane: NSView {
             localized("app.setup.action.refreshCmuxStatus"), action: .refreshCmuxStatus,
             roleQualifier: "connection-details.cmux-refresh"
         )
-        cmuxActionsRow.orientation = .horizontal
-        cmuxActionsRow.alignment = .centerY
+        cmuxActionsRow.orientation = .vertical
+        cmuxActionsRow.alignment = .leading
         cmuxActionsRow.spacing = 7
         cmuxActionsRow.addArrangedSubview(cmuxConfig)
         cmuxActionsRow.addArrangedSubview(cmuxRefresh)
@@ -467,7 +473,8 @@ final class SetupWindowGeneralPane: NSView {
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 15),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -15),
             content.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -14),
+            content.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
+            content.widthAnchor.constraint(equalToConstant: 326),
         ])
         controller.view = root
         connectionDetailsPopover.contentViewController = controller
@@ -614,6 +621,12 @@ final class SetupWindowGeneralPane: NSView {
     }
 
     @objc private func presentConnectionDetails(_ sender: NSButton) {
+        if let root = connectionDetailsPopover.contentViewController?.view {
+            root.setFrameSize(NSSize(width: 356, height: root.frame.height))
+            root.layoutSubtreeIfNeeded()
+            root.layoutSubtreeIfNeeded()
+            connectionDetailsPopover.contentSize = NSSize(width: 356, height: root.fittingSize.height)
+        }
         connectionDetailsPopover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
     }
 
@@ -634,51 +647,45 @@ final class SetupWindowGeneralPane: NSView {
 private final class SetupWindowGeneralStatusDot: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 4
-        setAccessibilityElement(true)
-        setAccessibilityRole(.image)
+        setAccessibilityElement(false)
+        for axis in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+            setContentHuggingPriority(.required, for: axis)
+            setContentCompressionResistancePriority(.required, for: axis)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override var intrinsicContentSize: NSSize { NSSize(width: 8, height: 8) }
+    var isAccessibilityElementForTesting: Bool { isAccessibilityElement() }
+
     func update(tone: SetupWindowGeneralStatusTone) {
         layer?.backgroundColor = tone.color.cgColor
-        let label: String
-        switch tone {
-        case .success: label = localized("app.setup.severity.success")
-        case .warning: label = localized("app.setup.severity.warning")
-        case .error: label = localized("app.setup.severity.error")
-        case .neutral: label = localized("app.setup.severity.unknown")
-        }
-        setAccessibilityLabel(label)
     }
 }
 
 private final class SetupWindowGeneralPopoverRow: NSStackView {
     let titleLabel: NSTextField
     private let dot = SetupWindowGeneralStatusDot()
-    private let valueLabel = NSTextField(labelWithString: "")
+    private let valueLabel = makeSetupWindowWrappingLabel()
     var valueTextForTesting: String { valueLabel.stringValue }
+    var statusDotForTesting: NSView { dot }
+    var statusDotIsAccessibilityElementForTesting: Bool { dot.isAccessibilityElementForTesting }
 
     init(title: String) {
         titleLabel = NSTextField(labelWithString: title)
         super.init(frame: .zero)
         orientation = .horizontal
-        alignment = .centerY
+        alignment = .top
         spacing = 7
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
-        ])
         titleLabel.font = Theme.ui(11, .medium)
         titleLabel.textColor = Theme.text
         titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         valueLabel.font = Theme.ui(11)
         valueLabel.textColor = Theme.textDim
-        valueLabel.alignment = .right
-        valueLabel.lineBreakMode = .byTruncatingTail
         valueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addArrangedSubview(dot)
         addArrangedSubview(titleLabel)

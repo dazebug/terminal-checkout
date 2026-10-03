@@ -3,7 +3,7 @@ import TestSupport
 import XCTest
 @testable import App
 
-/// User-facing strings outside the setup window: menu labels, automation status, and the one
+/// User-facing strings outside the setup window: menu labels and the one
 /// `Info.plist` key macOS puts in the permission prompt. Window messages are tested with their panes.
 ///
 /// The catalogues are read from the **source** tree: `swift test` runs with no app bundle, and
@@ -44,53 +44,6 @@ final class AppMessageTests: XCTestCase {
 
     private func value(_ key: String, _ tag: String) -> String {
         AppLocalization.string(key, tag: tag, resources: Self.sourceResources)
-    }
-
-    /// The five automation states read their sentence from the catalogue, so the language the window
-    /// is drawn in decides them. Two of them name a button, and they name it by **its** catalogue
-    /// value — rename the button and the sentence follows.
-    func testTheAutomationLabelsComeFromTheCatalogue() {
-        var granted: [String] = []
-        for tag in populatedLocales {
-            AppLocalization.tagOverrideForTesting = tag
-            let button = value("app.button.requestItermPermission", tag)
-
-            XCTAssertEqual(AutomationStatus.granted.label, value("app.automation.granted", tag), tag)
-            XCTAssertEqual(AutomationStatus.denied.label, value("app.automation.denied", tag), tag)
-            XCTAssertEqual(
-                AutomationStatus.notDetermined.label,
-                String(format: value("app.automation.notDetermined", tag), button), tag
-            )
-            XCTAssertTrue(AutomationStatus.notDetermined.label.contains(button), tag)
-            XCTAssertEqual(
-                AutomationStatus.targetNotRunning.label,
-                String(format: value("app.automation.targetNotRunning", tag), button), tag
-            )
-            XCTAssertTrue(AutomationStatus.targetNotRunning.label.contains(button), tag)
-            XCTAssertEqual(
-                AutomationStatus.unknown(-1743).label,
-                String(format: value("app.automation.unknown", tag), -1743), tag
-            )
-            XCTAssertTrue(AutomationStatus.unknown(-1743).label.contains("-1743"), tag)
-            granted.append(AutomationStatus.granted.label)
-        }
-        // Without this the case would pass just as well on a hardcoded literal, which answers the
-        // same in both languages
-        XCTAssertEqual(Set(granted).count, populatedLocales.count, "the label did not change with the language")
-    }
-
-    /// **Every sentence that points at a button takes the label as an argument**. A body that
-    /// went back to spelling the label out would still read correctly today and drift the moment the
-    /// button is renamed or translated differently, so the placeholder is what is pinned.
-    func testEverySentenceNamingAButtonTakesItsLabelAsAnArgument() {
-        let quoting = [
-            "app.automation.notDetermined", "app.automation.targetNotRunning",
-        ]
-        for tag in populatedLocales {
-            for key in quoting {
-                XCTAssertTrue(value(key, tag).contains("%@"), "\(tag)/\(key) no longer takes a label")
-            }
-        }
     }
 
     /// The menu bar is built once per language change, and every title in it comes from the

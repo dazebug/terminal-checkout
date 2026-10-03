@@ -659,36 +659,50 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     private func terminalIndicator(_ snapshot: SetupWindowSnapshot) -> SetupWindowGeneralIndicator {
         let terminal = snapshot.selectedTerminal
         guard snapshot.isInstalled(terminal) != false else {
-            return .init(text: localized("app.terminal.notInstalled", terminalName(terminal)), tone: .error)
+            if terminal.cmuxChannel != nil {
+                return .init(text: localized("app.setup.general.status.cmux.notInstalled"), tone: .error)
+            }
+            return .init(text: localized("app.setup.general.status.terminalNotInstalled"), tone: .error)
         }
         switch terminal {
         case .iterm:
             guard let status = snapshot.iTermAutomation else {
-                return .init(text: localized("app.setup.severity.unknown"), tone: .neutral)
+                return .init(text: localized("app.setup.general.status.iterm.checkFailed"), tone: .warning)
             }
-            let tone: SetupWindowGeneralStatusTone
             switch status {
-            case .granted: tone = .success
-            case .denied: tone = .error
-            case .notDetermined, .targetNotRunning, .unknown: tone = .warning
+            case .granted:
+                return .init(text: localized("app.setup.general.status.iterm.automationAllowed"), tone: .success)
+            case .denied:
+                return .init(text: localized("app.setup.general.status.iterm.permissionDenied"), tone: .error)
+            case .notDetermined:
+                return .init(text: localized("app.setup.general.status.iterm.permissionNeeded"), tone: .warning)
+            case .targetNotRunning:
+                return .init(text: localized("app.setup.general.status.iterm.cannotCheck"), tone: .warning)
+            case .unknown:
+                return .init(text: localized("app.setup.general.status.iterm.checkFailed"), tone: .warning)
             }
-            return .init(text: status.label, tone: tone)
         case .wezterm:
-            return .init(text: localized("app.setup.severity.success"), tone: .success)
+            return .init(text: localized("app.setup.general.status.wezterm.noPermissionNeeded"), tone: .success)
         case .warp:
             return snapshot.warpAccessibilityGranted
-                ? .init(text: localized("app.status.accessibility.granted"), tone: .success)
-                : .init(text: localized("app.status.accessibility.denied"), tone: .warning)
+                ? .init(text: localized("app.setup.general.status.warp.accessibilityAllowed"), tone: .success)
+                : .init(text: localized("app.setup.general.status.warp.accessibilityMissing"), tone: .warning)
         case .cmux, .cmuxNightly:
             guard let channel = terminal.cmuxChannel,
                   let status = snapshot.cmuxSocketStatus(for: channel) else {
-                return .init(text: localized("app.setup.severity.unknown"), tone: .neutral)
+                return .init(text: localized("app.setup.general.status.cmux.checkFailed"), tone: .warning)
             }
             switch status {
-            case .reachable: return .init(text: status.label, tone: .success)
-            case .notInstalled: return .init(text: status.label, tone: .error)
-            case .denied: return .init(text: status.label, tone: .error)
-            case .notRunning, .failed: return .init(text: status.label, tone: .warning)
+            case .reachable:
+                return .init(text: localized("app.setup.general.status.cmux.reachable"), tone: .success)
+            case .notInstalled:
+                return .init(text: localized("app.setup.general.status.cmux.notInstalled"), tone: .error)
+            case .denied:
+                return .init(text: localized("app.setup.general.status.cmux.accessDenied"), tone: .error)
+            case .notRunning:
+                return .init(text: localized("app.setup.general.status.cmux.notRunning"), tone: .warning)
+            case .failed:
+                return .init(text: localized("app.setup.general.status.cmux.checkFailed"), tone: .warning)
             }
         }
     }

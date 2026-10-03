@@ -212,7 +212,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
     }
 
     func testCmuxConnectionDetailsReadsTheTypedSocketState() throws {
-        let expected = localized("app.status.cmux.denied")
+        let expected = localized("app.setup.general.status.cmux.accessDenied")
         let fixture = makePane(state: makeState(
             terminal: .cmux,
             terminalStatus: .init(text: expected, tone: .error)
@@ -225,7 +225,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
     }
 
     func testNightlyCmuxConnectionDetailsKeepsItsChannelNameAndStatus() throws {
-        let expected = localized("app.status.cmux.reachable")
+        let expected = localized("app.setup.general.status.cmux.reachable")
         let fixture = makePane(state: makeState(
             terminal: .cmuxNightly,
             terminalStatus: .init(text: expected, tone: .success)

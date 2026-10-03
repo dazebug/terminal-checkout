@@ -288,9 +288,7 @@ final class SetupWindowLayoutTests: XCTestCase {
                 for label in labels {
                     let width = label.bounds.width
                     XCTAssertGreaterThan(width, 0, "\(tag)/\(pane) has an unmeasured wrapping label: \(label.stringValue)")
-                    let needed = try XCTUnwrap(label.cell).cellSize(forBounds: NSRect(
-                        x: 0, y: 0, width: width, height: 10_000
-                    )).height
+                    let needed = try XCTUnwrap(SetupWindowTestSupport.wrappedTextHeight(label))
                     XCTAssertGreaterThanOrEqual(
                         label.frame.height + 0.75,
                         needed,
