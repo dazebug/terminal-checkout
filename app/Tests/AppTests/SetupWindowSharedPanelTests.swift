@@ -330,6 +330,48 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(checklist.feedbackLabel.stringValue, localized("app.setup.install.chrome.feedback"))
     }
 
+    func testExpandedChromeStepsAreNumberedInsideChromeStepBeforeGitHubStep() throws {
+        let panel = try makePanel(
+            presentation: presentation(showsFirstInstallChecklist: true),
+            extensionFolder: .present
+        )
+        let checklist = try XCTUnwrap(panel.installChecklistView)
+        checklist.showChromeInstallationSteps()
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(try XCTUnwrap(panel.window)))
+
+        let chromeStep = checklist.steps[1]
+        let githubStep = checklist.steps[2]
+        XCTAssertEqual(checklist.guideStepLabels.count, 4)
+        let numberLabels = checklist.guideStepsContainer.arrangedSubviews.compactMap {
+            ($0 as? NSStackView)?.arrangedSubviews.first as? NSTextField
+        }
+        XCTAssertEqual(numberLabels.map(\.stringValue), ["1.", "2.", "3.", "4."])
+        XCTAssertTrue(isDescendant(checklist.guideStepsContainer, of: chromeStep))
+        for label in checklist.guideStepLabels {
+            XCTAssertTrue(isDescendant(label, of: chromeStep))
+            XCTAssertFalse(isDescendant(label, of: githubStep))
+            XCTAssertTrue(isAbove(label, githubStep, in: checklist))
+        }
+        XCTAssertTrue(isAbove(checklist.feedbackLabel, checklist.guideStepLabels[0], in: checklist))
+    }
+
+    private func isDescendant(_ view: NSView, of ancestor: NSView) -> Bool {
+        var current = view.superview
+        while let candidate = current {
+            if candidate === ancestor { return true }
+            current = candidate.superview
+        }
+        return false
+    }
+
+    private func isAbove(_ upper: NSView, _ lower: NSView, in coordinateView: NSView) -> Bool {
+        let upperFrame = upper.convert(upper.bounds, to: coordinateView)
+        let lowerFrame = lower.convert(lower.bounds, to: coordinateView)
+        return coordinateView.isFlipped
+            ? upperFrame.maxY <= lowerFrame.minY
+            : upperFrame.minY >= lowerFrame.maxY
+    }
+
     func testChromeChecklistButtonIsTheGreenReturnActionAndStepCopyWraps() throws {
         let panel = try makePanel(
             presentation: presentation(showsFirstInstallChecklist: true),

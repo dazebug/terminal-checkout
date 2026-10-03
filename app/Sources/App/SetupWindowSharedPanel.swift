@@ -645,6 +645,7 @@ final class SetupWindowInstallStepView: NSView {
 
     private let marker: NSTextField
     private let number: Int
+    private let textStack = NSStackView()
 
     init(
         number: Int,
@@ -686,7 +687,8 @@ final class SetupWindowInstallStepView: NSView {
         marker.widthAnchor.constraint(equalToConstant: 22).isActive = true
         marker.heightAnchor.constraint(equalToConstant: 22).isActive = true
 
-        let textStack = NSStackView(views: [titleLabel, statusLabel])
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(statusLabel)
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 3
@@ -714,6 +716,13 @@ final class SetupWindowInstallStepView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func appendDetailViews(_ views: [NSView]) {
+        for view in views {
+            textStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
+        }
+    }
 
     func update(
         title: String, status: String, isComplete: Bool, isProblem: Bool,
@@ -826,13 +835,18 @@ final class SetupWindowInstallChecklistView: NSView {
         )
         steps = [step0, step1, step2]
         chromeInstallButton = step1.actionButton!
+        let guideStepNumberLabels = (1...4).map {
+            let label = makeSetupPanelLabel("\($0).", font: Theme.ui(11, .medium), color: Theme.textDim)
+            label.alignment = .right
+            return label
+        }
         guideStepLabels = [
             makeSetupPanelLabel(localized("app.setup.install.chrome.step.developerMode"), font: Theme.ui(11), color: Theme.textDim),
             makeSetupPanelLabel(localized("app.setup.install.chrome.step.loadUnpacked"), font: Theme.ui(11), color: Theme.textDim),
             makeSetupPanelLabel(localized("app.setup.install.chrome.step.filePicker"), font: Theme.ui(11), color: Theme.textDim),
             makeSetupPanelLabel(localized("app.setup.install.chrome.step.keepMode"), font: Theme.ui(11), color: Theme.textDim),
         ]
-        guideStepsContainer = NSStackView(views: guideStepLabels)
+        guideStepsContainer = NSStackView()
         feedbackLabel = makeSetupPanelLabel(
             installFeedback ?? (guideStepsExpanded ? localized("app.setup.install.chrome.feedback") : ""),
             font: Theme.ui(11),
@@ -856,6 +870,8 @@ final class SetupWindowInstallChecklistView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(localized("app.setup.install.accessibilityLabel"))
+
+        step1.appendDetailViews([feedbackLabel, guideStepsContainer])
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -882,16 +898,23 @@ final class SetupWindowInstallChecklistView: NSView {
         guideStepsContainer.setAccessibilityElement(true)
         guideStepsContainer.setAccessibilityRole(.list)
         guideStepsContainer.setAccessibilityLabel(localized("app.setup.install.chrome.steps.accessibilityLabel"))
-        contentStack.addArrangedSubview(guideStepsContainer)
-        for label in guideStepLabels {
-            guideStepsContainer.addArrangedSubview(label)
-            label.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        for (index, label) in guideStepLabels.enumerated() {
+            let numberLabel = guideStepNumberLabels[index]
+            let row = NSStackView(views: [numberLabel, label])
+            row.orientation = .horizontal
+            row.alignment = .top
+            row.spacing = 6
+            row.translatesAutoresizingMaskIntoConstraints = false
+            guideStepsContainer.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: guideStepsContainer.widthAnchor),
+                numberLabel.widthAnchor.constraint(equalToConstant: 18),
+                label.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -24),
+            ])
         }
         guideStepsContainer.isHidden = !guideStepsExpanded
 
         feedbackLabel.isHidden = !guideStepsExpanded
-        contentStack.addArrangedSubview(feedbackLabel)
-        feedbackLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         let closeRow = NSStackView(views: [closeGuideButton])
         closeRow.orientation = .horizontal
