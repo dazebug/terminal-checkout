@@ -16,7 +16,8 @@ enum PermissionChecker {
     static var accessibilityStatusProvider: () -> Bool = { accessibilityIsTrusted() }
 
     /// These providers keep setup-window state checks deterministic in tests; production defaults
-    /// still read the installed applications and the selected terminal's live permission/socket.
+    /// still read the installed applications, the selected terminal's live permission or socket,
+    /// and the app's own socket.
     static var terminalInstallationStatusProvider: (Terminal) -> Bool = { terminal in
         switch terminal {
         case .iterm:

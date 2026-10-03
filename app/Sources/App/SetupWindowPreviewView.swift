@@ -1,8 +1,8 @@
 import AppKit
 import Core
 
-/// The schematic on the right side of the General pane. Later panes add their own render modes to
-/// this view so the preview and the sentence under it stay driven by the same value model.
+/// The schematic beside each pane's settings. One view renders the General, GitHub and Slack models,
+/// so a drawing and the sentence under it come from the same value.
 final class SetupWindowPreviewView: NSView {
     private var generalModel: SetupWindowGeneralPreview?
     private var githubModel: SetupWindowGitHubPreview?

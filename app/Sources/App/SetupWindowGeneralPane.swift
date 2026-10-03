@@ -231,7 +231,8 @@ final class SetupWindowGeneralPane: NSView {
         mainContentStack.distribution = .fill
         mainContentStack.spacing = 14
         mainContentStack.translatesAutoresizingMaskIntoConstraints = false
-        // This value breaks the tie with the left column's section stacks.
+        // Hug below the sections' own 250 so a column shorter than the preview keeps its height;
+        // at a tie AppKit stretched the first section instead.
         mainContentStack.setHuggingPriority(NSLayoutConstraint.Priority(240), for: .vertical)
         for view in [
             identityRow,
@@ -380,7 +381,8 @@ final class SetupWindowGeneralPane: NSView {
         terminalRow.spacing = 4
         terminalRow.addArrangedSubview(controls)
         terminalRow.addArrangedSubview(status)
-        // A single row exceeds 390 points in English and Japanese.
+        // The state sits on its own line under the popup: title, popup, state and button on one
+        // row overflowed the 390-point column in English and Japanese.
         indent.widthAnchor.constraint(equalTo: title.widthAnchor, constant: 6).isActive = true
     }
 

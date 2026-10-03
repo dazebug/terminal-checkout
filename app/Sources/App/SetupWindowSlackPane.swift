@@ -367,7 +367,8 @@ final class SetupWindowSlackPane: NSView {
         contentStack.distribution = .fill
         contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        // This value breaks the tie with the left column's section stacks.
+        // Hug below the sections' own 250 so a column shorter than the preview keeps its height;
+        // at a tie AppKit stretched the first section instead.
         contentStack.setHuggingPriority(NSLayoutConstraint.Priority(240), for: .vertical)
         contentStack.addArrangedSubview(leftColumn)
         contentStack.addArrangedSubview(previewColumn)

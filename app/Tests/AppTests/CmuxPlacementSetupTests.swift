@@ -264,9 +264,8 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         XCTAssertNotEqual(Settings.cmuxPlacementFixedName, "draft-group")
     }
 
-    /// macOS 15 ended the replaced field's editing after the rebuild had returned and sent its
-    /// action then, which stored the draft the rebuild only carried over. Sending the old field's
-    /// action after the rebuild stands in for that late end of editing on any macOS version.
+    /// A control from a replaced pane must not write settings. Sending the replaced field's action
+    /// after the rebuild stands in for any late end of its editing.
     func testAReplacedFieldCannotStoreTheDraftAfterTheRebuild() throws {
         Settings.cmuxPlacementIdentityMode = "fixed-name"
         Settings.cmuxPlacementFixedName = "stored-group"

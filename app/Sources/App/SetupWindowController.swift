@@ -1116,9 +1116,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         let environment = currentEnvironment()
         isRebuildingForLanguageChange = true
         defer { isRebuildingForLanguageChange = false }
-        // End the edit while the rebuild guard holds, then cut the old controls loose. macOS 15
-        // ended a removed field's editing after the rebuild had returned, and the action it sent
-        // then stored the draft this rebuild only carries over to the new field.
+        // End the edit while the rebuild guard holds, then cut the old controls loose: whatever ends
+        // a replaced field's editing later must not commit the draft carried over to the new field.
         window.makeFirstResponder(nil)
         if let oldContent = window.contentView { detachControls(in: oldContent) }
         window.contentView = buildContent(using: environment)

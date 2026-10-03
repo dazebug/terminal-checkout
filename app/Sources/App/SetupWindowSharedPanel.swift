@@ -159,9 +159,8 @@ final class SetupWindowSharedPanel: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// Called by the existing Chrome-install action after it prepares the extension copy and opens
-    /// chrome://extensions. The controller remains the action target; this only reveals the
-    /// instructions and feedback in the retained panel.
+    /// Expands the Chrome steps in the retained checklist. The install action reaches the same
+    /// state through `update(_:…installStepsExpanded:…)`; only tests call this directly.
     func showChromeInstallationSteps() {
         installChecklistView?.showChromeInstallationSteps()
     }
