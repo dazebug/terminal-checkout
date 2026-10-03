@@ -115,7 +115,7 @@ So the property was split. The arithmetic the invariant names — centring then 
 
 **Rejected — inventing a seam to manufacture a red.** It would have produced a green gate whose subject was a fixture, which is the failure the frozen-store entry above describes.
 
-The same split applies to a step this work could *not* perform: whether a language change leaves the window where the user put it is pinned by a test, but was never confirmed on a device, because the language picker is not reachable through the accessibility tree — enumerating pop-up buttons and radio buttons in that window both return empty, since the controls are custom. Driving it means clicking coordinates and guessing at a menu, which is not evidence. It is on the checklist as a step to perform, recorded as unperformed.
+The same split applies to a step this work could *not* perform: whether a language change leaves the window where the user put it is pinned by a test, but was never confirmed on a device, because the old custom language picker and terminal radio controls were not reachable through the accessibility tree — enumerating pop-up buttons and radio buttons in that window both returned empty. Driving it means clicking coordinates and guessing at a menu, which is not evidence. It is on the checklist as a step to perform, recorded as unperformed.
 
 ## An out-of-tree DOM harness needs its own red toggles
 
