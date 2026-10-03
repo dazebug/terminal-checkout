@@ -80,19 +80,40 @@ final class LocalizationBundleTests: XCTestCase {
     /// The lookup asks the requested catalog, then English, then gives back the key. The last step
     /// is a floor and not a feature: the catalogue gate turns a missing key into a red build, and a raw
     /// key on screen is the failure that gate exists to prevent.
-    func testAMissingKeyFallsBackToEnglishAndThenToTheKey() {
+    func testAMissingKeyFallsBackToEnglishAndThenToTheKey() throws {
+        let resources = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tc-localization-fallback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: resources) }
+        let english = resources.appendingPathComponent("en.lproj", isDirectory: true)
+        let japanese = resources.appendingPathComponent("ja.lproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: english, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: japanese, withIntermediateDirectories: true)
+        let fixtureKey = "app.test.localization.fallback"
+        let catalog = try PropertyListSerialization.data(
+            fromPropertyList: [fixtureKey: "English fixture value"],
+            format: .openStep,
+            options: 0
+        )
+        try catalog.write(to: english.appendingPathComponent("Localizable.strings"))
+        let japaneseCatalog = try PropertyListSerialization.data(
+            fromPropertyList: ["app.test.localization.other": "日本語"],
+            format: .openStep,
+            options: 0
+        )
+        try japaneseCatalog.write(to: japanese.appendingPathComponent("Localizable.strings"))
+
         XCTAssertEqual(
-            AppLocalization.string(probeKey, tag: "ja", resources: resources),
-            "Slack request failed. Open the Slack pane for details."
+            AppLocalization.string(fixtureKey, tag: "ja", resources: resources.path),
+            "English fixture value"
         )
         XCTAssertEqual(
-            AppLocalization.string("app.no.such.key", tag: "ja", resources: resources),
-            "app.no.such.key"
+            AppLocalization.string("app.test.localization.unknown", tag: "ja", resources: resources.path),
+            "app.test.localization.unknown"
         )
-        // A tag with no catalog at all falls to English rather than to the key
+        // A tag with no catalogue at all falls to English rather than to the key.
         XCTAssertEqual(
-            AppLocalization.string(probeKey, tag: "fr", resources: resources),
-            "Slack request failed. Open the Slack pane for details."
+            AppLocalization.string(fixtureKey, tag: "fr", resources: resources.path),
+            "English fixture value"
         )
     }
 

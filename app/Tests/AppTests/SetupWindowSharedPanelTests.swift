@@ -226,7 +226,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
     ) throws -> [String: String] {
         let panel = try makePanel(presentation: presentation(problems: [problem]), manifest: manifest)
         let block = try XCTUnwrap(panel.problemBlockViews.first)
-        return try Dictionary(uniqueKeysWithValues: block.actionButtons.map { button in
+        return try Dictionary(uniqueKeysWithValues: block.actionButtons.filter { !$0.isHidden }.map { button in
             let action = try XCTUnwrap(button.action)
             return (NSStringFromSelector(action), try XCTUnwrap(button.identifier?.rawValue))
         })
@@ -251,7 +251,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
         XCTAssertEqual(checklist.steps[1].actionButton?.keyEquivalent, "\r")
         XCTAssertEqual(checklist.steps[2].titleLabel.stringValue, localized("app.setup.install.github.pendingTitle"))
         XCTAssertFalse(checklist.steps[2].isComplete)
-        XCTAssertNil(checklist.closeGuideButton)
+        XCTAssertTrue(checklist.closeGuideButton.isHidden)
     }
 
     func testFirstInstallChecklistMarksRegisteredNativeHostComplete() throws {
@@ -266,7 +266,7 @@ final class SetupWindowSharedPanelTests: XCTestCase {
             checklist.steps[0].statusLabel.stringValue,
             localized("app.setup.install.nativeHost.complete")
         )
-        XCTAssertNil(checklist.steps[0].actionButton)
+        XCTAssertTrue(try XCTUnwrap(checklist.steps[0].actionButton).isHidden)
     }
 
     func testChromeInstallActionCanRevealFourStepsAndFeedback() throws {

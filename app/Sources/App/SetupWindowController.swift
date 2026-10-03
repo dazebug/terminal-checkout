@@ -142,12 +142,19 @@ final class FittedContentStackView: NSStackView {
                 visible = NSScreen.main?.visibleFrame
             }
 
+            let centerAfterUpdate = self.shouldCenterAfterFirstWindowUpdate?() == true
+            let originBeforeResize = window.frame.origin
             var target = requestedTarget
             if let visible { target.height = min(target.height, visible.height) }
             window.setContentSize(target)
-            if self.shouldCenterAfterFirstWindowUpdate?() == true, let visible {
+            if centerAfterUpdate, let visible {
                 Self.centerInside(visible, window)
                 self.didCenterAfterFirstWindowUpdate?()
+            } else {
+                // AppKit preserves the top edge when setContentSize changes height. After the
+                // window's first measured placement, keep its origin and let only the visible-frame
+                // clamp move it if the resized window would otherwise leave the screen.
+                window.setFrameOrigin(originBeforeResize)
             }
             if let visible { Self.moveInside(visible, window) }
 
@@ -320,6 +327,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
     var generalPaneForTesting: SetupWindowGeneralPane { generalPane }
     var githubPaneForTesting: SetupWindowGitHubPane { githubPane }
     var slackPaneForTesting: SetupWindowSlackPane { slackPane }
+    var wrappingStatusLabelsForTesting: [NSTextField] {
+        sharedPanel.wrappingStatusLabelsForTesting
+            + generalPane.wrappingStatusLabelsForTesting
+            + githubPane.wrappingStatusLabelsForTesting
+            + slackPane.wrappingStatusLabelsForTesting
+    }
     var cmuxPlacementIdentitySegmentForTesting: NSSegmentedControl { githubPane.identitySegment }
     var cmuxPlacementArrangementSegmentForTesting: NSSegmentedControl { githubPane.arrangementSegment }
     var cmuxPlacementNameFieldForTesting: NSTextField { githubPane.workspaceNameField }
@@ -756,6 +769,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate, NSToolb
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
+        // The document view is sized by its fitting content and these explicit scroll-content
+        // constraints. Translating its initial zero frame would add a zero-height autoresizing
+        // constraint and leave the window with only its title bar and toolbar.
+        stack.translatesAutoresizingMaskIntoConstraints = false
         // A standard title bar and preference toolbar own the chrome above this document; 12pt is the content separation after them.
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 16, right: 0)
         stack.wantsLayer = true

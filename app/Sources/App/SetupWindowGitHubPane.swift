@@ -123,6 +123,10 @@ final class SetupWindowGitHubPane: NSView {
     var cmuxSectionIsHiddenForTesting: Bool { cmuxSection.isHidden }
     var isCmuxPlacementVisible: Bool { !cmuxSection.isHidden }
     var workspaceNameHintIsHidden: Bool { emptyWorkspaceNameHint.isHidden }
+    var previewCaptionForTesting: String { previewCaption.stringValue }
+    var wrappingStatusLabelsForTesting: [NSTextField] {
+        [baseDirectoryNoticeLabel, effectSentenceLabel, previewCaption]
+    }
 
     var actionControlsForTesting: [(NSControl, SetupWindowGitHubAction)] {
         [
@@ -302,6 +306,7 @@ final class SetupWindowGitHubPane: NSView {
         previewView.heightAnchor.constraint(equalToConstant: 236).isActive = true
         previewCaption.font = Theme.ui(10)
         previewCaption.textColor = Theme.textDim
+        previewCaption.maximumNumberOfLines = 4
         previewColumn.orientation = .vertical
         previewColumn.alignment = .leading
         previewColumn.spacing = 8

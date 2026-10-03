@@ -119,7 +119,13 @@ final class SetupWindowGeneralPane: NSView {
 
     var requestStatusText: String { requestStatusLabel.stringValue }
     var hintTextForTesting: String { hintLabel.stringValue }
+    var previewCaptionForTesting: String { previewCaption.stringValue }
     var terminalDetailTitleForTesting: String { terminalDetailRow.titleLabel.stringValue }
+    var terminalDetailValueForTesting: String { terminalDetailRow.valueTextForTesting }
+    var wrappingStatusLabelsForTesting: [NSTextField] {
+        [terminalTestResultLabel, extensionStatusExplanation, cmuxFeedbackLabel,
+         languageNoteLabel, hintLabel, previewCaption]
+    }
     var cmuxFeedbackTextForTesting: String { cmuxFeedbackLabel.stringValue }
     var cmuxFeedbackIsHiddenForTesting: Bool { cmuxFeedbackLabel.isHidden }
     var cmuxActionButtonRoles: [NSUserInterfaceItemIdentifier] {
@@ -309,6 +315,7 @@ final class SetupWindowGeneralPane: NSView {
         terminalTestButton.identifier = setupWindowControlRole(selectors[.testTerminal]!)
         terminalTestResultLabel.font = Theme.ui(11)
         terminalTestResultLabel.textColor = Theme.textDim
+        terminalTestResultLabel.maximumNumberOfLines = 3
         terminalTestResultLabel.isHidden = true
 
         let status = NSStackView(views: [terminalDot, terminalStatusLabel])
@@ -362,6 +369,8 @@ final class SetupWindowGeneralPane: NSView {
         languageRestartButton.identifier = setupWindowControlRole(selectors[.restartForLanguage]!)
         languageNoteLabel.font = Theme.ui(11)
         languageNoteLabel.textColor = Theme.textDim
+        languageNoteLabel.maximumNumberOfLines = 2
+        previewCaption.maximumNumberOfLines = 4
 
         optionsButton.title = localized("app.setup.general.editGitHubButton")
         optionsButton.bezelStyle = .rounded
@@ -644,6 +653,7 @@ private final class SetupWindowGeneralPopoverRow: NSStackView {
     let titleLabel: NSTextField
     private let dot = SetupWindowGeneralStatusDot()
     private let valueLabel = NSTextField(labelWithString: "")
+    var valueTextForTesting: String { valueLabel.stringValue }
 
     init(title: String) {
         titleLabel = NSTextField(labelWithString: title)

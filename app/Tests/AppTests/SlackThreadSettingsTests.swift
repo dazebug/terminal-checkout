@@ -217,12 +217,15 @@ final class SlackThreadSettingsTests: XCTestCase {
         hotKey.combination = combination
         hotKey.state = .failed(combination, status: -9878)
         let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         let status = controller.slackPaneForTesting.hotKeyStatusLabel
         XCTAssertFalse(status.isHidden)
         XCTAssertTrue(status.stringValue.contains("-9878"))
 
         hotKey.state = .active(combination)
         hotKey.onStateChange?(hotKey.state)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         XCTAssertTrue(status.isHidden)
     }
 

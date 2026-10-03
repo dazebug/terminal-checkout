@@ -199,6 +199,35 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         )
     }
 
+    func testCmuxConnectionDetailsReadsTheTypedSocketState() throws {
+        let expected = localized("app.status.cmux.denied")
+        let fixture = makePane(state: makeState(
+            terminal: .cmux,
+            terminalStatus: .init(text: expected, tone: .error)
+        ))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        XCTAssertEqual(fixture.pane.terminalDetailTitleForTesting, localized("app.setup.general.connection.terminal", "cmux"))
+        XCTAssertEqual(fixture.pane.terminalDetailValueForTesting, expected)
+    }
+
+    func testNightlyCmuxConnectionDetailsKeepsItsChannelNameAndStatus() throws {
+        let expected = localized("app.status.cmux.reachable")
+        let fixture = makePane(state: makeState(
+            terminal: .cmuxNightly,
+            terminalStatus: .init(text: expected, tone: .success)
+        ))
+        let window = makeWindow(for: fixture.pane)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        XCTAssertEqual(
+            fixture.pane.terminalDetailTitleForTesting,
+            localized("app.setup.general.connection.terminal", "cmux NIGHTLY")
+        )
+        XCTAssertEqual(fixture.pane.terminalDetailValueForTesting, expected)
+    }
+
     func testHintUsesACompleteSentenceForTabsOrCmuxWorkspace() throws {
         let fixture = makePane(state: makeState(terminal: .iterm))
         let window = makeWindow(for: fixture.pane)
@@ -238,7 +267,8 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
         tabActivation: TabActivation = .foreground,
         installed: [Terminal: Bool] = Dictionary(uniqueKeysWithValues: Terminal.allCases.map { ($0, true) }),
         languageChange: SetupWindowGeneralLanguageChange = .unchanged,
-        cmuxFeedback: SetupWindowGeneralIndicator? = nil
+        cmuxFeedback: SetupWindowGeneralIndicator? = nil,
+        terminalStatus: SetupWindowGeneralIndicator = .init(text: "Ready", tone: .success)
     ) -> SetupWindowGeneralPaneState {
         let requestDate = requestRecorded ? Date(timeIntervalSince1970: 1_791_000_000) : nil
         let installations = Terminal.allCases.map {
@@ -257,7 +287,7 @@ final class SetupWindowGeneralPaneTests: XCTestCase {
             terminalInstallations: installations,
             nativeHostStatus: .init(text: localized("app.setup.install.nativeHost.complete"), tone: .success),
             appSocketStatus: .init(text: "Listening", tone: .success),
-            terminalStatus: .init(text: "Ready", tone: .success),
+            terminalStatus: terminalStatus,
             tools: SetupWindowToolResults(
                 available: ["zoxide": true, "gh": true, "claude": true],
                 executable: ["claude": true]

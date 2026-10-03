@@ -153,8 +153,10 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
             0
         )
         XCTAssertFalse(controller.cmuxPlacementNameFieldForTesting.isEnabled)
-        XCTAssertTrue(controller.githubPaneForTesting.effectSentenceLabel.stringValue.contains("New workspace"))
-        XCTAssertTrue(controller.githubPaneForTesting.effectSentenceLabel.stringValue.contains("Pane per item"))
+        XCTAssertEqual(
+            controller.githubPaneForTesting.effectSentenceLabel.stringValue,
+            localized("app.setup.github.effect.pane.new")
+        )
     }
 
     func testPlacementSegmentsSaveImmediately() throws {
@@ -241,7 +243,7 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         XCTAssertGreaterThan(controller.githubPaneForTesting.effectSentenceLabel.frame.width, 0)
     }
 
-    func testPlacementNameFieldReparentsAndKeepsAnUnstoredDraftAcrossRedraw() throws {
+    func testPlacementNameFieldRebuildKeepsAnUnstoredDraft() throws {
         Settings.cmuxPlacementIdentityMode = "fixed-name"
         Settings.cmuxPlacementFixedName = "stored-group"
         let controller = try makeController(terminal: .cmux)
@@ -254,13 +256,12 @@ final class CmuxPlacementSetupWindowTests: XCTestCase {
         XCTAssertNotEqual(Settings.cmuxPlacementFixedName, "draft-group")
 
         NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let rebuiltField = controller.cmuxPlacementNameFieldForTesting
 
-        XCTAssertTrue(
-            field === controller.cmuxPlacementNameFieldForTesting,
-            "the placement field was recreated instead of reparented"
-        )
-        XCTAssertNotNil(field.window, "the placement field was dropped instead of reparented")
-        XCTAssertEqual(field.stringValue, "draft-group")
+        XCTAssertFalse(field === rebuiltField, "language change did not rebuild the pane")
+        XCTAssertNotNil(rebuiltField.window, "the rebuilt placement field is not in the window")
+        XCTAssertEqual(rebuiltField.stringValue, "draft-group")
         XCTAssertNotEqual(Settings.cmuxPlacementFixedName, "draft-group")
     }
 

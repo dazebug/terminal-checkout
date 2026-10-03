@@ -69,6 +69,10 @@ final class SetupWindowSlackPane: NSView {
     var hotKeyStatusTextForTesting: String { hotKeyStatusLabel.stringValue }
     var loginItemStatusTextForTesting: String { loginItemStatusLabel.stringValue }
     var previewTitleForTesting: String { previewTitleLabel.stringValue }
+    var wrappingStatusLabelsForTesting: [NSTextField] {
+        [workDirectoryValidationLabel, instructionValidationLabel, hotKeyStatusLabel,
+         loginItemStatusLabel, previewTitleLabel, previewCaptionLabel]
+    }
 
     var actionControlsForTesting: [(NSControl, SetupWindowSlackAction, String?)] {
         [

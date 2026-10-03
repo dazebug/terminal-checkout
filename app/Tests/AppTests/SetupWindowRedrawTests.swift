@@ -10,6 +10,7 @@ final class SetupWindowRedrawTests: XCTestCase {
     private var savedPlacementName: String!
     private var savedSlackWorkDirectory: String!
     private var savedSlackInstruction: String!
+    private var savedLastRequestAt: Date?
     private var savedResources: String?
     private var savedTag: String?
 
@@ -21,6 +22,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         savedPlacementName = Settings.cmuxPlacementFixedName
         savedSlackWorkDirectory = Settings.slackThreadWorkDirectory
         savedSlackInstruction = Settings.slackThreadInstruction
+        savedLastRequestAt = Settings.lastRequestAt
         savedResources = AppLocalization.resourcesPath
         savedTag = AppLocalization.tagOverrideForTesting
         AppLocalization.resourcesPath = SetupWindowLayoutTests.sourceResources
@@ -30,6 +32,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         Settings.cmuxPlacementFixedName = "stored-workspace"
         Settings.slackThreadWorkDirectory = NSTemporaryDirectory()
         Settings.slackThreadInstruction = "stored instruction"
+        Settings.lastRequestAt = nil
     }
 
     override func tearDown() {
@@ -39,6 +42,7 @@ final class SetupWindowRedrawTests: XCTestCase {
         Settings.cmuxPlacementFixedName = savedPlacementName
         Settings.slackThreadWorkDirectory = savedSlackWorkDirectory
         Settings.slackThreadInstruction = savedSlackInstruction
+        Settings.lastRequestAt = savedLastRequestAt
         AppLocalization.resourcesPath = savedResources
         AppLocalization.tagOverrideForTesting = savedTag
         super.tearDown()
@@ -51,6 +55,27 @@ final class SetupWindowRedrawTests: XCTestCase {
     private func select(_ pane: String, in window: NSWindow) throws {
         let item = try XCTUnwrap(window.toolbar?.items.first { $0.itemIdentifier.rawValue == "setup.pane.\(pane)" })
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+    }
+
+    private func makeScrollingController() throws -> (SetupWindowController, NSWindow, NSScrollView) {
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let halfHeight = controller.rootStack.fittingSize.height / 2
+        controller.rootStack.visibleFrameOverride = NSRect(x: 0, y: 0, width: 1600, height: halfHeight)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let scroll = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertGreaterThan(
+            try XCTUnwrap(scroll.documentView).frame.height,
+            scroll.contentView.bounds.height,
+            "the fixture does not scroll"
+        )
+        return (controller, window, scroll)
+    }
+
+    private func postLanguageChange(in window: NSWindow) throws {
+        NotificationCenter.default.post(name: .terminalCheckoutLanguageChanged, object: nil)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
     }
 
     func testOrdinaryRefreshUpdatesTheSamePaneControlsAndKeepsDrafts() throws {
@@ -150,6 +175,100 @@ final class SetupWindowRedrawTests: XCTestCase {
         _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
 
         XCTAssertEqual(window.frame.origin, origin)
+    }
+
+    func testLanguageRebuildKeepsTheScrollPosition() throws {
+        let (_, window, scroll) = try makeScrollingController()
+        try XCTUnwrap(scroll.documentView).scroll(NSPoint(x: 0, y: 120))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        XCTAssertEqual(scroll.documentVisibleRect.origin.y, 120, accuracy: 0.5)
+
+        try postLanguageChange(in: window)
+
+        let rebuilt = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertFalse(scroll === rebuilt, "language change did not replace the document")
+        XCTAssertEqual(rebuilt.documentVisibleRect.origin.y, 120, accuracy: 0.5)
+    }
+
+    func testAHiddenSharedPanelAnchorFallsForwardToTheSelectedPane() throws {
+        Settings.lastRequestAt = nil
+        let (controller, window, scroll) = try makeScrollingController()
+        let document = try XCTUnwrap(scroll.documentView)
+        let panel = controller.sharedPanelForTesting
+        let clipHeight = scroll.contentView.bounds.height
+        document.scroll(NSPoint(x: 0, y: document.frame.maxY - clipHeight))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        XCTAssertEqual(panel.frame.maxY, scroll.documentVisibleRect.maxY, accuracy: 0.5)
+
+        Settings.lastRequestAt = Date()
+        try postLanguageChange(in: window)
+
+        let after = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertTrue(controller.sharedPanelForTesting.isHidden)
+        XCTAssertEqual(
+            controller.generalPaneForTesting.frame.maxY - after.documentVisibleRect.maxY,
+            0,
+            accuracy: 0.5,
+            "a hidden shared-panel anchor did not fall forward to the selected pane"
+        )
+    }
+
+    func testTheSelectedPaneEdgeAndOffsetSurviveALanguageReflow() throws {
+        AppLocalization.tagOverrideForTesting = "ko"
+        let (controller, window, scroll) = try makeScrollingController()
+        let document = try XCTUnwrap(scroll.documentView)
+        let pane = controller.generalPaneForTesting
+        let clipHeight = scroll.contentView.bounds.height
+        document.scroll(NSPoint(x: 0, y: pane.frame.maxY - clipHeight - 30))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let offset = pane.frame.maxY - scroll.documentVisibleRect.maxY
+        let oldHeight = document.frame.height
+        XCTAssertEqual(offset, 30, accuracy: 0.5)
+
+        AppLocalization.tagOverrideForTesting = "en"
+        try postLanguageChange(in: window)
+
+        let after = try XCTUnwrap(window.contentView as? NSScrollView)
+        XCTAssertNotEqual(try XCTUnwrap(after.documentView).frame.height, oldHeight)
+        XCTAssertEqual(
+            controller.generalPaneForTesting.frame.maxY - after.documentVisibleRect.maxY,
+            offset,
+            accuracy: 0.5
+        )
+        XCTAssertGreaterThanOrEqual(after.documentVisibleRect.origin.y, 0)
+        XCTAssertLessThanOrEqual(
+            after.documentVisibleRect.maxY,
+            try XCTUnwrap(after.documentView).frame.height + 0.5
+        )
+    }
+
+    func testWhereTheViewportGoesToPutTheAnchorBack() {
+        XCTAssertEqual(scrollOrigin(anchorTop: 600, offset: 30, clip: 400), 170)
+        XCTAssertEqual(scrollOrigin(anchorTop: 380, offset: 30, clip: 400), 0)
+        XCTAssertEqual(scrollOrigin(anchorTop: 300, offset: 0, clip: 400), 0)
+    }
+
+    func testTheRestoredSelectionIsClampedInUTF16Units() throws {
+        Settings.baseDirectory = "/tmp/🙂/notes"
+        let controller = makeController()
+        let window = try XCTUnwrap(controller.window)
+        try select("github", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let field = controller.githubPaneForTesting.baseDirectoryField
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor())
+        XCTAssertEqual(editor.string, "/tmp/🙂/notes")
+        let end = NSRange(location: (editor.string as NSString).length, length: 0)
+        XCTAssertNotEqual(end.location, editor.string.count)
+        editor.selectedRange = end
+
+        try postLanguageChange(in: window)
+
+        XCTAssertEqual(
+            controller.githubPaneForTesting.baseDirectoryField.currentEditor()?.selectedRange,
+            end
+        )
     }
 
     func testAllPaneControlsKeepRolesDerivedFromTheirActions() throws {

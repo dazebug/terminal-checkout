@@ -54,6 +54,13 @@ final class SetupWindowSharedPanel: NSView {
 
     private(set) var problemBlockViews: [SetupWindowProblemBlockView] = []
     private(set) var installChecklistView: SetupWindowInstallChecklistView?
+    var wrappingStatusLabelsForTesting: [NSTextField] {
+        let problemLabels = blocksByRole.values.flatMap { $0.paragraphLabels + $0.effectLabels }
+        let checklistLabels = installChecklistView.map { checklist in
+            checklist.steps.map(\.statusLabel) + checklist.guideStepLabels + [checklist.feedbackLabel]
+        } ?? []
+        return problemLabels + checklistLabels
+    }
 
     init(
         presentation: SetupWindowPresentation,
