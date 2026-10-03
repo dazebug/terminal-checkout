@@ -51,8 +51,48 @@ struct SetupWindowLayoutSnapshot: CustomStringConvertible {
 }
 
 enum SetupWindowTestSupport {
+    /// Larger than any fixture window, so whether the window fits its content never depends on the
+    /// display the tests run on — CI runners can have short screens, and the clamp then shrinks it.
+    static let roomyVisibleFrame = NSRect(x: 0, y: 0, width: 2560, height: 1600)
+
+    /// A machine on which nothing needs fixing: every terminal installed, every permission
+    /// granted, every cmux socket reachable, the app socket listening. Window tests start here so a
+    /// problem block appears only when a test asks for one — a CI runner has no terminals, no app
+    /// socket and no permissions. Returns the restore to call from `tearDown`.
+    static func installHealthyMachine() -> () -> Void {
+        let installation = PermissionChecker.terminalInstallationStatusProvider
+        let automation = PermissionChecker.iTermAutomationStatusProvider
+        let cmux = PermissionChecker.cmuxSocketStatusProvider
+        let accessibility = PermissionChecker.accessibilityStatusProvider
+        let appSocket = PermissionChecker.appSocketStatusProvider
+        PermissionChecker.terminalInstallationStatusProvider = { _ in true }
+        PermissionChecker.iTermAutomationStatusProvider = { .granted }
+        PermissionChecker.cmuxSocketStatusProvider = { _ in .reachable }
+        PermissionChecker.accessibilityStatusProvider = { true }
+        PermissionChecker.appSocketStatusProvider = { .listening }
+        return {
+            PermissionChecker.terminalInstallationStatusProvider = installation
+            PermissionChecker.iTermAutomationStatusProvider = automation
+            PermissionChecker.cmuxSocketStatusProvider = cmux
+            PermissionChecker.accessibilityStatusProvider = accessibility
+            PermissionChecker.appSocketStatusProvider = appSocket
+        }
+    }
+
+    static func onRoomyScreen(_ controller: SetupWindowController) -> SetupWindowController {
+        controller.rootStack.visibleFrameOverride = roomyVisibleFrame
+        return controller
+    }
+
     private static let maximumRunLoopSamples = 20
     private static let runLoopPumpDuration: TimeInterval = 0.001
+
+    static func wrappedTextHeight(_ label: NSTextField) -> CGFloat? {
+        guard let cell = label.cell, label.bounds.width > 0 else { return nil }
+        return cell.cellSize(forBounds: NSRect(
+            x: 0, y: 0, width: label.bounds.width, height: 10_000
+        )).height
+    }
 
     @discardableResult
     static func settle(

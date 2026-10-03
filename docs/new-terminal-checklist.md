@@ -8,7 +8,7 @@ Per-terminal pitfalls already confirmed (WezTerm's window selection and GUI-app 
 
 Terminal identifiers are defined by Core's `enum Terminal` (`Terminal.swift`), and the app stores the rawValue under the `terminal` key in `UserDefaults` (`iterm`, `wezterm`, `warp`, `cmux`, `cmux-nightly`). The extension doesn't know this value and gets no way to learn it — behaviorally there is nothing to touch on the extension side.
 
-Adding a case makes every default-less switch (the execution dispatch; the setup window's radio restore, permission section, and pipeline nodes) surface as compile errors. But the compiler only catches switches — visibility conditions and guidance copy written as `==` comparisons, and everything outside code (scripts, docs), are still caught only by the tables below. Don't stop at chasing compile errors.
+Adding a case makes every default-less switch (the execution dispatch and the setup window's terminal restore) surface as compile errors. The compiler does not catch visibility conditions or guidance written as `==` comparisons, nor the terminal selector, status blocks, previews, or documentation, so check the touch points below as well.
 
 **Core**
 
@@ -43,8 +43,10 @@ A terminal with no API to address a pane at all (Warp) is covered instead by a h
 |:---|:---|
 | `Settings.terminal` | Auto-detection order when there is no stored value (the unknown-stored-value fallback to iTerm2 lives in `Terminal(storedValue:)` alone — nothing to touch) |
 | `PermissionChecker.isXxxInstalled` | Install detection. If AppleScript-driven: status lookup, permission request, and opening System Settings too |
-| `SetupWindowController` | Add the radio button, disable when not installed, save (`terminalChanged` — the radio→case mapping is an if-chain the compiler can't catch) and restore, permission-card visibility conditions (`isHidden` comparisons), per-terminal guidance notes, and the pipeline node's name/color/description |
-| `Socket access mode is a prerequisite (cmux)` | Add the live status enum and setup-window card; the non-destructive button copies the settings fragment and opens the existing file or folder without creating or writing it, and a missing socket cannot distinguish a stopped cmux from a denied mode |
+| `SetupWindowController` and General pane | Add the terminal to the popup and its install detection, preserve the selected terminal, update terminal status and Terminal Test feedback, and keep After running disabled with “Switch to terminal” selected on Warp without changing the stored choice; check the General preview, GitHub's non-cmux preview, and the problem-block copy for terminal-specific branches too |
+| `SetupWindowSharedPanel` | Add or update the problem-block text and action for the terminal's install, permission, or connection states; keep denied socket access distinct from a terminal that is not running |
+| `SetupWindowPreviewView` | Add the terminal's General preview shape and the GitHub list-run behavior; non-cmux terminals use one new tab per row |
+| Connection Details popover | Add the terminal's status and any non-destructive control; cmux actions copy the setting and open the existing file, or check status again, without writing the file |
 | `app/Info.plist` | `NSAppleEventsUsageDescription` is the single one for the whole app — update it if the copy hard-codes a terminal name |
 | `install.sh` | The preflight's terminal-detection list and guidance copy. Finding none exits 1 and blocks installation, so missing this makes installation itself fail on machines that have only the new terminal (its detection criteria differ from the app's) |
 | `README.md` | The **Supported terminals** table is the canonical inventory — add a row with the terminal's required setup and its conditions for typed claude input. Terminal names also appear in the setup steps, Known limits and troubleshooting. If the code supports it but this is stale, users read it as unsupported |
@@ -59,13 +61,13 @@ Parts that parse CLI responses or script output (window picking, pane→tty look
 
 ## 2. Hands-on checklist
 
-Start with the new terminal selected in the app setup window and all 4 pipeline lights green.
+Start with the new terminal selected in the General pane, clear any relevant problem blocks, and check its status in Connection Details.
 
 **Launch and commands**
 
-- [ ] Setup window [Run in Terminal] → echo runs in a new tab
+- [ ] General pane [Terminal Test] → echo runs in a new tab or workspace as appropriate
 - [ ] With two displays and another app focused on the other display, the setup window stays centered on its chosen display after its measured resize rather than ending at a screen edge
-- [ ] After changing the app language, the setup window stays at its original position (not verified on the device; the custom language picker is not exposed in the Accessibility tree)
+- [ ] After changing the app language, the settings window stays at its original position (not verified on the device)
 - [ ] Disconnect the chosen display while a measured resize is pending → the setup window is recovered onto an available display and clamped there
 - [ ] Repository-page button → the new tab's working directory is that repo (`{repo}` `{owner}` `{main}` substituted)
 - [ ] PR button → new tab + `{repo}` `{branch}` `{base}` `{branch_underbar}` substituted
@@ -83,8 +85,8 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] With a shortcut set, copy a Slack message link and press the shortcut with Slack in front → exactly one session opens in the selected terminal.
 - [ ] Press it again with another app in front → exactly one new session opens; the same link is not deduplicated.
 - [ ] With an instruction configured, verify claude's single opening argument contains the copied link first and the instruction after it; use the argv transcript check in Verification tools below.
-- [ ] Compare the setup window's Keep the current screen setting on and off against that terminal's expected behavior; Warp still opens its new tab in front.
-- [ ] Press the shortcut with text other than a Slack link on the clipboard, then trigger a terminal-launch failure → each failure opens the setup window with a Slack error line; after a successful request, the error line is cleared.
+- [ ] Compare the General pane's After running choice in both states against that terminal's expected behavior; Warp still opens its new tab in front and keeps the stored choice while the control is disabled.
+- [ ] Press the shortcut with text other than a Slack link on the clipboard, then trigger a terminal-launch failure → each failure opens the setup window with a shared Slack problem block and the Slack toolbar item marked; after a successful request, both indicators clear.
 
 **Window selection**
 
@@ -126,9 +128,9 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] A command that can't take the append (`… && claude --resume`, `… | claude`, a trailing comment, a heredoc, a multi-line command, or **any word anywhere** that can rebind a name or that we cannot read — `function`/`alias`/`eval`/`source`/`export`/`PATH=…`/`if`/`'quoted'`/`$VAR`) → every input goes to the typed route instead, i.e. today's behaviour
 - [ ] Nothing is written to `$TMPDIR` any more (the pre-run script and its context file are gone). What remains is a **legacy sweep**: directories named `tc-prompt-<8 hex>` left by older installations are cleared by any request and by `uninstall.sh`. Old note kept for reference: `prompt.sh` inside is gone once the tab's command reaches `claude`; **`context.txt` deliberately stays** — deleting it before `execve` would lose the assembled text if the exec then failed, so a sweep reclaims it instead. The sweep reads **consumption, not just age**: 6 hours once `prompt.sh` is gone, 7 days while it is still there (nothing has run it yet — `sleep 21601 && claude` was reclaimed out from under a pending command) or while `handed-to-claude` is present (claude was told to read the file during the session). A run that fails before the terminal opens removes the whole directory immediately, and `uninstall.sh` takes them all except the ones carrying `handed-to-claude`, which it lists instead of deleting
 - [ ] Tab Config / AppleScript / CLI argument quoting survives the appended `command claude -- '<message>'` — the command block shown in the pane must not be split or mangled, and the single-quoted message must arrive as one argument
-- [ ] With a `claude` **function or alias wrapping an executable**, the argv route **bypasses the wrapper**: the append invokes `command claude`, which skips functions and aliases (measured in zsh, bash and dash) but **not builtins**. Confirm the session starts from the executable — and that the append still happens, which needs the startup check to see past the wrapper (it asks a child `/bin/sh`, so the rc's function is not there to hide the file). With `claude` available *only* as a function or alias there must be **no append at all** — appending would end in `command not found` in the pane — and the setup window says why. Residuals to confirm as *documented*, not as bugs: a PATH that resolves `claude` elsewhere, a `command` function or alias in the rc, and a login shell whose answers do not match the shell this terminal opens tabs with. The word list in `commandAcceptsAppendedClaudePrompt` is a second layer over that structure, and its completeness is **not** claimed
+- [ ] With a `claude` **function or alias wrapping an executable**, the argv route **bypasses the wrapper**: the append invokes `command claude`, which skips functions and aliases (measured in zsh, bash and dash) but **not builtins**. Confirm the session starts from the executable — and that the append still happens, which needs the startup check to see past the wrapper (it asks a child `/bin/sh`, so the rc's function is not there to hide the file). With `claude` available *only* as a function or alias there must be **no append at all** — appending would end in `command not found` in the pane — and the shared problem area says why the Slack link cannot open. Residuals to confirm as *documented*, not as bugs: a PATH that resolves `claude` elsewhere, a `command` function or alias in the rc, and a login shell whose answers do not match the shell this terminal opens tabs with. The word list in `commandAcceptsAppendedClaudePrompt` is a second layer over that structure, and its completeness is **not** claimed
 
-**Background tabs (setup window → Keep the current screen when you press a button)**
+**After running (General pane)**
 
 - [ ] Type in another app — and in another tab of this terminal — while pressing a button: the new session opens behind, not a keystroke lands in it, the screen you were on stays selected, and its claude input is still delivered
 - [ ] With the setting off, the new tab comes to the front as before
@@ -203,7 +205,7 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 - [ ] Helper fails to launch (missing from the bundle, socket path over the limit) — the command still runs, only claude input is abandoned, and the reason lands in the app log
 - [ ] The helper disappears after delivery ends (`ps -axo command= | grep warp-helper`; the socket file is deleted too)
 - [ ] Closing the tab mid-delivery makes the helper exit on its own — no stray processes remain
-- [ ] Without screen-reading permission, input is not delivered and the reason lands in the app log and the setup window (must be distinguishable from the command still running)
+- [ ] Without screen-reading permission, input is not delivered and the reason lands in the app log and the shared problem area (must be distinguishable from the command still running)
 - [ ] Inputs over 512 bytes (multi-byte text included) are delivered untruncated — the branch that chunks around the tty input-queue cap
 - [ ] Pressing two buttons in rapid succession opens two tabs each with its own command (the Tab Config files don't overwrite each other)
 - [ ] A user-created Tab Config with the same name is not overwritten
@@ -213,13 +215,13 @@ Start with the new terminal selected in the app setup window and all 4 pipeline 
 
 **cmux channels needing a socket access mode (stable and NIGHTLY)**
 
-- [ ] The setup window draws all four live states for both cmux channels: `notInstalled`, `notRunning`, `denied`, and `reachable`.
+- [ ] The shared problem area and General Connection Details show all four live states for both cmux channels: `notInstalled`, `notRunning`, `denied`, and `reachable`.
 - [ ] On both stable and NIGHTLY, a 1023-byte UTF-8 layout-leaf command runs inline, while a 1024-byte-or-longer command uses guarded `surface.send_text` rather than layout inline submission.
 - [ ] With cmux NIGHTLY selected, its workspace is created in the window the user was looking at.
 - [ ] With cmux NIGHTLY selected, claude input reaches the NIGHTLY pane.
 - [ ] With stable and NIGHTLY servers both running, selecting either channel creates the workspace only on that channel's server.
-- [ ] Repeat the placement default, N=25 pane placement, fixed-name found/not-found, byte-boundary, background-input, setup-window, and deadline-cut checks with both stable and NIGHTLY selected → no workspace or surface crosses the selected channel.
-- [ ] In the setup window, the placement section is visible only for cmux stable/NIGHTLY; choose fixed-name with an empty name and confirm the adjacent interpretation says “new workspace” (in the selected locale).
+- [ ] Repeat the placement default, N=25 pane placement, fixed-name found/not-found, byte-boundary, background-input, cmux shared status and preview checks, and deadline-cut checks with both stable and NIGHTLY selected → no workspace or surface crosses the selected channel.
+- [ ] In the GitHub pane, cmux placement controls are visible only for cmux stable/NIGHTLY; choose fixed-name with an empty name and confirm the adjacent interpretation says “new workspace” (in the selected locale).
 - [ ] With socket control mode disabled, pressing a button reports the automation-mode error immediately rather than a timeout.
 - [ ] The cmux config action opens the existing file or its folder, fills the clipboard with the automation fragment, and never creates or writes a file.
 - [ ] A claude input containing a C0 control character or DEL is rejected by the button as `{success:false}` before terminal delivery, and the storage/send path does not remove those control bytes before the app checks them.
@@ -246,13 +248,13 @@ n=struct.unpack("=I",r.stdout[:4])[0]; print(r.stdout[4:4+n].decode())' <<< \
 
 The payload above is typed (its input is a `!` line), which is the route every shipped preset that schedules claude input takes. To exercise the argv route instead, use a single plain-text input (`["summarise the diff"]`) with a command ending in a bare `claude`.
 
-`{cd}` is filled in by the app from its base directory setting, so the same payload exercises the zoxide jump alone or the full jump→`cd`→`clone` chain depending on what the setup window holds. Sending a `cd` variable of your own is rejected (`Unknown variable: {cd}`), which is the point — the app is the only source for it.
+`{cd}` is filled in by the app from the GitHub pane's base directory setting, so the same payload exercises the zoxide jump alone or the full jump→`cd`→`clone` chain depending on that value. Sending a `cd` variable of your own is rejected (`Unknown variable: {cd}`), which is the point — the app is the only source for it.
 
 - **New tab and working directory**: compare the set of ttys with attached shells before and after the run (`ps -eo tty,command`), then check the new tty's shell pid with `lsof -a -p <pid> -d cwd` for its working directory. Verifiable without any permission to control the terminal app
 - **Whether claude actually received a *typed* input**: look for `<bash-input>` (shell mode) and `<command-name>` (slash commands) in `~/.claude/projects/<cwd slug>/*.jsonl`. Since round 10 a merged `!` run lands here too — one `<bash-input>` carrying the whole `;`-joined line, banners included. Order and timestamps are recorded without reading the screen
 - **Whether claude actually received the *argv* message**: the same transcript, where it lands as the session's first user message with no `<bash-input>` around it.
 - **The app's verdict**: `/usr/bin/log show --predicate 'subsystem == "com.dazebug.terminal-checkout"' --last 15m --info` — on success it records a count line for the typed route: `claude(pid N): sent M of K input(s) (receipt is not confirmed)`. It says **sent**, not delivered, on purpose — nothing outside the TUI can confirm claude took the message. A run that went entirely through argv logs nothing there, because nothing was delivered by injection. The absolute path matters because `log` can be shadowed by shell functions/aliases
 - **What the merged `!` line will be**: it is built in `claudeTypedInputs` and nothing is written to disk — read it off the app log line for the request, or reproduce it with the same inputs in a unit test. A run merges only when every body provably joins (`claudeBodyJoinsSafely`); otherwise each input is typed on its own.
-- **Pressing setup-window buttons**: synthesizing clicks at coordinates sends the event to whatever window overlaps that point (verified empirically). Pressing the button directly via the Accessibility API is more reliable. To capture just the window, use `screencapture -l <windowID>`
+- **Pressing settings-window buttons**: synthesizing clicks at coordinates sends the event to whatever window overlaps that point (verified empirically). Pressing the button directly via the Accessibility API is more reliable. To capture just the window, use `screencapture -l <windowID>`
 
 Even when the app delivers all 3 claude inputs, if claude starts autonomous work after seeing its first output, the rest sit in claude's own input queue (verified empirically) — the app log's delivered count and the transcript's executed count can differ, so don't misread that as delivery failure; check both pieces of evidence together.

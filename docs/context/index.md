@@ -12,6 +12,7 @@
 - [github-page-reading.md](github-page-reading.md) — why the repository buttons find GitHub's header as the banner landmark rather than by an attribute, why a PR's branch links are picked by document order rather than screen position, why those selectors reach the worker's injected functions as arguments, how a navigation the history wrappers cannot see is noticed, and why an insert pass that waited through one draws nothing
 - [batch-fan-out.md](batch-fan-out.md) — why a whole-batch rejection keeps the app's own error text and hedges about the app's age instead of asserting it
 - [setup-window-placement.md](setup-window-placement.md) — why the window's measured size is applied outside the pass that measured it, and why one layout cycle gets one screen decision
+- [setup-window-design.md](setup-window-design.md) — why the setup window uses three toolbar panes, shared problems and pane previews
 - [signing-and-permissions.md](signing-and-permissions.md) — the ad-hoc signing churn, and the permission it silently revoked
 - [knowledge-capture.md](knowledge-capture.md) — why this directory exists and how its tooling is installed
 

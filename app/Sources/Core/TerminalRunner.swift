@@ -41,7 +41,7 @@ public enum TerminalError: Error, CustomStringConvertible {
         case .claudeInputNotDeliverable(let blocker): return blocker.message
         case .backgroundNeedsARunningTerminal(let terminal):
             return "\(terminal) is not running, and starting it would bring it to the front — open a \(terminal)"
-                + " window first, or turn off \"Keep the current screen when you press a button\"."
+                + " window first, or choose \"Switch to terminal\" under \"After running\"."
         }
     }
 }
@@ -60,8 +60,8 @@ public enum ClaudeInputBlocker: Equatable, CaseIterable {
     /// pane cannot be addressed — `send-text` and `get-text` both need a mux pane id
     case wezTermSessionUnavailable
 
-    /// Is the setup window the place to fix this? It holds the Accessibility card and the install
-    /// state, so it answers the two Warp reasons. It has no WezTerm control on it — bringing it
+    /// Is the setup window the place to fix this? It has shared problem blocks and the first-install
+    /// checklist, so it answers the two Warp reasons. It has no WezTerm control — bringing it
     /// forward for "start WezTerm first" takes focus away from Chrome and shows nothing to do.
     public var setupWindowCanHelp: Bool {
         switch self {

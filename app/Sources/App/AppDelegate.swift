@@ -19,8 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentFailure: { [weak self] error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.showSetupWindow()
-                self.setupWindow?.presentSlackThreadRequestFailure(error)
+                self.showSetupWindow(slackRequestFailure: error)
             }
         },
         clearFailure: { [weak self] in
@@ -33,12 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Takes the user somewhere that explains a rejection. The extension shows a failure as a
-        // single ❌ and the reason string only reaches the console (issue #29), so this window is
-        // the only channel the app has. Rejections come off the socket queue, hence the hop to
+        // single ❌, so this window is the user-facing channel for the reason as well as the console.
+        // Rejections come off the socket queue, hence the hop to
         // main. The headless server (`--headless-server`) never builds this delegate, so the hook
         // stays nil there — which is why e2e does not open a window
-        ClaudeInputGuidance.present = { [weak self] _ in
-            DispatchQueue.main.async { self?.showSetupWindow() }
+        ClaudeInputGuidance.present = { [weak self] blocker in
+            DispatchQueue.main.async { self?.showSetupWindow(claudeBlocker: blocker) }
         }
         startServer()
         Installer.autoSetup()
@@ -136,12 +135,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The app is nowhere on screen while it is idle — no menu bar item, and a Dock icon only while
     /// this window is open. Launching it again (from Spotlight, say) arrives as a reopen event,
     /// which is what brings the window back.
-    private func showSetupWindow() {
+    private func showSetupWindow(
+        claudeBlocker: ClaudeInputBlocker? = nil,
+        slackRequestFailure: Error? = nil
+    ) {
+        let created: Bool
         if setupWindow == nil {
-            let controller = SetupWindowController(slackHotKey: slackThreadHotKey, loginItem: loginItem)
+            let controller = SetupWindowController(
+                slackHotKey: slackThreadHotKey,
+                loginItem: loginItem,
+                openingBlocker: claudeBlocker,
+                slackRequestFailure: slackRequestFailure
+            )
             // Closing the window hides it from the Dock and ⌘Tab again — back to the invisible background
             controller.onClose = { NSApp.setActivationPolicy(.accessory) }
             setupWindow = controller
+            created = true
+        } else {
+            created = false
+        }
+        if !created {
+            if let claudeBlocker { setupWindow?.presentClaudeInputRejection(claudeBlocker) }
+            if let slackRequestFailure { setupWindow?.presentSlackThreadRequestFailure(slackRequestFailure) }
         }
         // A regular app while the window is up, so it appears in the Dock and ⌘Tab
         NSApp.setActivationPolicy(.regular)

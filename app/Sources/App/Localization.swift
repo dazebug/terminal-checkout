@@ -46,9 +46,8 @@ private let missingValueSentinel = "\u{0}tc-missing"
 enum AppLocalization {
     /// Where catalogues are read from. The app leaves it at its own bundle; `swift test` has no app
     /// bundle at all, so a test that wants the window to draw **sentences instead of raw keys** has
-    /// to say where they live. Without this the layout tests would be measuring the width of
-    /// `app.card.baseDir.help` — a string that is shorter than every sentence it stands for, which
-    /// is the one direction a layout test must not be wrong in.
+    /// to say where they live. Without this the layout tests would be measuring raw key names,
+    /// which are shorter than the localized sentences they stand for.
     static var resourcesPath: String? = Bundle.main.resourcePath
 
     /// A locale a test can force, so the window can be drawn in each one without touching the
@@ -244,16 +243,6 @@ func slackThreadRequestErrorMessage(_ failure: Error) -> String {
         }
     }
     return localizedErrorMessage(failure)
-}
-
-/// The line under the shortcut button; empty while the shortcut is off or working.
-func slackThreadHotKeyStateMessage(_ state: SlackThreadHotKeyState) -> String {
-    switch state {
-    case .off, .active:
-        return ""
-    case .failed(_, let status):
-        return localized("app.slack.hotKey.registerFailed", status)
-    }
 }
 
 func slackLoginItemStatusMessage(_ status: LoginItemStatus) -> String {

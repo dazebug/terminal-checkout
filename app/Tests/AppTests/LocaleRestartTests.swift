@@ -271,13 +271,13 @@ final class LocaleRestartTests: XCTestCase {
         let source = try auditSource(
             Self.appSource("SetupWindowController.swift"), claim: .sourceOrder
         ).text
-        let function = try XCTUnwrap(source.range(of: "@objc private func restartForLanguage() {"))
+        let function = try XCTUnwrap(source.range(of: "private func relaunchThroughGate("))
         let body = source[function.upperBound...]
         let guardIndex = try XCTUnwrap(
             body.range(of: "guard LocaleRestartGate.admitRestart() else {"),
-            "the picker restarts without taking an admission"
+            "the relaunch runs without taking an admission"
         ).lowerBound
-        let terminate = try XCTUnwrap(body.range(of: "NSApp.terminate(nil)")).lowerBound
+        let terminate = try XCTUnwrap(body.range(of: "effects.terminate()")).lowerBound
         XCTAssertLessThan(guardIndex, terminate, "the app is terminated before the gate is consulted")
     }
 

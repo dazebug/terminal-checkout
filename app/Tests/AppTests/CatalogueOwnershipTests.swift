@@ -187,7 +187,7 @@ final class CatalogueOwnershipTests: XCTestCase {
 
     /// Two keys in one catalogue holding the same sentence. Each pair is a judgement — the same
     /// words, deliberately, in two places that mean different things — so each is listed with the
-    /// reason it is not a duplicate to remove. There are three such judgements.
+    /// reason it is not a duplicate to remove. There are two such judgements.
     ///
     /// **Keyed by the pair of keys, not by the sentence.** The first version of this table was keyed
     /// by the English text, and the gate caught it on its first run: the same two pairs share a
@@ -195,11 +195,6 @@ final class CatalogueOwnershipTests: XCTestCase {
     /// row every time a locale is filled. Which two keys may legitimately agree is a fact about the
     /// keys; it is the same fact in every language.
     private let declaredSameValue: [[String]: String] = [
-        // Two permission rows on the setup card, each reporting its own grant: Accessibility (used
-        // for typing into Warp) and Apple Events (used to drive iTerm2). They are separate
-        // permissions with separate outcomes, and one shared row would make one look like the other.
-        ["app.automation.granted", "app.status.accessibility.granted"]:
-            "two independent permission rows report their own state",
         // The section heading `❯ main branch` and the column header of the override table under it.
         // Merging them would tie a heading's wording to a table column's.
         ["ext_section_main_title", "ext_table_mainBranch"]:
@@ -248,18 +243,12 @@ final class CatalogueOwnershipTests: XCTestCase {
     }
 
     /// One message contained whole inside another. This is the check that exact matching cannot make
-    /// — a known limit — so it is made here, with its two present cases judged.
+    /// — a known limit — so it is made here, with its present case judged.
     private let declaredContainment: [String: String] = [
         // The status message was split into two complete ones so that neither had a clause
         // substituted into it. The shorter is necessarily a prefix of the longer; that is
         // the shape of the fix, not a duplicate.
         "ext_status_imported": "the two-message split that replaced a substituted clause",
-        // **Recorded as debt, not as correct.** The z advice spells the base-directory card's title
-        // out — `“Repository base folder”` — instead of receiving it as a `%@` the way the other
-        // eight quotations do. The typographic quotes are not covered by the square-bracket
-        // convention. Changing a string value is outside this gate; the follow-up is to make it a
-        // quotation like the rest.
-        "app.card.baseDir.title": "a label quotation still spelled out — known debt, see the plan",
     ]
 
     func testOneValueInsideAnotherIsDeclared() throws {

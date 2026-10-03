@@ -1,18 +1,6 @@
 import Core
 import Foundation
 
-enum SetupState {
-    case ok(String)
-    case warning(String)
-    case error(String)
-
-    var message: String {
-        switch self {
-        case .ok(let m), .warning(let m), .error(let m): return m
-        }
-    }
-}
-
 enum InstallerError: Error, CustomStringConvertible {
     case bundledExtensionMissing
 
@@ -84,28 +72,18 @@ enum Installer {
 
     /// The three sentences that point at a button take its label from the catalogue as `%@`,
     /// and every one of them is read at the moment the window draws it.
-    static func manifestState() -> SetupState {
+    static func setupWindowManifestStatus() -> SetupWindowManifestStatus {
         guard let data = FileManager.default.contents(atPath: nativeHostManifestPath()),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return .error(
-                localized("app.status.manifest.notRegistered", localized("app.button.registerUpdate"))
-            )
+            return .notRegistered
         }
         let pathOK = obj["path"] as? String == relayPath
         // Compared as sets, so the order of the ID list does not matter as it grows
         let expected = Set(allowedExtensionIDs.map(extensionOrigin))
         let originOK = Set(obj["allowed_origins"] as? [String] ?? []) == expected
-        switch (pathOK, originOK) {
-        case (true, true): return .ok(localized("app.status.manifest.registered"))
-        case (false, _):
-            return .warning(
-                localized("app.status.manifest.wrongPath", localized("app.button.registerUpdate"))
-            )
-        case (_, false):
-            return .warning(
-                localized("app.status.manifest.wrongExtensionID", localized("app.button.registerUpdate"))
-            )
-        }
+        if pathOK && originOK { return .registered }
+        if !pathOK { return .wrongRelayPath }
+        return .wrongExtensionID
     }
 
     // MARK: The extension folder
@@ -169,14 +147,9 @@ enum Installer {
         (appSupportDirectory() as NSString).appendingPathComponent(".extension.staging")
     }
 
-    static func extensionState() -> SetupState {
+    static func setupWindowExtensionFolderStatus() -> SetupWindowExtensionFolderStatus {
         let manifest = (extensionDirectory as NSString).appendingPathComponent("manifest.json")
-        if FileManager.default.fileExists(atPath: manifest) {
-            return .ok(localized("app.status.extensionFolder.ready"))
-        }
-        return .error(
-            localized("app.status.extensionFolder.missing", localized("app.button.installInChrome"))
-        )
+        return FileManager.default.fileExists(atPath: manifest) ? .present : .missing
     }
 
     /// Whether the bundled extension and the installed copy differ — after an app update, say
@@ -220,7 +193,7 @@ enum Installer {
                 checkoutLog("updating the installed extension copy failed — \(errorMessage(error))")
             }
         }
-        if case .ok = manifestState() {} else {
+        if setupWindowManifestStatus() != .registered {
             try? installManifest() // self-healing when the app has moved
         }
     }

@@ -52,7 +52,7 @@ final class SlackThreadSettingsTests: XCTestCase {
         XCTAssertEqual(Settings.slackThreadInstruction, "  keep the user's wording  ")
     }
 
-    func testSettingsAndHotKeyRequestUseTheSameCoreValidator() throws {
+    func testControllerAndHotKeyRequestUseTheSameCoreValidator() throws {
         let appRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let coreSource = try auditSource(
@@ -68,15 +68,15 @@ final class SlackThreadSettingsTests: XCTestCase {
             from: "public func resolveSlackThreadRequest(",
             to: "\n/// Uses the existing request planner"
         ))
-        let settingsBody = try XCTUnwrap(segment(
+        let validationBody = try XCTUnwrap(segment(
             in: windowSource,
-            from: "private func updateSlackThreadSettingsCard() {",
-            to: "\n    private func revealSlackRequestFailure()"
+            from: "private func slackValidationNotice(",
+            to: "\n    private func baseDirectoryProblem("
         ))
 
         XCTAssertTrue(requestBody.contains("validateSlackThreadSettings("))
-        XCTAssertTrue(settingsBody.contains("validateSlackThreadSettings("))
-        XCTAssertFalse(settingsBody.contains("normalizedBaseDirectory("))
+        XCTAssertEqual(validationBody.components(separatedBy: "validateSlackThreadSettings(").count - 1, 1)
+        XCTAssertFalse(validationBody.contains("normalizedBaseDirectory("))
     }
 
     func testEverySlackThreadFailureHasLocalizedMessagesInEveryLocale() {
@@ -93,19 +93,17 @@ final class SlackThreadSettingsTests: XCTestCase {
             .invalidInstruction,
             .appendedPromptUnavailable,
         ]
-        let combination = HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift, .command])!
         let refusal = NSError(domain: "synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: "synthetic refusal"])
 
         for tag in supportedLocales {
             AppLocalization.tagOverrideForTesting = tag
             var messages = requestErrors.map { ("\($0)", slackThreadRequestErrorMessage($0)) }
             messages.append(("server unavailable", slackThreadRequestErrorMessage(SlackThreadHotKeyError.serverUnavailable)))
-            messages.append(("registration refused", slackThreadHotKeyStateMessage(.failed(combination, status: -9878))))
             messages.append(("login item approval", slackLoginItemStatusMessage(.requiresApproval)))
             messages.append(("login item refused", slackLoginItemFailureMessage(refusal)))
             for key in [
                 "app.slack.hotKey.label", "app.slack.hotKey.set", "app.slack.hotKey.recording", "app.slack.hotKey.clear",
-                "app.slack.hotKey.needsModifier", "app.slack.hotKey.help",
+                "app.slack.hotKey.needsModifier",
                 "app.slack.loginItem.title", "app.slack.loginItem.help",
             ] {
                 messages.append((key, AppLocalization.string(key)))
@@ -149,10 +147,10 @@ final class SlackThreadSettingsTests: XCTestCase {
         defer { restore() }
         Settings.slackThreadHotKey = nil
         let hotKey = StubSlackThreadHotKey()
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
-        let button = controller.slackHotKeyButtonForTesting
-        let clear = controller.slackHotKeyClearButtonForTesting
-        let status = controller.slackHotKeyStatusLabelForTesting
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
+        let button = controller.slackPaneForTesting.hotKeyButton
+        let clear = controller.slackPaneForTesting.clearHotKeyButton
+        let status = controller.slackPaneForTesting.hotKeyStatusLabel
         XCTAssertEqual(button.title, localized("app.slack.hotKey.set"))
         XCTAssertTrue(clear.isHidden)
 
@@ -196,8 +194,8 @@ final class SlackThreadSettingsTests: XCTestCase {
         let hotKey = StubSlackThreadHotKey()
         hotKey.combination = combination
         hotKey.state = .active(combination)
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
-        let button = controller.slackHotKeyButtonForTesting
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
+        let button = controller.slackPaneForTesting.hotKeyButton
 
         button.performClick(nil)
         XCTAssertNil(controller.handleHotKeyRecordingEvent(keyDown(kVK_Escape, [])))
@@ -216,22 +214,25 @@ final class SlackThreadSettingsTests: XCTestCase {
         let hotKey = StubSlackThreadHotKey()
         hotKey.combination = combination
         hotKey.state = .failed(combination, status: -9878)
-        let controller = SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem())
-        let status = controller.slackHotKeyStatusLabelForTesting
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
+        let window = try XCTUnwrap(controller.window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let status = controller.slackPaneForTesting.hotKeyStatusLabel
         XCTAssertFalse(status.isHidden)
         XCTAssertTrue(status.stringValue.contains("-9878"))
 
         hotKey.state = .active(combination)
         hotKey.onStateChange?(hotKey.state)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
         XCTAssertTrue(status.isHidden)
     }
 
     func testLoginItemCheckboxShowsTheServiceStateNotTheClick() {
         AppLocalization.tagOverrideForTesting = "en"
         let loginItem = StubLoginItem(status: .disabled)
-        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: loginItem)
-        let checkbox = controller.slackLoginItemCheckboxForTesting
-        let status = controller.slackLoginItemStatusLabelForTesting
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: loginItem))
+        let checkbox = controller.slackPaneForTesting.loginItemCheckbox
+        let status = controller.slackPaneForTesting.loginItemStatusLabel
         XCTAssertEqual(checkbox.state, .off)
         XCTAssertTrue(status.isHidden)
 
@@ -265,26 +266,68 @@ final class SlackThreadSettingsTests: XCTestCase {
         Settings.slackThreadWorkDirectory = ""
         Settings.slackThreadInstruction = ""
 
-        let controller = SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem())
-        let workField = controller.slackWorkDirectoryFieldForTesting
-        workField.stringValue = "/tmp/has space"
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workField))
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: StubSlackThreadHotKey(), loginItem: StubLoginItem()))
+        let window = try XCTUnwrap(controller.window)
+        select("slack", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+        let workField = controller.slackPaneForTesting.workDirectoryField
+        try enterText("/tmp/has space", in: workField, window: window)
         XCTAssertEqual(Settings.slackThreadWorkDirectory, "/tmp/has space")
         XCTAssertTrue(
-            controller.slackThreadValidationLabelForTesting.stringValue
+            controller.slackPaneForTesting.workDirectoryValidationLabel.stringValue
                 .contains(localized("app.slack.error.workDirectoryInvalidCharacters"))
         )
 
-        workField.stringValue = NSTemporaryDirectory()
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workField))
-        let instructionField = controller.slackInstructionFieldForTesting
-        instructionField.stringValue = "line\nbreak"
-        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: instructionField))
+        try enterText(NSTemporaryDirectory(), in: workField, window: window)
+        XCTAssertEqual(Settings.slackThreadWorkDirectory, NSTemporaryDirectory())
+        let instructionField = controller.slackPaneForTesting.instructionField
+        try enterText("line\nbreak", in: instructionField, window: window)
         XCTAssertEqual(Settings.slackThreadInstruction, "line\nbreak")
         XCTAssertTrue(
-            controller.slackThreadValidationLabelForTesting.stringValue
+            controller.slackPaneForTesting.instructionValidationLabel.stringValue
                 .contains(localized("app.slack.error.invalidInstruction"))
         )
+    }
+
+    func testLeavingSlackPaneEndsHotKeyRecordingBeforePasteCanChangeTheChoice() throws {
+        let restore = preserveHotKeySetting()
+        defer { restore() }
+        let original = try XCTUnwrap(
+            HotKeyCombination(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .option])
+        )
+        Settings.slackThreadHotKey = original
+        let hotKey = StubSlackThreadHotKey()
+        hotKey.combination = original
+        hotKey.state = .active(original)
+        let controller = SetupWindowTestSupport.onRoomyScreen(SetupWindowController(slackHotKey: hotKey, loginItem: StubLoginItem()))
+        let window = try XCTUnwrap(controller.window)
+        select("slack", in: window)
+        _ = try XCTUnwrap(SetupWindowTestSupport.settle(window))
+
+        controller.slackPaneForTesting.hotKeyButton.performClick(nil)
+        XCTAssertTrue(controller.isRecordingHotKeyForTesting)
+        select("github", in: window)
+
+        XCTAssertFalse(controller.isRecordingHotKeyForTesting)
+        let paste = keyDown(kVK_ANSI_V, [.command])
+        XCTAssertTrue(controller.handleHotKeyRecordingEvent(paste) === paste)
+        XCTAssertEqual(Settings.slackThreadHotKey, original)
+    }
+
+    private func select(_ pane: String, in window: NSWindow) {
+        guard let item = window.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "setup.pane.\(pane)" }),
+              let action = item.action else {
+            XCTFail("missing toolbar item for \(pane)")
+            return
+        }
+        XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+    }
+
+    private func enterText(_ text: String, in field: NSTextField, window: NSWindow) throws {
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        let replacedRange = NSRange(location: 0, length: editor.string.utf16.count)
+        editor.insertText(text, replacementRange: replacedRange)
     }
 
     private func keyDown(_ keyCode: Int, _ flags: NSEvent.ModifierFlags) -> NSEvent {

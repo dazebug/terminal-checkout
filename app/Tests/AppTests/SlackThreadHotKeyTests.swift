@@ -100,7 +100,7 @@ final class SlackThreadHotKeyTests: XCTestCase {
         XCTAssertNil(registrar.onPress, "turning the shortcut off must leave nothing that can fire")
     }
 
-    func testRegistrationRefusalIsAStateTheWindowCanShow() {
+    func testRegistrationRefusalKeepsTheStoredHotKeyAndFailureState() {
         let registrar = FakeHotKeyRegistrar()
         registrar.refusal = -9878
         let controller = makeController(registrar: registrar)
@@ -109,10 +109,6 @@ final class SlackThreadHotKeyTests: XCTestCase {
 
         XCTAssertEqual(controller.state, .failed(combination, status: -9878))
         XCTAssertEqual(controller.combination, combination, "a refused shortcut is still the stored choice")
-        AppLocalization.tagOverrideForTesting = "en"
-        let message = slackThreadHotKeyStateMessage(controller.state)
-        XCTAssertTrue(message.contains("-9878"))
-        XCTAssertFalse(message.hasPrefix("app."))
     }
 
     func testPressReadsTheClipboardAtPressTimeAndReportsTheOutcome() {

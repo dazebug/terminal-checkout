@@ -10,7 +10,7 @@ How the app reaches a cmux server, what it is allowed to ask of it, and what it 
 **Source:** PR #60; `app/Sources/App/CmuxConfigHelp.swift`; denial measured from an external shell
 **Revisit when:** cmux gains a supported way for an outside process to request automation mode, or `cmux settings automation` stops requiring a socket that automation mode is what grants
 
-cmux only accepts socket commands from processes it can prove are its own descendants, so the app cannot talk to it until the user sets `socketControlMode` to `automation` in `~/.config/cmux/cmux.json`. The setup window's button copies the JSON fragment to the clipboard and opens that file — or its folder if the file does not exist yet — and writes nothing.
+cmux only accepts socket commands from processes it can prove are its own descendants, so the app cannot talk to it until the user sets `socketControlMode` to `automation` in `~/.config/cmux/cmux.json`. General's Connection Details popover copies the JSON fragment to the clipboard and opens that file — or its folder if the file does not exist yet — and writes nothing.
 
 **Reason:** the default mode (`cmuxOnly`) authorizes by walking the peer pid's ancestor chain up to the cmux server. An app launched through LaunchServices is never in that chain, by construction, so no amount of care on our side makes the default mode work. `automation` removes only the ancestry test and keeps the same-uid test, which is the boundary the app's own socket already uses — so it adds no trust boundary that this machine did not already have. `password` and `allowAll` also pass, and the app does not object to them.
 
@@ -66,7 +66,7 @@ Stable and NIGHTLY each write the same live socket path to two pointer files. Th
 
 **Rejected alternative — use different CLIs but share one socket.** Choosing the right executable does not constrain the server when the CLI itself performs unpinned discovery, so the same cross-channel error remains.
 
-**Rejected alternative — discover whenever the selected channel has no pointer.** With the selected channel stopped and the other channel running, this creates the workspace on the other channel's server and makes the setup window report a false reachable state.
+**Rejected alternative — discover whenever the selected channel has no pointer.** With the selected channel stopped and the other channel running, this creates the workspace on the other channel's server and makes General Connection Details report a false reachable state.
 
 **Consequence, accepted:** stable and NIGHTLY remain separate choices and never fall back to one another; a live pointer is always honored, a missing selected-channel pointer blocks cross-channel discovery, and discovery remains only when no channel has a live pointer. No settings file is modified by the app.
 
@@ -147,7 +147,7 @@ Measured server-side validation failures carried typed prefixes (`invalid_params
 
 **Rejected alternative — substring matching.** A partial match cannot tell a connection refusal from a post-create failure that quotes the same words, and it silently starts matching different things when the wording drifts. An earlier version of this classifier also anchored on the error text *without* its `Error: ` prefix — the test passed while the real CLI output did not match, so the auto-launch path was dead. Requiring the prefix that the CLI always emits is what makes the anchor testable against something real.
 
-**Rejected alternative — preflight with `cmux ping`.** The execution path deliberately does not ping first. `workspace.create` is tried immediately: a socket denial then fails at once with the reason the user needs, and a ping in front of it would only add a round trip and a second thing that can be wrong. The setup window's live status probe *does* use ping, because its question is different — it is asking about state, not performing an action.
+**Rejected alternative — preflight with `cmux ping`.** The execution path deliberately does not ping first. `workspace.create` is tried immediately: a socket denial then fails at once with the reason the user needs, and a ping in front of it would only add a round trip and a second thing that can be wrong. General Connection Details' live status probe *does* use ping, because its question is different — it is asking about state, not performing an action.
 
 ## The workspace is created focused and unaddressed
 

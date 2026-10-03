@@ -211,7 +211,7 @@ The transitional Korean glosses these scripts and `README.md` carried while the 
 **Source:** PR #41; `LocaleRestartGate` in `app/Sources/App/Settings.swift`, `restartForLanguage` in `app/Sources/App/SetupWindowController.swift`
 **Revisit when:** claude input delivery gains a bounded worst case, or the restart stops being user-initiated
 
-A language change moves AppKit's own chrome only on the next launch, so the card offers a restart. Restarting through an in-flight claude input delivery would cut it off and orphan a Warp injection helper whose only defence is its lifetime, so the gate answers "not now".
+A language change moves AppKit's own chrome only on the next launch, so the General pane's language row offers a restart. Restarting through an in-flight claude input delivery would cut it off and orphan a Warp injection helper whose only defence is its lifetime, so the gate answers "not now".
 
 **Rejected alternative — defer the restart until the delivery finishes.** Two reasons. The window already says "not restarting right now, press again when the delivery has finished", and a queue that fired by itself would contradict a sentence about to exist in five languages. More fundamentally, deferring needs the deferral to outlive whatever it waits for — including a delivery that never ends — which is the same self-lifetime problem the gate exists to avoid. The user keeps the trigger.
 
@@ -221,9 +221,9 @@ A language change moves AppKit's own chrome only on the next launch, so the card
 **Status:** active
 **Evidence:** confirmed by the implementation
 **Source:** PR #41 (closing change); `LanguageNoteState` and `languageNote` in `app/Sources/App/SetupWindowController.swift`
-**Revisit when:** the language card gains another mutually exclusive restart outcome
+**Revisit when:** the General pane's language row gains another mutually exclusive restart outcome
 
-The language card has three outcomes: the ordinary note, a restart blocked because delivery is in flight, and a relaunch that failed to start. They are represented by `LanguageNoteState`, not by two independent booleans, so the impossible combination “blocked and failed” cannot be passed to the formatter. The failed-launch path therefore keeps its own message instead of borrowing the explanation for a delivery refusal.
+The General pane's language row has three outcomes: the ordinary note, a restart blocked because delivery is in flight, and a relaunch that failed to start. They are represented by `LanguageNoteState`, not by two independent booleans, so the impossible combination “blocked and failed” cannot be passed to the formatter. The failed-launch path therefore keeps its own message instead of borrowing the explanation for a delivery refusal.
 
 ## Residual: the compatibility cache's fence is per worker, not per account
 

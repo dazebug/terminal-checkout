@@ -21,6 +21,8 @@ Two consequences the deferral creates, and how each is handled. A queued block m
 
 A separate, smaller cause was found in the same investigation and fixed first: `NSScrollView.automaticallyAdjustsContentInsets` added a title-bar inset that duplicated the stack's own 38-point top edge inset, because this window uses `.fullSizeContentView` and already clears the title bar itself. That was 32 of the missing points. Fixing it did not fix the device, which is what identified the resize as a second, independent cause rather than the same one measured imprecisely.
 
+The current window uses a standard titlebar with a preference toolbar, so its content begins below the toolbar and no longer uses that 38-point top inset or the matching automatic-inset suppression.
+
 ## One screen decision per layout cycle, and only the first measured size is centred
 
 **Type:** decision

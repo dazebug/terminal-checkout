@@ -97,7 +97,7 @@ echo "[1/3] Dependency preflight check ✓"
 echo "      Detected terminals: ${DETECTED_TERMINALS[*]}"
 if ! command -v zoxide >/dev/null 2>&1; then
     echo "      Note: zoxide not found. Commands jump to your repository with zoxide first (z.sh doesn't count) —"
-    echo "            either install it (brew install zoxide), or set a repository base folder in the setup window,"
+    echo "            either install it (brew install zoxide), or set a repository base folder in the GitHub pane,"
     echo "            which is used whenever the jump fails and clones the repository when it isn't there yet"
 fi
 
@@ -157,7 +157,7 @@ NEW_CDHASH="$(cdhash_of "$INSTALL_DIR/$APP_NAME")"
 if [ -n "$PREVIOUS_CDHASH" ] && [ -n "$NEW_CDHASH" ] && [ "$PREVIOUS_CDHASH" != "$NEW_CDHASH" ]; then
     if tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1; then
         echo "      The app's code signature changed, so its Accessibility permission was reset."
-        echo "      Only Warp claude input uses it — allow it again in the setup window if you need it."
+        echo "      Only Warp claude input uses it — follow the shared Warp Accessibility problem if you need it again."
     else
         # Keep the script non-interactive: never prompt or escalate, just say what to run.
         echo "      Note: the app's code signature changed, so a previously granted Accessibility"
@@ -170,10 +170,11 @@ fi
 echo ""
 echo "=== Installation complete! Launching the app ==="
 echo ""
-echo "The app's setup window walks you through the remaining steps (Native Host registration and extension folder setup are automatic):"
-echo "  ① [Install in Chrome] → load the folder from chrome://extensions"
-echo "  ② Pick a language and a terminal (if you pick iTerm2, allow the permission prompt — the permission is granted to this app only)"
-echo "  ③ Verify it works with [Run in Terminal]"
+echo "The app's General pane includes a first-install checklist; Native Host registration is automatic and checked whenever the app starts:"
+echo "  Step 1: [Install in Chrome] → follow the checklist's four steps in chrome://extensions"
+echo "  Step 2: On a GitHub pull-request page, press a Terminal Checkout button once to confirm the extension reached the app"
+echo "  Step 3: Choose a terminal in General, review Connection details if needed, then verify it with [Terminal Test]"
+echo "  Step 4: Set the repository base folder in GitHub or configure Slack in the Slack pane if you use those workflows"
 echo ""
 
 open "$INSTALL_DIR/$APP_NAME"
