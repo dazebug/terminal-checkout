@@ -183,6 +183,8 @@ final class SetupWindowGeneralPane: NSView {
         mainContentStack.distribution = .fill
         mainContentStack.spacing = 14
         mainContentStack.translatesAutoresizingMaskIntoConstraints = false
+        // This value breaks the tie with the left column's section stacks.
+        mainContentStack.setHuggingPriority(NSLayoutConstraint.Priority(240), for: .vertical)
         for view in [
             identityRow,
             requestStatusRow,
@@ -200,7 +202,6 @@ final class SetupWindowGeneralPane: NSView {
         leftColumn.spacing = 13
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
         leftColumn.setHuggingPriority(.required, for: .vertical)
-        leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
         previewColumn.orientation = .vertical
         previewColumn.alignment = .leading
@@ -329,7 +330,6 @@ final class SetupWindowGeneralPane: NSView {
         status.orientation = .horizontal
         status.alignment = .centerY
         status.spacing = 5
-        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         terminalRow.orientation = .horizontal
         terminalRow.alignment = .centerY
         terminalRow.spacing = 7

@@ -241,7 +241,7 @@ final class FittedContentStackView: NSStackView {
     }
 }
 
-/// Measures wrapped text against the width Auto Layout actually assigns to the label.
+/// The frame is wider than its alignment rect, so wrapping uses the alignment width.
 final class SetupWindowWrappingLabel: NSTextField {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -255,8 +255,9 @@ final class SetupWindowWrappingLabel: NSTextField {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        guard newSize.width > 0, abs(preferredMaxLayoutWidth - newSize.width) > 0.5 else { return }
-        preferredMaxLayoutWidth = newSize.width
+        let width = alignmentRect(forFrame: NSRect(origin: .zero, size: newSize)).width
+        guard width > 0, abs(preferredMaxLayoutWidth - width) > 0.5 else { return }
+        preferredMaxLayoutWidth = width
         invalidateIntrinsicContentSize()
     }
 
@@ -264,6 +265,7 @@ final class SetupWindowWrappingLabel: NSTextField {
         usesSingleLineMode = false
         cell?.wraps = true
         cell?.isScrollable = false
+        lineBreakStrategy = .standard
         maximumNumberOfLines = 0
         isBezeled = false
         isBordered = false

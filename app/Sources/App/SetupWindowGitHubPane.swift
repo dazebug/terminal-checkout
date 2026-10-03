@@ -326,7 +326,6 @@ final class SetupWindowGitHubPane: NSView {
         leftColumn.spacing = 17
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
         leftColumn.setHuggingPriority(.required, for: .vertical)
-        leftColumn.setContentCompressionResistancePriority(.required, for: .vertical)
         leftColumn.widthAnchor.constraint(equalToConstant: 390).isActive = true
 
         contentStack.orientation = .horizontal
@@ -334,6 +333,8 @@ final class SetupWindowGitHubPane: NSView {
         contentStack.distribution = .fill
         contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
+        // This value breaks the tie with the left column's section stacks.
+        contentStack.setHuggingPriority(NSLayoutConstraint.Priority(240), for: .vertical)
         contentStack.addArrangedSubview(leftColumn)
         contentStack.addArrangedSubview(previewColumn)
         addSubview(contentStack)
