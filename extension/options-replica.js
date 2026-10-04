@@ -344,6 +344,14 @@ function dropMoveAction(kind, buttons, uid, targetUid, after) {
   return { type: 'button-move', kind, uid, beforeUid };
 }
 
+/** Classify a document click from the path captured for that event, even if a redraw detached its target. */
+function isOutsideDrawerEventPath(path) {
+  if (!Array.isArray(path)) return true;
+  return !path.some(entry => entry?.dataset?.replicaDrawerSurface === 'true'
+    || entry?.dataset?.action === 'drawer-toggle'
+    || entry?.dataset?.action === 'slot-add');
+}
+
 const model = Object.freeze({
   replicaKinds,
   replicaButtonLook,
@@ -361,6 +369,7 @@ const model = Object.freeze({
   iconButtonForPage,
   buttonMoveAction,
   dropMoveAction,
+  isOutsideDrawerEventPath,
 });
 
 let mounted = null;
@@ -626,7 +635,7 @@ function renderReplica() {
           </div>
           <p class="replica-reorder-instructions" id="replica-reorder-instructions">${replicaEscape(replicaText('move.instructions'))}</p>
           <div class="replica-page-frame">${renderGitHubPage(kind, snapshot, mounted.showPlaceholders)}</div>
-          <aside id="replica-drawer" class="replica-drawer" aria-labelledby="replica-drawer-title" aria-hidden="${!drawerOpen}"${drawerOpen ? '' : ' hidden'}>
+          <aside id="replica-drawer" class="replica-drawer" data-replica-drawer-surface="true" aria-labelledby="replica-drawer-title" aria-hidden="${!drawerOpen}"${drawerOpen ? '' : ' hidden'}>
             <div class="replica-drawer-heading">
               <h2 id="replica-drawer-title">${replicaEscape(replicaText('drawer.title'))}</h2>
               <button type="button" class="replica-drawer-close" data-action="drawer-close" data-focus-key="drawer-close"><span class="replica-sr-only">${replicaEscape(replicaText('drawer.close'))}</span><span aria-hidden="true">×</span></button>
@@ -1080,10 +1089,7 @@ function closeDrawerInternal(restoreFocus) {
 /** @param {MouseEvent} event */
 function handleDocumentClick(event) {
   if (!mounted?.drawerOpen) return;
-  const target = event.target instanceof Element ? event.target : null;
-  const drawer = mounted.root.querySelector('.replica-drawer');
-  if (drawer?.contains(target)) return;
-  if (target?.closest('[data-action="drawer-toggle"], [data-action="slot-add"]')) return;
+  if (!model.isOutsideDrawerEventPath(event.composedPath())) return;
   closeDrawerInternal(true);
 }
 

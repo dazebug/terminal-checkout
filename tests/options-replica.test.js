@@ -122,6 +122,20 @@ test('keyboard movement and drag placement produce beforeUid actions without arr
   assert.equal(model.dropMoveAction('pr', buttons, 'b', 'b', false), null);
 });
 
+test('drawer outside-click classification follows the dispatch path, including a detached old drawer', () => {
+  const oldDrawerRoot = { dataset: { replicaDrawerSurface: 'true' }, isConnected: false };
+  const replaceButton = { dataset: { action: 'preset-replace-picker' }, isConnected: false };
+  const slotAddButton = { dataset: { action: 'slot-add' }, isConnected: true };
+  const drawerToggle = { dataset: { action: 'drawer-toggle' }, isConnected: true };
+  const outsideButton = { dataset: { action: 'placeholders-toggle' }, isConnected: true };
+
+  assert.equal(model.isOutsideDrawerEventPath([replaceButton, oldDrawerRoot]), false);
+  assert.equal(model.isOutsideDrawerEventPath([slotAddButton]), false);
+  assert.equal(model.isOutsideDrawerEventPath([drawerToggle]), false);
+  assert.equal(model.isOutsideDrawerEventPath([outsideButton, { nodeName: 'BODY' }]), true);
+  assert.equal(model.isOutsideDrawerEventPath(null), true);
+});
+
 test('extension copy is catalogued in the same contiguous ordered block in all five locales', () => {
   const logicalKeys = asArray(replica.messageKeys);
   assert.ok(logicalKeys.length >= 20);
