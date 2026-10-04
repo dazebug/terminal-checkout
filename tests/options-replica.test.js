@@ -74,6 +74,37 @@ test('GitHub button shape matches content.js for detail, list, and repository bu
   assert.equal(model.replicaButtonHasCaret({ command: '{cd}', claudeInputs: ['!gh pr view {number}'] }), false);
 });
 
+test('only the trusted drag-generated click for the moved button is suppressed', () => {
+  assert.equal(typeof model.shouldSuppressReplicaDragClick, 'function');
+  assert.equal(model.shouldSuppressReplicaDragClick('moved', 'moved', { isTrusted: true, detail: 1 }), true);
+  assert.equal(model.shouldSuppressReplicaDragClick('moved', 'moved', { isTrusted: false, detail: 0 }), false);
+  assert.equal(model.shouldSuppressReplicaDragClick('moved', 'moved', { isTrusted: true, detail: 0 }), false);
+  assert.equal(model.shouldSuppressReplicaDragClick('moved', 'other', { isTrusted: true, detail: 1 }), false);
+  assert.equal(model.shouldSuppressReplicaDragClick(null, 'moved', { isTrusted: true, detail: 1 }), false);
+  assert.equal(/(?:document|root\.ownerDocument)\.addEventListener\('pointerdown', handleReplicaPointerDown, true\)/.test(source), true,
+    'a new pointer interaction clears a pending drag click when the drag made no click');
+});
+
+test('GitHub copy and fixed example scenery declare English without labeling user button text', () => {
+  assert.equal(/function gh\(key\) \{\s*return `<span[^>]*lang="en"/.test(source), true);
+  assert.equal(/function ghScenery\(value\) \{\s*return `<span[^>]*lang="en"/.test(source), true);
+  const pageStart = source.indexOf('function renderGitHubPage(kind, snapshot, showPlaceholders) {');
+  const pageEnd = source.indexOf('\nfunction ', pageStart + 1);
+  assert.ok(pageStart >= 0 && pageEnd > pageStart);
+  const renderer = source.slice(pageStart, pageEnd);
+  assert.equal(/replicaEscape\(context\.(?:owner|repo|pullRequest\.(?:title|base|branch)|issue\.title)\)/.test(renderer), false,
+    'fixed textual scenery is marked English through its helper');
+  assert.equal(/ghScenery\(context\.pullRequest\.title\)/.test(renderer), true);
+  assert.equal(/ghScenery\(context\.issue\.title\)/.test(renderer), true);
+  assert.equal(/ghScenery\(context\.owner\)/.test(renderer), true);
+  assert.equal(/ghScenery\(context\.repo\)/.test(renderer), true);
+  const buttonStart = source.indexOf('function renderEditButton(kind, button, loaded, describedBy = \'\') {');
+  const buttonEnd = source.indexOf('\nfunction ', buttonStart + 1);
+  assert.ok(buttonStart >= 0 && buttonEnd > buttonStart);
+  assert.equal(/lang="en"/.test(source.slice(buttonStart, buttonEnd)), false,
+    'user supplied button faces and labels inherit no forced language');
+});
+
 test('list buttons unavailable on GitHub remain editable and explain the unavailable variable', () => {
   const unsupported = { uid: 'bad', face: '🤖', command: '{cd} && git checkout {branch}', claudeInputs: [] };
   const supported = { uid: 'good', face: '📂', command: '{cd}', claudeInputs: [] };

@@ -376,6 +376,11 @@ function dropMoveAction(kind, buttons, uid, targetUid, after) {
   return { type: 'button-move', kind, uid, beforeUid };
 }
 
+/** Distinguish the trusted pointer click from an independent or keyboard activation after a drag. */
+function shouldSuppressReplicaDragClick(pendingUid, clickedUid, event) {
+  return Boolean(pendingUid && pendingUid === clickedUid && event?.isTrusted === true && event.detail > 0);
+}
+
 /** Classify a document click from the path captured for that event, even if a redraw detached its target. */
 function isOutsideDrawerEventPath(path) {
   if (!Array.isArray(path)) return true;
@@ -403,6 +408,7 @@ const model = Object.freeze({
   iconButtonForPage,
   buttonMoveAction,
   dropMoveAction,
+  shouldSuppressReplicaDragClick,
   isOutsideDrawerEventPath,
 });
 
@@ -425,7 +431,12 @@ function replicaEscape(value) {
 
 /** @param {GitHubUICopyKey} key */
 function gh(key) {
-  return replicaEscape(GITHUB_UI_COPY[key]);
+  return `<span class="gh-copy" lang="en">${replicaEscape(GITHUB_UI_COPY[key])}</span>`;
+}
+
+/** Mark fixed English example values without assigning a language to edited button text. */
+function ghScenery(value) {
+  return `<span class="gh-example-text" lang="en">${replicaEscape(value)}</span>`;
 }
 
 /** @param {string} kind */
@@ -593,29 +604,29 @@ function renderGitHubPage(kind, snapshot, showPlaceholders) {
 
   if (kind === 'pr') {
     const branchSlot = renderSlot('pr', snapshot, showPlaceholders);
-    body = `<header class="gh-detail-heading"><h1>${replicaEscape(context.pullRequest.title)} <span class="gh-number">#${context.pullRequest.number}</span></h1><div class="gh-status-line"><span class="gh-state gh-state-open">${gh('open')}</span><span>${replicaEscape(context.owner)} ${gh('openedBy')} ${replicaEscape(context.owner)}</span></div><div class="gh-branch-line"><span class="gh-branch-relation">${gh('wantsToMergeInto')}</span><span class="gh-branch">${replicaEscape(context.pullRequest.base)}</span><span class="gh-branch-relation">${gh('from')}</span><span class="gh-branch">${replicaEscape(context.pullRequest.branch)}</span>${branchSlot}</div></header><nav class="gh-content-tabs">${tabs}</nav><div class="gh-pr-grid"><article class="gh-conversation-card"><div class="gh-card-heading"><span class="gh-avatar">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span><b>${replicaEscape(context.owner)}</b><span>${gh('openedBy')} ${replicaEscape(context.owner)}</span><button type="button" class="gh-muted-button">${gh('edit')}</button></div><div class="gh-card-body"><p>${replicaEscape(context.pullRequest.title)}</p><div class="gh-merge-summary"><span class="gh-state gh-state-open">${gh('open')}</span><span>${gh('noConflicts')}</span></div><span>${gh('mergingAutomatically')}</span></div><div class="gh-card-footer"><span>${gh('comments')}</span><span>${gh('reviews')}</span></div></article><aside class="gh-sidebar"><h2>${gh('reviewers')}</h2><p>${gh('noReviews')}</p><h2>${gh('assignees')}</h2><p>${gh('noneYet')}</p><h2>${gh('labels')}</h2><p>${gh('noneYet')}</p><h2>${gh('milestone')}</h2><p>${gh('noneYet')}</p><h2>${gh('development')}</h2><p>${gh('noneYet')}</p></aside></div>`;
+    body = `<header class="gh-detail-heading"><h1>${ghScenery(context.pullRequest.title)} <span class="gh-number">#${context.pullRequest.number}</span></h1><div class="gh-status-line"><span class="gh-state gh-state-open">${gh('open')}</span><span>${ghScenery(context.owner)} ${gh('openedBy')} ${ghScenery(context.owner)}</span></div><div class="gh-branch-line"><span class="gh-branch-relation">${gh('wantsToMergeInto')}</span><span class="gh-branch">${ghScenery(context.pullRequest.base)}</span><span class="gh-branch-relation">${gh('from')}</span><span class="gh-branch">${ghScenery(context.pullRequest.branch)}</span>${branchSlot}</div></header><nav class="gh-content-tabs">${tabs}</nav><div class="gh-pr-grid"><article class="gh-conversation-card"><div class="gh-card-heading"><span class="gh-avatar" lang="en">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span><b>${ghScenery(context.owner)}</b><span>${gh('openedBy')} ${ghScenery(context.owner)}</span><button type="button" class="gh-muted-button">${gh('edit')}</button></div><div class="gh-card-body"><p>${ghScenery(context.pullRequest.title)}</p><div class="gh-merge-summary"><span class="gh-state gh-state-open">${gh('open')}</span><span>${gh('noConflicts')}</span></div><span>${gh('mergingAutomatically')}</span></div><div class="gh-card-footer"><span>${gh('comments')}</span><span>${gh('reviews')}</span></div></article><aside class="gh-sidebar"><h2>${gh('reviewers')}</h2><p>${gh('noReviews')}</p><h2>${gh('assignees')}</h2><p>${gh('noneYet')}</p><h2>${gh('labels')}</h2><p>${gh('noneYet')}</p><h2>${gh('milestone')}</h2><p>${gh('noneYet')}</p><h2>${gh('development')}</h2><p>${gh('noneYet')}</p></aside></div>`;
   } else if (kind === 'pr-list') {
     const listSlot = renderSlot('pr-list', snapshot, showPlaceholders);
-    body = `<header class="gh-list-heading"><h1>${gh('pullRequests')}</h1><button type="button" class="gh-green-button">${gh('newPullRequest')}</button></header><div class="gh-list-tools">${listSlot}<div class="gh-filter-row"><span>${gh('filters')}</span><span>${gh('author')}</span><span>${gh('labels')}</span><span class="gh-spacer"></span><span>${gh('sort')}: ${gh('updated')}</span></div></div><div class="gh-list"><div class="gh-list-row"><span class="gh-open-dot">●</span><b>${replicaEscape(context.pullRequest.title)}</b><span class="gh-row-meta">#${context.pullRequest.number}</span></div><div class="gh-list-row"><span class="gh-open-dot">●</span><span>${gh('noneYet')}</span><span class="gh-row-meta">${gh('author')}</span></div></div>`;
+    body = `<header class="gh-list-heading"><h1>${gh('pullRequests')}</h1><button type="button" class="gh-green-button">${gh('newPullRequest')}</button></header><div class="gh-list-tools">${listSlot}<div class="gh-filter-row"><span>${gh('filters')}</span><span>${gh('author')}</span><span>${gh('labels')}</span><span class="gh-spacer"></span><span>${gh('sort')}: ${gh('updated')}</span></div></div><div class="gh-list"><div class="gh-list-row"><span class="gh-open-dot">●</span><b>${ghScenery(context.pullRequest.title)}</b><span class="gh-row-meta">#${context.pullRequest.number}</span></div><div class="gh-list-row"><span class="gh-open-dot">●</span><span>${gh('noneYet')}</span><span class="gh-row-meta">${gh('author')}</span></div></div>`;
   } else if (kind === 'issue') {
     const issueSlot = renderSlot('issue', snapshot, showPlaceholders);
-    body = `<header class="gh-detail-heading"><h1>${replicaEscape(context.issue.title)} <span class="gh-number">#${context.issue.number}</span></h1><div class="gh-status-line gh-issue-status"><span class="gh-state gh-state-open">${gh('open')}</span><span>${replicaEscape(context.owner)} ${gh('openedBy')} ${replicaEscape(context.owner)}</span>${issueSlot}</div></header><nav class="gh-content-tabs">${['conversation', 'commits', 'checks'].map((key, index) => `<span class="gh-content-tab${index === 0 ? ' is-current' : ''}">${gh(key)}</span>`).join('')}</nav><div class="gh-pr-grid"><article class="gh-conversation-card"><div class="gh-card-heading"><span class="gh-avatar">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span><b>${replicaEscape(context.owner)}</b><span>${gh('openedBy')} ${replicaEscape(context.owner)}</span><button type="button" class="gh-muted-button">${gh('edit')}</button></div><div class="gh-card-body"><p>${replicaEscape(context.issue.title)}</p><span>${gh('comments')}</span></div><div class="gh-card-footer"><span>${gh('timeline')}</span><span>${gh('updated')}</span></div></article><aside class="gh-sidebar"><h2>${gh('assignees')}</h2><p>${gh('noneYet')}</p><h2>${gh('labels')}</h2><p>${gh('noneYet')}</p><h2>${gh('milestone')}</h2><p>${gh('noneYet')}</p><h2>${gh('development')}</h2><p>${gh('noneYet')}</p></aside></div>`;
+    body = `<header class="gh-detail-heading"><h1>${ghScenery(context.issue.title)} <span class="gh-number">#${context.issue.number}</span></h1><div class="gh-status-line gh-issue-status"><span class="gh-state gh-state-open">${gh('open')}</span><span>${ghScenery(context.owner)} ${gh('openedBy')} ${ghScenery(context.owner)}</span>${issueSlot}</div></header><nav class="gh-content-tabs">${['conversation', 'commits', 'checks'].map((key, index) => `<span class="gh-content-tab${index === 0 ? ' is-current' : ''}">${gh(key)}</span>`).join('')}</nav><div class="gh-pr-grid"><article class="gh-conversation-card"><div class="gh-card-heading"><span class="gh-avatar" lang="en">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span><b>${ghScenery(context.owner)}</b><span>${gh('openedBy')} ${ghScenery(context.owner)}</span><button type="button" class="gh-muted-button">${gh('edit')}</button></div><div class="gh-card-body"><p>${ghScenery(context.issue.title)}</p><span>${gh('comments')}</span></div><div class="gh-card-footer"><span>${gh('timeline')}</span><span>${gh('updated')}</span></div></article><aside class="gh-sidebar"><h2>${gh('assignees')}</h2><p>${gh('noneYet')}</p><h2>${gh('labels')}</h2><p>${gh('noneYet')}</p><h2>${gh('milestone')}</h2><p>${gh('noneYet')}</p><h2>${gh('development')}</h2><p>${gh('noneYet')}</p></aside></div>`;
   } else if (kind === 'issue-list') {
     const listSlot = renderSlot('issue-list', snapshot, showPlaceholders);
-    body = `<header class="gh-list-heading gh-issue-list-heading"><h1>${gh('allIssues')}</h1>${listSlot}<button type="button" class="gh-green-button">${gh('newIssue')}</button></header><div class="gh-list-tools"><div class="gh-filter-row"><span>${gh('filters')}</span><span>${gh('author')}</span><span>${gh('labels')}</span><span class="gh-spacer"></span><span>${gh('sort')}: ${gh('updated')}</span></div></div><div class="gh-list"><div class="gh-list-row"><span class="gh-open-dot">●</span><b>${replicaEscape(context.issue.title)}</b><span class="gh-row-meta">#${context.issue.number}</span></div><div class="gh-list-row"><span class="gh-open-dot">●</span><span>${gh('noneYet')}</span><span class="gh-row-meta">${gh('author')}</span></div></div>`;
+    body = `<header class="gh-list-heading gh-issue-list-heading"><h1>${gh('allIssues')}</h1>${listSlot}<button type="button" class="gh-green-button">${gh('newIssue')}</button></header><div class="gh-list-tools"><div class="gh-filter-row"><span>${gh('filters')}</span><span>${gh('author')}</span><span>${gh('labels')}</span><span class="gh-spacer"></span><span>${gh('sort')}: ${gh('updated')}</span></div></div><div class="gh-list"><div class="gh-list-row"><span class="gh-open-dot">●</span><b>${ghScenery(context.issue.title)}</b><span class="gh-row-meta">#${context.issue.number}</span></div><div class="gh-list-row"><span class="gh-open-dot">●</span><span>${gh('noneYet')}</span><span class="gh-row-meta">${gh('author')}</span></div></div>`;
   } else {
-    body = `<header class="gh-repo-overview"><div><span class="gh-public-badge">${gh('public')}</span><h1>${replicaEscape(context.repo)}</h1><p>${gh('about')}</p></div><div class="gh-repo-actions"><button type="button">${gh('watch')}</button><button type="button">${gh('fork')}</button><button type="button">${gh('star')}</button></div></header><div class="gh-repo-grid"><section class="gh-readme"><h2>${gh('readme')}</h2><p>${replicaEscape(context.repo)}</p><span>${gh('activity')}</span></section><aside class="gh-sidebar"><h2>${gh('branches')}</h2><p>${replicaEscape(context.pullRequest.base)}</p><h2>${gh('issues')}</h2><p>${replicaEscape(context.issue.title)}</p><h2>${gh('pullRequests')}</h2><p>${replicaEscape(context.pullRequest.title)}</p></aside></div>`;
+    body = `<header class="gh-repo-overview"><div><span class="gh-public-badge">${gh('public')}</span><h1>${ghScenery(context.repo)}</h1><p>${gh('about')}</p></div><div class="gh-repo-actions"><button type="button">${gh('watch')}</button><button type="button">${gh('fork')}</button><button type="button">${gh('star')}</button></div></header><div class="gh-repo-grid"><section class="gh-readme"><h2>${gh('readme')}</h2><p>${ghScenery(context.repo)}</p><span>${gh('activity')}</span></section><aside class="gh-sidebar"><h2>${gh('branches')}</h2><p>${ghScenery(context.pullRequest.base)}</p><h2>${gh('issues')}</h2><p>${ghScenery(context.issue.title)}</p><h2>${gh('pullRequests')}</h2><p>${ghScenery(context.pullRequest.title)}</p></aside></div>`;
   }
 
   return `
     <div class="gh-page" data-rendered-kind="${replicaEscape(kind)}">
       <div class="gh-global-bar">
         <span class="gh-octicon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.76-.24.76-.54v-2.1c-3.1.67-3.76-1.31-3.76-1.31-.51-1.29-1.24-1.63-1.24-1.63-1.02-.7.08-.69.08-.69 1.12.08 1.71 1.15 1.71 1.15 1 1.71 2.61 1.22 3.25.93.1-.72.39-1.22.71-1.5-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.21 1.15-2.99-.12-.28-.5-1.42.11-2.95 0 0 .94-.3 3.08 1.14a10.7 10.7 0 0 1 5.6 0c2.14-1.45 3.08-1.14 3.08-1.14.61 1.53.23 2.67.11 2.95.72.78 1.15 1.77 1.15 2.99 0 4.29-2.61 5.23-5.1 5.51.4.35.76 1.02.76 2.06v3.05c0 .3.2.65.77.54A11.2 11.2 0 0 0 12 .8Z"/></svg></span>
-        <span class="gh-search">${gh('search')}</span>
-        <span class="gh-top-actions">${gh('pullRequests')} <span class="gh-avatar">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span></span>
+        <span class="gh-search" lang="en">${gh('search')}</span>
+        <span class="gh-top-actions">${gh('pullRequests')} <span class="gh-avatar" lang="en">${replicaEscape(context.owner.slice(0, 1).toUpperCase())}</span></span>
       </div>
       <div class="gh-repo-header">
-        <div class="gh-repo-crumb"><span class="gh-owner">${replicaEscape(context.owner)}</span><span aria-hidden="true">/</span><b>${replicaEscape(context.repo)}</b><span class="gh-public-badge">${gh('public')}</span></div>
+        <div class="gh-repo-crumb"><span class="gh-owner">${ghScenery(context.owner)}</span><span aria-hidden="true">/</span><b>${ghScenery(context.repo)}</b><span class="gh-public-badge">${gh('public')}</span></div>
         ${repoSlot}
       </div>
       <nav class="gh-repo-nav">${nav}</nav>
@@ -896,16 +907,20 @@ function openButtonEditor(button) {
   }
 }
 
+/** A fresh pointer action means any unobserved drag click did not arrive. */
+function handleReplicaPointerDown() {
+  if (mounted) mounted.dragClickCandidateUid = null;
+}
+
 /** @param {Event} event */
 function handleReplicaClick(event) {
+  const pendingUid = mounted?.dragClickCandidateUid || null;
+  if (mounted) mounted.dragClickCandidateUid = null;
   const target = event.target instanceof Element ? event.target : null;
   const editButton = target?.closest('[data-replica-button]');
   if (editButton) {
     event.preventDefault();
-    if (mounted.suppressClickUid === editButton.dataset.uid) {
-      mounted.suppressClickUid = null;
-      return;
-    }
+    if (model.shouldSuppressReplicaDragClick(pendingUid, editButton.dataset.uid, event)) return;
     openButtonEditor(editButton);
     return;
   }
@@ -986,6 +1001,7 @@ function handleReplicaClick(event) {
 /** @param {KeyboardEvent} event */
 function handleReplicaKeydown(event) {
   if (event.isComposing || event.keyCode === 229) return;
+  if (mounted) mounted.dragClickCandidateUid = null;
   const target = event.target instanceof Element ? event.target.closest('[data-replica-button]') : null;
   if (!target || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
   event.preventDefault();
@@ -997,6 +1013,7 @@ function handleReplicaKeydown(event) {
 
 /** @param {DragEvent} event */
 function handleReplicaDragStart(event) {
+  if (mounted) mounted.dragClickCandidateUid = null;
   const eventTarget = event.target instanceof Element ? event.target : null;
   const presetCard = eventTarget?.closest('[data-preset-kind][data-preset-id]');
   if (presetCard && mounted.snapshot.load?.loaded) {
@@ -1043,7 +1060,7 @@ function handleReplicaDrop(event) {
   dragUid = null;
   if (isPreset && target.hasAttribute('data-replica-button')) {
     dragPreset = null;
-    mounted.suppressClickUid = target.dataset.uid;
+    mounted.dragClickCandidateUid = target.dataset.uid;
     mounted.root.querySelectorAll('.is-drop-target, .is-dragging').forEach(node => node.classList.remove('is-drop-target', 'is-dragging'));
     replacePreset(source.kind, target.dataset.uid, source.presetId);
     return;
@@ -1076,7 +1093,7 @@ function handleReplicaDrop(event) {
   }
   mounted.root.querySelectorAll('.is-drop-target, .is-dragging').forEach(node => node.classList.remove('is-drop-target', 'is-dragging'));
   if (action) {
-    mounted.suppressClickUid = source.uid;
+    mounted.dragClickCandidateUid = source.uid;
     sendReplicaAction(action, `button:${source.kind}:${source.uid}`);
   }
 }
@@ -1184,7 +1201,7 @@ function mountReplica(root, engine, editor) {
     replacePicker: null,
     pendingReplace: null,
     status: '',
-    suppressClickUid: null,
+    dragClickCandidateUid: null,
     snapshot: engine.getSnapshot(),
     unsubscribe: null,
   };
@@ -1199,6 +1216,7 @@ function mountReplica(root, engine, editor) {
   root.addEventListener('mouseout', handleReplicaMouseOut);
   root.addEventListener('focusin', handleReplicaFocusIn);
   root.addEventListener('focusout', handleReplicaFocusOut);
+  root.ownerDocument.addEventListener('pointerdown', handleReplicaPointerDown, true);
   root.ownerDocument.addEventListener('click', handleDocumentClick);
   root.ownerDocument.addEventListener('keydown', handleDocumentKeydown);
   renderReplica();
