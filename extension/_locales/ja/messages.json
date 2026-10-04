@@ -113,6 +113,9 @@
   "ext_d_shell_waiting": {
     "message": "設定を待っています…"
   },
+  "ext_d_shell_saved": {
+    "message": "保存済み"
+  },
   "ext_card_delete": {
     "message": "削除"
   },

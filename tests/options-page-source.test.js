@@ -56,6 +56,14 @@ test('the shell replaces the legacy global settings, backup, and reset surfaces'
   assert.match(read('options.js'), /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
 });
 
+test('the page makes the hidden attribute override module display styles', () => {
+  const html = read('options.html');
+  const shellStyles = read('options-shell.css');
+  const baseStyles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] || '';
+  assert.match(baseStyles, /^\s*\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}\s*$/m);
+  assert.doesNotMatch(shellStyles, /\[hidden\][^{]*\{[^}]*display\s*:\s*(?!none\b)/s);
+});
+
 test('the engine dispatch contract is promise-based with structured outcomes', () => {
   const source = read('options.js');
   assert.match(source, /@typedef \{Object\} OptionsDispatchResult[\s\S]*?@property \{boolean\} ok[\s\S]*?@property \{\('not-loaded'\|'busy'\|'limit'\|'not-found'\|'needs-confirmation'\|'invalid'\|'failed'\)=\} \[reason\][\s\S]*?@property \{string=\} \[createdUid\][\s\S]*?@property \{OptionsEngineSnapshot\} snapshot/);

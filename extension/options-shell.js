@@ -402,7 +402,7 @@ window.optionsShell = Object.freeze({
       const viewState = optionsShellViewState(snapshot);
       const saveLabels = {
         blocked: tr('ext.d.shell.waiting'),
-        saved: tr('ext.status.saved'),
+        saved: tr('ext.d.shell.saved'),
         dirty: tr('ext.status.unsaved'),
         saving: tr('ext.d.shell.saving'),
       };

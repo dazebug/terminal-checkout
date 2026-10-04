@@ -125,3 +125,21 @@ test('global settings view state follows the snapshot and maps override validati
   assert.equal(viewState({ ...snapshot, save: { saving: false, importing: true } }).disabled, true);
   assert.equal(viewState({ ...snapshot, load: { loaded: false } }).disabled, true);
 });
+
+test('a clean save bar uses a state label, not the successful-save announcement', () => {
+  assert.match(source, /saved:\s*tr\('ext\.d\.shell\.saved'\)/);
+
+  const expected = {
+    en: 'Saved',
+    ko: '저장됨',
+    ja: '保存済み',
+    zh_CN: '已保存',
+    zh_TW: '已儲存',
+  };
+  const root = path.join(__dirname, '../extension/_locales');
+  for (const [locale, label] of Object.entries(expected)) {
+    const messages = JSON.parse(fs.readFileSync(path.join(root, locale, 'messages.json'), 'utf8'));
+    assert.equal(messages.ext_d_shell_saved.message, label, `${locale} state label`);
+    assert.notEqual(messages.ext_d_shell_saved.message, messages.ext_status_saved.message, `${locale} event copy`);
+  }
+});
