@@ -194,9 +194,12 @@ window.optionsShell = Object.freeze({
     const importFile = document.createElement('input');
     importFile.type = 'file';
     importFile.id = 'shell-import-file';
+    importFile.className = 'options-shell-sr-only';
     importFile.accept = 'application/json,.json';
-    importFile.hidden = true;
-    backupActions.append(exportButton, importButton, resetButton, importFile);
+    importFile.tabIndex = -1;
+    const importFileLabel = optionsShellElement('label', 'options-shell-sr-only', importButton.textContent);
+    importFileLabel.htmlFor = 'shell-import-file';
+    backupActions.append(exportButton, importButton, resetButton, importFileLabel, importFile);
     backup.append(backupTitle, backupHelp1, backupHelp2, backupHelp3, backupActions);
 
     shell.append(sticky);
@@ -284,7 +287,7 @@ window.optionsShell = Object.freeze({
         const source = optionsShellElement('span', 'options-shell-migration-source', item.source === 'prefix'
           ? tr('ext.d.shell.sourcePrefix')
           : tr('ext.d.shell.sourceVerbatim'));
-        heading.append(checkbox, label, position, source);
+        heading.append(label, position, source);
         if (item.effect === 'behavior-change') {
           heading.appendChild(optionsShellElement('span', 'options-shell-migration-effect', tr('ext.migration.effect.behaviorChange')));
         }
@@ -446,6 +449,7 @@ window.optionsShell = Object.freeze({
       else if (engine.getSnapshot().load.retryAvailable) retry.focus();
     });
     document.addEventListener('keydown', event => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Escape' && !confirmation.hidden) {
         event.preventDefault();
         closeConfirmation();

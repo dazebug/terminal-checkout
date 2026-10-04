@@ -4,7 +4,7 @@
 - 대상: `extension/options.html` · `extension/options.js` Chrome 확장 옵션 페이지
 - 시작 커밋: `b8d8f483aaa76e556e244e414fbdd0a0ea51ad21` (`b8d8f48`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/options-d-review` (`worktree-options-d-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-options-d-work` (`options-d-work`)
-- 현재: R1 · 마지막 승격 c9a622b · 리뷰 중 없음 · 게이트 그린(389)
+- 현재: R1 · 마지막 승격 5ac1026 · 리뷰 중 없음 · 게이트 그린(397)
 - 최근 검증자 판정: 계획을 레인 3개로 재편하면 시작에 합의한다 — 1단계 항목 1부터 · R0
 
 ## 배경 — 확인한 원천
@@ -106,14 +106,17 @@
 | 3 | 전역 설정·백업 | 레인 A · 전역 설정·백업 | (a) 저장 충돌 배너·오류가 저장값만 내보내는 export로 편집을 보존하라고 잘못 안내한다 (`extension/options.js:1105; extension/_locales/en/messages.json:11,167,211`) | `extension/options-shell.css`, `extension/options-shell.js`, `extension/options.html`, `extension/_locales/*/messages.json`, `tests/migration.test.js`, `tests/options-shell.test.js`, `tests/options-page-source.test.js`, `tests/i18n.test.js`, `tools/check-locales.js` | 1, 2 | verified | `node --test` → `ℹ tests 364`, `ℹ pass 364`, `ℹ fail 0`, `exit_code=0`; `node .git/smoke-backup.cjs` → load 오류 0, legacy 전역 표면 숨김, override 불완전·중복 경고와 삭제, 빈 main은 `main` 저장, export는 미저장 편집 제외·storage 쓰기 0, 정상·초과·미래 버전 import는 편집 상태만 변경, Reset 확인·storage 쓰기 0, 소유 키만 저장·`conflictButtons` 미기록·브라우저 대화상자 0; `node .git/smoke-shell.cjs` → 로드·다시 시도·동기화·마이그레이션 동작 유지; 재실행: 드라이버 기준 트리 `node --test` 364 pass · `tests/migration.test.js` 단언 변경은 결함 red→green | |
 | 3′ | 셸 표시 결함 | 레인 A · 셸 표시 | (a) `hidden` 영역을 CSS `display` 가 덮어 로드 성공 후에도 오류 영역이 보인다 (b) 깨끗한 상태가 저장 사건 문장으로 보인다 | `extension/options.html`, `extension/options-shell.js/css`, `extension/_locales/*/messages.json`, `tests/options-page-source.test.js`, `tests/options-shell.test.js`, `tests/i18n.test.js`, `tools/check-locales.js` | 2 | verified | 재실행: 드라이버 기준 트리 `node --test` 374 pass · 실제 브라우저 편집기 연 상태에서 hidden인데 보이는 요소 0 (승격 전 4) | 53cf591 |
 | 3″ | 한국어 줄바꿈 | 레인 A · 셸 표시 | 한국어 문구가 음절 사이에서 줄이 바뀐다 | `extension/options.html`, `tests/options-page-source.test.js` | 3′ | verified | 재실행: 드라이버 기준 트리 `node --test` 374 pass · 실제 브라우저 편집기 연 상태에서 hidden인데 보이는 요소 0 (승격 전 4) | 8f9d5b7 |
+| 3‴ | 셸 접근성·IME 입력 | 레인 A · 셸 접근성 | (a) 마이그레이션 후보 라벨이 체크박스를 감쌌다가 heading에 다시 추가해 연결을 끊는다 (b) IME 조합 중 Escape를 셸 단축키가 가로챈다 | `extension/options-shell.js`, `tests/options-shell.test.js` | 3 | claimed | 수정 전 재현 스크립트: 마이그레이션 `labelControl=null`, `checkboxLabels=0`, 라벨 클릭 뒤 선택 불변; IME Escape `defaultPrevented=true`; `node --test tests/options-shell.test.js` → `ℹ tests 8`, `ℹ pass 6`, `ℹ fail 2`; 수정 후 `.git/smoke-accessibility.cjs` → main·override repo/branch·가져오기 파일·마이그레이션 체크박스 이름 연결, 라벨 클릭 선택 전환, IME Enter/Escape 중 확인 유지, 일반 Escape 닫힘, jsdom 오류 0; `node --test` → `ℹ tests 397`, `ℹ pass 397`, `ℹ fail 0` | |
 | 4 | 복제 화면 | 레인 B · 복제 화면 | (a) 목록 페이지 미리보기가 실제 pill 모양을 그리지 않는다 (`extension/options.js:393; extension/content.js:504,524`)<br>(b) 800 px에서 목록·편집 막대 문구가 세로로 접히며 900 px 이하 배치는 실측되지 않았다 (2026-10-04 사용자 관찰) | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록. 주변 값은 이 모듈의 단일 `EXAMPLE_CONTEXT` 상수에 둔다: `octo-demo/sample-repo`, PR `#42`, issue `#17`, branch `example/options`, base `main`, 제목 `Add button presets`, repo 경로 `/work/sample-repo` | 1 | verified | 레인 B 커밋 `7fc851f` · 레인 B 하네스 5/5 페이지·목록 pill 2·storage 쓰기 0 · 드라이버 실제 브라우저 800px: 다섯 페이지 카드·브랜치 옆 버튼 3개·편집기 열림 · 재실행 361 pass | 7fc851f |
 | 5 | 프리셋 서랍 | 레인 B · 프리셋 서랍 | — | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록 | 1·4 | verified | 레인 B 커밋 c3f8b38 · 하네스: 서랍 카드 5/1/3/1/3·자리 강조·[추가]·위치 지정 끌어 놓기·확인 뒤 교체·대화상자 0·storage 쓰기 0 · 드라이버 재실행 380 pass · 프리셋 설명 13개를 실제 명령과 대조 | c3f8b38 |
 | 5′ | 복제 화면 줄바꿈 | 레인 B · 복제 화면 | 복제 화면의 언어 공통 `word-break: keep-all` 이 일본어·중국어 문구도 줄바꿈하지 못하게 한다 | `extension/options-replica.css`, `tests/options-replica.test.js` | 4 | verified | 드라이버 재실행 384 pass · replica에서 언어 무관 keep-all 제거 확인 | 097d025 |
 | 5″ | 서랍 바꾸기 동작 | 레인 B · 프리셋 서랍 | 서랍 카드의 `[바꾸기]` 를 누른 뒤 이벤트 대상이 분리되면서 바깥 클릭 처리기가 서랍을 닫는다 | `extension/options-replica.js`, `tests/options-replica.test.js` | 5 | verified | 실제 브라우저에서 서랍 `[바꾸기]` 클릭 뒤 서랍 열림 유지 · 385 pass | 88bd567 |
+| 5‴ | 목록 버튼 편집·서랍 확인 재개 | 레인 B · 복제 화면 | (a) 목록 페이지에서 쓸 수 없는 변수를 넣은 버튼이 복제 화면에서 사라져 편집 진입점이 없다 (b) 서랍 교체 확인을 Escape로 닫고 다시 열면 `[확인]` 이 동작하지 않는다 | `extension/options-replica.js/css`, `tests/options-replica.test.js` | 4·5″ | wip | 레인 B 진행 중; 드라이버 cold 재현 스크립트에서 목록 버튼 진입점 0, 확인 뒤 revision 불변 | |
 | 6 | 팝오버 편집기 | 레인 C · 팝오버 편집기 | — | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 1 | verified | 레인 C 커밋 `46f12de` · 레인 C 하네스: 열기·바깥 클릭/Escape 닫기와 포커스 복귀·재열기 값 유지·대화상자 0·storage 쓰기 0 · 드라이버 재실행 352 pass | 46f12de |
 | 7 | claude 입력과 실행 전 예시 | 레인 C · 입력·실행 예시 | — | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 1·6 | verified | 레인 C 커밋 `a2e164d` · 하네스: 입력 행 추가·삭제·↑↓·합성 DragEvent·상한·타이핑 중 노드 유지·예시 표시·storage 쓰기 0 · 드라이버 재실행 371 pass · 실제 브라우저에서 편집기 열림 | a2e164d |
 | 7′ | 편집기 표시 결함 | 레인 C · 편집기 표시 | (a) `hidden` 요소가 보임 (b) 리사이즈에 자리를 다시 잡지 않음 — 폭 0에서 열면 세로 띠로 고정 (c) 명령 칸 아래 맨 글자 예시 (d) 변수 목록 두 번 (e) 하단 동작 막대 뒤로 본문이 비침 | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 7 | verified | 실제 브라우저에서 hidden 요소 0 · 하네스 0폭 열기·리사이즈 · 384 pass | 98de9cc |
 | 7″ | 편집기 포커스·바깥 클릭 | 레인 C · 편집기 표시 | (a) 버튼이 사라질 때 편집기 포커스 복귀가 셸 포커스와 다툰다 (b) 다시 그려 분리된 편집기 안 클릭을 바깥 클릭으로 잘못 판정한다 | `extension/options-editor.js`, `tests/options-editor.test.js` | 7′ | verified | 하네스 포커스 다툼·바깥 클릭 경로 판정 · 387 pass | 53e8c41 |
+| 7‴ | 편집기 IME·좁은 창 배치 | 레인 C · 편집기 표시 | (a) IME 조합 중 Escape가 편집기를 닫는다 (b) 좁은 창에서 아래쪽 버튼을 열면 편집기 높이가 0이다 | `extension/options-editor.js/css`, `tests/options-editor.test.js` | 7′ | wip | 레인 C 진행 중; 드라이버 cold 재현 스크립트에서 조합 중 Escape로 편집기 닫힘, 579×700 아래쪽 anchor에서 높이 0 | |
 | 8 | 통합 | 레인 A · 3단계 통합 | (a) 옛 카드·셸 DOM 및 전용 렌더·이벤트 코드가 남아 이중 상태와 경로를 유지한다 (b) 엔진 스냅샷이 오류·상태 값을 옛 DOM에서 읽는다 (c) 숨김 규칙 주석이 모든 페이지에서 버튼을 숨긴다고 과장하지만 실제 숨김은 목록 종류만이다 (`extension/defaults.js`, `extension/content.js`) | `extension/options.html`, `extension/options.js`, `extension/defaults.js`, `tests/options-page-source.test.js`, 기존 옵션 관련 테스트 | 2·3·4·5·6·7 | verified | 드라이버 실제 브라우저 실설정 왕복: 바뀐 소유 키 `buttons` 하나·`conflictButtons` 같음 · 388 pass | c9a622b |
 | 8′ | 복제 화면 첫 배치와 제목 | 레인 A · 화면 배치 | (a) 복제 화면 앞에 긴 설정·백업 도움말이 나와 복제 화면이 첫 화면 밖에 밀린다 (b) 통합 뒤 페이지에 `h1` 이 없다 | `extension/options.html`, `extension/options.js`, `extension/options-shell.js/css`, `tests/options-shell.test.js`, `tests/options-page-source.test.js` | 8 | claimed | `node .git/smoke-layout.cjs` → DOM 순서 savebar < page-card/replica < global-settings/backup, `h1=Terminal Checkout — 설정 (lang=ko)`, 첫 로드 전 설정 `inert`·컨트롤 비활성·추가 변화 없음, 로드 오류 0; `node --test` → `ℹ tests 389`, `ℹ pass 389`, `ℹ fail 0`, `exit_code=0` | |
 | 9 | README 네 언어판 | 레인 C · README 네 언어판 | 새 UI 레이블을 README가 인용할 때 카탈로그 값과 불일치하면 화면 문구를 찾을 수 없다 (`tests/readme-catalogue-labels.test.js:49`) | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh-Hant.md`, `tests/readme-catalogue-labels.test.js` | 8 | verified | README 네 언어판 · 버튼 순서 키 ←/→ 정정 · 384 pass | 08a7fd2 |
@@ -140,6 +143,7 @@
 | D10 | 드라이버 | Chrome storage API 실패 뒤 부분 쓰기 여부 | 부분 쓰기 여부는 확인하지 않았다 — 저장 경로를 바꾸지 않으므로 이 루프의 위험이 아니다 | R0 설계 리뷰 | 저장 API 동작은 미확인 상태로 남는다 |
 | D11 | 드라이버 | 연결할 옵션 재설계 이슈·PR 존재 여부 | 관련 이슈·PR 없음 — 출처는 이 루프의 PR이 된다 | `gh issue list --repo dazebug/terminal-checkout --state all --search "options in:title"` 결과 #78·#24만, 둘 다 무관; R0 실측 | — |
 | D12 | 드라이버 | 문서 항목 배정 변경 | 항목 10을 레인 B로 재배정 — 레인 A가 항목 8을 맡는 동안 문서를 병렬로 쓴다. 항목 9는 레인 C가 7′ 뒤에 맡는다 | 2026-10-05 사용자 지시 | — |
+| D13 | 드라이버 | 저장 직전 재읽기 뒤 쓰기 완료 전 원격 변경이 덮이는 창 | cold 분류 A 잔여 — `storage.sync` 에 비교 후 쓰기가 없어 남는 기존 잔여(설정 마이그레이션 때부터 명시), 이번 변경의 회귀 아님 | cold 검토 | 기록만 |
 
 ## 전수 소탕 표
 
@@ -169,7 +173,7 @@
 | JSON export·날짜·버전·저장값 전용·미저장 제외 안내·저장값이 없을 때의 오류 | 항목 3·8 — 셸 백업 패널의 export가 저장값만 출력; `.git/smoke-backup.cjs` 에서 미저장 main 제외·storage 쓰기 0 | `options.js:1105`, `_locales/en/messages.json:11,167,211` |
 | JSON import·256 KiB 제한·오류·미래 버전 거부·건너뛴 값 보고·부분 편집 상태 반영 | 항목 3·8 — 셸 백업 패널의 import가 편집 상태만 변경; `.git/smoke-backup.cjs` 에서 정상·초과·미래 버전 모두 확인 | `options.js:1160`, `migrations.js:384` |
 | 페이지별 변수·마이그레이션·Claude 입력·백업 도움말 | 항목 3·6·7·8 — 도움말은 셸·편집기의 기존 카탈로그 메시지로 제공; `node --test` 의 카탈로그 참조 검사 통과 | `options.html:387,446,465`, `_locales/en/messages.json` |
-| 접근성 레이블·키보드 조작·동적 상태 공지·포커스 | 항목 2·4·5·6·7·8 — 카탈로그 레이블·Escape·드래그 대안과 상태 공지; `.git/smoke-shell.cjs` 에서 Escape 포커스 복귀·바깥 클릭 닫기 | `options.js:304,356`, `tests/i18n.test.js` |
+| 접근성 레이블·키보드 조작·동적 상태 공지·포커스 | 항목 2·3‴·4·5·6·7·8 — main·override 저장소/브랜치·가져오기 파일·마이그레이션 체크박스에 연결된 이름, IME 조합 중 셸 단축키 무시, Escape·드래그 대안과 상태 공지; `.git/smoke-accessibility.cjs` 에서 라벨 연결·선택 전환·IME Enter/Escape 보존·일반 Escape 닫기 | `options-shell.js`, `tests/options-shell.test.js` |
 | 저장 충돌 배너와 export 안내 사이의 의미 충돌 | 항목 3·8 — 셸은 편집 보존 수단으로 export를 말하지 않고 최신값 수용 후 재적용·Save를 안내; `tests/options-shell.test.js` 와 `node --test` 통과 | `_locales/en/messages.json:11,167,211` |
 | 목업의 고정 PR #99·issue #88·SAVED·가짜 설명 | 항목 4·5·8 — 복제 화면은 편집 상태 버튼·고정 예시 context·카탈로그 프리셋 설명을 사용; `.git/smoke-shell.cjs` 의 context와 예시 배너 확인 | `.git/mockup-d/shared.js` |
 | 목업의 평소·편집·서랍·예시·변수 오류 상태 스위처 | 항목 8 — 목업 전환기는 제거하고 실제 셸·편집기·복제 화면의 상태로 렌더; legacy DOM 노드 0 | `.git/mockup-d/src-d-real-github.html:319` |
@@ -190,12 +194,12 @@
 
 ### R1
 
-#### 리뷰 <k> — <증분/최종/cold> · <해시>∼<해시> · 승격 hh:mm · 리뷰 hh:mm∼hh:mm · 왕복 <n> · 원문 <경로>
+#### 리뷰 cold — b8d8f48..5ac1026 · 새 스레드 01a10816-cbd7-7c33-a267-29ba243c1117
 
-- 차단: <지적 한 줄, 재현 입력 포함>
-- 수정: <무엇을, 재사용한 함수 이름> (배정 hh:mm · 완료 hh:mm)
-- 실측: <게이트 실행 테스트 수와 결과>
-- 판정: <최종 판정 문장만> → <상태 변경>
+- 차단: (1) 목록 버튼에 그 페이지에서 못 쓰는 변수를 넣으면 복제 화면에서 사라져 편집 불가 (2) 서랍 교체 확인을 Escape로 닫고 다시 열면 [확인] 무동작 (3) IME 조합 중 Escape가 편집기를 닫음 (4) 마이그레이션 체크박스 라벨 미연결 (5) 좁은 창 아래쪽 버튼에서 편집기 높이 0 — 전부 분류 B
+- 수정: 항목 5‴(레인 B: 1·2)·7‴(레인 C: 3·5)·3‴(레인 A: 4)
+- 실측: 드라이버가 검토자 재현 스크립트를 샌드박스 밖에서 실행해 5건 모두 재현
+- 판정: 이 구현에 합의하는가: no
 
 ## 열린 질문
 

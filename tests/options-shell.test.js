@@ -130,6 +130,34 @@ test('global settings view state follows the snapshot and maps override validati
   assert.equal(blocked.inert, true);
 });
 
+test('every shell text input has an associated label or accessible name', () => {
+  assert.match(source, /defaultMainLabel\.htmlFor = 'shell-default-main';[\s\S]*?defaultMain\.id = 'shell-default-main';/);
+  assert.match(source, /repoLabel\.htmlFor = `shell-override-\$\{row\.index\}-repo`;[\s\S]*?repoInput\.id = repoLabel\.htmlFor;/);
+  assert.match(source, /branchLabel\.htmlFor = `shell-override-\$\{row\.index\}-branch`;[\s\S]*?branchInput\.id = branchLabel\.htmlFor;/);
+  assert.match(source, /const importFileLabel = optionsShellElement\('label', 'options-shell-sr-only', importButton\.textContent\)/);
+  assert.match(source, /importFileLabel\.htmlFor = 'shell-import-file'/);
+  assert.match(source, /importFile\.className = 'options-shell-sr-only'/);
+  assert.match(source, /importFile\.tabIndex = -1/);
+  assert.doesNotMatch(source, /importFile\.hidden = true/);
+  assert.match(source, /backupActions\.append\(exportButton, importButton, resetButton, importFileLabel, importFile\)/);
+
+  const start = source.indexOf('function renderMigration(');
+  const end = source.indexOf('\n    function createOverrideRow(', start);
+  const renderMigration = source.slice(start, end);
+  assert.match(renderMigration, /label\.append\(checkbox, optionsShellElement\('span', '', optionsShellMessage\(item\.label\)\)\)/);
+  assert.doesNotMatch(renderMigration, /heading\.append\(checkbox, label/);
+  assert.match(renderMigration, /heading\.append\(label, position, source\)/);
+});
+
+test('shell key handling leaves IME composition keys to the input method', () => {
+  const start = source.indexOf("document.addEventListener('keydown', event => {");
+  const end = source.indexOf('\n    });', start);
+  const handler = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(handler, /if \(event\.isComposing \|\| event\.keyCode === 229\) return;/);
+  assert.ok(handler.indexOf('event.isComposing') < handler.indexOf("event.key === 'Escape'"));
+});
+
 test('a clean save bar uses a state label, not the successful-save announcement', () => {
   assert.match(source, /saved:\s*tr\('ext\.d\.shell\.saved'\)/);
 
