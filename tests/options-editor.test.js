@@ -37,6 +37,8 @@ function loadEditor() {
     buttonMoveAction: typeof buttonMoveAction === 'function' ? buttonMoveAction : null,
     presetReplaceAction: typeof presetReplaceAction === 'function' ? presetReplaceAction : null,
     eventPathIncludesEditor: typeof eventPathIncludesEditor === 'function' ? eventPathIncludesEditor : null,
+    editorSurfaceIsBlocked: typeof editorSurfaceIsBlocked === 'function' ? editorSurfaceIsBlocked : null,
+    eventBelongsToEditorOrAnchor: typeof eventBelongsToEditorOrAnchor === 'function' ? eventBelongsToEditorOrAnchor : null,
   })`, context);
   return { context, model, api: context.window.optionsEditor };
 }
@@ -63,8 +65,73 @@ test('outside pointer classification follows the event path after the original t
   assert.equal(model.eventPathIncludesEditor({ composedPath: () => [detachedControl, marker] }), true);
   assert.equal(model.eventPathIncludesEditor({ composedPath: () => [detachedControl, { dataset: {} }] }), false);
   assert.ok(/panel\.dataset\.optionsEditorSurface = 'popover'/.test(source), 'popover path marker is missing');
-  assert.ok(/if \(!active \|\| eventPathIncludesEditor\(event\)\) return;/.test(source),
-    'outside pointer handler does not use the captured path');
+  assert.ok(/if \(!active \|\| editorSurfaceIsBlocked\(root\) \|\| eventPathIncludesEditor\(event\)\) return;/.test(source),
+    'outside pointer handling needs the inert guard and captured event path');
+});
+
+test('an inert ancestor blocks the editor surface', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.editorSurfaceIsBlocked, 'function');
+  const blockedParent = { inert: true, parentElement: null };
+  const editorRoot = { inert: false, parentElement: blockedParent };
+  const unblockedRoot = { inert: false, parentElement: { inert: false, parentElement: null } };
+  assert.equal(model.editorSurfaceIsBlocked(editorRoot), true);
+  assert.equal(model.editorSurfaceIsBlocked(unblockedRoot), false);
+  assert.equal(model.editorSurfaceIsBlocked(null), false);
+});
+
+test('Escape belongs only to the editor or its active button anchor', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.eventBelongsToEditorOrAnchor, 'function');
+  const editorMarker = { dataset: { optionsEditorSurface: 'popover' } };
+  const editorControl = {};
+  const anchorControl = {};
+  const otherControl = {};
+  const panel = { contains: node => node === editorControl };
+  const anchor = { contains: node => node === anchorControl };
+  assert.equal(model.eventBelongsToEditorOrAnchor(
+    { composedPath: () => [editorControl, editorMarker] }, panel, anchor, otherControl,
+  ), true);
+  assert.equal(model.eventBelongsToEditorOrAnchor(
+    { composedPath: () => [anchorControl, anchor] }, panel, anchor, otherControl,
+  ), true);
+  assert.equal(model.eventBelongsToEditorOrAnchor(
+    { composedPath: () => [otherControl] }, panel, anchor, editorControl,
+  ), true);
+  assert.equal(model.eventBelongsToEditorOrAnchor(
+    { composedPath: () => [otherControl] }, panel, anchor, anchorControl,
+  ), true);
+  assert.equal(model.eventBelongsToEditorOrAnchor(
+    { composedPath: () => [otherControl] }, panel, anchor, otherControl,
+  ), false);
+});
+
+test('document key and pointer listeners leave a blocked editor alone', () => {
+  const keydown = source.slice(source.indexOf('function handleDocumentKeydown'), source.indexOf('function handlePointerDown'));
+  const editorKeydown = source.slice(source.indexOf('function handleKeydown'), source.indexOf('function handleDocumentKeydown'));
+  const pointerdown = source.slice(source.indexOf('function handlePointerDown'), source.indexOf('function handleWindowChange'));
+  const mouseup = source.slice(source.indexOf('function handleInputMouseUp'), source.indexOf('function editorMessage'));
+  const windowChange = source.slice(source.indexOf('function handleWindowChange'), source.indexOf('function handleMouseDown'));
+  assert.match(keydown, /function handleDocumentKeydown\(event\) \{\s*if \(editorSurfaceIsBlocked\(root\)\) return;\s*handleKeydown\(event\);/,
+    'a blocked editor must not call its key handler');
+  assert.match(source, /document\.addEventListener\('keydown', handleDocumentKeydown, true\)/,
+    'the document capture listener must use the inert gate');
+  assert.match(editorKeydown, /eventBelongsToEditorOrAnchor\(event, currentPanel\(\), anchor, document\.activeElement\)/,
+    'Escape must be scoped to the editor or its current anchor');
+  assert.match(pointerdown, /if \(!active \|\| editorSurfaceIsBlocked\(root\) \|\| eventPathIncludesEditor\(event\)\) return;/,
+    'a blocked editor must not close in response to background pointer events');
+  assert.match(mouseup, /if \(editorSurfaceIsBlocked\(root\)\) return;/,
+    'the temporary document mouseup listener must not handle a blocked editor surface');
+  const escape = editorKeydown.slice(editorKeydown.indexOf("if (event.key === 'Escape')"));
+  assert.match(escape, /if \(!eventBelongsToEditorOrAnchor\(event, currentPanel\(\), anchor, document\.activeElement\)\) return;[\s\S]*event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\);/,
+    'Escape cancellation must follow the editor-or-anchor ownership check');
+  assert.doesNotMatch(pointerdown, /preventDefault\(\)|stopPropagation\(\)/,
+    'outside-pointer detection must not cancel or stop the pointer event');
+  assert.doesNotMatch(mouseup, /preventDefault\(\)|stopPropagation\(\)/,
+    'the one-shot drag cleanup must not cancel or stop mouseup');
+  assert.match(windowChange, /schedulePopoverPosition\(\);/);
+  assert.doesNotMatch(windowChange, /preventDefault\(\)|stopPropagation\(\)/,
+    'viewport changes must not cancel or stop unrelated events');
 });
 
 test('external snapshot close only restores focus when the focus owner was inside the popover', () => {

@@ -97,6 +97,30 @@ function eventPathIncludesEditor(event) {
   return event.composedPath().some(node => node?.dataset?.optionsEditorSurface === 'popover');
 }
 
+/** @param {Element|null} surface @returns {boolean} */
+function editorSurfaceIsBlocked(surface) {
+  for (let ancestor = surface; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.inert === true
+      || (typeof ancestor.hasAttribute === 'function' && ancestor.hasAttribute('inert'))) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @param {HTMLElement|null} panel
+ * @param {HTMLElement|null} anchor
+ * @param {Element|null} focusedElement
+ * @returns {boolean}
+ */
+function eventBelongsToEditorOrAnchor(event, panel, anchor, focusedElement) {
+  if (eventPathIncludesEditor(event)) return true;
+  const path = typeof event?.composedPath === 'function' ? event.composedPath() : [];
+  return path.includes(anchor)
+    || Boolean(panel?.contains?.(focusedElement))
+    || Boolean(anchor?.contains?.(focusedElement));
+}
+
 /**
  * Replica anchor contract: the current button is under #options-replica-root and has exact
  * data-kind and data-uid attributes. Replica redraws replace button nodes, so resolve by identity.
@@ -344,6 +368,7 @@ function cancelInputDrag() {
 }
 
 function handleInputMouseUp() {
+  if (editorSurfaceIsBlocked(root)) return;
   disarmInputDrag();
 }
 
@@ -1277,6 +1302,10 @@ function handleInput(event) {
 function handleKeydown(event) {
   if (!active || isImeCompositionKeyEvent(event)) return;
   if (event.key === 'Escape') {
+    const anchor = findReplicaAnchor(
+      document.getElementById('options-replica-root'), active.kind, active.uid,
+    );
+    if (!eventBelongsToEditorOrAnchor(event, currentPanel(), anchor, document.activeElement)) return;
     event.preventDefault();
     event.stopPropagation();
     closePopover();
@@ -1297,8 +1326,13 @@ function handleKeydown(event) {
   void moveClaudeInput(inputIndex, direction < 0 ? targetIndex : targetIndex + 1);
 }
 
+function handleDocumentKeydown(event) {
+  if (editorSurfaceIsBlocked(root)) return;
+  handleKeydown(event);
+}
+
 function handlePointerDown(event) {
-  if (!active || eventPathIncludesEditor(event)) return;
+  if (!active || editorSurfaceIsBlocked(root) || eventPathIncludesEditor(event)) return;
   closePopover();
 }
 
@@ -1408,7 +1442,7 @@ function setUpListeners() {
   root.addEventListener('drop', handleDrop);
   root.addEventListener('dragend', handleDragEnd);
   document.addEventListener('pointerdown', handlePointerDown, true);
-  document.addEventListener('keydown', handleKeydown, true);
+  document.addEventListener('keydown', handleDocumentKeydown, true);
   window.addEventListener('resize', handleWindowChange);
   window.addEventListener('scroll', handleWindowChange, true);
 }
@@ -1424,7 +1458,7 @@ function removeListeners() {
   root?.removeEventListener('drop', handleDrop);
   root?.removeEventListener('dragend', handleDragEnd);
   document.removeEventListener('pointerdown', handlePointerDown, true);
-  document.removeEventListener('keydown', handleKeydown, true);
+  document.removeEventListener('keydown', handleDocumentKeydown, true);
   window.removeEventListener('resize', handleWindowChange);
   window.removeEventListener('scroll', handleWindowChange, true);
 }
