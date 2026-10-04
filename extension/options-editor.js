@@ -241,6 +241,11 @@ function canAddClaudeInput(count) {
   return Number.isInteger(count) && count >= 0 && count < MAX_CLAUDE_INPUTS;
 }
 
+/** @param {KeyboardEvent} event @returns {boolean} */
+function isImeCompositionKeyEvent(event) {
+  return event?.isComposing === true || event?.keyCode === 229;
+}
+
 /**
  * Computes fixed-position geometry from viewport client rects. `height` and `width` are the
  * measured popover dimensions; a constrained height is applied to the scrollable surface.
@@ -251,6 +256,9 @@ function calculatePopoverPosition(anchor, popover, viewport, margin = 12, gap = 
   const viewportHeight = Math.max(0, Number(viewport?.height) || 0);
   const safeMargin = Math.max(0, Number(margin) || 0);
   const safeGap = Math.max(0, Number(gap) || 0);
+  if (!viewportWidth || !viewportHeight) {
+    return { top: 0, left: 0, width: 0, height: 0, maxHeight: 0, arrowX: 0, placement: 'bottom' };
+  }
   const width = Math.min(Math.max(0, Number(popover?.width) || 0), Math.max(0, viewportWidth - safeMargin * 2));
   const viewportMaxHeight = Math.max(0, viewportHeight - safeMargin * 2);
   const maxLeft = Math.max(safeMargin, viewportWidth - safeMargin - width);
@@ -258,10 +266,12 @@ function calculatePopoverPosition(anchor, popover, viewport, margin = 12, gap = 
   const belowSpace = Math.max(0, viewportHeight - safeMargin - (Number(anchor?.bottom) || 0) - safeGap);
   const aboveSpace = Math.max(0, (Number(anchor?.top) || 0) - safeMargin - safeGap);
   const naturalHeight = Math.max(0, Number(popover?.height) || 0);
-  const narrow = viewportWidth <= 640;
-  const shouldFlip = !narrow && naturalHeight > belowSpace && aboveSpace > belowSpace;
-  const placement = shouldFlip ? 'top' : 'bottom';
-  const maxHeight = Math.min(viewportMaxHeight, placement === 'top' ? aboveSpace : belowSpace);
+  const belowFits = naturalHeight <= belowSpace;
+  const aboveFits = naturalHeight <= aboveSpace;
+  const placement = !belowFits && (aboveFits || aboveSpace > belowSpace) ? 'top' : 'bottom';
+  const availableSpace = placement === 'top' ? aboveSpace : belowSpace;
+  const minimumUsableHeight = Math.min(160, viewportMaxHeight);
+  const maxHeight = Math.min(viewportMaxHeight, Math.max(availableSpace, minimumUsableHeight));
   const height = Math.min(naturalHeight, maxHeight);
   const proposedTop = placement === 'top'
     ? (Number(anchor?.top) || 0) - safeGap - height
@@ -1219,7 +1229,7 @@ function handleInput(event) {
 }
 
 function handleKeydown(event) {
-  if (!active) return;
+  if (!active || isImeCompositionKeyEvent(event)) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     event.stopPropagation();

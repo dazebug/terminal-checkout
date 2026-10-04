@@ -16,6 +16,7 @@ function loadEditor() {
   vm.runInContext(source, context);
   const model = vm.runInContext(`({
     calculatePopoverPosition: typeof calculatePopoverPosition === 'function' ? calculatePopoverPosition : null,
+    isImeCompositionKeyEvent: typeof isImeCompositionKeyEvent === 'function' ? isImeCompositionKeyEvent : null,
     hasMeasurableViewport: typeof hasMeasurableViewport === 'function' ? hasMeasurableViewport : null,
     fitsFieldLimit: typeof fitsFieldLimit === 'function' ? fitsFieldLimit : null,
     appendFaceCharacter: typeof appendFaceCharacter === 'function' ? appendFaceCharacter : null,
@@ -85,6 +86,72 @@ test('popover placement flips above when below is short and keeps the surface in
   assert.ok(placed.left + placed.width <= 888);
   assert.ok(placed.top >= 12);
   assert.ok(placed.top + placed.height <= 788);
+});
+
+test('a low anchor in a narrow viewport flips above when there is room there', () => {
+  const { model } = loadEditor();
+  const placed = model.calculatePopoverPosition(
+    { left: 100, right: 150, top: 650, bottom: 680, width: 50, height: 30 },
+    { width: 440, height: 560 },
+    { width: 579, height: 700 },
+  );
+  assert.equal(placed.placement, 'top');
+  assert.equal(placed.height, 560);
+  assert.ok(placed.maxHeight >= placed.height);
+  assert.ok(placed.top >= 12);
+  assert.ok(placed.top + placed.height <= 688);
+});
+
+test('equally short sides break ties below when both sides constrain the popover', () => {
+  const { model } = loadEditor();
+  const placed = model.calculatePopoverPosition(
+    { left: 100, right: 150, top: 190, bottom: 210, width: 50, height: 20 },
+    { width: 300, height: 320 },
+    { width: 800, height: 400 },
+  );
+  assert.equal(placed.placement, 'bottom');
+  assert.equal(placed.maxHeight, 166);
+  assert.equal(placed.height, 166);
+  assert.equal(placed.top, 222);
+});
+
+test('when neither side fits, the larger side gets a minimum scroll height', () => {
+  const { model } = loadEditor();
+  const placed = model.calculatePopoverPosition(
+    { left: 100, right: 150, top: 70, bottom: 90, width: 50, height: 20 },
+    { width: 300, height: 320 },
+    { width: 579, height: 150 },
+  );
+  assert.equal(placed.placement, 'top');
+  assert.ok(placed.maxHeight >= 120);
+  assert.ok(placed.height >= 120);
+  assert.ok(placed.top >= 12);
+  assert.ok(placed.top + placed.height <= 138);
+});
+
+test('zero-sized viewports produce zero-sized popover geometry', () => {
+  const { model } = loadEditor();
+  const placed = model.calculatePopoverPosition(
+    { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 },
+    { width: 440, height: 560 },
+    { width: 0, height: 0 },
+  );
+  assert.equal(placed.placement, 'bottom');
+  assert.equal(placed.top, 0);
+  assert.equal(placed.left, 0);
+  assert.equal(placed.width, 0);
+  assert.equal(placed.height, 0);
+  assert.equal(placed.maxHeight, 0);
+});
+
+test('every editor keydown shortcut leaves IME composition events untouched', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.isImeCompositionKeyEvent, 'function');
+  assert.equal(model.isImeCompositionKeyEvent({ key: 'Escape', isComposing: true, keyCode: 229 }), true);
+  assert.equal(model.isImeCompositionKeyEvent({ key: 'Enter', isComposing: false, keyCode: 229 }), true);
+  assert.equal(model.isImeCompositionKeyEvent({ key: 'ArrowUp', isComposing: false, keyCode: 38 }), false);
+  assert.match(source, /function handleKeydown\(event\) \{\s*if \(!active \|\| isImeCompositionKeyEvent\(event\)\) return;/,
+    'all editor shortcuts must check composition before Escape or arrow handling');
 });
 
 test('narrow viewports keep the popover below and clamp its width and horizontal position', () => {
