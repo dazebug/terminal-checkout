@@ -140,6 +140,52 @@ function presetById(presets, id) {
   return presets.find(preset => preset.id === id) ?? null;
 }
 
+// The edit view reports the exact preset whose command matches the current command after the same
+// outer whitespace trim used by the legacy preset confirmation. A non-empty unmatched command is
+// a hand-edited command and needs confirmation before replacement.
+function classifyPresetCommand(command, presets) {
+  const normalized = typeof command === 'string' ? command.trim() : '';
+  const preset = normalized ? presets.find(candidate => candidate.command === normalized) : null;
+  return {
+    presetId: preset?.id ?? null,
+    customCommand: normalized !== '' && !preset,
+  };
+}
+
+// Save and every view consume one validation result so required fields and the Claude warning
+// cannot drift between the card editor and the engine snapshot.
+function validateButtonValue(button) {
+  const errors = [];
+  for (const field of ['face', 'label', 'command']) {
+    if (!button[field].trim()) errors.push(field);
+  }
+  const warnings = normalizeClaudeInputs(button.claudeInputs).length > 0
+    && !commandStartsClaude(button.command)
+    ? ['claude-inputs-without-claude-command']
+    : [];
+  return { errors, warnings };
+}
+
+// Pure counterpart to override serialization. Empty rows are omitted; partial rows and duplicate
+// repositories are reported in row order; the first complete repository wins as it does in Save.
+function validateOverrideRows(rows) {
+  const seen = new Map();
+  const entries = new Map();
+  const diagnostics = rows.map((row, index) => {
+    const repo = row.repo.trim();
+    const branch = row.branch.trim();
+    const errors = [];
+    if ((!repo && branch) || (repo && !branch)) errors.push('incomplete');
+    if (repo && branch && seen.has(repo)) errors.push('duplicate');
+    if (repo && branch && !seen.has(repo)) {
+      seen.set(repo, index);
+      entries.set(repo, branch);
+    }
+    return { index, errors };
+  });
+  return { rows: diagnostics, value: Object.fromEntries(entries) };
+}
+
 // What the options page's dropdown is built from — the id as the value, the name as the text. The
 // pairing lives here rather than in options.js because *which field identifies a preset* is a
 // defaults.js decision, and because there is nowhere to assert it on the options page.
@@ -317,6 +363,8 @@ const PR_BRANCH_LINK_SELECTOR =
   'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
 
 const DEFAULT_MAIN = 'main';
+// Face choices shared by the legacy card editor and the replacement views.
+const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 // Maximum buttons per page kind. A synced device running a version with a lower cap keeps only the
 // first entries — every reader enforces it through adoptStoredButtons — and removes the rest if it
 // saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this count, is what stops a

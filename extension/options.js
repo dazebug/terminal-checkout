@@ -17,7 +17,7 @@
 /**
  * @typedef {Object} OptionsButtonValidation
  * @property {ReadonlyArray<OptionsButtonRequiredField>} errors Every empty required field, in face/label/command order.
- * @property {ReadonlyArray<OptionsButtonWarningCode>} warnings Read-only diagnostics; Save still uses validateButtons().
+ * @property {ReadonlyArray<OptionsButtonWarningCode>} warnings Diagnostics shared by Save and the snapshot.
  */
 
 /**
@@ -27,6 +27,8 @@
  * @property {string} label Stored button tooltip value.
  * @property {string} command Stored command value.
  * @property {ReadonlyArray<string>} claudeInputs Stored Claude input rows in their current order.
+ * @property {string|null} presetId Exact matching preset id for this kind, or null.
+ * @property {boolean} customCommand Non-empty command matching no preset command for this kind.
  * @property {OptionsButtonValidation} validation Read-only button diagnostics.
  */
 
@@ -78,7 +80,7 @@
  * @property {Readonly<Record<OptionsButtonKind, ReadonlyArray<OptionsButtonSnapshot>>>} buttons Per-kind buttons in edit order, with runtime uids and stored fields.
  * @property {boolean} dirty Whether button/global settings differ from the loaded edit state.
  * @property {number} revision Monotonic edit revision.
- * @property {{buttons: ReadonlyArray<{kind: OptionsButtonKind, uid: string, errors: ReadonlyArray<OptionsButtonRequiredField>, warnings: ReadonlyArray<OptionsButtonWarningCode>}>, overrides: ReadonlyArray<{index: number, errors: ReadonlyArray<OptionsOverrideErrorCode>}>}} validation Read-only diagnostics; never the Save decision.
+ * @property {{buttons: ReadonlyArray<{kind: OptionsButtonKind, uid: string, errors: ReadonlyArray<OptionsButtonRequiredField>, warnings: ReadonlyArray<OptionsButtonWarningCode>}>, overrides: ReadonlyArray<{index: number, errors: ReadonlyArray<OptionsOverrideErrorCode>}>}} validation The same button and override rules Save uses.
  * @property {{defaultMain: string, repoMainBranch: ReadonlyArray<OptionsOverrideSnapshot>}} globalSettings Raw editable default main and ordered overrides.
  * @property {{status: 'unloaded'|'loading'|'loaded'|'reloading'|'error', loaded: boolean, generation: number, appliedGeneration: number, inFlight: number, errorMessage: string|null, retryAvailable: boolean}} load
  * @property {{status: 'blocked'|'clean'|'dirty'|'saving', saving: boolean, importing: boolean, dirty: boolean, reviewTouched: boolean, hasUnsavedWork: boolean, canSave: boolean, loadedVersion: number|null, versionToWrite: number|null}} save
@@ -95,10 +97,10 @@
  */
 
 /** @typedef {{type: 'save'}} OptionsSaveAction */
-/** @typedef {{type: 'discard', confirmed?: boolean}} OptionsDiscardAction `confirmed` is true only after the view has asked before dropping unsaved work. */
+/** @typedef {{type: 'discard', confirmed?: true}} OptionsDiscardAction `confirmed` is true only after the view has asked before dropping unsaved work. */
 /** @typedef {{type: 'retry-load'}} OptionsRetryLoadAction */
 /** @typedef {{type: 'reload-latest'}} OptionsReloadLatestAction */
-/** @typedef {{type: 'adopt-latest', confirmed?: boolean}} OptionsAdoptLatestAction `confirmed` is true only after the view has asked before dropping unsaved work. */
+/** @typedef {{type: 'adopt-latest', confirmed?: true}} OptionsAdoptLatestAction `confirmed` is true only after the view has asked before dropping unsaved work. */
 /** @typedef {{type: 'defer-latest'}} OptionsDeferLatestAction */
 /** @typedef {{type: 'reset'}} OptionsResetAction */
 /** @typedef {{type: 'export-saved'}} OptionsExportAction */
@@ -115,7 +117,7 @@
 /** @typedef {{type: 'button-remove', kind: OptionsButtonKind, uid: string}} OptionsButtonRemoveAction */
 /** @typedef {{type: 'button-move', kind: OptionsButtonKind, uid: string, beforeUid: string|null}} OptionsButtonMoveAction */
 /** @typedef {{type: 'preset-add', kind: OptionsButtonKind, presetId: string, beforeUid?: string|null}} OptionsPresetAddAction */
-/** @typedef {{type: 'preset-replace', kind: OptionsButtonKind, uid: string, presetId: string}} OptionsPresetReplaceAction */
+/** @typedef {{type: 'preset-replace', kind: OptionsButtonKind, uid: string, presetId: string, confirmed?: true}} OptionsPresetReplaceAction `confirmed` is required only for a custom command. */
 /** @typedef {{type: 'input-add', kind: OptionsButtonKind, buttonUid: string, value?: string}} OptionsInputAddAction */
 /** @typedef {{type: 'input-patch', kind: OptionsButtonKind, buttonUid: string, inputIndex: number, value: string}} OptionsInputPatchAction */
 /** @typedef {{type: 'input-remove', kind: OptionsButtonKind, buttonUid: string, inputIndex: number}} OptionsInputRemoveAction */
@@ -131,13 +133,18 @@
  *   OptionsButtonMoveAction|OptionsPresetAddAction|OptionsPresetReplaceAction|OptionsInputAddAction|
  *   OptionsInputPatchAction|OptionsInputRemoveAction|OptionsInputMoveAction
  * } OptionsEngineAction
- * @typedef {OptionsEngineSnapshot|Promise<OptionsEngineSnapshot>} OptionsEngineDispatchResult
+ * @typedef {Object} OptionsDispatchResult
+ * @property {boolean} ok Whether the action completed or was accepted.
+ * @property {('not-loaded'|'busy'|'limit'|'not-found'|'needs-confirmation'|'invalid'|'failed')=} [reason] Failure category when `ok` is false.
+ * @property {string=} [createdUid] Runtime uid created by button-add, button-duplicate, or preset-add.
+ * @property {OptionsEngineSnapshot} snapshot Snapshot after the action was handled.
+ *
  * @typedef {Object} OptionsEngine
  * @property {() => OptionsEngineSnapshot} getSnapshot Returns a deeply frozen copy of the current edit and page state.
- * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Receives later state changes, not an initial call; returns an unsubscribe function.
- * @property {(action: OptionsEngineAction) => OptionsEngineDispatchResult} dispatch Routes actions through the current page handlers and returns the resulting snapshot or its asynchronous result.
+ * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Registers for state changes coalesced into one microtask; registration never invokes the listener, so mount calls getSnapshot for its first render. Returns an unsubscribe function.
+ * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action through the same state changes as the legacy handlers. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
  *
- * `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. `adopt-latest` and `discard` re-read through that path after confirmation; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. Button and input moves use the existing before-index ordering.
+ * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. Button and input moves use the existing before-index ordering.
  */
 
 // PR, PR-list, issue, issue-list, and repository buttons differ in both their storage key and the
@@ -151,9 +158,6 @@ const SECTIONS = [
   { kind: 'issue-list', container: 'issue-list-buttons', addButton: 'issue-list-add', addHint: 'issue-list-add-hint' },
   { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
 ].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
-
-// Emoji commonly used as a face — clicking one appends it to the face field (they can be combined)
-const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 
 // This page stores message ids in `data-i18n`, not prose, and resolves them synchronously through
 // `chrome.i18n` before drawing.
@@ -220,6 +224,7 @@ applyStaticText();
 const state = {
   buttons: Object.fromEntries(SECTIONS.map(s => [s.kind, []])),
   overrides: [],
+  defaultMain: DEFAULT_MAIN,
   dirty: false,
   // Bumped on every edit. Used after a save to tell whether the user changed anything in the meantime.
   revision: 0,
@@ -560,7 +565,8 @@ function updateFacePreview(card, face) {
 
 function updateClaudeWarn(card, btn) {
   const hasInputs = normalizeClaudeInputs(btn.claudeInputs).length > 0;
-  card.querySelector('.claude-warn').hidden = !hasInputs || commandStartsClaude(btn.command);
+  const diagnostics = validateButtonValue(btn);
+  card.querySelector('.claude-warn').hidden = !diagnostics.warnings.includes('claude-inputs-without-claude-command');
   // The merge rules are only worth reading once there is something to merge — showing them on
   // every empty card would put three paragraphs of prose above every button
   card.querySelector('.claude-hint').hidden = !hasInputs;
@@ -657,6 +663,210 @@ function editAndReview(change) {
   return accepted;
 }
 
+function preparedEdit(apply, createdUid, changed = true) {
+  return { ok: true, apply, changed, ...(createdUid ? { createdUid } : {}) };
+}
+
+function rejectedEdit(reason) {
+  return { ok: false, reason };
+}
+
+function prepareButtonPatch(kind, uid, patch) {
+  const buttonSection = section(kind);
+  const index = buttonIndexForUid(kind, uid);
+  if (!buttonSection || index < 0) return rejectedEdit('not-found');
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return rejectedEdit('invalid');
+  const fields = ['face', 'label', 'command'];
+  const entries = Object.keys(patch).map(field => [field, patch[field]]);
+  if (entries.length === 0) return preparedEdit(() => {}, undefined, false);
+  if (entries.some(([field, value]) => !fields.includes(field) || typeof value !== 'string')) {
+    return rejectedEdit('invalid');
+  }
+  return preparedEdit(() => {
+    for (const [field, value] of entries) state.buttons[kind][index][field] = value;
+  });
+}
+
+function prepareButtonAdd(kind) {
+  const buttonSection = section(kind);
+  if (!buttonSection) return rejectedEdit('invalid');
+  if (state.buttons[kind].length >= MAX_BUTTONS) return rejectedEdit('limit');
+  const next = appendButton(state.buttons[kind], buttonSection);
+  const createdUid = next[next.length - 1].uid;
+  return preparedEdit(() => { state.buttons[kind] = next; }, createdUid);
+}
+
+function prepareButtonDuplicate(kind, uid) {
+  const index = buttonIndexForUid(kind, uid);
+  if (index < 0) return rejectedEdit('not-found');
+  if (state.buttons[kind].length >= MAX_BUTTONS) return rejectedEdit('limit');
+  const next = duplicateButton(state.buttons[kind], index);
+  const createdUid = next[index + 1].uid = nextButtonUid();
+  return preparedEdit(() => { state.buttons[kind] = next; }, createdUid);
+}
+
+function prepareButtonRemove(kind, uid) {
+  const index = buttonIndexForUid(kind, uid);
+  if (index < 0) return rejectedEdit('not-found');
+  if (state.buttons[kind].length <= 1) return rejectedEdit('limit');
+  return preparedEdit(() => { state.buttons[kind].splice(index, 1); });
+}
+
+function prepareButtonMove(kind, uid, beforeUid) {
+  const buttons = state.buttons[kind];
+  const from = buttonIndexForUid(kind, uid);
+  if (!section(kind) || from < 0) return rejectedEdit('not-found');
+  if (beforeUid !== null && typeof beforeUid !== 'string') return rejectedEdit('invalid');
+  const insertBefore = beforeUid === null ? buttons.length : buttonIndexForUid(kind, beforeUid);
+  if (insertBefore < 0) return rejectedEdit('not-found');
+  if (insertBefore === from || insertBefore === from + 1) return preparedEdit(() => {}, undefined, false);
+  const next = moveItem(buttons, from, insertBefore);
+  return preparedEdit(() => { state.buttons[kind] = next; });
+}
+
+function preparePresetReplace(kind, uid, presetId, confirmed = false) {
+  const buttonSection = section(kind);
+  const index = buttonIndexForUid(kind, uid);
+  if (!buttonSection || index < 0) return rejectedEdit('not-found');
+  if (typeof presetId !== 'string') return rejectedEdit('invalid');
+  const preset = presetById(buttonSection.presets, presetId);
+  if (!preset) return rejectedEdit('not-found');
+  const current = state.buttons[kind][index];
+  if (classifyPresetCommand(current.command, buttonSection.presets).customCommand && confirmed !== true) {
+    return rejectedEdit('needs-confirmation');
+  }
+  const nextButton = reshapeButton({
+    face: preset.face,
+    label: preset.name,
+    command: preset.command,
+    claudeInputs: [...(preset.claudeInputs || [])],
+  }, current.uid);
+  return preparedEdit(() => { state.buttons[kind][index] = nextButton; });
+}
+
+function preparePresetAdd(kind, presetId, beforeUid) {
+  const buttonSection = section(kind);
+  if (!buttonSection) return rejectedEdit('invalid');
+  const preset = presetById(buttonSection.presets, presetId);
+  if (!preset) return rejectedEdit('not-found');
+  if (state.buttons[kind].length >= MAX_BUTTONS) return rejectedEdit('limit');
+  const next = appendButton(state.buttons[kind], buttonSection);
+  const added = next[next.length - 1];
+  next[next.length - 1] = reshapeButton({
+    face: preset.face,
+    label: preset.name,
+    command: preset.command,
+    claudeInputs: [...(preset.claudeInputs || [])],
+  }, added.uid);
+  if (beforeUid !== undefined) {
+    if (beforeUid !== null && (typeof beforeUid !== 'string' || buttonIndexForUid(kind, beforeUid) < 0)) {
+      return rejectedEdit('not-found');
+    }
+    const beforeIndex = beforeUid === null ? next.length - 1 : buttonIndexForUid(kind, beforeUid);
+    const moved = moveItem(next, next.length - 1, beforeIndex);
+    return preparedEdit(() => { state.buttons[kind] = moved; }, added.uid);
+  }
+  return preparedEdit(() => { state.buttons[kind] = next; }, added.uid);
+}
+
+function prepareInputAdd(kind, buttonUid, value = '') {
+  const index = buttonIndexForUid(kind, buttonUid);
+  if (index < 0) return rejectedEdit('not-found');
+  const button = state.buttons[kind][index];
+  if (button.claudeInputs.length >= MAX_CLAUDE_INPUTS) return rejectedEdit('limit');
+  if (typeof value !== 'string') return rejectedEdit('invalid');
+  return preparedEdit(() => { button.claudeInputs.push(value); });
+}
+
+function prepareInputPatch(kind, buttonUid, inputIndex, value) {
+  const index = buttonIndexForUid(kind, buttonUid);
+  if (index < 0) return rejectedEdit('not-found');
+  const inputs = state.buttons[kind][index].claudeInputs;
+  if (!Number.isInteger(inputIndex) || inputIndex < 0 || inputIndex >= inputs.length) return rejectedEdit('not-found');
+  if (typeof value !== 'string') return rejectedEdit('invalid');
+  return preparedEdit(() => { inputs[inputIndex] = value; });
+}
+
+function prepareInputRemove(kind, buttonUid, inputIndex) {
+  const index = buttonIndexForUid(kind, buttonUid);
+  if (index < 0) return rejectedEdit('not-found');
+  const inputs = state.buttons[kind][index].claudeInputs;
+  if (!Number.isInteger(inputIndex) || inputIndex < 0 || inputIndex >= inputs.length) return rejectedEdit('not-found');
+  return preparedEdit(() => { inputs.splice(inputIndex, 1); });
+}
+
+function prepareInputMove(kind, buttonUid, fromIndex, beforeIndex) {
+  const index = buttonIndexForUid(kind, buttonUid);
+  if (index < 0) return rejectedEdit('not-found');
+  const inputs = state.buttons[kind][index].claudeInputs;
+  if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= inputs.length
+    || !Number.isInteger(beforeIndex) || beforeIndex < 0 || beforeIndex > inputs.length) {
+    return rejectedEdit('invalid');
+  }
+  if (beforeIndex === fromIndex || beforeIndex === fromIndex + 1) return preparedEdit(() => {}, undefined, false);
+  const next = moveItem(inputs, fromIndex, beforeIndex);
+  return preparedEdit(() => { state.buttons[kind][index].claudeInputs = next; });
+}
+
+function prepareMainPatch(value) {
+  if (typeof value !== 'string') return rejectedEdit('invalid');
+  return preparedEdit(() => { state.defaultMain = value; });
+}
+
+function prepareOverrideAdd() {
+  return preparedEdit(() => { state.overrides.push({ repo: '', branch: '' }); });
+}
+
+function prepareOverridePatch(index, patch) {
+  if (!Number.isInteger(index) || index < 0 || index >= state.overrides.length
+    || !patch || typeof patch !== 'object' || Array.isArray(patch)) return rejectedEdit('not-found');
+  const entries = Object.keys(patch).map(field => [field, patch[field]]);
+  if (entries.length === 0) return preparedEdit(() => {}, undefined, false);
+  if (entries.some(([field, value]) => !['repo', 'branch'].includes(field) || typeof value !== 'string')) {
+    return rejectedEdit('invalid');
+  }
+  return preparedEdit(() => {
+    for (const [field, value] of entries) state.overrides[index][field] = value;
+  });
+}
+
+function prepareOverrideRemove(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= state.overrides.length) return rejectedEdit('not-found');
+  return preparedEdit(() => { state.overrides.splice(index, 1); });
+}
+
+function prepareReset() {
+  const buttons = Object.fromEntries(SECTIONS.map(({ kind, defaults }) => [kind, defaults.map(adoptButton)]));
+  return preparedEdit(() => {
+    state.buttons = buttons;
+    state.overrides = [];
+    state.defaultMain = DEFAULT_MAIN;
+    recordMigrationReviewed();
+  });
+}
+
+function prepareMigrationApply() {
+  if (!state.plan) return rejectedEdit('not-found');
+  const { settings: migrated, applied } = applyMigrationPlan(editStateSnapshot(), state.plan, state.selection);
+  const declined = state.selection.size - applied;
+  const buttons = Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [
+    kind,
+    migrated[storageKey].map(button => reshapeButton(button, button.uid)),
+  ]));
+  return {
+    ...preparedEdit(() => {
+      state.buttons = buttons;
+      recordMigrationReviewed();
+    }),
+    applied,
+    declined,
+  };
+}
+
+function prepareMigrationKeep() {
+  return preparedEdit(recordMigrationReviewed);
+}
+
 function clearDirty() {
   state.dirty = false;
   document.getElementById('dirty-indicator').hidden = true;
@@ -674,23 +884,16 @@ function applyPreset(select) {
   if (!id) return;
 
   const { kind, index } = cardOf(select);
+  const button = state.buttons[kind][index];
   const preset = presetById(section(kind).presets, id);
-  if (!preset) return;
+  if (!button || !preset) return;
 
-  const current = state.buttons[kind][index].command.trim();
-  const isCustom = current !== '' && !section(kind).presets.some(p => p.command === current);
+  const isCustom = classifyPresetCommand(button.command, section(kind).presets).customCommand;
   if (isCustom && !confirm(t('ext.confirm.presetOverwrite', index, preset.name))) {
     return;
   }
-
-  edit(() => {
-    // The card stays the same button — only its contents are replaced — so it keeps its uid
-    state.buttons[kind][index] = reshapeButton({
-      face: preset.face, label: preset.name, command: preset.command,
-      claudeInputs: [...(preset.claudeInputs || [])],
-    }, state.buttons[kind][index].uid);
-    renderButtons(kind); // the number of claude input rows changes too, so redraw the whole card
-  });
+  const operation = preparePresetReplace(kind, button.uid, id, true);
+  if (operation.ok && edit(operation.apply)) renderButtons(kind);
 }
 
 // --- Validation ---
@@ -704,52 +907,46 @@ const REQUIRED_FIELDS = [
   { field: 'command', describe: (key, index) => t('ext.validate.command', key, index) },
 ];
 
-function validateButtons() {
-  for (const { kind } of SECTIONS) {
-    const name = section(kind).storageKey;
-    for (let i = 0; i < state.buttons[kind].length; i++) {
-      for (const { field, describe } of REQUIRED_FIELDS) {
-        if (state.buttons[kind][i][field].trim()) continue;
-        return {
-          message: describe(name, i),
-          focus: cardElement(kind, i, `[data-field="${field}"]`),
-        };
-      }
-    }
-  }
-  return null;
+function validateEditState() {
+  const buttons = SECTIONS.flatMap(({ kind }) => state.buttons[kind].map(button => ({
+    kind,
+    uid: button.uid,
+    ...validateButtonValue(button),
+  })));
+  const overrides = validateOverrideRows(state.overrides);
+  return { buttons, overrides: overrides.rows, overrideValue: overrides.value };
 }
 
-// Turn the overrides we keep as an array back into the storage schema (an object)
-function serializeOverrides() {
-  const entries = new Map();
+function validateButtons(validation = validateEditState()) {
+  const diagnostic = validation.buttons.find(button => button.errors.length > 0);
+  if (!diagnostic) return null;
+  const index = buttonIndexForUid(diagnostic.kind, diagnostic.uid);
+  const field = diagnostic.errors[0];
+  return {
+    message: REQUIRED_FIELDS.find(item => item.field === field)
+      .describe(section(diagnostic.kind).storageKey, index),
+    focus: cardElement(diagnostic.kind, index, `[data-field="${field}"]`),
+  };
+}
 
-  for (let i = 0; i < state.overrides.length; i++) {
-    const repo = state.overrides[i].repo.trim();
-    const branch = state.overrides[i].branch.trim();
+// Turn the shared override diagnostics back into the storage schema (an object).
+function serializeOverrides(validation = validateEditState()) {
+  const diagnostic = validation.overrides.find(row => row.errors.length > 0);
+  if (!diagnostic) return { value: validation.overrideValue };
 
-    if (!repo && !branch) continue; // a row that was added but never filled in is dropped silently
-
-    if (!repo || !branch) {
-      return {
-        error: {
-          message: t('ext.validate.override.incomplete', i + 1),
-          focus: overrideInput(i, repo ? '.override-branch' : '.override-repo'),
-        },
-      };
-    }
-    if (entries.has(repo)) {
-      return {
-        error: {
-          message: t('ext.validate.override.duplicate', i + 1, repo),
-          focus: overrideInput(i, '.override-repo'),
-        },
-      };
-    }
-    entries.set(repo, branch);
-  }
-
-  return { value: Object.fromEntries(entries) };
+  const row = state.overrides[diagnostic.index];
+  const code = diagnostic.errors[0];
+  const repo = row.repo.trim();
+  const focusSelector = code === 'duplicate' ? '.override-repo'
+    : repo ? '.override-branch' : '.override-repo';
+  return {
+    error: {
+      message: code === 'duplicate'
+        ? t('ext.validate.override.duplicate', diagnostic.index + 1, repo)
+        : t('ext.validate.override.incomplete', diagnostic.index + 1),
+      focus: overrideInput(diagnostic.index, focusSelector),
+    },
+  };
 }
 
 // --- Load / save ---
@@ -781,7 +978,7 @@ async function loadSettings() {
     if (generation === state.loadGeneration) showLoadFailure(error);
     // The change that asked for this re-read is not adopted, and `staleSinceLoad` was never cleared,
     // so the banner it raised is still up — which is the whole point of not clearing it early.
-    return;
+    return false;
   } finally {
     state.loadsInFlight -= 1;
     scheduleOptionsEngineNotify();
@@ -797,7 +994,7 @@ async function loadSettings() {
     // both the snapshot and the fact that it existed. Only once there is a snapshot to compare
     // against: before that, "everything differs from nothing" would be a banner about nothing.
     if (state.loaded && saveConflict(state.loadedSnapshot, data)) markStale();
-    return;
+    return false;
   }
 
   // Storage is as untrusted as an imported file: another device, another version of this extension,
@@ -812,7 +1009,8 @@ async function loadSettings() {
       .map(adoptButton);
   }
   state.overrides = Object.entries(settings.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
-  document.getElementById('default-main').value = settings.defaultMain || 'main';
+  state.defaultMain = settings.defaultMain || DEFAULT_MAIN;
+  document.getElementById('default-main').value = state.defaultMain;
 
   state.loadedVersion = storedSchemaVersion(data);
   // Exactly what was read — the raw object, not the cleaned one, because that is what a later save
@@ -848,32 +1046,40 @@ async function loadSettings() {
   // store moved.
   adoptDeferredChange();
   scheduleOptionsEngineNotify();
+  return true;
 }
 
 async function saveSettings() {
   // Nothing may be written before the first load answers: the edit state is empty until then, and
   // writing it would delete every command and mark the migration as reviewed in the same breath.
-  if (!requireLoaded()) return;
+  if (!requireLoaded()) return false;
   // One page-changing task at a time. Two saves would each capture the same world, each find it
   // unchanged, and the later write would land carrying what was true before the earlier one; a save
   // started while a load is outstanding builds its payload from a form that answer is about to
   // replace.
   if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
     showStatus('info', pageBusyMessage(pageTasks()));
-    return;
+    return false;
   }
 
-  const invalidButton = validateButtons();
-  if (invalidButton) return showError(invalidButton);
+  const validation = validateEditState();
+  const invalidButton = validateButtons(validation);
+  if (invalidButton) {
+    showError(invalidButton);
+    return false;
+  }
 
-  const overrides = serializeOverrides();
-  if (overrides.error) return showError(overrides.error);
+  const overrides = serializeOverrides(validation);
+  if (overrides.error) {
+    showError(overrides.error);
+    return false;
+  }
 
   // toStoredButton is what decides the stored shape — including dropping the runtime uid
   const cleaned = Object.fromEntries(SECTIONS.map(({ kind }) => [
     kind, state.buttons[kind].map(toStoredButton),
   ]));
-  const defaultMain = document.getElementById('default-main').value.trim() || 'main';
+  const defaultMain = state.defaultMain.trim() || DEFAULT_MAIN;
 
   // The world this save starts in, captured once. Everything below settles against these values and
   // never against `state`, which moves underneath: adoption of a remote change is not a user action
@@ -921,7 +1127,7 @@ async function saveSettings() {
       // The read that decides whether writing is safe failed, so writing is not safe. It used to
       // reject unhandled: no status, no refusal, and the save simply evaporated.
       showStatus('error', t('ext.status.saveFailed', error.message));
-      return;
+      return false;
     }
     const outcome = planSave({
       capturedSnapshot,
@@ -943,7 +1149,7 @@ async function saveSettings() {
       // and a banner there would be telling the user about a gap that no longer exists.
       if (outcome.stale) markStale();
       showStatus('error', outcome.message);
-      return;
+      return false;
     }
 
     try {
@@ -953,9 +1159,10 @@ async function saveSettings() {
       await chrome.storage.sync.set(outcome.write);
     } catch (error) {
       showStatus('error', t('ext.status.saveFailed', error.message));
-      return;
+      return false;
     }
     settleSave({ payload, cleaned, defaultMain, overrides, savedRevision });
+    return true;
   } finally {
     state.saving = false;
     state.pendingWrite = null;
@@ -997,6 +1204,7 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // are carried over: these are the same buttons, only tidied, and a candidate the user is looking
   // at must keep its name across a save.
   document.getElementById('default-main').value = defaultMain;
+  state.defaultMain = defaultMain;
   for (const { kind } of SECTIONS) {
     state.buttons[kind] = cleaned[kind].map(
       (button, index) => reshapeButton(button, state.buttons[kind][index].uid)
@@ -1019,21 +1227,16 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
 // Saving happens through the Save button alone. This only resets the view; storage is untouched.
 function resetSettings() {
   if (!requireLoaded()) return;
-  editAndReview(() => {
-    for (const { kind, defaults } of SECTIONS) {
-      state.buttons[kind] = defaults.map(adoptButton);
-      renderButtons(kind);
-    }
-    state.overrides = [];
-    document.getElementById('default-main').value = 'main';
-
-    renderOverrides();
-    // Reset replaces every command with the current preset, so the settings are the current
-    // generation by construction — taking that as a decision keeps the notice from lingering over
-    // settings that have nothing stale left in them.
-    markReviewed();
-    showStatus('info', t('ext.status.reset', t('ext.button.save')));
-  });
+  const operation = prepareReset();
+  if (!operation.ok || !editAndReview(operation.apply)) return;
+  SECTIONS.forEach(({ kind }) => renderButtons(kind));
+  document.getElementById('default-main').value = state.defaultMain;
+  renderOverrides();
+  renderMigration();
+  // Reset replaces every command with the current preset, so the settings are the current
+  // generation by construction — taking that as a decision keeps the notice from lingering over
+  // settings that have nothing stale left in them.
+  showStatus('info', t('ext.status.reset', t('ext.button.save')));
 }
 
 // --- The update notice ---
@@ -1053,11 +1256,10 @@ function setPlan(plan) {
 
 // The user has decided about this generation — by applying some or none of it, by declining, or by
 // resetting. That decision is what lets the next save move the version.
-function markReviewed() {
+function recordMigrationReviewed() {
   state.reviewed = true;
   state.plan = null;
   state.selection = new Set();
-  renderMigration();
   scheduleOptionsEngineNotify();
 }
 
@@ -1184,29 +1386,16 @@ function renderMigration() {
 // import — the edit state is the only thing that changes here.
 function applyMigration() {
   if (!requireLoaded()) return;
-  editAndReview(() => {
-    // `applied` is what was actually rewritten, not what was checked: a candidate whose button was
-    // deleted, moved, or typed over while the preview was open is skipped, and counting checkboxes
-    // reported those skips as successes.
-    const { settings: migrated, applied } = applyMigrationPlan(
-      editStateSnapshot(), state.plan, state.selection
-    );
-    const declined = state.selection.size - applied;
-
-    for (const { kind, storageKey } of SECTIONS) {
-      state.buttons[kind] = migrated[storageKey].map(button => reshapeButton(button, button.uid));
-      renderButtons(kind);
-    }
-    markReviewed();
-    // Two complete messages, not one message with a clause bolted on. The English needed
-    // `command`/`commands` and `was`/`were` to agree with two different counts, and a translation
-    // cannot be assembled out of the pieces that made those agree — so the count moved
-    // behind a noun and a colon, where no language here inflects anything, and the two states each
-    // became a message of their own.
-    showStatus('info', declined > 0
-      ? t('ext.migration.appliedWithDeclined', applied, declined, t('ext.button.save'))
-      : t('ext.migration.applied', applied, t('ext.button.save')));
-  });
+  const operation = prepareMigrationApply();
+  if (!operation.ok || !editAndReview(operation.apply)) return;
+  SECTIONS.forEach(({ kind }) => renderButtons(kind));
+  renderMigration();
+  // Two complete messages, not one message with a clause bolted on. The English needed
+  // `command`/`commands` and `was`/`were` to agree with two different counts, and a translation
+  // cannot be assembled out of the pieces that made those agree.
+  showStatus('info', operation.declined > 0
+    ? t('ext.migration.appliedWithDeclined', operation.applied, operation.declined, t('ext.button.save'))
+    : t('ext.migration.applied', operation.applied, t('ext.button.save')));
 }
 
 // --- Export / import ---
@@ -1282,13 +1471,13 @@ async function exportSettings() {
     // An unhandled rejection here produced a button that did nothing and said nothing — and this is
     // the path a user takes precisely when they are trying not to lose their settings.
     showStatus('error', t('ext.status.exportFailed', error.message));
-    return;
+    return false;
   }
   // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
     showStatus('error', t('ext.export.nothingSaved'));
-    return;
+    return false;
   }
 
   const now = new Date();
@@ -1301,6 +1490,7 @@ async function exportSettings() {
   setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
 
   if (state.dirty) showStatus('info', t('ext.export.excludedUnsaved'));
+  return true;
 }
 
 // Saving happens through the Save button alone — this too only fills in the view and leaves storage
@@ -1311,7 +1501,8 @@ function applyImportedSettings(settings, mergedVersion) {
       if (settings[storageKey]) state.buttons[kind] = settings[storageKey].map(adoptButton);
     }
     if (settings.defaultMain !== undefined) {
-      document.getElementById('default-main').value = settings.defaultMain.trim() || 'main';
+      state.defaultMain = settings.defaultMain.trim() || DEFAULT_MAIN;
+      document.getElementById('default-main').value = state.defaultMain;
     }
     if (settings.repoMainBranch) {
       state.overrides = Object.entries(settings.repoMainBranch).map(([repo, branch]) => ({ repo, branch }));
@@ -1332,16 +1523,16 @@ function applyImportedSettings(settings, mergedVersion) {
 async function importSettings(file) {
   // An import that landed before the load answered would be merged into an empty edit state and
   // then compared against a snapshot we do not have yet
-  if (!requireLoaded()) return;
+  if (!requireLoaded()) return false;
   // One file at a time. Two in flight both captured the same revision, and whichever finished
   // reading first applied and disqualified the other — so the file chosen *second* lost, silently.
   if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
     showStatus('error', pageBusyMessage(pageTasks()));
-    return;
+    return false;
   }
   if (file.size > MAX_IMPORT_BYTES) {
     showStatus('error', t('ext.import.fileTooLarge'));
-    return;
+    return false;
   }
 
   // The world this import starts in. Reading the file is asynchronous and the form stays live
@@ -1362,7 +1553,7 @@ async function importSettings(file) {
       mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
     } catch (error) {
       showStatus('error', t('ext.status.importFailed', error.message));
-      return;
+      return false;
     }
 
     const outcome = planImport({
@@ -1374,12 +1565,12 @@ async function importSettings(file) {
     });
     if (outcome.refused) {
       showStatus('error', outcome.message);
-      return;
+      return false;
     }
 
     // Refused only if the page stopped being loaded under us; nothing was filled in, so nothing is
     // reported as imported either.
-    if (!applyImportedSettings(outcome.apply, mergedVersion)) return;
+    if (!applyImportedSettings(outcome.apply, mergedVersion)) return false;
 
     const notes = [...imported.unreadable];
     if (imported.skipped.length) notes.push(t('ext.import.skippedNote', imported.skipped.join(', ')));
@@ -1389,6 +1580,7 @@ async function importSettings(file) {
     showStatus('info', notes.length
       ? t('ext.status.importedWithNotes', t('ext.button.save'), notes.join('; '))
       : t('ext.status.imported', t('ext.button.save')));
+    return true;
   } finally {
     state.importing = false;
     scheduleOptionsEngineNotify();
@@ -1422,83 +1614,78 @@ function showError({ message, focus }) {
 
 function onCardInput(e) {
   const { card, kind, index } = cardOf(e.target);
+  const uid = state.buttons[kind][index]?.uid;
+  if (!uid) return;
 
   if (e.target.classList.contains('ci-input')) {
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    edit(() => {
-      state.buttons[kind][index].claudeInputs[row] = e.target.value;
-      updateClaudeWarn(card, state.buttons[kind][index]);
-    });
+    const operation = prepareInputPatch(kind, uid, row, e.target.value);
+    if (operation.ok && edit(operation.apply)) updateClaudeWarn(card, state.buttons[kind][index]);
     return;
   }
 
   const field = e.target.dataset.field;
   if (!field) return;
-  edit(() => {
-    state.buttons[kind][index][field] = e.target.value;
-    if (field === 'face') updateFacePreview(card, e.target.value);
-    if (field === 'command') {
-      autosize(e.target);
-      updateClaudeWarn(card, state.buttons[kind][index]);
-    }
-  });
+  const operation = prepareButtonPatch(kind, uid, { [field]: e.target.value });
+  if (!operation.ok || !edit(operation.apply)) return;
+  if (field === 'face') updateFacePreview(card, e.target.value);
+  if (field === 'command') {
+    autosize(e.target);
+    updateClaudeWarn(card, state.buttons[kind][index]);
+  }
 }
 
 function onCardClick(e) {
   if (e.target.classList.contains('remove-btn')) {
     const { kind, index } = cardOf(e.target);
-    edit(() => {
-      state.buttons[kind].splice(index, 1);
-      renderButtons(kind);
-    });
+    const uid = state.buttons[kind][index]?.uid;
+    const operation = prepareButtonRemove(kind, uid);
+    if (operation.ok && edit(operation.apply)) renderButtons(kind);
     return;
   }
 
   if (e.target.classList.contains('duplicate-btn')) {
     const { kind, index } = cardOf(e.target);
     if (state.buttons[kind].length >= MAX_BUTTONS) return;
-    edit(() => {
-      state.buttons[kind] = duplicateButton(state.buttons[kind], index);
-      // duplicateButton spreads the original, uid included — two buttons answering to the same name
-      // would make a candidate ambiguous, so the copy gets its own
-      state.buttons[kind][index + 1].uid = nextButtonUid();
+    const uid = state.buttons[kind][index]?.uid;
+    const operation = prepareButtonDuplicate(kind, uid);
+    if (operation.ok && edit(operation.apply)) {
       renderButtons(kind);
       // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
       cardElement(kind, index + 1, '.face-input').focus();
-    });
+    }
     return;
   }
 
   if (e.target.classList.contains('palette-btn')) {
     const { card, kind, index } = cardOf(e.target);
-    edit(() => {
+    const button = state.buttons[kind][index];
+    const operation = prepareButtonPatch(kind, button?.uid, { face: `${button?.face || ''}${e.target.textContent}` });
+    if (operation.ok && edit(operation.apply)) {
       const input = card.querySelector('.face-input');
-      state.buttons[kind][index].face += e.target.textContent;
       input.value = state.buttons[kind][index].face;
       updateFacePreview(card, input.value);
-    });
+    }
     return;
   }
 
   if (e.target.classList.contains('add-input-btn')) {
     const { kind, index } = cardOf(e.target);
     if (state.buttons[kind][index].claudeInputs.length >= MAX_CLAUDE_INPUTS) return;
-    edit(() => {
-      const inputs = state.buttons[kind][index].claudeInputs;
-      inputs.push('');
+    const button = state.buttons[kind][index];
+    const operation = prepareInputAdd(kind, button.uid);
+    if (operation.ok && edit(operation.apply)) {
       renderButtons(kind);
-      cardElement(kind, index, `.claude-row[data-ci="${inputs.length - 1}"] .ci-input`).focus();
-    });
+      cardElement(kind, index, `.claude-row[data-ci="${button.claudeInputs.length - 1}"] .ci-input`).focus();
+    }
     return;
   }
 
   if (e.target.classList.contains('ci-remove')) {
     const { kind, index } = cardOf(e.target);
     const row = Number(e.target.closest('.claude-row').dataset.ci);
-    edit(() => {
-      state.buttons[kind][index].claudeInputs.splice(row, 1);
-      renderButtons(kind);
-    });
+    const operation = prepareInputRemove(kind, state.buttons[kind][index]?.uid, row);
+    if (operation.ok && edit(operation.apply)) renderButtons(kind);
   }
 }
 
@@ -1563,10 +1750,13 @@ function endDrag(container) {
 // Returns the index after the move (so keyboard reordering can keep focus on the handle)
 function reorderButtons(kind, from, insertBefore) {
   if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
-  const moved = edit(() => {
-    state.buttons[kind] = moveItem(state.buttons[kind], from, insertBefore);
-    renderButtons(kind);
-  });
+  const buttons = state.buttons[kind];
+  if (!buttons[from] || !Number.isInteger(insertBefore) || insertBefore < 0 || insertBefore > buttons.length) return from;
+  const uid = buttons[from].uid;
+  const beforeUid = insertBefore >= buttons.length ? null : buttons[insertBefore].uid;
+  const operation = prepareButtonMove(kind, uid, beforeUid);
+  const moved = operation.ok && edit(operation.apply);
+  if (moved) renderButtons(kind);
   if (!moved) return from; // refused: nothing moved, so the handle stays where it was
   return insertBefore > from ? insertBefore - 1 : insertBefore;
 }
@@ -1575,11 +1765,11 @@ function reorderButtons(kind, from, insertBefore) {
 // than becoming a flag-heavy version of reorderButtons.
 function reorderClaudeInputs(kind, cardIndex, from, insertBefore) {
   if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
-  const moved = edit(() => {
-    const button = state.buttons[kind][cardIndex];
-    button.claudeInputs = moveItem(button.claudeInputs, from, insertBefore);
-    renderButtons(kind);
-  });
+  const button = state.buttons[kind][cardIndex];
+  if (!button) return from;
+  const operation = prepareInputMove(kind, button.uid, from, insertBefore);
+  const moved = operation.ok && edit(operation.apply);
+  if (moved) renderButtons(kind);
   if (!moved) return from; // refused: nothing moved, so the handle stays where it was
   return insertBefore > from ? insertBefore - 1 : insertBefore;
 }
@@ -1727,12 +1917,11 @@ for (const { kind, container, addButton } of SECTIONS) {
   });
 
   document.getElementById(addButton).addEventListener('click', () => {
-    if (state.buttons[kind].length >= MAX_BUTTONS) return;
-    edit(() => {
-      state.buttons[kind] = appendButton(state.buttons[kind], section(kind));
+    const operation = prepareButtonAdd(kind);
+    if (operation.ok && edit(operation.apply)) {
       renderButtons(kind);
       cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
-    });
+    }
   });
 }
 
@@ -1744,35 +1933,31 @@ overridesBody.addEventListener('input', (e) => {
   const isRepo = e.target.classList.contains('override-repo');
   const isBranch = e.target.classList.contains('override-branch');
   if (!isRepo && !isBranch) return;
-  edit(() => {
-    const row = state.overrides[Number(tr.dataset.index)];
-    // Don't trim while typing (whitespace is cleaned up all at once on save)
-    if (isRepo) row.repo = e.target.value;
-    else row.branch = e.target.value;
-  });
+  const field = isRepo ? 'repo' : 'branch';
+  const operation = prepareOverridePatch(Number(tr.dataset.index), { [field]: e.target.value });
+  if (operation.ok) edit(operation.apply);
 });
 
 overridesBody.addEventListener('click', (e) => {
   if (!e.target.classList.contains('remove-row')) return;
   const index = Number(e.target.closest('tr').dataset.index);
-  edit(() => {
-    state.overrides.splice(index, 1);
-    renderOverrides();
-  });
+  const operation = prepareOverrideRemove(index);
+  if (operation.ok && edit(operation.apply)) renderOverrides();
 });
 
 document.getElementById('add-override').addEventListener('click', () => {
-  edit(() => {
-    state.overrides.push({ repo: '', branch: '' });
+  const operation = prepareOverrideAdd();
+  if (operation.ok && edit(operation.apply)) {
     renderOverrides();
     overrideInput(state.overrides.length - 1, '.override-repo').focus();
-  });
+  }
 });
 
-// The field itself is what a save reads, so there is nothing in the edit state to change here — the
-// guard is still the first thing that runs, and before the first load it refuses.
+// The input mirrors the canonical edit state. A user keystroke enters that state through the shared
+// patch function; Save never reads the field back.
 document.getElementById('default-main').addEventListener('input', () => {
-  if (touch({ dirty: true })) scheduleOptionsEngineNotify();
+  const operation = prepareMainPatch(document.getElementById('default-main').value);
+  if (operation.ok) edit(operation.apply);
 });
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
@@ -1812,10 +1997,10 @@ document.getElementById('migration-apply').addEventListener('click', applyMigrat
 // once the user presses Save.
 document.getElementById('migration-keep').addEventListener('click', () => {
   if (!requireLoaded()) return;
-  editAndReview(() => {
-    markReviewed();
-    showStatus('info', t('ext.migration.markedReviewed', t('ext.button.save')));
-  });
+  const operation = prepareMigrationKeep();
+  if (!operation.ok || !editAndReview(operation.apply)) return;
+  renderMigration();
+  showStatus('info', t('ext.migration.markedReviewed', t('ext.button.save')));
 });
 
 // A save on another machine on this account arrives here as a storage change. Adopting it is what
@@ -1878,43 +2063,20 @@ window.addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
-// A load that failed is the only thing the user can act on while unloaded, and pressing it starts a
-// fresh attempt — a new generation, so an earlier answer that turns up late cannot win.
-document.getElementById('retry-btn').addEventListener('click', () => {
+// A load that failed is the only thing the user can act on while unloaded, and retry starts a fresh
+// attempt — a new generation, so an earlier answer that turns up late cannot win.
+async function retrySettingsLoad() {
   hideLoadFailure();
   showStatus('info', LOADING_MESSAGE());
-  loadSettings();
-});
+  return loadSettings();
+}
+
+document.getElementById('retry-btn').addEventListener('click', retrySettingsLoad);
 
 function freezeSnapshot(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) freezeSnapshot(child);
   return Object.freeze(value);
-}
-
-function buttonValidation(button) {
-  const errors = [];
-  for (const field of ['face', 'label', 'command']) {
-    if (!button[field].trim()) errors.push(field);
-  }
-  const warnings = normalizeClaudeInputs(button.claudeInputs).length > 0
-    && !commandStartsClaude(button.command)
-    ? ['claude-inputs-without-claude-command']
-    : [];
-  return { errors, warnings };
-}
-
-function overrideValidation() {
-  const seen = new Map();
-  return state.overrides.map((row, index) => {
-    const repo = row.repo.trim();
-    const branch = row.branch.trim();
-    const errors = [];
-    if ((!repo && branch) || (repo && !branch)) errors.push('incomplete');
-    if (repo && branch && seen.has(repo)) errors.push('duplicate');
-    if (repo && branch && !seen.has(repo)) seen.set(repo, index);
-    return { index, errors };
-  });
 }
 
 function optionsStatusSnapshot() {
@@ -1925,6 +2087,8 @@ function optionsStatusSnapshot() {
 
 /** @returns {OptionsEngineSnapshot} */
 function getOptionsEngineSnapshot() {
+  const editValidation = validateEditState();
+  const validationByButton = new Map(editValidation.buttons.map(item => [item.uid, item]));
   const buttons = Object.fromEntries(SECTIONS.map(({ kind }) => [
     kind,
     state.buttons[kind].map(button => ({
@@ -1933,7 +2097,11 @@ function getOptionsEngineSnapshot() {
       label: button.label,
       command: button.command,
       claudeInputs: [...button.claudeInputs],
-      validation: buttonValidation(button),
+      ...classifyPresetCommand(button.command, section(kind).presets),
+      validation: {
+        errors: [...validationByButton.get(button.uid).errors],
+        warnings: [...validationByButton.get(button.uid).warnings],
+      },
     })),
   ]));
   const buttonDiagnostics = SECTIONS.flatMap(({ kind }) => buttons[kind].map(button => ({
@@ -1948,7 +2116,7 @@ function getOptionsEngineSnapshot() {
     : state.loadsInFlight
       ? 'loading'
       : loadError ? 'error' : 'unloaded';
-  const validation = { buttons: buttonDiagnostics, overrides: overrideValidation() };
+  const validation = { buttons: buttonDiagnostics, overrides: editValidation.overrides };
   const targetVersion = state.plan?.targetVersion ?? SETTINGS_VERSION;
   const planSummary = state.plan
     ? migrationSummary(state.plan, state.selection)
@@ -2002,7 +2170,7 @@ function getOptionsEngineSnapshot() {
     revision: state.revision,
     validation,
     globalSettings: {
-      defaultMain: document.getElementById('default-main').value,
+      defaultMain: state.defaultMain,
       repoMainBranch: state.overrides.map((row, index) => ({ index, repo: row.repo, branch: row.branch })),
     },
     load: {
@@ -2048,66 +2216,22 @@ function buttonIndexForUid(kind, uid) {
   return state.buttons[buttonSection.kind].findIndex(button => button.uid === uid);
 }
 
-function buttonCardForUid(kind, uid) {
-  const index = buttonIndexForUid(kind, uid);
-  return index < 0 ? null : document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"]`);
-}
-
-function dispatchInput(element, value) {
-  if (!element || typeof value !== 'string') return false;
-  element.value = value;
-  element.dispatchEvent(new Event('input', { bubbles: true }));
-  return true;
-}
-
-function dispatchButtonPatch(action) {
-  const card = buttonCardForUid(action.kind, action.uid);
-  if (!card || !action.patch || typeof action.patch !== 'object') return;
-  const fields = new Map([
-    ['face', '.face-input'],
-    ['label', '.label-input'],
-    ['command', '.command-input'],
-  ]);
-  for (const [field, selector] of fields) {
-    if (Object.hasOwn(action.patch, field)) dispatchInput(card.querySelector(selector), action.patch[field]);
-  }
-}
-
-function dispatchButtonMove(action) {
-  const buttonSection = section(action.kind);
-  const from = buttonIndexForUid(action.kind, action.uid);
-  if (!buttonSection || from < 0) return;
-  const buttons = state.buttons[buttonSection.kind];
-  const insertBefore = action.beforeUid === null
-    ? buttons.length
-    : buttonIndexForUid(action.kind, action.beforeUid);
-  if (insertBefore >= 0) reorderButtons(buttonSection.kind, from, insertBefore);
-}
-
-function dispatchPresetAdd(action) {
-  const buttonSection = section(action.kind);
-  if (!buttonSection || state.buttons[buttonSection.kind].length >= MAX_BUTTONS) return;
-  const oldUids = new Set(state.buttons[buttonSection.kind].map(button => button.uid));
-  document.getElementById(buttonSection.addButton).click();
-  const index = state.buttons[buttonSection.kind].findIndex(button => !oldUids.has(button.uid));
-  if (index < 0) return;
-  const uid = state.buttons[buttonSection.kind][index].uid;
-  const select = buttonCardForUid(buttonSection.kind, uid)?.querySelector('.preset-select');
-  if (select) {
-    select.value = action.presetId;
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  if (action.beforeUid !== undefined) dispatchButtonMove({ kind: buttonSection.kind, uid, beforeUid: action.beforeUid });
+function runPreparedEdit(operation, { review: isReview = false } = {}) {
+  if (!operation.ok) return operation;
+  if (operation.changed === false) return { ok: true };
+  const accepted = (isReview ? editAndReview : edit)(operation.apply);
+  if (!accepted) return rejectedEdit(state.loaded ? 'busy' : 'not-loaded');
+  return { ok: true, ...(operation.createdUid ? { createdUid: operation.createdUid } : {}) };
 }
 
 async function discardOptionsEdits(confirmed) {
-  if (!state.loaded) return getOptionsEngineSnapshot();
+  if (!state.loaded) return rejectedEdit('not-loaded');
   if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
     showStatus('info', pageBusyMessage(pageTasks()));
-    return getOptionsEngineSnapshot();
+    return rejectedEdit('busy');
   }
   const hadUnsavedWork = editsInProgress();
-  if (hadUnsavedWork && confirmed !== true) return getOptionsEngineSnapshot();
+  if (hadUnsavedWork && confirmed !== true) return rejectedEdit('needs-confirmation');
 
   const revisionAtStart = state.revision;
   const appliedGenerationAtStart = state.appliedGeneration;
@@ -2126,13 +2250,22 @@ async function discardOptionsEdits(confirmed) {
     document.getElementById('dirty-indicator').hidden = !previousDirty;
     scheduleOptionsEngineNotify();
   }
-  return getOptionsEngineSnapshot();
+  return applied ? { ok: true } : rejectedEdit('failed');
 }
 
-/** @param {OptionsEngineAction} action @returns {OptionsEngineDispatchResult} */
-function dispatchOptionsEngineAction(action) {
+function dispatchResult(outcome) {
+  return {
+    ok: outcome.ok,
+    ...(outcome.reason ? { reason: outcome.reason } : {}),
+    ...(outcome.createdUid ? { createdUid: outcome.createdUid } : {}),
+    snapshot: getOptionsEngineSnapshot(),
+  };
+}
+
+/** @param {OptionsEngineAction} action @returns {Promise<OptionsDispatchResult>} */
+async function dispatchOptionsEngineAction(action) {
   if (!action || typeof action !== 'object' || typeof action.type !== 'string') {
-    throw new TypeError('optionsEngine.dispatch expects an action object');
+    return dispatchResult(rejectedEdit('invalid'));
   }
   const type = action.type;
   const editsSettings = new Set([
@@ -2143,115 +2276,116 @@ function dispatchOptionsEngineAction(action) {
   ]);
   if (editsSettings.has(type) && !state.loaded) {
     requireLoaded();
-    return getOptionsEngineSnapshot();
+    return dispatchResult(rejectedEdit('not-loaded'));
   }
 
-  switch (type) {
-    case 'save':
-      return saveSettings().then(getOptionsEngineSnapshot);
-    case 'discard':
-      return discardOptionsEdits(action.confirmed);
-    case 'retry-load':
-      document.getElementById('retry-btn').click();
-      return getOptionsEngineSnapshot();
-    case 'reload-latest':
-      return loadSettings().then(getOptionsEngineSnapshot);
-    case 'adopt-latest':
-      return discardOptionsEdits(action.confirmed);
-    case 'defer-latest':
-      return getOptionsEngineSnapshot();
-    case 'reset':
-      document.getElementById('reset-btn').click();
-      return getOptionsEngineSnapshot();
-    case 'export-saved':
-      return exportSettings().then(getOptionsEngineSnapshot);
-    case 'import-file':
-      if (typeof File === 'undefined' || !(action.file instanceof File)) throw new TypeError('import-file requires a File');
-      return importSettings(action.file).then(getOptionsEngineSnapshot);
-    case 'migration-apply':
-      document.getElementById('migration-apply').click();
-      return getOptionsEngineSnapshot();
-    case 'migration-keep':
-      document.getElementById('migration-keep').click();
-      return getOptionsEngineSnapshot();
-    case 'main-patch':
-      dispatchInput(document.getElementById('default-main'), action.value);
-      return getOptionsEngineSnapshot();
-    case 'override-add':
-      document.getElementById('add-override').click();
-      return getOptionsEngineSnapshot();
-    case 'override-patch': {
-      if (!Number.isInteger(action.index) || action.index < 0 || !action.patch || typeof action.patch !== 'object') return getOptionsEngineSnapshot();
-      for (const field of ['repo', 'branch']) {
-        if (!Object.hasOwn(action.patch, field)) continue;
-        const input = document.querySelector(`#overrides-body tr[data-index="${action.index}"] .override-${field}`);
-        dispatchInput(input, action.patch[field]);
+  try {
+    let outcome;
+    switch (type) {
+      case 'save': {
+        if (!state.loaded) outcome = rejectedEdit('not-loaded');
+        else if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) outcome = rejectedEdit('busy');
+        else {
+          const validation = validateEditState();
+          if (validation.buttons.some(button => button.errors.length)
+            || validation.overrides.some(row => row.errors.length)) outcome = rejectedEdit('invalid');
+          else outcome = await saveSettings() ? { ok: true } : rejectedEdit('failed');
+        }
+        break;
       }
-      return getOptionsEngineSnapshot();
-    }
-    case 'override-remove': {
-      if (!Number.isInteger(action.index) || action.index < 0) return getOptionsEngineSnapshot();
-      document.querySelector(`#overrides-body tr[data-index="${action.index}"] .remove-row`)?.click();
-      return getOptionsEngineSnapshot();
-    }
-    case 'button-patch':
-      dispatchButtonPatch(action);
-      return getOptionsEngineSnapshot();
-    case 'button-add': {
-      const buttonSection = section(action.kind);
-      if (buttonSection) document.getElementById(buttonSection.addButton).click();
-      return getOptionsEngineSnapshot();
-    }
-    case 'button-duplicate':
-    case 'button-remove': {
-      const button = buttonCardForUid(action.kind, action.uid);
-      button?.querySelector(type === 'button-duplicate' ? '.duplicate-btn' : '.remove-btn')?.click();
-      return getOptionsEngineSnapshot();
-    }
-    case 'button-move':
-      dispatchButtonMove(action);
-      return getOptionsEngineSnapshot();
-    case 'preset-add':
-      dispatchPresetAdd(action);
-      return getOptionsEngineSnapshot();
-    case 'preset-replace': {
-      const select = buttonCardForUid(action.kind, action.uid)?.querySelector('.preset-select');
-      if (select) {
-        select.value = action.presetId;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
+      case 'discard':
+      case 'adopt-latest':
+        outcome = await discardOptionsEdits(action.confirmed);
+        break;
+      case 'retry-load': {
+        const appliedBefore = state.appliedGeneration;
+        await retrySettingsLoad();
+        outcome = state.appliedGeneration !== appliedBefore ? { ok: true } : rejectedEdit('failed');
+        break;
       }
-      return getOptionsEngineSnapshot();
-    }
-    case 'input-add': {
-      if (!buttonCardForUid(action.kind, action.buttonUid)) return getOptionsEngineSnapshot();
-      const currentIndex = buttonIndexForUid(action.kind, action.buttonUid);
-      document.querySelector(`.btn-card[data-kind="${action.kind}"][data-index="${currentIndex}"] .add-input-btn`)?.click();
-      if (typeof action.value === 'string') {
-        const inputIndex = state.buttons[action.kind][currentIndex]?.claudeInputs.length - 1;
-        dispatchInput(cardElement(action.kind, currentIndex, `.claude-row[data-ci="${inputIndex}"] .ci-input`), action.value);
+      case 'reload-latest': {
+        if (!state.loaded) outcome = rejectedEdit('not-loaded');
+        else if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) outcome = rejectedEdit('busy');
+        else {
+          const appliedBefore = state.appliedGeneration;
+          await loadSettings();
+          outcome = state.appliedGeneration !== appliedBefore ? { ok: true } : rejectedEdit('failed');
+        }
+        break;
       }
-      return getOptionsEngineSnapshot();
+      case 'defer-latest':
+        outcome = { ok: true };
+        break;
+      case 'reset':
+        outcome = runPreparedEdit(prepareReset(), { review: true });
+        break;
+      case 'export-saved':
+        outcome = await exportSettings() ? { ok: true } : rejectedEdit('failed');
+        break;
+      case 'import-file':
+        if (typeof File === 'undefined' || !(action.file instanceof File)) outcome = rejectedEdit('invalid');
+        else if (!state.loaded) outcome = rejectedEdit('not-loaded');
+        else if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) outcome = rejectedEdit('busy');
+        else outcome = await importSettings(action.file) ? { ok: true } : rejectedEdit('failed');
+        break;
+      case 'migration-apply':
+        outcome = runPreparedEdit(prepareMigrationApply(), { review: true });
+        break;
+      case 'migration-keep':
+        outcome = runPreparedEdit(prepareMigrationKeep(), { review: true });
+        break;
+      case 'main-patch':
+        outcome = runPreparedEdit(prepareMainPatch(action.value));
+        break;
+      case 'override-add':
+        outcome = runPreparedEdit(prepareOverrideAdd());
+        break;
+      case 'override-patch':
+        outcome = runPreparedEdit(prepareOverridePatch(action.index, action.patch));
+        break;
+      case 'override-remove':
+        outcome = runPreparedEdit(prepareOverrideRemove(action.index));
+        break;
+      case 'button-patch':
+        outcome = runPreparedEdit(prepareButtonPatch(action.kind, action.uid, action.patch));
+        break;
+      case 'button-add':
+        outcome = runPreparedEdit(prepareButtonAdd(action.kind));
+        break;
+      case 'button-duplicate':
+        outcome = runPreparedEdit(prepareButtonDuplicate(action.kind, action.uid));
+        break;
+      case 'button-remove':
+        outcome = runPreparedEdit(prepareButtonRemove(action.kind, action.uid));
+        break;
+      case 'button-move':
+        outcome = runPreparedEdit(prepareButtonMove(action.kind, action.uid, action.beforeUid));
+        break;
+      case 'preset-add':
+        outcome = runPreparedEdit(preparePresetAdd(action.kind, action.presetId, action.beforeUid));
+        break;
+      case 'preset-replace':
+        outcome = runPreparedEdit(preparePresetReplace(action.kind, action.uid, action.presetId, action.confirmed));
+        break;
+      case 'input-add':
+        outcome = runPreparedEdit(prepareInputAdd(action.kind, action.buttonUid, action.value));
+        break;
+      case 'input-patch':
+        outcome = runPreparedEdit(prepareInputPatch(action.kind, action.buttonUid, action.inputIndex, action.value));
+        break;
+      case 'input-remove':
+        outcome = runPreparedEdit(prepareInputRemove(action.kind, action.buttonUid, action.inputIndex));
+        break;
+      case 'input-move':
+        outcome = runPreparedEdit(prepareInputMove(action.kind, action.buttonUid, action.fromIndex, action.beforeIndex));
+        break;
+      default:
+        outcome = rejectedEdit('invalid');
     }
-    case 'input-patch': {
-      const index = buttonIndexForUid(action.kind, action.buttonUid);
-      if (index < 0 || !Number.isInteger(action.inputIndex) || action.inputIndex < 0) return getOptionsEngineSnapshot();
-      dispatchInput(cardElement(action.kind, index, `.claude-row[data-ci="${action.inputIndex}"] .ci-input`), action.value);
-      return getOptionsEngineSnapshot();
-    }
-    case 'input-remove': {
-      const index = buttonIndexForUid(action.kind, action.buttonUid);
-      if (index < 0 || !Number.isInteger(action.inputIndex) || action.inputIndex < 0) return getOptionsEngineSnapshot();
-      cardElement(action.kind, index, `.claude-row[data-ci="${action.inputIndex}"] .ci-remove`)?.click();
-      return getOptionsEngineSnapshot();
-    }
-    case 'input-move': {
-      const index = buttonIndexForUid(action.kind, action.buttonUid);
-      if (index < 0) return getOptionsEngineSnapshot();
-      reorderClaudeInputs(action.kind, index, action.fromIndex, action.beforeIndex);
-      return getOptionsEngineSnapshot();
-    }
-    default:
-      throw new TypeError(`Unknown optionsEngine action: ${type}`);
+    return dispatchResult(outcome);
+  } catch (error) {
+    console.error('Terminal Checkout: options action failed', error);
+    return dispatchResult(rejectedEdit('failed'));
   }
 }
 

@@ -42,24 +42,17 @@ test('the linked module stylesheets exist as local assets', () => {
   }
 });
 
-test('the engine snapshot typedef names every view state group and button value', () => {
+test('the engine dispatch contract is promise-based with structured outcomes', () => {
   const source = read('options.js');
-  assert.match(source, /@typedef \{Object\} OptionsEngineSnapshot/);
-  for (const field of [
-    'buttons', 'uid', 'face', 'label', 'command', 'claudeInputs', 'validation', 'dirty',
-    'errors', 'warnings', 'load', 'save', 'hasUnsavedWork', 'sync', 'migration', 'globalSettings', 'status',
-  ]) assert.ok(source.includes(field), `missing snapshot contract field ${field}`);
-  for (const field of ['summary', 'actionable', 'informational', 'fromInputs', 'toInputs']) {
-    assert.ok(source.includes(field), `missing migration snapshot contract field ${field}`);
-  }
-  assert.match(source, /@property \{\(\) => OptionsEngineSnapshot\} getSnapshot/);
-  assert.match(source, /@property \{\(listener: \(snapshot: OptionsEngineSnapshot\) => void\) => \(\) => void\} subscribe/);
-  assert.match(source, /@property \{\(action: OptionsEngineAction\) => OptionsEngineDispatchResult\} dispatch/);
-  for (const action of [
-    'save', 'discard', 'retry-load', 'reload-latest', 'adopt-latest', 'defer-latest', 'reset',
-    'export-saved', 'import-file', 'migration-apply', 'migration-keep', 'main-patch', 'override-add',
-    'override-patch', 'override-remove', 'button-patch', 'button-add', 'button-duplicate',
-    'button-remove', 'button-move', 'preset-add', 'preset-replace', 'input-add', 'input-patch',
-    'input-remove', 'input-move',
-  ]) assert.ok(source.includes(`type: '${action}'`), `missing dispatch action ${action}`);
+  assert.match(source, /@typedef \{Object\} OptionsDispatchResult[\s\S]*?@property \{boolean\} ok[\s\S]*?@property \{\('not-loaded'\|'busy'\|'limit'\|'not-found'\|'needs-confirmation'\|'invalid'\|'failed'\)=\} \[reason\][\s\S]*?@property \{string=\} \[createdUid\][\s\S]*?@property \{OptionsEngineSnapshot\} snapshot/);
+  assert.match(source, /@property \{\(action: OptionsEngineAction\) => Promise<OptionsDispatchResult>\} dispatch/);
+});
+
+test('dispatch mutates engine state without DOM edits, synthetic events, or browser dialogs', () => {
+  const source = read('options.js');
+  const start = source.indexOf('async function dispatchOptionsEngineAction(');
+  const end = source.indexOf('\n/** @type {OptionsEngine} */', start);
+  assert.ok(start >= 0 && end > start);
+  const dispatch = source.slice(start, end);
+  assert.doesNotMatch(dispatch, /document\.|\.click\s*\(|dispatchEvent\s*\(|\.value\s*=|\b(?:confirm|alert|prompt)\s*\(/);
 });

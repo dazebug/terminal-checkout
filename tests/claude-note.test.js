@@ -86,7 +86,12 @@ test('the claude word test has one home, and the options warning asks it', () =>
     const found = (readExtension(file).match(regexLiteral) ?? []).length;
     assert.equal(found, file === 'defaults.js' ? 1 : 0, `${file} spells the claude word test ${found} time(s)`);
   }
-  assert.match(readExtension('options.js'), /commandStartsClaude\(/, 'the options warning no longer asks the shared predicate');
+  const options = readExtension('options.js');
+  const warning = options.slice(options.indexOf('function updateClaudeWarn('));
+  assert.match(warning.slice(0, warning.indexOf('\n}\n')), /validateButtonValue\(btn\)/, 'the options warning no longer asks the shared validator');
+  const defaults = readExtension('defaults.js');
+  const validator = defaults.slice(defaults.indexOf('function validateButtonValue('));
+  assert.match(validator.slice(0, validator.indexOf('\n}\n')), /commandStartsClaude\(button\.command\)/, 'the shared validator no longer uses the shared predicate');
 });
 
 test('the options warning counts inputs the way a click sends them', () => {

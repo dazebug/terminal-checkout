@@ -27,6 +27,8 @@ const { isTextFace } = vm.runInThisContext('({ isTextFace })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
 const { buttonUsesAllowedVariables } =
   vm.runInThisContext('({ buttonUsesAllowedVariables })');
+const { classifyPresetCommand, validateButtonValue, validateOverrideRows } =
+  vm.runInThisContext('({ classifyPresetCommand, validateButtonValue, validateOverrideRows })');
 // Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
@@ -207,6 +209,49 @@ test('presetById: an unknown id finds nothing rather than the wrong preset', () 
   // from settings: a lookup must not answer with something off Object.prototype
   assert.equal(presetById(PR_PRESETS, 'constructor'), null);
   assert.equal(presetById(PR_PRESETS, PR_PRESETS[0].name), null);
+});
+
+test('classifyPresetCommand uses exact trimmed commands for preset identity and custom status', () => {
+  const presets = [
+    { id: 'pr.first', command: 'echo one' },
+    { id: 'pr.second', command: 'echo two' },
+  ];
+  assert.deepEqual(classifyPresetCommand('  echo two  ', presets), {
+    presetId: 'pr.second', customCommand: false,
+  });
+  assert.deepEqual(classifyPresetCommand('echo  two', presets), {
+    presetId: null, customCommand: true,
+  });
+  assert.deepEqual(classifyPresetCommand('   ', presets), {
+    presetId: null, customCommand: false,
+  });
+});
+
+test('validateButtonValue returns the shared required-field errors and Claude warning', () => {
+  assert.deepEqual(validateButtonValue({ face: ' ', label: '', command: 'echo run', claudeInputs: ['!run'] }), {
+    errors: ['face', 'label'],
+    warnings: ['claude-inputs-without-claude-command'],
+  });
+  assert.deepEqual(validateButtonValue({ face: 'x', label: 'Run', command: 'claude', claudeInputs: ['!run'] }), {
+    errors: [], warnings: [],
+  });
+});
+
+test('validateOverrideRows shares Save validation and keeps empty rows out of storage', () => {
+  assert.deepEqual(validateOverrideRows([
+    { repo: '', branch: '' },
+    { repo: 'owner/repo', branch: '' },
+    { repo: 'owner/repo', branch: 'main' },
+    { repo: 'owner/repo', branch: 'trunk' },
+  ]), {
+    rows: [
+      { index: 0, errors: [] },
+      { index: 1, errors: ['incomplete'] },
+      { index: 2, errors: [] },
+      { index: 3, errors: ['duplicate'] },
+    ],
+    value: { 'owner/repo': 'main' },
+  });
 });
 
 test('the preset dropdown carries the id as its value and the name as its text', () => {
