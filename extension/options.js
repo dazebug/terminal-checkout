@@ -145,81 +145,19 @@
  * @typedef {Object} OptionsEngine
  * @property {() => OptionsEngineSnapshot} getSnapshot Returns a deeply frozen copy of the current edit and page state.
  * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Registers for state changes coalesced into one microtask; registration never invokes the listener, so mount calls getSnapshot for its first render. Returns an unsubscribe function.
- * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action through the same state changes as the legacy handlers. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
+ * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action to engine state. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
  *
  * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. `migration-selection` takes a migration candidate uid and boolean `selected`; it records review intent without marking settings dirty. `migration-panel-toggle` changes the shared migration panel visibility and records review intent. Button and input moves use the existing before-index ordering.
  */
 
-// PR, PR-list, issue, issue-list, and repository buttons differ in both their storage key and the
-// variables they can use (BUTTON_KINDS in defaults.js). Everything else about editing them is
-// identical, so here we only add the DOM slot each set of cards goes into and share one renderer and
-// one set of event handlers.
-const SECTIONS = [
-  { kind: 'pr', container: 'pr-buttons', addButton: 'pr-add', addHint: 'pr-add-hint' },
-  { kind: 'pr-list', container: 'pr-list-buttons', addButton: 'pr-list-add', addHint: 'pr-list-add-hint' },
-  { kind: 'issue', container: 'issue-buttons', addButton: 'issue-add', addHint: 'issue-add-hint' },
-  { kind: 'issue-list', container: 'issue-list-buttons', addButton: 'issue-list-add', addHint: 'issue-list-add-hint' },
-  { kind: 'repo', container: 'repo-buttons', addButton: 'repo-add', addHint: 'repo-add-hint' },
-].map(dom => ({ ...BUTTON_KINDS[dom.kind], ...dom }));
+const SECTIONS = Object.entries(BUTTON_KINDS).map(([kind, section]) => ({ kind, ...section }));
 
-// This page stores message ids in `data-i18n`, not prose, and resolves them synchronously through
-// `chrome.i18n` before drawing.
+/** @type {(key: string, ...args: Array<string|number>) => string} */
+const tHTML = tr;
 
-// A message as **text**. Everything that lands in `textContent`, a `title`, a placeholder or
-// `confirm()` comes through here, and no value it returns carries markup.
-//
-// The split from `tHTML` is the point, and it is the same shape as the app's shell-payload type: a
-// value that will be parsed as HTML and a value that may contain something the user typed must not
-// be reachable through one function. A repository name goes into a validation message; that message
-// is set with `textContent`, so it can only ever be text. A test pins the halves apart — a key whose
-// value contains a tag is used only through `tHTML`, and never the other way around.
-function t(key, ...args) {
-  return tr(key, ...args);
-}
-
-// A message as **markup**, for the two places that build HTML: the static prose in `options.html`
-// and the button card template. Its arguments are ours — a constant, a preset name, another
-// message — and never anything a user typed.
-function tHTML(key, ...args) {
-  return tr(key, ...args);
-}
-
-// The arguments the static prose takes, in one table, so that "what can reach innerHTML on this
-// page" is a list to read rather than a search to run. Thunks rather than values: the labels they
-// quote are themselves messages and must resolve in the same paint as the containing sentence.
-//
-// The quotations are message relations. Prose that names another control used to spell that control's
-// label out again — and the two had already drifted apart here, with one paragraph calling the
-// field `Face` and another calling it `face`. Naming the message instead of the string means a
-// translator cannot make them disagree. Thunks resolve the quoted labels in the same paint as the
-// sentence that contains them.
-const STATIC_TEXT_ARGS = {
-  'ext.section.pr.help1': () => [MAX_BUTTONS, t('ext.field.face'), t('ext.field.tooltip')],
-  'ext.section.pr.help2': () => [t('ext.card.duplicate')],
-  'ext.section.prList.help': () => [MAX_BUTTONS],
-  'ext.section.issue.help': () => [MAX_BUTTONS],
-  'ext.section.issueList.help': () => [MAX_BUTTONS],
-  'ext.section.repo.help': () => [
-    MAX_BUTTONS,
-    presetById(section('repo').presets, 'repo.open').name,
-    t('ext.field.face'),
-  ],
-  'ext.section.backup.help2': () => [t('ext.button.save')],
-  'ext.button.addLimit': () => [MAX_BUTTONS],
-};
-
-// Fill every node that names a message while the parser is still here.
-function applyStaticText(root = document) {
-  for (const node of root.querySelectorAll('[data-i18n]')) {
-    const key = node.dataset.i18n;
-    const args = Object.hasOwn(STATIC_TEXT_ARGS, key) ? STATIC_TEXT_ARGS[key]() : [];
-    node.innerHTML = tHTML(key, ...args);
-  }
-}
-
+// Engine messages are plain text. The view modules own their text and markup insertion helpers.
 applyDocumentLanguage();
-document.title = `Terminal Checkout — ${t('ext.header.options')}`;
-applyStaticText();
+document.title = `Terminal Checkout — ${tr('ext.header.options')}`;
 
 // Unlike the storage schema, overrides are kept as an array. Keying them by repo would mean
 // deleting and re-adding the key on every keystroke in the name, and redrawing the row each time
@@ -279,6 +217,8 @@ const state = {
   reviewed: false,
   plan: null,
   migrationPanelOpen: false,
+  loadErrorMessage: null,
+  status: { type: 'idle', message: '' },
   // Ids of the checked candidates — they start checked, so this starts as all of them.
   selection: new Set(),
 };
@@ -306,24 +246,6 @@ function section(kind) {
   return SECTIONS.find(s => s.kind === kind);
 }
 
-// The preset list is fixed per section, so build it once and clone it for each card.
-//
-// Chrome fixes the catalogue for this extension context, so a template built at load can be cloned
-// for the page's lifetime. A Chrome-language change creates a new context on the next page load.
-let presetTemplates = buildPresetTemplates();
-
-function buildPresetTemplates() {
-  return Object.fromEntries(SECTIONS.map(({ kind, presets }) => {
-    const select = document.createElement('select');
-    select.className = 'preset-select';
-    select.add(new Option(t('ext.field.preset.placeholder'), ''));
-    // The value is the preset's id and the text is its name — a name is display text and will be
-    // translated, so it cannot be what the selection is read back as (defaults.js, presetOptions)
-    presetOptions(presets).forEach(({ value, text }) => select.add(new Option(text, value)));
-    return [kind, select];
-  }));
-}
-
 // Buttons enter the edit state through `adoptButton` (anything from outside: storage, a file, a
 // preset — it gets a uid we mint) or `reshapeButton` (a button already here, keeping its name).
 // Both live in defaults.js, along with why they are two functions and not one.
@@ -332,7 +254,7 @@ function buildPresetTemplates() {
 // state. Every entry point that would write, or that would change what a later write contains, asks
 // here first. The page is also inert until then (updateLoadedGate), but that is the fence; this is
 // the rule, and code paths that do not come from a click still have to pass it.
-const LOADING_MESSAGE = () => t('ext.status.loading');
+const LOADING_MESSAGE = () => tr('ext.status.loading');
 
 function requireLoaded() {
   if (state.loaded) return true;
@@ -340,13 +262,8 @@ function requireLoaded() {
   return false;
 }
 
-// Nothing on the page is interactive until there are settings to interact with.
-//
-// One switch on the root, not a list of controls. The list was wrong the moment it was written: it
-// named the buttons and forgot the `default-main` field and [+ Add Override], and typing in that
-// field bumped the revision — which made the first load throw away its own answer and stop, leaving
-// the page unloaded with nothing to retry it. A control added later is covered here without anyone
-// having to remember.
+// The replica and editor become interactive only after settings load. One switch on their shared
+// root covers every control, including controls added by either view module.
 function updateLoadedGate() {
   // The app, not the whole document: the status line and [Retry] live outside it, so a load that
   // failed still has somewhere to say so and something the user can press.
@@ -356,19 +273,14 @@ function updateLoadedGate() {
 // A load that never answered. The gate stays shut — a Save here would write an empty settings object
 // over real ones — so what is offered instead is another attempt.
 function showLoadFailure(error) {
-  document.getElementById('load-error').hidden = false;
-  showStatus('error', `${LOAD_FAILED_MESSAGE()} (${error?.message || error})`);
+  state.loadErrorMessage = `${LOAD_FAILED_MESSAGE()} (${error?.message || error})`;
+  showStatus('error', state.loadErrorMessage);
+  scheduleOptionsEngineNotify();
 }
 
 function hideLoadFailure() {
-  document.getElementById('load-error').hidden = true;
-}
-
-// Save is the one control that has to be shut while it is already running. `inert` covers "before
-// the load"; this covers "while a write is in flight", and the guard in saveSettings covers the
-// routes that never touch a button.
-function updateSavingGate() {
-  document.getElementById('save-btn').disabled = state.saving;
+  state.loadErrorMessage = null;
+  scheduleOptionsEngineNotify();
 }
 
 // Unsaved work that a remote change must never overwrite: text typed, and a review being decided.
@@ -427,15 +339,7 @@ function adoptDeferredChange() {
 // act on it ends here, so there is no route where the fact is known and nothing shows it.
 function markStale() {
   state.staleSinceLoad = true;
-  renderStaleBanner();
   scheduleOptionsEngineNotify();
-}
-
-// Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
-// event can be missed, and a banner that was never shown must not mean "nothing changed".
-function renderStaleBanner() {
-  const banner = document.getElementById('stale-banner');
-  if (banner) banner.hidden = !state.staleSinceLoad;
 }
 
 // The edit state in the shape the planner reads: what would be stored if Save were pressed now,
@@ -443,181 +347,6 @@ function renderStaleBanner() {
 // storage happens to hold — those two drift apart the moment anything is edited or imported.
 function editStateSnapshot() {
   return Object.fromEntries(SECTIONS.map(({ kind, storageKey }) => [storageKey, state.buttons[kind]]));
-}
-
-// --- Rendering ---
-// Editing text only updates the state; it never redraws. Redrawing happens only when cards or rows
-// are added, removed, or reordered, and every one of those is triggered by a button click, a drag,
-// or ↑↓ — so focus is never lost while typing.
-
-function renderButtons(kind) {
-  const { container: containerId, addButton, addHint } = section(kind);
-  const container = document.getElementById(containerId);
-  // Redrawing replaces every node a drag captured and invalidates its indices, so cancel the drag
-  // before clearing this section. The shared state may belong to another section, so clean its source.
-  if (drag) endDrag(document.getElementById(section(drag.kind).container));
-  container.innerHTML = '';
-
-  const count = state.buttons[kind].length;
-
-  state.buttons[kind].forEach((btn, i) => {
-    const card = document.createElement('div');
-    card.className = 'btn-card';
-    card.dataset.index = i;
-    card.dataset.kind = kind;
-    // Values aren't interpolated into the HTML; they are assigned as properties below (which removes the need to escape them)
-    card.innerHTML = `
-      <div class="btn-card-header">
-        <span class="btn-number">
-          ${count > 1 ? `<button class="drag-handle" aria-label="${t('ext.card.reorder.aria')}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
-          <span class="prompt">❯</span> ${section(kind).storageKey}[${i}]
-        </span>
-        <span class="card-actions">
-          ${count < MAX_BUTTONS ? `<button class="duplicate-btn" title="${t('ext.card.duplicate.tooltip')}">${t('ext.card.duplicate')}</button>` : ''}
-          ${count > 1 ? `<button class="remove-btn">${t('ext.card.delete')}</button>` : ''}
-        </span>
-      </div>
-      <div class="btn-row">
-        <div class="field field-face">
-          <label for="${kind}-${i}-face">${t('ext.field.face')}</label>
-          <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="${FACE_MAX_LENGTH}">
-        </div>
-        <div class="field field-preview">
-          <label>${t('ext.field.preview')}</label>
-          <span class="face-preview"></span>
-        </div>
-        <div class="field field-label">
-          <label for="${kind}-${i}-label">${t('ext.field.tooltip')}</label>
-          <input id="${kind}-${i}-label" class="label-input" data-field="label" placeholder="${t('ext.field.tooltip.placeholder')}">
-        </div>
-        <div class="field field-preset">
-          <label for="${kind}-${i}-preset">${t('ext.field.preset')}</label>
-        </div>
-      </div>
-      <div class="face-palette">
-        <span class="palette-label">${t('ext.card.palette.label')}</span>
-        ${FACE_EMOJI.map(e => `<button class="palette-btn" title="${t('ext.card.palette.tooltip', e)}">${e}</button>`).join('')}
-      </div>
-      <div class="field field-command">
-        <label for="${kind}-${i}-command">${t('ext.field.command')}</label>
-        <div class="cmd-block">
-          <span class="cmd-prompt">$</span>
-          <textarea id="${kind}-${i}-command" class="command-input" data-field="command" rows="2"
-                    spellcheck="false" placeholder="{cd} && claude"></textarea>
-        </div>
-      </div>
-      <div class="claude-queue">
-        <div class="claude-queue-head"><span class="ret">⏎</span> ${t('ext.field.claudeInputs')}
-          <span class="help-inline">${tHTML('ext.field.claudeInputs.help')}</span>
-        </div>
-        <div class="claude-hint" hidden>${tHTML('ext.field.claudeInputs.hint')}</div>
-        <div class="claude-warn" hidden>${t('ext.field.claudeInputs.warn')}</div>
-        <div class="claude-rows"></div>
-        <button class="add-input-btn">${t('ext.button.addInput')}</button>
-      </div>
-    `;
-
-    const select = presetTemplates[kind].cloneNode(true);
-    select.id = `${kind}-${i}-preset`;
-    card.querySelector('.field-preset').appendChild(select);
-
-    card.querySelector('.face-input').value = btn.face;
-    card.querySelector('.label-input').value = btn.label;
-    card.querySelector('.command-input').value = btn.command;
-
-    const rows = card.querySelector('.claude-rows');
-    btn.claudeInputs.forEach((text, j) => {
-      const row = document.createElement('div');
-      row.className = 'claude-row';
-      row.dataset.ci = j;
-      // Keep this class separate from .drag-handle: the card mousedown listener matches that class
-      // and would make the whole card draggable from a row's handle.
-      row.innerHTML = `
-        ${btn.claudeInputs.length > 1 ? `<button class="ci-drag-handle" aria-label="${t('ext.claudeInput.reorder.aria', j + 1)}" title="${t('ext.reorder.tooltip')}">⠿</button>` : ''}
-        <span class="ci-marker">⏎${j + 1}</span>
-        <input class="ci-input" placeholder="${t('ext.field.claudeInput.placeholder')}">
-        <button class="ci-remove" title="${t('ext.button.remove')}">×</button>
-      `;
-      row.querySelector('.ci-input').value = text;
-      rows.appendChild(row);
-    });
-    card.querySelector('.add-input-btn').disabled = btn.claudeInputs.length >= MAX_CLAUDE_INPUTS;
-
-    updateFacePreview(card, btn.face);
-    updateClaudeWarn(card, btn);
-    container.appendChild(card);
-    autosize(card.querySelector('.command-input')); // scrollHeight is only meaningful once it is attached
-  });
-
-  const atMax = count >= MAX_BUTTONS;
-  document.getElementById(addButton).disabled = atMax;
-  document.getElementById(addHint).hidden = !atMax;
-}
-
-// Paired with the button rendering rules in content.js (they share the decision in defaults.js) —
-// this reproduces exactly how the button will look.
-// Repository buttons are the only filled action buttons, so their shape is the same whether the
-// face is text or emoji.
-function updateFacePreview(card, face) {
-  const el = card.querySelector('.face-preview');
-  const shown = face.trim() || '⏏️';
-  const style = card.dataset.kind === 'repo' ? 'gh-btn-header'
-    : isTextFace(shown) ? 'gh-btn-text' : 'gh-btn-emoji';
-  el.textContent = shown;
-  el.className = `face-preview ${style}`;
-}
-
-function updateClaudeWarn(card, btn) {
-  const hasInputs = normalizeClaudeInputs(btn.claudeInputs).length > 0;
-  const diagnostics = validateButtonValue(btn);
-  card.querySelector('.claude-warn').hidden = !diagnostics.warnings.includes('claude-inputs-without-claude-command');
-  // The merge rules are only worth reading once there is something to merge — showing them on
-  // every empty card would put three paragraphs of prose above every button
-  card.querySelector('.claude-hint').hidden = !hasInputs;
-}
-
-function renderOverrides() {
-  const tbody = document.getElementById('overrides-body');
-  tbody.innerHTML = '';
-
-  state.overrides.forEach((row, i) => {
-    const tr = document.createElement('tr');
-    tr.dataset.index = i;
-    tr.innerHTML = `
-      <td><input type="text" class="override-repo" placeholder="remy-worker"></td>
-      <td><input type="text" class="override-branch" placeholder="master"></td>
-      <td><button class="remove-row" title="${t('ext.button.remove')}">✕</button></td>
-    `;
-    tr.querySelector('.override-repo').value = row.repo;
-    tr.querySelector('.override-branch').value = row.branch;
-    tbody.appendChild(tr);
-  });
-
-  const isEmpty = state.overrides.length === 0;
-  document.querySelector('.override-table').hidden = isEmpty;
-  document.getElementById('overrides-empty').hidden = !isEmpty;
-}
-
-// A clipped command can be neither edited nor reviewed, so grow the height to fit the content
-function autosize(textarea) {
-  textarea.style.height = 'auto';
-  textarea.style.height = `${textarea.scrollHeight}px`; // cmd-block owns the border, so no adjustment is needed
-}
-
-function cardOf(el) {
-  const card = el.closest('.btn-card');
-  return { card, kind: card.dataset.kind, index: Number(card.dataset.index) };
-}
-
-function overrideInput(index, selector) {
-  return document.querySelector(`#overrides-body tr[data-index="${index}"] ${selector}`);
-}
-
-// Grabs an element inside a card by kind and index (the counterpart of overrideInput for override
-// rows). Redrawing a card drops the old nodes, so nothing is held on to — it is looked up again
-// every time.
-function cardElement(kind, index, selector) {
-  return document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"] ${selector}`);
 }
 
 // --- Unsaved-change indicator ---
@@ -635,18 +364,12 @@ function cardElement(kind, index, selector) {
 function touch({ dirty = false, review = false } = {}) {
   if (!shouldAcceptUserAction(state.loaded)) return false;
   state.revision++;
-  if (dirty) {
-    state.dirty = true;
-    document.getElementById('dirty-indicator').hidden = false;
-  }
+  if (dirty) state.dirty = true;
   if (review) state.reviewTouched = true;
   return true;
 }
 
-// Every handler is one of these three: the guard runs, and only then does the change. Writing the
-// guard and the change as separate statements is how their order got reversed — [+ Add Button]
-// pushed the button and asked afterwards, and so did [+ Add Override], the card inputs, delete,
-// duplicate, reorder and the review checkboxes (userAction in migrations.js).
+// The guard and edit run together so a rejected action cannot partially change engine state.
 function edit(change) {
   const accepted = userAction(() => touch({ dirty: true }), change);
   if (accepted) scheduleOptionsEngineNotify();
@@ -873,31 +596,6 @@ function prepareMigrationKeep() {
 
 function clearDirty() {
   state.dirty = false;
-  document.getElementById('dirty-indicator').hidden = true;
-}
-
-
-// --- Applying a preset ---
-// The dropdown does not represent the current state. The card shows the state; the dropdown is
-// merely an action that loads a template, so it snaps back to its placeholder as soon as one is
-// picked.
-
-function applyPreset(select) {
-  const id = select.value;
-  select.value = ''; // applied or cancelled, it always returns to the placeholder
-  if (!id) return;
-
-  const { kind, index } = cardOf(select);
-  const button = state.buttons[kind][index];
-  const preset = presetById(section(kind).presets, id);
-  if (!button || !preset) return;
-
-  const isCustom = classifyPresetCommand(button.command, section(kind).presets).customCommand;
-  if (isCustom && !confirm(t('ext.confirm.presetOverwrite', index, preset.name))) {
-    return;
-  }
-  const operation = preparePresetReplace(kind, button.uid, id, true);
-  if (operation.ok && edit(operation.apply)) renderButtons(kind);
 }
 
 // --- Validation ---
@@ -906,9 +604,9 @@ function applyPreset(select) {
 // `a face` to carry an English article, and an article is a fact about English grammar that no
 // other language here inflects the same way, so never assemble a translated clause.
 const REQUIRED_FIELDS = [
-  { field: 'face', describe: (key, index) => t('ext.validate.face', key, index) },
-  { field: 'label', describe: (key, index) => t('ext.validate.tooltip', key, index) },
-  { field: 'command', describe: (key, index) => t('ext.validate.command', key, index) },
+  { field: 'face', describe: (key, index) => tr('ext.validate.face', key, index) },
+  { field: 'label', describe: (key, index) => tr('ext.validate.tooltip', key, index) },
+  { field: 'command', describe: (key, index) => tr('ext.validate.command', key, index) },
 ];
 
 function validateEditState() {
@@ -929,7 +627,6 @@ function validateButtons(validation = validateEditState()) {
   return {
     message: REQUIRED_FIELDS.find(item => item.field === field)
       .describe(section(diagnostic.kind).storageKey, index),
-    focus: cardElement(diagnostic.kind, index, `[data-field="${field}"]`),
   };
 }
 
@@ -941,14 +638,11 @@ function serializeOverrides(validation = validateEditState()) {
   const row = state.overrides[diagnostic.index];
   const code = diagnostic.errors[0];
   const repo = row.repo.trim();
-  const focusSelector = code === 'duplicate' ? '.override-repo'
-    : repo ? '.override-branch' : '.override-repo';
   return {
     error: {
       message: code === 'duplicate'
-        ? t('ext.validate.override.duplicate', diagnostic.index + 1, repo)
-        : t('ext.validate.override.incomplete', diagnostic.index + 1),
-      focus: overrideInput(diagnostic.index, focusSelector),
+        ? tr('ext.validate.override.duplicate', diagnostic.index + 1, repo)
+        : tr('ext.validate.override.incomplete', diagnostic.index + 1),
     },
   };
 }
@@ -1014,7 +708,6 @@ async function loadSettings() {
   }
   state.overrides = Object.entries(settings.repoMainBranch || {}).map(([repo, branch]) => ({ repo, branch }));
   state.defaultMain = settings.defaultMain || DEFAULT_MAIN;
-  document.getElementById('default-main').value = state.defaultMain;
 
   state.loadedVersion = storedSchemaVersion(data);
   // Exactly what was read — the raw object, not the cleaned one, because that is what a later save
@@ -1029,7 +722,6 @@ async function loadSettings() {
   state.appliedGeneration += 1;
   hideLoadFailure();
   updateLoadedGate();
-  renderStaleBanner();
   const dropped = describeSkipped(skippedByKey);
   if (dropped.length) {
     // Said out loud, named per key, and with the consequence attached. The section above is now
@@ -1038,8 +730,6 @@ async function loadSettings() {
     showStatus('error', `${dropped.join('; ')}. ${SKIP_CONSEQUENCE()}`);
   }
 
-  SECTIONS.forEach(({ kind }) => renderButtons(kind));
-  renderOverrides();
   // Planned from the edit state that was just built, not from `data` — those are the same thing
   // here, and keeping one path means they cannot fall out of step later.
   setPlan(planMigration(editStateSnapshot(), state.loadedVersion));
@@ -1069,13 +759,13 @@ async function saveSettings() {
   const validation = validateEditState();
   const invalidButton = validateButtons(validation);
   if (invalidButton) {
-    showError(invalidButton);
+    showError(invalidButton.message);
     return false;
   }
 
   const overrides = serializeOverrides(validation);
   if (overrides.error) {
-    showError(overrides.error);
+    showError(overrides.error.message);
     return false;
   }
 
@@ -1112,7 +802,6 @@ async function saveSettings() {
 
   state.saving = true;
   state.changedDuringSave = false;
-  updateSavingGate();
   scheduleOptionsEngineNotify();
   try {
     // This page may have been open a long time, and another device on the account can have saved in
@@ -1130,7 +819,7 @@ async function saveSettings() {
     } catch (error) {
       // The read that decides whether writing is safe failed, so writing is not safe. It used to
       // reject unhandled: no status, no refusal, and the save simply evaporated.
-      showStatus('error', t('ext.status.saveFailed', error.message));
+      showStatus('error', tr('ext.status.saveFailed', error.message));
       return false;
     }
     const outcome = planSave({
@@ -1162,7 +851,7 @@ async function saveSettings() {
       state.pendingWrite = payload;
       await chrome.storage.sync.set(outcome.write);
     } catch (error) {
-      showStatus('error', t('ext.status.saveFailed', error.message));
+      showStatus('error', tr('ext.status.saveFailed', error.message));
       return false;
     }
     settleSave({ payload, cleaned, defaultMain, overrides, savedRevision });
@@ -1170,7 +859,6 @@ async function saveSettings() {
   } finally {
     state.saving = false;
     state.pendingWrite = null;
-    updateSavingGate();
     scheduleOptionsEngineNotify();
     // A remote change that arrived during the save was held rather than acted on. Now that the save
     // has settled, ask the ordinary question again.
@@ -1190,7 +878,6 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // still true — and if the user had also been typing, the held change was then dropped as well and
   // nothing at all showed it.
   if (!state.changedDuringSave) state.staleSinceLoad = false;
-  renderStaleBanner();
   const version = payload[VERSION_KEY];
 
   // Everything below is a claim about the *user* — that they have nothing outstanding — and none of
@@ -1199,7 +886,7 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // was adopted, the selection snapped back to the defaults, and Apply rewrote a candidate they had
   // declined. One predicate now guards the whole settlement.
   if (!nothingHappenedSince(savedRevision, state.revision)) {
-    showStatus('success', t('ext.status.savedWithPendingEdits'));
+    showStatus('success', tr('ext.status.savedWithPendingEdits'));
     return;
   }
   state.reviewTouched = false;
@@ -1207,16 +894,13 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   // Bring the view in line with what was saved (empty rows cleared, whitespace trimmed). The uids
   // are carried over: these are the same buttons, only tidied, and a candidate the user is looking
   // at must keep its name across a save.
-  document.getElementById('default-main').value = defaultMain;
   state.defaultMain = defaultMain;
   for (const { kind } of SECTIONS) {
     state.buttons[kind] = cleaned[kind].map(
       (button, index) => reshapeButton(button, state.buttons[kind][index].uid)
     );
-    renderButtons(kind);
   }
   state.overrides = Object.entries(overrides.value).map(([repo, branch]) => ({ repo, branch }));
-  renderOverrides();
 
   // What was just written is now what is stored, so the notice reflects that — and because the
   // version rode along, the other machines on this account drop their notice as the change syncs.
@@ -1225,22 +909,7 @@ function settleSave({ payload, cleaned, defaultMain, overrides, savedRevision })
   setPlan(planMigration(editStateSnapshot(), version));
 
   clearDirty();
-  showStatus('success', t('ext.status.saved'));
-}
-
-// Saving happens through the Save button alone. This only resets the view; storage is untouched.
-function resetSettings() {
-  if (!requireLoaded()) return;
-  const operation = prepareReset();
-  if (!operation.ok || !editAndReview(operation.apply)) return;
-  SECTIONS.forEach(({ kind }) => renderButtons(kind));
-  document.getElementById('default-main').value = state.defaultMain;
-  renderOverrides();
-  renderMigration();
-  // Reset replaces every command with the current preset, so the settings are the current
-  // generation by construction — taking that as a decision keeps the notice from lingering over
-  // settings that have nothing stale left in them.
-  showStatus('info', t('ext.status.reset', t('ext.button.save')));
+  showStatus('success', tr('ext.status.saved'));
 }
 
 // --- The update notice ---
@@ -1254,7 +923,6 @@ function setPlan(plan) {
   // Only the candidates nothing can go wrong with start checked. A behavior change is opted into
   // after reading it, never opted out of after missing it (defaultSelection in migrations.js).
   state.selection = new Set(defaultSelection(plan));
-  renderMigration();
   scheduleOptionsEngineNotify();
 }
 
@@ -1266,7 +934,6 @@ function prepareMigrationSelection(uid, selected) {
     if (selected) state.selection.add(uid);
     else state.selection.delete(uid);
     state.migrationPanelOpen = true;
-    renderMigration();
   });
 }
 
@@ -1274,10 +941,6 @@ function prepareMigrationPanelToggle() {
   if (!state.plan || state.loadedVersion >= state.plan.targetVersion) return rejectedEdit('not-found');
   return preparedEdit(() => {
     state.migrationPanelOpen = !state.migrationPanelOpen;
-    renderMigration();
-    if (state.migrationPanelOpen) {
-      document.getElementById('migration-section').scrollIntoView?.({ block: 'nearest' });
-    }
   });
 }
 
@@ -1291,143 +954,17 @@ function recordMigrationReviewed() {
   scheduleOptionsEngineNotify();
 }
 
-function migrationItemRow(item, { checkbox }) {
-  const row = document.createElement('div');
-  row.className = 'mig-item';
-  row.dataset.id = item.id;
-  const where = `${section(item.kind).storageKey}[${item.index}]`;
-  row.innerHTML = `
-    <div class="mig-head">
-      ${checkbox ? `<input type="checkbox" class="mig-check" checked>` : ''}
-      <span class="mig-label"></span>
-      <span class="mig-where"></span>
-      ${checkbox ? `<span class="mig-source"></span>` : ''}
-      ${checkbox && item.effect === 'behavior-change' ? `<span class="mig-effect">${t('ext.migration.effect.behaviorChange')}</span>` : ''}
-    </div>
-  `;
-  row.querySelector('.mig-label').textContent = item.label || t('ext.migration.noTooltip');
-  row.querySelector('.mig-where').textContent = where;
-  if (checkbox) {
-    // 'verbatim' = this was one of our old presets; 'prefix' = you had edited it, and only the
-    // leading jump is being replaced. Saying which is how the user knows we noticed their edit.
-    //
-    // **A visible machine identifier**, and filed as one rather than left in the gap between "shown"
-    // and "translated". It is drawn on screen, next to the `- old` / `+ new` diff, and it is *not*
-    // translated: it is a discriminator of the same kind as the command text beside it, and
-    // rendering it in five languages would mean inventing UX copy the product has no basis for. The
-    // residual is stated rather than implied — a Korean screen shows an English discriminator — and
-    // what it is not is invisible.
-    row.querySelector('.mig-source').textContent = item.source;
-  }
-
-  const detail = document.createElement('div');
-  if (checkbox) {
-    detail.className = 'mig-diff';
-    // A candidate can move its command, its claude inputs, or both; only what moved is drawn, so
-    // an inputs-only rename does not show an identical command as a bogus diff.
-    if (item.from !== item.to) {
-      const from = document.createElement('div');
-      from.className = 'mig-from';
-      from.textContent = `- ${item.from}`;
-      const to = document.createElement('div');
-      to.className = 'mig-to';
-      to.textContent = `+ ${item.to}`;
-      detail.append(from, to);
-    }
-    if (item.fromInputs) {
-      item.fromInputs.forEach((input, i) => {
-        if (input === item.toInputs[i]) return;
-        const from = document.createElement('div');
-        from.className = 'mig-from';
-        from.textContent = `- ${input}`;
-        const to = document.createElement('div');
-        to.className = 'mig-to';
-        to.textContent = `+ ${item.toInputs[i]}`;
-        detail.append(from, to);
-      });
-    }
-  } else {
-    detail.className = 'mig-note';
-    detail.textContent = item.note;
-  }
-  row.appendChild(detail);
-
-  // A behavior change has to say what changes, next to the item it changes — a paragraph at the top
-  // of the panel is not what someone reads while deciding about one particular button.
-  if (checkbox && item.effect === 'behavior-change' && item.describe) {
-    const why = document.createElement('div');
-    why.className = 'mig-why';
-    why.textContent = item.describe;
-    row.appendChild(why);
-  }
-  return row;
-}
-
-function renderMigration() {
-  const badge = document.getElementById('migration-badge');
-  const panel = document.getElementById('migration-section');
-  const plan = state.plan;
-  const pending = !!plan && state.loadedVersion < plan.targetVersion;
-
-  badge.hidden = !pending;
-  panel.hidden = !pending || !state.migrationPanelOpen;
-  if (!pending) {
-    return;
-  }
-
-  const summary = migrationSummary(plan, state.selection);
-  // Every step being applied gets its say, not only the newest one — a settings object can be
-  // several generations behind, and the user is consenting to all of them at once.
-  let intro = migrationDescription(plan.fromVersion);
-  if (summary.reviewOnly) {
-    const notice = summary.informationalCount
-      ? t('ext.migration.intro.nothingSafe')
-      : t('ext.migration.intro.nothingToDo', t('ext.migration.gotIt'));
-    intro = `${summary.descriptions}${notice ? ` ${notice}` : ''}`.trim();
-  }
-  document.getElementById('migration-describe').textContent = intro;
-
-  const actionable = document.getElementById('migration-actionable');
-  const informational = document.getElementById('migration-informational');
-  actionable.innerHTML = '';
-  informational.innerHTML = '';
-  for (const item of plan.actionable) {
-    const row = migrationItemRow(item, { checkbox: true });
-    row.querySelector('.mig-check').checked = state.selection.has(item.id);
-    actionable.appendChild(row);
-  }
-  for (const item of plan.informational) {
-    informational.appendChild(migrationItemRow(item, { checkbox: false }));
-  }
-
-  const apply = document.getElementById('migration-apply');
-  apply.hidden = summary.reviewOnly;
-  apply.disabled = summary.nothingToApply;
-  const keep = document.getElementById('migration-keep');
-  keep.textContent = summary.reviewOnly ? t('ext.migration.gotIt') : t('ext.migration.keep');
-  document.getElementById('migration-hint').textContent = summary.reviewOnly
-    ? t('ext.migration.hint.reviewOnly', t('ext.button.save'))
-    : t('ext.migration.hint.selected', summary.selectedCount, summary.actionableCount, t('ext.button.save'));
-}
-
-// Fills the edit state with the selected rewrites. Storage is untouched until Save, exactly like
-// import — the edit state is the only thing that changes here.
-function applyMigration() {
-  if (!requireLoaded()) return;
-  const operation = prepareMigrationApply();
-  if (!operation.ok || !editAndReview(operation.apply)) return;
-  completeMigrationApply(operation);
-}
-
 function completeMigrationApply(operation) {
-  SECTIONS.forEach(({ kind }) => renderButtons(kind));
-  renderMigration();
   // Two complete messages, not one message with a clause bolted on. The English needed
   // `command`/`commands` and `was`/`were` to agree with two different counts, and a translation
   // cannot be assembled out of the pieces that made those agree.
   showStatus('info', operation.declined > 0
-    ? t('ext.migration.appliedWithDeclined', operation.applied, operation.declined, t('ext.button.save'))
-    : t('ext.migration.applied', operation.applied, t('ext.button.save')));
+    ? tr('ext.migration.appliedWithDeclined', operation.applied, operation.declined, tr('ext.button.save'))
+    : tr('ext.migration.applied', operation.applied, tr('ext.button.save')));
+}
+
+function completeMigrationKeep() {
+  showStatus('info', tr('ext.migration.markedReviewed', tr('ext.button.save')));
 }
 
 // --- Export / import ---
@@ -1448,10 +985,10 @@ function parseImportedSettings(raw) {
   try {
     data = JSON.parse(raw);
   } catch {
-    throw new Error(t('ext.import.notJSON'));
+    throw new Error(tr('ext.import.notJSON'));
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error(t('ext.import.notObject'));
+    throw new Error(tr('ext.import.notObject'));
   }
 
   // A file from a newer extension is refused whole, before anything is read out of it: we do not
@@ -1490,7 +1027,7 @@ function parseImportedSettings(raw) {
   }
 
   if (Object.keys(settings).length === 0) {
-    throw new Error(t('ext.import.nothingToImport', BACKUP_KEYS.join(', ')));
+    throw new Error(tr('ext.import.nothingToImport', BACKUP_KEYS.join(', ')));
   }
   return { settings, skipped, unreadable, version };
 }
@@ -1502,13 +1039,13 @@ async function exportSettings() {
   } catch (error) {
     // An unhandled rejection here produced a button that did nothing and said nothing — and this is
     // the path a user takes precisely when they are trying not to lose their settings.
-    showStatus('error', t('ext.status.exportFailed', error.message));
+    showStatus('error', tr('ext.status.exportFailed', error.message));
     return false;
   }
   // Export the saved values, not the unsaved edits on screen
   const saved = Object.fromEntries(BACKUP_KEYS.filter(k => data[k] !== undefined).map(k => [k, data[k]]));
   if (Object.keys(saved).length === 0) {
-    showStatus('error', t('ext.export.nothingSaved'));
+    showStatus('error', tr('ext.export.nothingSaved'));
     return false;
   }
 
@@ -1521,7 +1058,7 @@ async function exportSettings() {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking immediately can cancel the download
 
-  if (state.dirty) showStatus('info', t('ext.export.excludedUnsaved'));
+  if (state.dirty) showStatus('info', tr('ext.export.excludedUnsaved'));
   return true;
 }
 
@@ -1534,14 +1071,10 @@ function applyImportedSettings(settings, mergedVersion) {
     }
     if (settings.defaultMain !== undefined) {
       state.defaultMain = settings.defaultMain.trim() || DEFAULT_MAIN;
-      document.getElementById('default-main').value = state.defaultMain;
     }
     if (settings.repoMainBranch) {
       state.overrides = Object.entries(settings.repoMainBranch).map(([repo, branch]) => ({ repo, branch }));
     }
-
-    SECTIONS.forEach(({ kind }) => renderButtons(kind));
-    renderOverrides();
 
     // The edit state is now part file, part whatever was already on screen — a file carrying only
     // `defaultMain` leaves every button section untouched. So the generation to answer for is the
@@ -1563,7 +1096,7 @@ async function importSettings(file) {
     return false;
   }
   if (file.size > MAX_IMPORT_BYTES) {
-    showStatus('error', t('ext.import.fileTooLarge'));
+    showStatus('error', tr('ext.import.fileTooLarge'));
     return false;
   }
 
@@ -1584,7 +1117,7 @@ async function importSettings(file) {
       // hands an old generation to content a newer extension wrote, and the next Save records it.
       mergedVersion = mergedSourceVersion(state.loadedVersion, imported.version);
     } catch (error) {
-      showStatus('error', t('ext.status.importFailed', error.message));
+      showStatus('error', tr('ext.status.importFailed', error.message));
       return false;
     }
 
@@ -1605,13 +1138,13 @@ async function importSettings(file) {
     if (!applyImportedSettings(outcome.apply, mergedVersion)) return false;
 
     const notes = [...imported.unreadable];
-    if (imported.skipped.length) notes.push(t('ext.import.skippedNote', imported.skipped.join(', ')));
+    if (imported.skipped.length) notes.push(tr('ext.import.skippedNote', imported.skipped.join(', ')));
     // The notes are a list of complete diagnostic sentences, not a clause of this one, which is why
     // they may ride in a placeholder where the declined count above may not: what varies here is how
     // many sentences follow, never the grammar of this one.
     showStatus('info', notes.length
-      ? t('ext.status.importedWithNotes', t('ext.button.save'), notes.join('; '))
-      : t('ext.status.imported', t('ext.button.save')));
+      ? tr('ext.status.importedWithNotes', tr('ext.button.save'), notes.join('; '))
+      : tr('ext.status.imported', tr('ext.button.save')));
     return true;
   } finally {
     state.importing = false;
@@ -1624,406 +1157,17 @@ async function importSettings(file) {
 let statusTimer = null;
 
 function showStatus(type, message) {
-  const el = document.getElementById('status');
-  el.className = `status ${type}`;
-  el.textContent = message;
+  state.status = { type, message };
   clearTimeout(statusTimer);
   scheduleOptionsEngineNotify();
   statusTimer = setTimeout(() => {
-    el.className = 'status';
+    state.status = { type: 'idle', message: '' };
     scheduleOptionsEngineNotify();
   }, 4000);
 }
 
-function showError({ message, focus }) {
+function showError(message) {
   showStatus('error', message);
-  focus?.focus();
-}
-
-// --- Events ---
-// The sections share one card structure, so they share the handlers too. The card's data-kind says
-// which section it belongs to.
-
-function onCardInput(e) {
-  const { card, kind, index } = cardOf(e.target);
-  const uid = state.buttons[kind][index]?.uid;
-  if (!uid) return;
-
-  if (e.target.classList.contains('ci-input')) {
-    const row = Number(e.target.closest('.claude-row').dataset.ci);
-    const operation = prepareInputPatch(kind, uid, row, e.target.value);
-    if (operation.ok && edit(operation.apply)) updateClaudeWarn(card, state.buttons[kind][index]);
-    return;
-  }
-
-  const field = e.target.dataset.field;
-  if (!field) return;
-  const operation = prepareButtonPatch(kind, uid, { [field]: e.target.value });
-  if (!operation.ok || !edit(operation.apply)) return;
-  if (field === 'face') updateFacePreview(card, e.target.value);
-  if (field === 'command') {
-    autosize(e.target);
-    updateClaudeWarn(card, state.buttons[kind][index]);
-  }
-}
-
-function onCardClick(e) {
-  if (e.target.classList.contains('remove-btn')) {
-    const { kind, index } = cardOf(e.target);
-    const uid = state.buttons[kind][index]?.uid;
-    const operation = prepareButtonRemove(kind, uid);
-    if (operation.ok && edit(operation.apply)) renderButtons(kind);
-    return;
-  }
-
-  if (e.target.classList.contains('duplicate-btn')) {
-    const { kind, index } = cardOf(e.target);
-    if (state.buttons[kind].length >= MAX_BUTTONS) return;
-    const uid = state.buttons[kind][index]?.uid;
-    const operation = prepareButtonDuplicate(kind, uid);
-    if (operation.ok && edit(operation.apply)) {
-      renderButtons(kind);
-      // The tooltip is disambiguated by its number, but the face is identical to the original — put the cursor in the copy's face field
-      cardElement(kind, index + 1, '.face-input').focus();
-    }
-    return;
-  }
-
-  if (e.target.classList.contains('palette-btn')) {
-    const { card, kind, index } = cardOf(e.target);
-    const button = state.buttons[kind][index];
-    const operation = prepareButtonPatch(kind, button?.uid, { face: `${button?.face || ''}${e.target.textContent}` });
-    if (operation.ok && edit(operation.apply)) {
-      const input = card.querySelector('.face-input');
-      input.value = state.buttons[kind][index].face;
-      updateFacePreview(card, input.value);
-    }
-    return;
-  }
-
-  if (e.target.classList.contains('add-input-btn')) {
-    const { kind, index } = cardOf(e.target);
-    if (state.buttons[kind][index].claudeInputs.length >= MAX_CLAUDE_INPUTS) return;
-    const button = state.buttons[kind][index];
-    const operation = prepareInputAdd(kind, button.uid);
-    if (operation.ok && edit(operation.apply)) {
-      renderButtons(kind);
-      cardElement(kind, index, `.claude-row[data-ci="${button.claudeInputs.length - 1}"] .ci-input`).focus();
-    }
-    return;
-  }
-
-  if (e.target.classList.contains('ci-remove')) {
-    const { kind, index } = cardOf(e.target);
-    const row = Number(e.target.closest('.claude-row').dataset.ci);
-    const operation = prepareInputRemove(kind, state.buttons[kind][index]?.uid, row);
-    if (operation.ok && edit(operation.apply)) renderButtons(kind);
-  }
-}
-
-// --- Reordering (drag, ↑↓) ---
-// The button order is the order they appear in on a GitHub page, and it decides which button (the
-// first) the extension icon runs.
-// A row's order decides what claude is told: inputs are typed in list order, and a run of consecutive
-// `!` bodies is merged onto one shell line joined with `;`, so moving a row can change which commands
-// share shell state and whether the run merges at all.
-
-// The item being dragged. The sections share handlers, so this also carries which section the drag
-// started in (so a drop over another section is not accepted).
-let drag = null;
-
-function clearDropMarks(container, itemSelector) {
-  container.querySelectorAll(itemSelector)
-    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
-}
-
-// Which half of the hovered item the pointer is over decides "before which item" it goes (past the
-// end, that's the count).
-function dropIndex(container, itemSelector, y) {
-  const items = [...container.querySelectorAll(itemSelector)];
-  const hit = items.findIndex(item => {
-    const rect = item.getBoundingClientRect();
-    return y < rect.top + rect.height / 2;
-  });
-  return hit === -1 ? items.length : hit;
-}
-
-function markDropTarget(container, itemSelector, index) {
-  clearDropMarks(container, itemSelector);
-  const items = container.querySelectorAll(itemSelector);
-  if (index < items.length) items[index].classList.add('drop-before');
-  else if (items.length) items[items.length - 1].classList.add('drop-after');
-}
-
-function claudeDropZone(kind, target) {
-  if (drag?.type !== 'claude') return null;
-  const rows = target.closest?.('.claude-rows');
-  const card = rows?.closest('.btn-card');
-  if (drag.kind !== kind
-    || card?.dataset.kind !== kind
-    || Number(card.dataset.index) !== drag.cardIndex) return null;
-  return rows;
-}
-
-function endDrag(container) {
-  container.querySelectorAll('.btn-card').forEach(card => {
-    card.draggable = false;
-    card.classList.remove('dragging');
-  });
-  container.querySelectorAll('.claude-row').forEach(row => {
-    row.draggable = false;
-    row.classList.remove('dragging');
-  });
-  clearDropMarks(container, '.btn-card');
-  clearDropMarks(container, '.claude-row');
-  drag = null;
-}
-
-// Returns the index after the move (so keyboard reordering can keep focus on the handle)
-function reorderButtons(kind, from, insertBefore) {
-  if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
-  const buttons = state.buttons[kind];
-  if (!buttons[from] || !Number.isInteger(insertBefore) || insertBefore < 0 || insertBefore > buttons.length) return from;
-  const uid = buttons[from].uid;
-  const beforeUid = insertBefore >= buttons.length ? null : buttons[insertBefore].uid;
-  const operation = prepareButtonMove(kind, uid, beforeUid);
-  const moved = operation.ok && edit(operation.apply);
-  if (moved) renderButtons(kind);
-  if (!moved) return from; // refused: nothing moved, so the handle stays where it was
-  return insertBefore > from ? insertBefore - 1 : insertBefore;
-}
-
-// The row path has a nested state path and a different focus target, so it stays a sibling rather
-// than becoming a flag-heavy version of reorderButtons.
-function reorderClaudeInputs(kind, cardIndex, from, insertBefore) {
-  if (insertBefore === from || insertBefore === from + 1) return from; // dropped where it already was
-  const button = state.buttons[kind][cardIndex];
-  if (!button) return from;
-  const operation = prepareInputMove(kind, button.uid, from, insertBefore);
-  const moved = operation.ok && edit(operation.apply);
-  if (moved) renderButtons(kind);
-  if (!moved) return from; // refused: nothing moved, so the handle stays where it was
-  return insertBefore > from ? insertBefore - 1 : insertBefore;
-}
-
-for (const { kind, container, addButton } of SECTIONS) {
-  const element = document.getElementById(container);
-  element.addEventListener('input', onCardInput);
-  element.addEventListener('click', onCardClick);
-  element.addEventListener('change', (e) => {
-    if (e.target.classList.contains('preset-select')) applyPreset(e.target);
-  });
-
-  // A drag may only start from the handle — the card is made draggable only while the handle is
-  // held down. Leaving draggable on the card permanently would turn a press-and-pull anywhere in
-  // the card into a drag, which collides with selecting text by dragging inside an input (the
-  // collision itself hasn't been confirmed — Chrome may well give the input priority. Either way,
-  // the handle approach prevents dragging a card by accident).
-  element.addEventListener('mousedown', (e) => {
-    // The lost-release sequence is hold a handle, switch applications, and release there; it leaves
-    // a card or row armed, so a later body pull can start a drag. Clear on mousedown because every
-    // new gesture gets one, while focus may move during a legitimate native drag.
-    element.querySelectorAll('.btn-card, .claude-row').forEach(item => { item.draggable = false; });
-    if (e.target.classList.contains('ci-drag-handle')) {
-      const row = e.target.closest('.claude-row');
-      if (!row) return;
-      row.draggable = true;
-      // Releasing without dragging never fires dragend, so undo it here
-      document.addEventListener('mouseup', () => { row.draggable = false; }, { once: true });
-      return;
-    }
-    if (!e.target.classList.contains('drag-handle')) return;
-    const card = e.target.closest('.btn-card');
-    // Keep symmetry with the row branch; a handle outside a card is not a known path today, but
-    // the guard should remain if the markup changes.
-    if (!card) return;
-    card.draggable = true;
-    // Releasing without dragging never fires dragend, so undo it here
-    document.addEventListener('mouseup', () => { card.draggable = false; }, { once: true });
-  });
-
-  element.addEventListener('dragstart', (e) => {
-    const row = e.target.closest?.('.claude-row');
-    if (row?.draggable) {
-      const card = row.closest('.btn-card');
-      if (!card) return;
-      drag = {
-        type: 'claude',
-        kind,
-        cardIndex: Number(card.dataset.index),
-        from: Number(row.dataset.ci),
-      };
-      row.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      return;
-    }
-    const card = e.target.closest?.('.btn-card');
-    if (!card?.draggable) return; // leave the native drag for selecting text inside an input alone
-    // Remember the card to move here — nothing is put into dataTransfer. It is data we never read,
-    // and carrying it as text/plain would let it be pasted outside (another input, another app),
-    // while Chrome carries the drag through fine with an empty data store (measured — dragover and
-    // dropEffect behave normally)
-    drag = { type: 'button', kind, from: Number(card.dataset.index) };
-    card.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-  });
-
-  element.addEventListener('dragover', (e) => {
-    if (drag?.type === 'claude') {
-      const rows = claudeDropZone(kind, e.target);
-      const origin = document.getElementById(section(drag.kind).container);
-      if (!rows) {
-        clearDropMarks(origin, '.claude-row');
-        return;
-      }
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      markDropTarget(rows, '.claude-row', dropIndex(rows, '.claude-row', e.clientY));
-      return;
-    }
-    if (drag?.type !== 'button' || drag.kind !== kind) return; // don't accept a drag that came from another section
-    e.preventDefault(); // the default is "can't drop", so preventing it is what opens the drop
-    e.dataTransfer.dropEffect = 'move';
-    markDropTarget(element, '.btn-card', dropIndex(element, '.btn-card', e.clientY));
-  });
-
-  element.addEventListener('dragleave', (e) => {
-    if (!element.contains(e.relatedTarget)) {
-      clearDropMarks(element, '.btn-card');
-      clearDropMarks(element, '.claude-row');
-    }
-  });
-
-  element.addEventListener('drop', (e) => {
-    if (drag?.type === 'claude') {
-      const rows = claudeDropZone(kind, e.target);
-      const origin = document.getElementById(section(drag.kind).container);
-      if (!rows) {
-        clearDropMarks(origin, '.claude-row');
-        return;
-      }
-      e.preventDefault();
-      const { cardIndex, from } = drag;
-      const to = dropIndex(rows, '.claude-row', e.clientY);
-      endDrag(element);
-      reorderClaudeInputs(kind, cardIndex, from, to);
-      return;
-    }
-    if (drag?.type !== 'button' || drag.kind !== kind) return;
-    e.preventDefault();
-    const { from } = drag;
-    const to = dropIndex(element, '.btn-card', e.clientY);
-    // Finish the cleanup here — the redraw that follows immediately removes the original card from
-    // the document, so don't rely on the dragend that would reach that node (if dragend does
-    // arrive, it just runs the same cleanup once more)
-    endDrag(element);
-    reorderButtons(kind, from, to);
-  });
-
-  element.addEventListener('dragend', () => endDrag(element)); // cancelled, or dropped outside
-
-  element.addEventListener('keydown', (e) => {
-    if (!e.target.classList.contains('drag-handle') && !e.target.classList.contains('ci-drag-handle')) return;
-    const step = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
-    if (!step) return;
-    e.preventDefault(); // block the arrow keys' default behavior (scrolling)
-
-    if (e.target.classList.contains('ci-drag-handle')) {
-      const { index } = cardOf(e.target);
-      const row = Number(e.target.closest('.claude-row').dataset.ci);
-      const inputs = state.buttons[kind][index].claudeInputs;
-      const to = row + step;
-      if (to < 0 || to >= inputs.length) return;
-      const moved = reorderClaudeInputs(kind, index, row, step < 0 ? to : to + 1);
-      cardElement(kind, index, `.claude-row[data-ci="${moved}"] .ci-drag-handle`).focus();
-      return;
-    }
-
-    if (!e.target.classList.contains('drag-handle')) return; // a row handle must never reach the card branch
-    const { index } = cardOf(e.target);
-    const to = index + step;
-    if (to < 0 || to >= state.buttons[kind].length) return;
-    // reorderButtons takes "before which card" — moving down, that is the slot after the destination card
-    const moved = reorderButtons(kind, index, step < 0 ? to : to + 1);
-    cardElement(kind, moved, '.drag-handle').focus();
-  });
-
-  document.getElementById(addButton).addEventListener('click', () => {
-    const operation = prepareButtonAdd(kind);
-    if (operation.ok && edit(operation.apply)) {
-      renderButtons(kind);
-      cardElement(kind, state.buttons[kind].length - 1, '.command-input').focus();
-    }
-  });
-}
-
-const overridesBody = document.getElementById('overrides-body');
-
-overridesBody.addEventListener('input', (e) => {
-  const tr = e.target.closest('tr[data-index]');
-  if (!tr) return;
-  const isRepo = e.target.classList.contains('override-repo');
-  const isBranch = e.target.classList.contains('override-branch');
-  if (!isRepo && !isBranch) return;
-  const field = isRepo ? 'repo' : 'branch';
-  const operation = prepareOverridePatch(Number(tr.dataset.index), { [field]: e.target.value });
-  if (operation.ok) edit(operation.apply);
-});
-
-overridesBody.addEventListener('click', (e) => {
-  if (!e.target.classList.contains('remove-row')) return;
-  const index = Number(e.target.closest('tr').dataset.index);
-  const operation = prepareOverrideRemove(index);
-  if (operation.ok && edit(operation.apply)) renderOverrides();
-});
-
-document.getElementById('add-override').addEventListener('click', () => {
-  const operation = prepareOverrideAdd();
-  if (operation.ok && edit(operation.apply)) {
-    renderOverrides();
-    overrideInput(state.overrides.length - 1, '.override-repo').focus();
-  }
-});
-
-// The input mirrors the canonical edit state. A user keystroke enters that state through the shared
-// patch function; Save never reads the field back.
-document.getElementById('default-main').addEventListener('input', () => {
-  const operation = prepareMainPatch(document.getElementById('default-main').value);
-  if (operation.ok) edit(operation.apply);
-});
-
-document.getElementById('save-btn').addEventListener('click', saveSettings);
-document.getElementById('reset-btn').addEventListener('click', resetSettings);
-
-// --- Update notice ---
-
-document.getElementById('migration-badge').addEventListener('click', () => {
-  // Opening the review is the start of deciding about it
-  runPreparedReview(prepareMigrationPanelToggle());
-});
-
-document.getElementById('migration-actionable').addEventListener('change', (e) => {
-  if (!e.target.classList.contains('mig-check')) return;
-  const { id } = e.target.closest('.mig-item').dataset;
-  const { checked } = e.target;
-  runPreparedReview(prepareMigrationSelection(id, checked));
-});
-
-document.getElementById('migration-apply').addEventListener('click', applyMigration);
-
-// Declining is a decision too, and it is the only thing that stops the notice coming back forever
-// for someone who means to keep their commands. It changes no command — only the version, and only
-// once the user presses Save.
-document.getElementById('migration-keep').addEventListener('click', () => {
-  if (!requireLoaded()) return;
-  const operation = prepareMigrationKeep();
-  if (!operation.ok || !editAndReview(operation.apply)) return;
-  completeMigrationKeep();
-});
-
-function completeMigrationKeep() {
-  renderMigration();
-  showStatus('info', t('ext.migration.markedReviewed', t('ext.button.save')));
 }
 
 // A save on another machine on this account arrives here as a storage change. Adopting it is what
@@ -2067,17 +1211,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   loadSettings();
 });
 
-const importInput = document.getElementById('import-file');
-
-document.getElementById('export-btn').addEventListener('click', exportSettings);
-document.getElementById('import-btn').addEventListener('click', () => importInput.click());
-
-importInput.addEventListener('change', () => {
-  const file = importInput.files[0];
-  importInput.value = ''; // without clearing it, picking the same file again fires no change event
-  if (file) importSettings(file);
-});
-
 // The manifest uses options_page (a full tab), so the leave-site warning dialog actually appears.
 // Switching to options_ui (embedded) makes the browser suppress it.
 window.addEventListener('beforeunload', (e) => {
@@ -2094,8 +1227,6 @@ async function retrySettingsLoad() {
   return loadSettings();
 }
 
-document.getElementById('retry-btn').addEventListener('click', retrySettingsLoad);
-
 function freezeSnapshot(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) freezeSnapshot(child);
@@ -2103,9 +1234,7 @@ function freezeSnapshot(value) {
 }
 
 function optionsStatusSnapshot() {
-  const element = document.getElementById('status');
-  const type = ['info', 'success', 'error'].find(value => element.classList.contains(value)) || 'idle';
-  return { type, message: type === 'idle' ? '' : element.textContent };
+  return { ...state.status };
 }
 
 /** @returns {OptionsEngineSnapshot} */
@@ -2133,7 +1262,7 @@ function getOptionsEngineSnapshot() {
     errors: [...button.validation.errors],
     warnings: [...button.validation.warnings],
   })));
-  const loadError = !document.getElementById('load-error').hidden;
+  const loadError = state.loadErrorMessage !== null;
   const loadStatus = state.loaded
     ? (state.loadsInFlight ? 'reloading' : 'loaded')
     : state.loadsInFlight
@@ -2202,7 +1331,7 @@ function getOptionsEngineSnapshot() {
       generation: state.loadGeneration,
       appliedGeneration: state.appliedGeneration,
       inFlight: state.loadsInFlight,
-      errorMessage: loadError ? document.getElementById('status').textContent : null,
+      errorMessage: state.loadErrorMessage,
       retryAvailable: !state.loaded && loadError,
     },
     save: {
@@ -2277,7 +1406,6 @@ async function discardOptionsEdits(confirmed) {
   if (!applied && state.revision === revisionAtStart && hadUnsavedWork) {
     state.dirty = previousDirty;
     state.reviewTouched = previousReviewTouched;
-    document.getElementById('dirty-indicator').hidden = !previousDirty;
     scheduleOptionsEngineNotify();
   }
   return applied ? { ok: true } : rejectedEdit('failed');
@@ -2352,6 +1480,7 @@ async function dispatchOptionsEngineAction(action) {
         break;
       case 'reset':
         outcome = runPreparedEdit(prepareReset(), { review: true });
+        if (outcome.ok) showStatus('info', tr('ext.status.reset', tr('ext.button.save')));
         break;
       case 'export-saved':
         outcome = await exportSettings() ? { ok: true } : rejectedEdit('failed');
@@ -2453,5 +1582,4 @@ window.optionsEditor.mount(document.getElementById('options-editor-root'), windo
 // first load is even asked for, so the window where the controls are live but the state is empty
 // does not exist.
 updateLoadedGate();
-renderStaleBanner();
 loadSettings();

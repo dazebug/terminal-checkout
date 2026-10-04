@@ -7,22 +7,8 @@
     "message": "从 GitHub 的 PR、issue 和仓库页面在你的终端（iTerm2/WezTerm/Warp/cmux）中运行命令",
     "description": "Chrome 显示在名称旁边的一行说明。"
   },
-  "ext_banner_stale": {
-    "message": "⚠ 自此页面加载以来，设置已在另一台设备上更改。只有在没有未保存的编辑时，重新加载才会应用最新设置。编辑会保留在此页面。若要保存编辑，请接受最新设置，再重新应用编辑并保存。"
-  },
-  "ext_button_addButton": {
-    "message": "+ 添加按钮"
-  },
   "ext_button_addInput": {
     "message": "+ 添加输入"
-  },
-  "ext_button_addLimit": {
-    "message": "最多可以添加 $ARG1$ 个按钮。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ 添加覆盖项"
@@ -122,9 +108,6 @@
   "ext_card_duplicate": {
     "message": "复制"
   },
-  "ext_card_duplicate_tooltip": {
-    "message": "复制这个按钮"
-  },
   "ext_card_palette_label": {
     "message": "添加到显示："
   },
@@ -135,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "重新排序"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "重新排序输入 $ARG1$",
@@ -190,17 +170,6 @@
   },
   "ext_claudeNote_send": {
     "message": "发送"
-  },
-  "ext_confirm_presetOverwrite": {
-    "message": "按钮 $ARG1$ 将被“$ARG2$”预设覆盖。要继续吗？",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
   },
   "ext_error_backupFromFuture": {
     "message": "该备份由更新版本的扩展程序导出。请更新扩展程序（git pull 后在 chrome://extensions 重新加载），或用 $ARG1$ 从当前预设重新开始。",
@@ -296,26 +265,11 @@
   "ext_field_face": {
     "message": "显示"
   },
-  "ext_field_preset": {
-    "message": "预设"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "应用预设…"
-  },
-  "ext_field_preview": {
-    "message": "预览"
-  },
   "ext_field_tooltip": {
     "message": "工具提示"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "按钮工具提示"
-  },
   "ext_header_options": {
     "message": "设置"
-  },
-  "ext_header_subtitle": {
-    "message": "PR、issue 和仓库按钮、命令、main 分支 — 终端选择、权限以及仓库基准文件夹在 Terminal Checkout 应用的设置窗口中"
   },
   "ext_import_fileTooLarge": {
     "message": "设置文件太大（最大 256KB）。"
@@ -658,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— 导出、导入、账号同步</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "以 <code>!</code> 开头的 claude 输入会被键入 claude 的 shell 模式，因此命令真的在该会话中运行 — 默认预设用 <code>gh</code> 把 issue 正文、它的评论以及提到它的 issue 摆在 claude 面前。连续的 <code>!</code> 输入会作为一行键入。"
-  },
-  "ext_section_issue_help": {
-    "message": "在 issue 页面上位于状态徽章（Open/Closed）旁边的按钮（最多 $ARG1$ 个）。它们与 PR 按钮分开配置；在 issue 页面上点击扩展程序图标会运行这里的第一个按钮。重新排序（拖动 <code>⠿</code>，或用 <code>↑</code> <code>↓</code>）和复制的方式与 PR 按钮相同。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— issue 页面</span>"
-  },
   "ext_section_issue_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> <code>{main}</code> — issue 没有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "默认列表按钮会打开 claude，并在 claude 的 shell 模式中输入 <code>!gh issue view {number} --comments</code>。"
-  },
-  "ext_section_issueList_help": {
-    "message": "Issue 列表页按钮（最多 $ARG1$ 个）。设置每个选中 Issue 要在独立终端会话中运行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— Issue 列表页</span>"
   },
   "ext_section_issueList_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>。"
@@ -698,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main 分支"
   },
-  "ext_section_pr_help1": {
-    "message": "在 PR 页面上位于分支名旁边的按钮（最多 $ARG1$ 个）。<b>$ARG2$</b> 是按钮显示的内容 — 一个表情符号、几个（🌳🤖），或者一个短名称（Review、WT）。<b>$ARG3$</b> 在悬停时出现；选择一个预设会用该模板填充卡片。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "拖动卡片左侧的 <code>⠿</code> 手柄，或使用 <code>↑</code> <code>↓</code> 键重新排序 — 这就是按钮在 GitHub 上出现的顺序，点击扩展程序图标会运行第一个。<b>$ARG1$</b> 用于再做一个和现有按钮一样的按钮 — 副本的工具提示会附上诸如 <code>(1)</code> 的编号。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "我们随附的预设的重写会被预先勾选。你自定义过的命令会以<b>未勾选</b>的方式提供，并标为行为变更：只有开头的跳转被替换，其余部分现在会在新的进入子句落地的地方运行。每个预设都以 <code>{cd}</code> 开头。它用 zoxide 跳转到与仓库名称完全相同的文件夹，不会像 <code>z {repo}</code> 那样跳进名称中仅仅包含仓库名的工作树；设置了基准文件夹的话，它会回退到该文件夹，并在仓库不存在时克隆 — 所以即便是你从未在本地打开过的仓库，按钮也能工作。"
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR 页面</span>"
-  },
   "ext_section_pr_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 应用会从它的仓库基准文件夹设置填充，因此在每个页面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合并的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合并进去的那个分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 换成 _）</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "PR 列表页按钮（最多 $ARG1$ 个）。设置每个选中 PR 要在独立终端会话中运行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR 列表页</span>"
   },
   "ext_section_prList_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {number}</code> 在本地解析分支。"
   },
-  "ext_section_repo_help": {
-    "message": "在仓库页面（代码、issue 列表、Actions 等）的标题栏中位于仓库名旁边的按钮 — 最多 $ARG1$ 个。与 PR 和 issue 按钮不同，它们看起来像 GitHub 的绿色操作按钮，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 这样的名称比表情符号更合适。在既不是 PR 也不是 issue 的 GitHub 页面上点击扩展程序图标，会运行这里的第一个按钮。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG3": {
-        "content": "$3"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— 仓库页面</span>"
-  },
   "ext_section_repo_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 仓库页面既没有 PR 或 issue 编号，也没有分支，因此 <code>{number}</code>、<code>{branch}</code> 系列和 <code>{base}</code> 不可用。<code>{main}</code> 由 GitHub 嵌在页面里的仓库默认分支解析得出 — 使用 <code>master</code> 的仓库无需覆盖项也能正确得出。"
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— 已保存的命令与当前预设</span>"
   },
   "ext_status_exportFailed": {
     "message": "无法导出：$ARG1$",

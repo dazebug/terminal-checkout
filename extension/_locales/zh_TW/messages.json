@@ -7,22 +7,8 @@
     "message": "從 GitHub 的 PR、issue 與儲存庫頁面在你的終端機（iTerm2/WezTerm/Warp/cmux）中執行指令",
     "description": "Chrome 顯示在名稱旁邊的一行說明。"
   },
-  "ext_banner_stale": {
-    "message": "⚠ 自此頁面載入以來，設定已在另一部裝置上變更。只有在沒有未儲存的編輯時，重新載入才會套用最新設定。編輯會保留在此頁面。若要儲存編輯，請接受最新設定，再重新套用編輯並儲存。"
-  },
-  "ext_button_addButton": {
-    "message": "+ 新增按鈕"
-  },
   "ext_button_addInput": {
     "message": "+ 新增輸入"
-  },
-  "ext_button_addLimit": {
-    "message": "最多可以新增 $ARG1$ 個按鈕。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ 新增覆寫項"
@@ -122,9 +108,6 @@
   "ext_card_duplicate": {
     "message": "複製"
   },
-  "ext_card_duplicate_tooltip": {
-    "message": "複製這個按鈕"
-  },
   "ext_card_palette_label": {
     "message": "加入顯示："
   },
@@ -135,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "重新排序"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "重新排序輸入 $ARG1$",
@@ -190,17 +170,6 @@
   },
   "ext_claudeNote_send": {
     "message": "傳送"
-  },
-  "ext_confirm_presetOverwrite": {
-    "message": "按鈕 $ARG1$ 將被「$ARG2$」預設覆寫。要繼續嗎？",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
   },
   "ext_error_backupFromFuture": {
     "message": "該備份由較新版本的擴充功能匯出。請更新擴充功能（git pull 後在 chrome://extensions 重新載入），或用 $ARG1$ 從目前預設重新開始。",
@@ -296,26 +265,11 @@
   "ext_field_face": {
     "message": "顯示"
   },
-  "ext_field_preset": {
-    "message": "預設"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "套用預設…"
-  },
-  "ext_field_preview": {
-    "message": "預覽"
-  },
   "ext_field_tooltip": {
     "message": "工具提示"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "按鈕工具提示"
-  },
   "ext_header_options": {
     "message": "設定"
-  },
-  "ext_header_subtitle": {
-    "message": "PR、issue 與儲存庫按鈕、指令、main 分支 — 終端機選擇、權限以及儲存庫基準資料夾在 Terminal Checkout 應用程式的設定視窗中"
   },
   "ext_import_fileTooLarge": {
     "message": "設定檔太大（最大 256KB）。"
@@ -658,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— 匯出、匯入、帳號同步</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "以 <code>!</code> 開頭的 claude 輸入會被鍵入 claude 的 shell 模式，因此指令真的在該工作階段中執行 — 預設會用 <code>gh</code> 把 issue 內文、它的留言以及提到它的 issue 擺在 claude 面前。連續的 <code>!</code> 輸入會作為一行鍵入。"
-  },
-  "ext_section_issue_help": {
-    "message": "在 issue 頁面上位於狀態標章（Open/Closed）旁邊的按鈕（最多 $ARG1$ 個）。它們與 PR 按鈕分開設定；在 issue 頁面上點擊擴充功能圖示會執行這裡的第一個按鈕。重新排序（拖曳 <code>⠿</code>，或用 <code>↑</code> <code>↓</code>）和複製的方式與 PR 按鈕相同。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— issue 頁面</span>"
-  },
   "ext_section_issue_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 編號，僅數字）</span> <code>{main}</code> — issue 沒有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "預設清單按鈕會開啟 claude，並在 claude 的 shell 模式中輸入 <code>!gh issue view {number} --comments</code>。"
-  },
-  "ext_section_issueList_help": {
-    "message": "issue 清單頁面的按鈕（最多 $ARG1$ 個）。設定每個選取 issue 要在獨立終端機工作階段執行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— issue 清單頁面</span>"
   },
   "ext_section_issueList_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>。"
@@ -698,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main 分支"
   },
-  "ext_section_pr_help1": {
-    "message": "在 PR 頁面上位於分支名稱旁邊的按鈕（最多 $ARG1$ 個）。<b>$ARG2$</b> 是按鈕顯示的內容 — 一個表情符號、幾個（🌳🤖），或者一個短名稱（Review、WT）。<b>$ARG3$</b> 在停留時出現；選擇一個預設會用該範本填入卡片。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "拖曳卡片左側的 <code>⠿</code> 控點，或使用 <code>↑</code> <code>↓</code> 鍵重新排序 — 這就是按鈕在 GitHub 上出現的順序，點擊擴充功能圖示會執行第一個。<b>$ARG1$</b> 用於再做一個和現有按鈕一樣的按鈕 — 副本的工具提示會附上諸如 <code>(1)</code> 的編號。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "我們隨附的預設的重寫會被預先勾選。你自訂過的指令會以<b>未勾選</b>的方式提供，並標為行為變更：只有開頭的跳轉被替換，其餘部分現在會在新的進入子句落地的地方執行。每個預設都以 <code>{cd}</code> 開頭。它用 zoxide 跳轉到與儲存庫名稱完全相同的資料夾，不會像 <code>z {repo}</code> 那樣跳進名稱中僅僅包含儲存庫名的工作樹；設定了基準資料夾的話，它會回退到該資料夾，並在儲存庫不存在時複製 — 所以即便是你從未在本機開啟過的儲存庫，按鈕也能運作。"
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR 頁面</span>"
-  },
   "ext_section_pr_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 應用程式會從它的儲存庫基準資料夾設定填入，因此在每個頁面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 編號，僅數字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合併的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合併進去的那個分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 換成 _）</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "PR 清單頁面的按鈕（最多 $ARG1$ 個）。設定每個選取 PR 要在獨立終端機工作階段執行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR 清單頁面</span>"
   },
   "ext_section_prList_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 編號，僅限數字）</span> — 清單頁面沒有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {number}</code> 在本機解析分支。"
   },
-  "ext_section_repo_help": {
-    "message": "在儲存庫頁面（程式碼、issue 清單、Actions 等）的標題列中位於儲存庫名稱旁邊的按鈕 — 最多 $ARG1$ 個。與 PR 和 issue 按鈕不同，它們看起來像 GitHub 的綠色操作按鈕，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 這樣的名稱比表情符號更合適。在既不是 PR 也不是 issue 的 GitHub 頁面上點擊擴充功能圖示，會執行這裡的第一個按鈕。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG3": {
-        "content": "$3"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— 儲存庫頁面</span>"
-  },
   "ext_section_repo_variables": {
     "message": "可用變數：<code>{cd}</code> <span class=\"faint\">（進入儲存庫 — 由應用程式填入）</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 儲存庫頁面既沒有 PR 或 issue 編號，也沒有分支，因此 <code>{number}</code>、<code>{branch}</code> 系列和 <code>{base}</code> 不可用。<code>{main}</code> 由 GitHub 嵌在頁面裡的儲存庫預設分支解析得出 — 使用 <code>master</code> 的儲存庫不需要覆寫項也能正確得出。"
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— 已儲存的指令與目前預設</span>"
   },
   "ext_status_exportFailed": {
     "message": "無法匯出：$ARG1$",

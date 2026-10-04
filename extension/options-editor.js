@@ -11,14 +11,10 @@ const SECTION_VARIABLE_HELP = Object.freeze({
 });
 
 const REQUIRED_FIELD_MESSAGE = Object.freeze({
-  face: 'ext.validate.face',
-  label: 'ext.validate.tooltip',
-  command: 'ext.validate.command',
+  face: (storageKey, position) => tr('ext.validate.face', storageKey, position),
+  label: (storageKey, position) => tr('ext.validate.tooltip', storageKey, position),
+  command: (storageKey, position) => tr('ext.validate.command', storageKey, position),
 });
-
-const WARNING_MESSAGE = new Map([
-  ['claude-inputs-without-claude-command', 'ext.field.claudeInputs.warn'],
-]);
 
 /** @returns {boolean} */
 function fitsFieldLimit(value, limit) {
@@ -48,13 +44,14 @@ function validationFor(snapshot, kind, button, { includeWarnings = true } = {}) 
   const storageKey = BUTTON_KINDS[kind]?.storageKey || '';
   const messages = [];
   for (const field of diagnostic.errors || []) {
-    const key = REQUIRED_FIELD_MESSAGE[field];
-    if (key) messages.push(tr(key, storageKey, position));
+    const describe = REQUIRED_FIELD_MESSAGE[field];
+    if (describe) messages.push(describe(storageKey, position));
   }
   if (includeWarnings) {
     for (const warning of diagnostic.warnings || []) {
-      const key = WARNING_MESSAGE.get(warning);
-      if (key) messages.push(tr(key));
+      if (warning === 'claude-inputs-without-claude-command') {
+        messages.push(tr('ext.field.claudeInputs.warn'));
+      }
     }
   }
   return messages;
@@ -364,19 +361,6 @@ function makeButton(label, className, action) {
   return button;
 }
 
-function addAccessibleLabel(element, message, ...args) {
-  const label = makeElement('span', 'options-editor-sr-only', tr(message, ...args));
-  label.id = `options-editor-label-${++instanceCounter}`;
-  element.setAttribute('aria-labelledby', label.id);
-  element.appendChild(label);
-  return label;
-}
-
-function updateAccessibleLabel(element, message, ...args) {
-  const label = element?.querySelector('.options-editor-sr-only');
-  if (label) label.textContent = tr(message, ...args);
-}
-
 function inputTypeMessage(type) {
   switch (type) {
     case 'shell': return editorMessage('inputTypeShell');
@@ -389,7 +373,7 @@ function inputTypeMessage(type) {
 function buildClaudeInputRow() {
   const row = makeElement('div', 'options-editor-input-row');
   const handle = makeButton('⠿', 'options-editor-input-drag-handle', null);
-  addAccessibleLabel(handle, 'ext.claudeInput.reorder.aria', 1);
+  handle.setAttribute('aria-label', tr('ext.claudeInput.reorder.aria', 1));
   const number = makeElement('span', 'options-editor-input-number');
   const type = makeElement('span', 'options-editor-input-type');
   const input = makeElement('input', 'options-editor-input');
@@ -400,11 +384,11 @@ function buildClaudeInputRow() {
   inputLabel.htmlFor = input.id;
   const example = makeElement('span', 'options-editor-input-example');
   const earlier = makeButton('↑', 'btn-secondary options-editor-input-move options-editor-input-move-earlier', 'input-move-earlier');
-  addAccessibleLabel(earlier, 'ext.d.editor.moveEarlier');
+  earlier.setAttribute('aria-label', tr('ext.d.editor.moveEarlier'));
   const later = makeButton('↓', 'btn-secondary options-editor-input-move options-editor-input-move-later', 'input-move-later');
-  addAccessibleLabel(later, 'ext.d.editor.moveLater');
+  later.setAttribute('aria-label', tr('ext.d.editor.moveLater'));
   const remove = makeButton('×', 'btn-secondary options-editor-input-remove', 'input-remove');
-  addAccessibleLabel(remove, 'ext.d.editor.inputRemove', 1);
+  remove.setAttribute('aria-label', tr('ext.d.editor.inputRemove', 1));
   const tooltip = makeElement('span', 'options-editor-reorder-tooltip', tr('ext.reorder.tooltip'));
   tooltip.id = `options-editor-reorder-tooltip-${++instanceCounter}`;
   tooltip.setAttribute('role', 'tooltip');
@@ -636,8 +620,9 @@ function renderClaudeInputs(button) {
     handle.disabled = values.length < 2;
     earlier.disabled = index <= 0;
     later.disabled = index >= values.length - 1;
-    updateAccessibleLabel(handle, 'ext.claudeInput.reorder.aria', index + 1);
-    updateAccessibleLabel(row.querySelector('.options-editor-input-remove'), 'ext.d.editor.inputRemove', index + 1);
+    handle.setAttribute('aria-label', tr('ext.claudeInput.reorder.aria', index + 1));
+    row.querySelector('.options-editor-input-remove')
+      ?.setAttribute('aria-label', tr('ext.d.editor.inputRemove', index + 1));
   });
 
   const normalizedValues = normalizeClaudeInputs(values);
@@ -778,11 +763,11 @@ function updatePanel() {
   positionPopover();
 }
 
-function createField({ name, labelKey, value, type = 'input', maxLength = null }) {
+function createField({ name, label, value, type = 'input', maxLength = null }) {
   const field = makeElement('div', `options-editor-field field-${name}`);
   const id = `options-editor-${++instanceCounter}-${name}`;
-  const label = makeElement('label', '', tr(labelKey));
-  label.htmlFor = id;
+  const labelElement = makeElement('label', '', label);
+  labelElement.htmlFor = id;
   const control = makeElement(type, 'options-editor-control');
   control.id = id;
   control.dataset.editorField = name;
@@ -794,7 +779,7 @@ function createField({ name, labelKey, value, type = 'input', maxLength = null }
   }
   control.value = value;
   if (maxLength !== null) control.maxLength = maxLength;
-  field.append(label, control);
+  field.append(labelElement, control);
   return { field, control };
 }
 
@@ -806,7 +791,7 @@ function replaceVariableReferences(container, kind) {
     if (!name || !allowed.has(name)) continue;
     const token = makeButton(code.textContent, 'options-editor-variable', 'insert-variable');
     token.dataset.variable = name;
-    addAccessibleLabel(token, 'ext.d.editor.variableInsert', code.textContent);
+    token.setAttribute('aria-label', tr('ext.d.editor.variableInsert', code.textContent));
     const description = code.nextElementSibling?.classList.contains('faint')
       ? code.nextElementSibling
       : null;
@@ -847,12 +832,12 @@ function buildPopover(button) {
   preview.setAttribute('aria-labelledby', heading.id);
   identity.append(preview, heading);
   const close = makeButton('×', 'options-editor-close', 'close');
-  addAccessibleLabel(close, 'ext.d.editor.close');
+  close.setAttribute('aria-label', tr('ext.d.editor.close'));
   header.append(identity, close);
 
   const fields = makeElement('div', 'options-editor-fields');
-  const face = createField({ name: 'face', labelKey: 'ext.field.face', value: button.face, maxLength: FACE_MAX_LENGTH });
-  const label = createField({ name: 'label', labelKey: 'ext.field.tooltip', value: button.label });
+  const face = createField({ name: 'face', label: tr('ext.field.face'), value: button.face, maxLength: FACE_MAX_LENGTH });
+  const label = createField({ name: 'label', label: tr('ext.field.tooltip'), value: button.label });
   fields.append(face.field, label.field);
 
   const palette = makeElement('div', 'options-editor-palette');
@@ -860,14 +845,14 @@ function buildPopover(button) {
   palette.appendChild(paletteLabel);
   for (const emoji of facePalette()) {
     const emojiButton = makeButton(emoji, 'options-editor-emoji', 'append-emoji');
-    addAccessibleLabel(emojiButton, 'ext.card.palette.tooltip', emoji);
+    emojiButton.setAttribute('aria-label', tr('ext.card.palette.tooltip', emoji));
     emojiButton.dataset.emoji = emoji;
     palette.appendChild(emojiButton);
   }
 
   const commandSection = makeElement('section', 'options-editor-command-section');
   const commandField = createField({
-    name: 'command', labelKey: 'ext.field.command', value: button.command, type: 'textarea',
+    name: 'command', label: tr('ext.field.command'), value: button.command, type: 'textarea',
   });
   const prompt = makeElement('span', 'options-editor-command-prompt', '$');
   const commandBox = makeElement('div', 'options-editor-command-box');
@@ -888,9 +873,9 @@ function buildPopover(button) {
 
   const actions = makeElement('div', 'options-editor-actions');
   const earlier = makeButton('↑', 'btn-secondary options-editor-order', 'move-earlier');
-  addAccessibleLabel(earlier, 'ext.d.editor.moveEarlier');
+  earlier.setAttribute('aria-label', tr('ext.d.editor.moveEarlier'));
   const later = makeButton('↓', 'btn-secondary options-editor-order', 'move-later');
-  addAccessibleLabel(later, 'ext.d.editor.moveLater');
+  later.setAttribute('aria-label', tr('ext.d.editor.moveLater'));
   const presetToggle = makeButton(editorMessage('replacePreset'), 'btn-secondary options-editor-preset-toggle', 'toggle-presets');
   presetToggle.setAttribute('aria-expanded', 'false');
   const duplicate = makeButton(tr('ext.card.duplicate'), 'btn-secondary', 'duplicate');

@@ -313,9 +313,9 @@ window.optionsShell = Object.freeze({
       const apply = optionsShellButton('shell-migration-apply', 'btn-primary', tr('ext.migration.apply'));
       apply.disabled = migration.summary.nothingToApply;
       apply.hidden = migration.summary.reviewOnly;
-      const keep = optionsShellButton('shell-migration-keep', 'btn-secondary', tr(migration.summary.reviewOnly
-        ? 'ext.migration.gotIt'
-        : 'ext.migration.keep'));
+      const keep = optionsShellButton('shell-migration-keep', 'btn-secondary', migration.summary.reviewOnly
+        ? tr('ext.migration.gotIt')
+        : tr('ext.migration.keep'));
       actions.append(apply, keep);
       migrationPanel.appendChild(actions);
       const hint = migration.summary.reviewOnly

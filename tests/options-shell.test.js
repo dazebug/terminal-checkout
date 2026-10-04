@@ -83,7 +83,7 @@ test('sync conflict copy does not offer export as a way to preserve unsaved edit
   };
   for (const [locale, term] of Object.entries(exportTerms)) {
     const messages = JSON.parse(fs.readFileSync(path.join(root, locale, 'messages.json'), 'utf8'));
-    for (const key of ['ext_banner_stale', 'ext_error_saveConflict', 'ext_d_shell_staleHelp']) {
+    for (const key of ['ext_error_saveConflict', 'ext_d_shell_staleHelp']) {
       assert.doesNotMatch(messages[key].message, term, `${locale}/${key} recommends export`);
     }
   }

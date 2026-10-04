@@ -259,10 +259,11 @@ const BUTTON_KINDS = {
   },
 };
 
-// A button is visible only when every placeholder in its command and every scheduled claude input
-// can be supplied for its page kind. Keeping this predicate here makes the list of variables in
-// BUTTON_KINDS the one authority shared by the content script and service worker; the app's own
-// renderer remains the final fail-closed check when a request leaves the extension.
+// This predicate checks whether every command and scheduled input placeholder is available for a
+// page kind. The content script hides invalid buttons only on list pages; detail and repository
+// buttons remain visible and the app rejects an unsupported value when the command is assembled.
+// Keeping this predicate here makes BUTTON_KINDS the shared authority for the content script,
+// service worker, and options page.
 function buttonUsesAllowedVariables(kind, button) {
   if (typeof kind !== 'string' || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
   if (!button || typeof button !== 'object' || typeof button.command !== 'string') return false;

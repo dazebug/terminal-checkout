@@ -7,22 +7,8 @@
     "message": "Run commands in your terminal (iTerm2/WezTerm/Warp/cmux) from GitHub PR, issue, and repository pages",
     "description": "The one-line description Chrome shows next to the name."
   },
-  "ext_banner_stale": {
-    "message": "⚠ Settings changed on another device since this page loaded. Reload applies the latest settings only when there are no unsaved edits. Your edits stay on this page. To save them, accept the latest settings, reapply your edits, then Save."
-  },
-  "ext_button_addButton": {
-    "message": "+ Add Button"
-  },
   "ext_button_addInput": {
     "message": "+ Add Input"
-  },
-  "ext_button_addLimit": {
-    "message": "You can add up to $ARG1$ buttons.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ Add Override"
@@ -122,9 +108,6 @@
   "ext_card_duplicate": {
     "message": "Duplicate"
   },
-  "ext_card_duplicate_tooltip": {
-    "message": "Duplicate this button"
-  },
   "ext_card_palette_label": {
     "message": "Add to face:"
   },
@@ -135,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "Reorder"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "Reorder input $ARG1$",
@@ -190,17 +170,6 @@
   },
   "ext_claudeNote_send": {
     "message": "Send"
-  },
-  "ext_confirm_presetOverwrite": {
-    "message": "Button $ARG1$ will be overwritten with the \"$ARG2$\" preset. Continue?",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
   },
   "ext_error_backupFromFuture": {
     "message": "This backup was exported by a newer version of the extension. Update the extension (git pull + refresh at chrome://extensions), or use $ARG1$ to start from the current presets.",
@@ -296,26 +265,11 @@
   "ext_field_face": {
     "message": "Face"
   },
-  "ext_field_preset": {
-    "message": "Preset"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "Apply preset…"
-  },
-  "ext_field_preview": {
-    "message": "Preview"
-  },
   "ext_field_tooltip": {
     "message": "Tooltip"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "Button tooltip"
-  },
   "ext_header_options": {
     "message": "options"
-  },
-  "ext_header_subtitle": {
-    "message": "PR, issue, and repository buttons, commands, main branch — terminal choice, permissions, and the repository base folder live in the Terminal Checkout app settings window"
   },
   "ext_import_fileTooLarge": {
     "message": "The settings file is too large (256KB max)."
@@ -658,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— export, import, account sync</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "A claude input that starts with <code>!</code> is typed into claude's shell mode, so the command really runs in that session — the default preset uses <code>gh</code> to put the issue body, its comments and the issues that mention it in front of claude. Consecutive <code>!</code> inputs are typed as one line."
-  },
-  "ext_section_issue_help": {
-    "message": "Buttons that sit next to the status badge (Open/Closed) on an issue page (up to $ARG1$). They are configured separately from the PR buttons, and on an issue page clicking the extension icon runs the first button here. Reordering (drag <code>⠿</code>, or <code>↑</code> <code>↓</code>) and duplicating work just like they do for PR buttons.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— Issue pages</span>"
-  },
   "ext_section_issue_variables": {
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue number, digits only)</span> <code>{main}</code> — an issue has no PR branch, so the <code>{branch}</code> family and <code>{base}</code> are unavailable."
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "The default list button opens claude and types <code>!gh issue view {number} --comments</code> into claude's shell mode."
-  },
-  "ext_section_issueList_help": {
-    "message": "Buttons for an issue list page (up to $ARG1$). Configure the command that each selected issue will run in its own terminal session.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— Issue list pages</span>"
   },
   "ext_section_issueList_variables": {
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>."
@@ -698,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main branch"
   },
-  "ext_section_pr_help1": {
-    "message": "Buttons that sit next to the branch name on a PR page (up to $ARG1$). <b>$ARG2$</b> is what the button shows — a single emoji, several of them (🌳🤖), or a short name (Review, WT). <b>$ARG3$</b> appears on hover, and picking a preset fills the card with that template.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "Drag the <code>⠿</code> handle on the left of a card, or use the <code>↑</code> <code>↓</code> keys, to reorder — this is the order the buttons appear in on GitHub, and clicking the extension icon runs the first one. <b>$ARG1$</b> is for making another button like an existing one — the copy's tooltip gets a number such as <code>(1)</code> appended.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "Rewrites of presets we shipped are pre-checked. A command you customized is offered <b>unchecked</b> and marked as a behavior change: only its leading jump is replaced, and the rest of it will now run wherever the new entry clause lands. Every preset starts with <code>{cd}</code>. It jumps with zoxide to the folder named exactly like the repository, not to a worktree whose name merely contains it as <code>z {repo}</code> could; with a base folder set, it falls back to that folder and clones the repository when it isn't there — so a button works even on a repository you have never opened locally."
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR pages</span>"
-  },
   "ext_section_pr_variables": {
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — the app fills this in from its repository base folder setting, so it works on every page)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR number, digits only)</span> <code>{branch}</code> <span class=\"faint\">(head — the branch being merged)</span> <code>{base}</code> <span class=\"faint\">(base — the branch it merges into)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">(branch with / replaced by _)</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "Buttons for a PR list page (up to $ARG1$). Configure the command that each selected PR will run in its own terminal session.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR list pages</span>"
   },
   "ext_section_prList_variables": {
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR number, digits only)</span> — a list page has no <code>{branch}</code> or <code>{base}</code>; use <code>gh pr checkout {number}</code> to resolve the branch locally."
   },
-  "ext_section_repo_help": {
-    "message": "Buttons that sit next to the repository name in the header of a repository page (code, issue list, Actions, and so on) — up to $ARG1$. Unlike the PR and issue buttons these look like GitHub's green action button, so a name such as <code>$ARG2$</code> suits the <b>$ARG3$</b> better than an emoji. On GitHub pages that are neither a PR nor an issue, clicking the extension icon runs the first button here.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— Repository pages</span>"
-  },
   "ext_section_repo_variables": {
     "message": "Available variables: <code>{cd}</code> <span class=\"faint\">(move into the repository — filled in by the app)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — a repository page has neither a PR or issue number nor a branch, so <code>{number}</code>, the <code>{branch}</code> family, and <code>{base}</code> are unavailable. <code>{main}</code> is resolved from the repository default branch GitHub embeds in the page — a <code>master</code> repository comes out right without an override."
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— saved commands versus the current presets</span>"
   },
   "ext_status_exportFailed": {
     "message": "Could not export: $ARG1$",

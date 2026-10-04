@@ -7,22 +7,8 @@
     "message": "GitHub の PR・issue・リポジトリのページから、ターミナル (iTerm2/WezTerm/Warp/cmux) でコマンドを実行します",
     "description": "Chrome が名前の横に表示する 1 行の説明。"
   },
-  "ext_banner_stale": {
-    "message": "⚠ このページを開いたあと、別のデバイスで設定が変更されました。未保存の編集がない場合にのみ、再読み込みで最新の設定が適用されます。編集はこのページに残ります。保存するには、最新の設定を受け入れ、編集をやり直してから保存してください。"
-  },
-  "ext_button_addButton": {
-    "message": "+ ボタンを追加"
-  },
   "ext_button_addInput": {
     "message": "+ 入力を追加"
-  },
-  "ext_button_addLimit": {
-    "message": "ボタンは最大 $ARG1$ 個まで追加できます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ 個別設定を追加"
@@ -122,9 +108,6 @@
   "ext_card_duplicate": {
     "message": "複製"
   },
-  "ext_card_duplicate_tooltip": {
-    "message": "このボタンを複製します"
-  },
   "ext_card_palette_label": {
     "message": "表示に追加:"
   },
@@ -135,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "並べ替え"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "入力 $ARG1$ を並べ替え",
@@ -190,17 +170,6 @@
   },
   "ext_claudeNote_send": {
     "message": "送信"
-  },
-  "ext_confirm_presetOverwrite": {
-    "message": "ボタン $ARG1$ を「$ARG2$」プリセットで上書きします。続けますか?",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
   },
   "ext_error_backupFromFuture": {
     "message": "このバックアップは、より新しいバージョンの拡張機能でエクスポートされました。拡張機能を更新するか(git pull のあと chrome://extensions で再読み込み)、$ARG1$ で現在のプリセットから始めてください。",
@@ -296,26 +265,11 @@
   "ext_field_face": {
     "message": "表示"
   },
-  "ext_field_preset": {
-    "message": "プリセット"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "プリセットを適用…"
-  },
-  "ext_field_preview": {
-    "message": "プレビュー"
-  },
   "ext_field_tooltip": {
     "message": "ツールチップ"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "ボタンのツールチップ"
-  },
   "ext_header_options": {
     "message": "設定"
-  },
-  "ext_header_subtitle": {
-    "message": "PR・issue・リポジトリのボタン、コマンド、main ブランチ — ターミナルの選択、権限、リポジトリのベースフォルダは Terminal Checkout アプリの設定ウインドウにあります"
   },
   "ext_import_fileTooLarge": {
     "message": "設定ファイルが大きすぎます (最大 256KB)。"
@@ -658,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— エクスポート、インポート、アカウント同期</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "<code>!</code> で始まる claude 入力は claude のシェルモードに入力されるので、コマンドはそのセッションで実際に実行されます — 既定のプリセットは <code>gh</code> を使って、issue の本文とコメント、そしてその issue に言及している issue を claude の前に置きます。連続する <code>!</code> 入力は 1 行として入力されます。"
-  },
-  "ext_section_issue_help": {
-    "message": "issue ページでステータスバッジ (Open/Closed) の横に置かれるボタンです (最大 $ARG1$ 個)。PR ボタンとは別に設定し、issue ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。並べ替え (<code>⠿</code> をドラッグ、または <code>↑</code> <code>↓</code>) と複製は PR ボタンと同じです。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— issue ページ</span>"
-  },
   "ext_section_issue_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> <code>{main}</code> — issue には PR のブランチがないため、<code>{branch}</code> 系と <code>{base}</code> は使えません。"
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "デフォルトのリストボタンは claude を起動し、<code>!gh issue view {number} --comments</code> を claude のシェルモードに入力します。"
-  },
-  "ext_section_issueList_help": {
-    "message": "issue リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 issue を別のターミナルセッションで実行するコマンドを設定します。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— issue リストページ</span>"
   },
   "ext_section_issueList_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。"
@@ -698,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main ブランチ"
   },
-  "ext_section_pr_help1": {
-    "message": "PR ページでブランチ名の横に置かれるボタンです (最大 $ARG1$ 個)。<b>$ARG2$</b> はボタンに表示されるもので、絵文字 1 つ、複数 (🌳🤖)、または短い名前 (Review, WT) です。<b>$ARG3$</b> はホバーしたときに出ます。プリセットを選ぶと、そのテンプレートでカードが埋まります。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "カード左側の <code>⠿</code> ハンドルをドラッグするか、<code>↑</code> <code>↓</code> キーで並べ替えます — これが GitHub 上でボタンが並ぶ順序で、拡張機能のアイコンを押すと最初のものが実行されます。<b>$ARG1$</b> は既存のボタンと同じものをもう 1 つ作るためのもので、複製のツールチップには <code>(1)</code> のような番号が付きます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "私たちが配布したプリセットの書き換えは、あらかじめ選択されています。ご自身で変更したコマンドは<b>選択なし</b>で提示され、動作の変更として印が付きます: 先頭の移動だけが置き換わり、残りは新しい進入節が着地した場所で実行されます。すべてのプリセットは <code>{cd}</code> で始まります。それは zoxide で、リポジトリとまったく同じ名前のフォルダへ移動し、<code>z {repo}</code> のように名前にリポジトリ名を含むだけのワークツリーへは移動しません。ベースフォルダを設定していれば、そのフォルダへフォールバックし、リポジトリがなければ clone します — そのため、ローカルで一度も開いたことのないリポジトリでもボタンが動きます。"
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR ページ</span>"
-  },
   "ext_section_pr_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリがリポジトリのベースフォルダ設定から埋めるので、どのページでも動きます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> <code>{branch}</code> <span class=\"faint\">(head — マージされるブランチ)</span> <code>{base}</code> <span class=\"faint\">(base — マージ先のブランチ)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">(ブランチの / を _ に置き換えたもの)</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "PR リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 PR を別のターミナルセッションで実行するコマンドを設定します。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR リストページ</span>"
   },
   "ext_section_prList_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。ブランチをローカルで解決するには <code>gh pr checkout {number}</code> を使います。"
   },
-  "ext_section_repo_help": {
-    "message": "リポジトリページ (コード、issue 一覧、Actions など) のヘッダーで、リポジトリ名の横に置かれるボタンです — 最大 $ARG1$ 個。PR・issue のボタンと違って GitHub の緑のアクションボタンのように見えるので、<b>$ARG3$</b> には絵文字より <code>$ARG2$</code> のような名前が向いています。PR でも issue でもない GitHub ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG3": {
-        "content": "$3"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— リポジトリページ</span>"
-  },
   "ext_section_repo_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — リポジトリページには PR や issue の番号もブランチもないため、<code>{number}</code>、<code>{branch}</code> 系、<code>{base}</code> は使えません。<code>{main}</code> は GitHub がページに埋め込んでいるリポジトリの既定ブランチから決まります — <code>master</code> のリポジトリも個別設定なしで正しく出ます。"
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— 保存されたコマンドと現在のプリセット</span>"
   },
   "ext_status_exportFailed": {
     "message": "エクスポートできませんでした: $ARG1$",

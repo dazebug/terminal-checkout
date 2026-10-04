@@ -178,8 +178,6 @@
 .options-shell-status.error { color: var(--err); }
 .options-shell-status.info { color: var(--accent); }
 
-.legacy-shell-ui { display: none !important; }
-
 @media (max-width: 560px) {
   .options-shell-savebar { flex-wrap: wrap; }
   .options-shell-save-state { flex-basis: 100%; }

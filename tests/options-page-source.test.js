@@ -42,18 +42,27 @@ test('the linked module stylesheets exist as local assets', () => {
   }
 });
 
-test('the shell replaces the legacy global settings, backup, and reset surfaces', () => {
+test('the app contains only the replica and editor roots, and legacy controls are removed', () => {
   const html = read('options.html');
+  const options = read('options.js');
   const shell = read('options-shell.js');
   const styles = read('options-shell.css');
-  assert.match(html, /<section class="section legacy-shell-ui" id="legacy-main-settings">/);
-  assert.match(html, /<section class="section legacy-shell-ui" id="legacy-backup-settings">/);
-  assert.match(html, /<div class="actions legacy-shell-ui">/);
-  assert.match(styles, /\.legacy-shell-ui\s*\{\s*display:\s*none\s*!important;/);
+  const app = html.match(/<main id="app" inert>([\s\S]*?)<\/main>/)?.[1] || '';
+  assert.deepEqual([...app.matchAll(/id="([^"]+)"/g)].map(([, id]) => id), [
+    'options-replica-root', 'options-editor-root',
+  ]);
+  assert.ok(html.indexOf('id="options-shell-root"') < html.indexOf('<main id="app"'));
+  assert.doesNotMatch(`${html}\n${options}`, /legacy-shell-ui|btn-card|pr-buttons|default-main|legacy-main-settings|legacy-backup-settings|migration-section|stale-banner|dirty-indicator|load-error/);
+  assert.doesNotMatch(styles, /legacy-shell-ui|btn-card|migration-section|stale-banner|dirty-indicator/);
+  assert.doesNotMatch(options, /renderButtons|renderOverrides|renderMigration|applyPreset|onCardInput|onCardClick/);
   for (const action of ['main-patch', 'override-add', 'override-patch', 'override-remove', 'export-saved', 'import-file', 'reset']) {
     assert.match(shell, new RegExp(`type: '${action}'`));
   }
-  assert.match(read('options.js'), /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
+  assert.match(options, /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
+  assert.match(options, /loadErrorMessage: null/);
+  assert.match(options, /status: \{ type: 'idle', message: '' \}/);
+  assert.match(options, /errorMessage: state\.loadErrorMessage/);
+  assert.match(options, /return \{ \.\.\.state\.status \};/);
 });
 
 test('the page makes the hidden attribute override module display styles', () => {
@@ -62,6 +71,17 @@ test('the page makes the hidden attribute override module display styles', () =>
   const baseStyles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] || '';
   assert.match(baseStyles, /^\s*\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}\s*$/m);
   assert.doesNotMatch(shellStyles, /\[hidden\][^{]*\{[^}]*display\s*:\s*(?!none\b)/s);
+});
+
+test('the engine reads no rendered settings and only uses the module roots and inert gate', () => {
+  const source = read('options.js');
+  const lookups = [...source.matchAll(/document\.getElementById\('([^']+)'\)/g)].map(([, id]) => id);
+  assert.deepEqual([...new Set(lookups)].sort(), [
+    'app', 'options-editor-root', 'options-replica-root', 'options-shell-root',
+  ]);
+  assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/);
+  assert.doesNotMatch(source, /(?:\.value|\.textContent|\.innerHTML)\s*(?:=|\+=)/,
+    'engine state still depends on markup fields or legacy rendering');
 });
 
 test('Korean wrapping rules follow only the Korean document language', () => {
@@ -90,24 +110,20 @@ test('dispatch mutates engine state without DOM edits, synthetic events, or brow
   assert.doesNotMatch(dispatch, /document\.|\.click\s*\(|dispatchEvent\s*\(|\.value\s*=|\b(?:confirm|alert|prompt)\s*\(/);
 });
 
-test('legacy face inputs read their limit from defaults.js', () => {
+test('the face editor reads its limit from defaults.js', () => {
   const defaults = read('defaults.js');
-  const options = read('options.js');
+  const editor = read('options-editor.js');
   assert.match(defaults, /const FACE_MAX_LENGTH = 24;/);
-  assert.match(options, /maxlength="\$\{FACE_MAX_LENGTH\}"/);
-  assert.doesNotMatch(options, /maxlength=["']24["']/);
+  assert.match(editor, /maxLength: FACE_MAX_LENGTH/);
+  assert.match(editor, /appendFaceCharacter\(face\.value, target\.dataset\.emoji, FACE_MAX_LENGTH\)/);
+  assert.doesNotMatch(editor, /maxLength:\s*24\b/);
 });
 
-test('legacy migration controls and the shell dispatch share selection and panel actions', () => {
+test('migration selection and panel state are owned by the engine and rendered by the shell', () => {
   const source = read('options.js');
+  const shell = read('options-shell.js');
   assert.match(source, /@typedef \{\{type: 'migration-selection', uid: string, selected: boolean\}\} OptionsMigrationSelectionAction/);
   assert.match(source, /@typedef \{\{type: 'migration-panel-toggle'\}\} OptionsMigrationPanelToggleAction/);
-  const legacy = source.slice(
-    source.indexOf("document.getElementById('migration-badge').addEventListener"),
-    source.indexOf("document.getElementById('migration-apply').addEventListener"),
-  );
-  assert.match(legacy, /runPreparedReview\(prepareMigrationPanelToggle\(\)\)/);
-  assert.match(legacy, /runPreparedReview\(prepareMigrationSelection\(id, checked\)\)/);
   const dispatchStart = source.indexOf('async function dispatchOptionsEngineAction(');
   const dispatchEnd = source.indexOf('\n/** @type {OptionsEngine} */', dispatchStart);
   const dispatch = source.slice(dispatchStart, dispatchEnd);
@@ -115,4 +131,6 @@ test('legacy migration controls and the shell dispatch share selection and panel
   assert.match(dispatch, /case 'migration-panel-toggle':\s*outcome = runPreparedReview\(prepareMigrationPanelToggle\(\)\)/);
   assert.match(source, /panelOpen: state\.migrationPanelOpen/);
   assert.match(source, /pending: state\.plan !== null && state\.loadedVersion !== null/);
+  assert.match(shell, /type: 'migration-selection'/);
+  assert.match(shell, /type: 'migration-panel-toggle'/);
 });
