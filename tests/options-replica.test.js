@@ -106,6 +106,34 @@ test('page selection closes both transient surfaces before changing page and res
     'programmatic page changes must close a popover too');
 });
 
+test('a full redraw and the preset preview draw the shown page through one function', () => {
+  const body = name => {
+    const start = source.indexOf(`function ${name}(`);
+    const end = source.indexOf('\nfunction ', start + 1);
+    assert.ok(start >= 0 && end > start, `${name} is missing`);
+    return source.slice(start, end);
+  };
+  const shown = body('syncShownPage');
+  for (const part of [
+    /routeAddress\(pageKind\)/,
+    /renderIconPreview\(pageKind, snapshot\)/,
+    /renderGitHubPage\(pageKind, snapshot, /,
+    /'aria-current'/,
+    /'is-preset-target'/,
+    /'is-preview'/,
+  ]) assert.match(shown, part);
+  const pageDependent = /routeAddress\(|iconKindAndButton\(|renderIconPreview\(|renderGitHubPage\(|aria-current|is-preset-target|is-preview/;
+  for (const name of ['renderReplica', 'updatePresetPreview']) {
+    const path = body(name);
+    assert.match(path, /syncShownPage\(\);/, `${name} must draw the shown page through syncShownPage`);
+    assert.doesNotMatch(path, pageDependent, `${name} must not draw a part of the shown page on its own`);
+  }
+  for (const name of ['renderFilmstripCard', 'renderPresetCard']) {
+    assert.doesNotMatch(body(name), /aria-current|is-preset-target|is-preview|previewPreset|mounted\.pageKind/,
+      `${name} must leave the marks that follow the shown page to syncShownPage`);
+  }
+});
+
 test('replica event blocking recognizes an inert surface or inert event-path ancestor', () => {
   assert.equal(typeof model.isReplicaEventBlocked, 'function');
   assert.equal(model.isReplicaEventBlocked([], false), false);

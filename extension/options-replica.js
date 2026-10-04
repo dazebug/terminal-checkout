@@ -486,6 +486,13 @@ function iconKindAndButton(kind, snapshot) {
   return runKind ? { kind: runKind, button: iconButtonForPage(kind, snapshot) } : null;
 }
 
+/** @param {string} kind @param {OptionsEngineSnapshot} snapshot */
+function renderIconPreview(kind, snapshot) {
+  const icon = iconKindAndButton(kind, snapshot);
+  const button = icon ? renderDecorativeButton(icon.kind, icon.button) : renderDecorativeButton('repo', null);
+  return `<span class="replica-icon-label">${replicaEscape(replicaText('iconAction'))}</span>${button}`;
+}
+
 /** @param {string} kind @param {OptionsButtonSnapshot|null} button */
 function renderDecorativeButton(kind, button) {
   if (!button) return `<span class="replica-icon-empty">${replicaEscape(replicaText('iconEmpty'))}</span>`;
@@ -538,8 +545,7 @@ function renderFilmstripCard(kind, snapshot) {
   const preview = previewButton
     ? renderDecorativeButton(kind, previewButton)
     : `<span class="replica-filmstrip-empty" aria-hidden="true">+</span>`;
-  const presetTarget = mounted.previewPreset?.kind === kind;
-  return `<button type="button" class="replica-page-card${presetTarget ? ' is-preset-target' : ''}" data-page-kind="${replicaEscape(kind)}" data-focus-key="page:${replicaEscape(kind)}" aria-current="${mounted.pageKind === kind ? 'page' : 'false'}"><span class="replica-page-card-name">${replicaEscape(pageName(kind))}</span><span class="replica-page-card-preview">${preview}</span><span class="replica-page-card-location">${replicaEscape(placeName(kind))}</span></button>`;
+  return `<button type="button" class="replica-page-card" data-page-kind="${replicaEscape(kind)}" data-focus-key="page:${replicaEscape(kind)}"><span class="replica-page-card-name">${replicaEscape(pageName(kind))}</span><span class="replica-page-card-preview">${preview}</span><span class="replica-page-card-location">${replicaEscape(placeName(kind))}</span></button>`;
 }
 
 /** @param {ReplicaPresetGroup} group @param {ReplicaPresetCard} card @param {OptionsEngineSnapshot} snapshot */
@@ -551,14 +557,13 @@ function renderPresetCard(group, card, snapshot) {
   const canAdd = group.availability === 'available';
   const canReplace = snapshot.load?.loaded === true;
   const isPickerOpen = mounted.replacePicker?.kind === kind && mounted.replacePicker?.presetId === presetId;
-  const isPreview = mounted.previewPreset?.kind === kind && mounted.previewPreset?.presetId === presetId;
   const useStatus = card.inUse
     ? `<span class="replica-preset-use">${replicaEscape(replicaText('drawer.inUse'))}</span>`
     : '';
   const replaceTargets = isPickerOpen
     ? renderPresetReplaceTargets(kind, presetId, snapshot, focusPrefix)
     : '';
-  return `<article class="replica-preset-card${isPreview ? ' is-preview' : ''}" role="group" aria-labelledby="${focusPrefix}-name" tabindex="0" draggable="${snapshot.load?.loaded === true}" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-focus-key="${focusPrefix}-card">
+  return `<article class="replica-preset-card" role="group" aria-labelledby="${focusPrefix}-name" tabindex="0" draggable="${snapshot.load?.loaded === true}" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-focus-key="${focusPrefix}-card">
     <div class="replica-preset-card-main">
       <span class="replica-preset-face">${renderDecorativeButton(kind, card)}</span>
       <div class="replica-preset-copy">
@@ -682,11 +687,8 @@ function renderReplica() {
   dragPreset = null;
   mounted.snapshot = engine.getSnapshot();
   const snapshot = mounted.snapshot;
-  const kind = mounted.pageKind;
-  const icon = iconKindAndButton(kind, snapshot);
   const filmstrip = REPLICA_KIND_ORDER.map(pageKind => renderFilmstripCard(pageKind, snapshot)).join('');
   const drawerOpen = mounted.drawerOpen;
-  const iconPreview = icon ? renderDecorativeButton(icon.kind, icon.button) : renderDecorativeButton('repo', null);
   root.innerHTML = `
     <section class="options-replica">
       <h2 class="replica-sr-only">${replicaEscape(replicaText('label'))}</h2>
@@ -696,7 +698,7 @@ function renderReplica() {
           <h2 class="replica-sr-only">${replicaEscape(replicaText('label'))}</h2>
           <div class="replica-browser-chrome">
             <span class="replica-browser-lights" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="replica-browser-address">${replicaEscape(routeAddress(kind))}</span>
+            <span class="replica-browser-address"></span>
           </div>
           <div class="replica-editbar">
             <div class="replica-editbar-copy">
@@ -704,13 +706,13 @@ function renderReplica() {
               <span>${replicaEscape(replicaText('description'))}</span>
             </div>
             <div class="replica-editbar-controls">
-              <div class="replica-icon-preview"><span class="replica-icon-label">${replicaEscape(replicaText('iconAction'))}</span>${iconPreview}</div>
+              <div class="replica-icon-preview"></div>
               <button type="button" class="replica-control" data-action="placeholders-toggle" data-focus-key="placeholders-toggle" aria-pressed="${mounted.showPlaceholders}"${snapshot.load?.loaded ? '' : ' disabled'}>${replicaEscape(replicaText(mounted.showPlaceholders ? 'placeholders.hide' : 'placeholders.show'))}</button>
               <button type="button" class="replica-control replica-drawer-toggle" data-action="drawer-toggle" data-focus-key="drawer-toggle" aria-controls="replica-drawer" aria-expanded="${drawerOpen}"${snapshot.load?.loaded ? '' : ' disabled'}>${replicaEscape(replicaText(drawerOpen ? 'drawer.close' : 'drawer.open'))}</button>
             </div>
           </div>
           <p class="replica-reorder-instructions" id="replica-reorder-instructions">${replicaEscape(replicaText('move.instructions'))}</p>
-          <div class="replica-page-frame">${renderGitHubPage(kind, snapshot, mounted.showPlaceholders)}</div>
+          <div class="replica-page-frame"></div>
           <aside id="replica-drawer" class="replica-drawer" data-replica-drawer-surface="true" aria-labelledby="replica-drawer-title" aria-hidden="${!drawerOpen}"${drawerOpen ? '' : ' hidden'}>
             <div class="replica-drawer-heading">
               <h2 id="replica-drawer-title">${replicaEscape(replicaText('drawer.title'))}</h2>
@@ -724,10 +726,33 @@ function renderReplica() {
       </div>
     </section>`;
   root.querySelector('.replica-drawer')?.setAttribute('data-drawer-kind', mounted.drawerKind);
+  syncShownPage();
   if (focusKey) {
     const replacement = [...root.querySelectorAll('[data-focus-key]')].find(node => node.dataset.focusKey === focusKey);
     replacement?.focus();
   }
+}
+
+/** Both a full redraw and the drawer's preview draw the parts that follow the shown page here, so neither leaves one stale. */
+function syncShownPage() {
+  const { root, snapshot, pageKind, previewPreset } = mounted;
+  const target = previewPreset ? presetHighlightTarget(previewPreset.kind) : null;
+  const address = root.querySelector('.replica-browser-address');
+  if (address) address.textContent = routeAddress(pageKind);
+  const icon = root.querySelector('.replica-icon-preview');
+  if (icon) icon.innerHTML = renderIconPreview(pageKind, snapshot);
+  const frame = root.querySelector('.replica-page-frame');
+  if (frame) frame.innerHTML = renderGitHubPage(pageKind, snapshot, mounted.showPlaceholders);
+  root.querySelectorAll('.replica-page-card').forEach(card => {
+    card.classList.toggle('is-preset-target', card.dataset.pageKind === target?.pageCardKind);
+    card.setAttribute('aria-current', card.dataset.pageKind === pageKind ? 'page' : 'false');
+  });
+  root.querySelectorAll('.replica-preset-card').forEach(card => {
+    card.classList.toggle(
+      'is-preview',
+      card.dataset.presetKind === previewPreset?.kind && card.dataset.presetId === previewPreset?.presetId,
+    );
+  });
 }
 
 /** Update only the page preview so hovering a card does not replace its drag source. */
@@ -736,20 +761,7 @@ function updatePresetPreview(next) {
   const target = next ? presetHighlightTarget(next.kind) : null;
   mounted.previewPreset = next;
   mounted.pageKind = target?.pageKind || mounted.drawerOriginPageKind || mounted.pageKind;
-  const frame = mounted.root.querySelector('.replica-page-frame');
-  if (frame) frame.innerHTML = renderGitHubPage(mounted.pageKind, mounted.snapshot, mounted.showPlaceholders);
-  const address = mounted.root.querySelector('.replica-browser-address');
-  if (address) address.textContent = routeAddress(mounted.pageKind);
-  mounted.root.querySelectorAll('.replica-page-card').forEach(card => {
-    card.classList.toggle('is-preset-target', card.dataset.pageKind === target?.pageCardKind);
-    card.setAttribute('aria-current', mounted.pageKind === card.dataset.pageKind ? 'page' : 'false');
-  });
-  mounted.root.querySelectorAll('.replica-preset-card').forEach(card => {
-    card.classList.toggle(
-      'is-preview',
-      card.dataset.presetKind === next?.kind && card.dataset.presetId === next?.presetId,
-    );
-  });
+  syncShownPage();
 }
 
 /** @param {Element|null} target */
