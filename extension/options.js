@@ -5,6 +5,7 @@
 /** @typedef {'face'|'label'|'command'} OptionsButtonRequiredField */
 /** @typedef {'incomplete'|'duplicate'} OptionsOverrideErrorCode */
 /** @typedef {'claude-inputs-without-claude-command'} OptionsButtonWarningCode */
+/** @typedef {'first-load'|'confirmation'} OptionsInertReason */
 
 /**
  * @typedef {Object} OptionsButtonValue
@@ -146,6 +147,7 @@
  * @property {() => OptionsEngineSnapshot} getSnapshot Returns a deeply frozen copy of the current edit and page state.
  * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Registers for state changes coalesced into one microtask; registration never invokes the listener, so mount calls getSnapshot for its first render. Returns an unsubscribe function.
  * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action to engine state. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
+ * @property {(reason: OptionsInertReason, elements: ReadonlyArray<HTMLElement>, active: boolean) => void} setInertReason Adds or removes one owner's page-interaction blocker; an element stays inert while any owner remains.
  *
  * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. `migration-selection` takes a migration candidate uid and boolean `selected`; it records review intent without marking settings dirty. `migration-panel-toggle` changes the shared migration panel visibility and records review intent. Button and input moves use the existing before-index ordering.
  */
@@ -256,18 +258,36 @@ function section(kind) {
 // the rule, and code paths that do not come from a click still have to pass it.
 const LOADING_MESSAGE = () => tr('ext.status.loading');
 
+const optionsPageInertReasons = new WeakMap();
+
+/** @param {OptionsInertReason} reason @param {ReadonlyArray<HTMLElement>} elements @param {boolean} active */
+function setOptionsPageInertReason(reason, elements, active) {
+  for (const element of elements) {
+    if (!element) continue;
+    let reasons = optionsPageInertReasons.get(element);
+    if (!reasons) {
+      reasons = new Set();
+      optionsPageInertReasons.set(element, reasons);
+    }
+    if (active) reasons.add(reason);
+    else reasons.delete(reason);
+    element.inert = reasons.size > 0;
+    if (reasons.size === 0) optionsPageInertReasons.delete(element);
+  }
+}
+
 function requireLoaded() {
   if (state.loaded) return true;
   showStatus('info', LOADING_MESSAGE());
   return false;
 }
 
-// The replica and editor become interactive only after settings load. One switch on their shared
-// root covers every control, including controls added by either view module.
+// The replica and editor become interactive only after settings load. This owner changes only its
+// own reason; a shell confirmation can keep the same root inert until it closes.
 function updateLoadedGate() {
   // The app, not the whole document: the status line and [Retry] live outside it, so a load that
   // failed still has somewhere to say so and something the user can press.
-  document.getElementById('app').inert = !state.loaded;
+  setOptionsPageInertReason('first-load', [document.getElementById('app')], !state.loaded);
 }
 
 // A load that never answered. The gate stays shut — a Save here would write an empty settings object
@@ -1568,6 +1588,7 @@ window.optionsEngine = Object.freeze({
   getSnapshot: getOptionsEngineSnapshot,
   subscribe: subscribeOptionsEngine,
   dispatch: dispatchOptionsEngineAction,
+  setInertReason: setOptionsPageInertReason,
 });
 
 window.optionsShell.mount(

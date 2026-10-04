@@ -4,7 +4,7 @@
 - 대상: `extension/options.html` · `extension/options.js` Chrome 확장 옵션 페이지
 - 시작 커밋: `b8d8f483aaa76e556e244e414fbdd0a0ea51ad21` (`b8d8f48`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/options-d-review` (`worktree-options-d-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-options-d-work` (`options-d-work`)
-- 현재: R1 · 마지막 승격 b62595f · 리뷰 중 없음 · 게이트 그린(401)
+- 현재: R1 · 마지막 승격 3cd871b · 리뷰 중 없음 · 게이트 그린(407)
 - 최근 검증자 판정: 계획을 레인 3개로 재편하면 시작에 합의한다 — 1단계 항목 1부터 · R0
 
 ## 배경 — 확인한 원천
@@ -108,6 +108,9 @@
 | 3″ | 한국어 줄바꿈 | 레인 A · 셸 표시 | 한국어 문구가 음절 사이에서 줄이 바뀐다 | `extension/options.html`, `tests/options-page-source.test.js` | 3′ | verified | 재실행: 드라이버 기준 트리 `node --test` 374 pass · 실제 브라우저 편집기 연 상태에서 hidden인데 보이는 요소 0 (승격 전 4) | 8f9d5b7 |
 | 3‴ | 셸 접근성·IME 입력 | 레인 A · 셸 접근성 | (a) 마이그레이션 후보 라벨이 체크박스를 감쌌다가 heading에 다시 추가해 연결을 끊는다 (b) IME 조합 중 Escape를 셸 단축키가 가로챈다 | `extension/options-shell.js`, `tests/options-shell.test.js` | 3 | claimed | 수정 전 재현 스크립트: 마이그레이션 `labelControl=null`, `checkboxLabels=0`, 라벨 클릭 뒤 선택 불변; IME Escape `defaultPrevented=true`; `node --test tests/options-shell.test.js` → `ℹ tests 8`, `ℹ pass 6`, `ℹ fail 2`; 수정 후 `.git/smoke-accessibility.cjs` → main·override repo/branch·가져오기 파일·마이그레이션 체크박스 이름 연결, 라벨 클릭 선택 전환, IME Enter/Escape 중 확인 유지, 일반 Escape 닫힘, jsdom 오류 0; `node --test` → `ℹ tests 397`, `ℹ pass 397`, `ℹ fail 0` | |
 | 3⁗ | 셸 확인창 모달 차단 | 레인 A · 셸 확인 UI | aria-modal 확인창이 열린 동안 페이지 배경·설정·복제 화면을 조작할 수 있어 포커스와 엔진 상태가 바뀐다 | `extension/options-shell.js`, `tests/options-shell.test.js` | 2·3 | claimed | 수정 전 재현: `aria-modal=true`, `activeOutsideModal=true`, `backgroundInert=false`, `engineMain=draft-while-confirming`; 수정 전 `node --test tests/options-shell.test.js` → `ℹ tests 10`, `ℹ pass 8`, `ℹ fail 2`; 수정 후 제공 재현: `activeOutsideModal=false`, `backgroundInert=true`, `engineMain=develop`; `.git/smoke-confirmation.cjs` → 변경 취소·Reset·동기화 받아들이기 각각 배경 inert·Tab 순환·배경 편집 차단·Escape 뒤 포커스 복귀; 재실행 `node --test` → `ℹ tests 401`, `ℹ pass 401`, `ℹ fail 0` | |
+| 3⁵ | 재로드 중 확인창 차단 유지 | 레인 A · 차단 이유 합산 | 원격 재로드가 끝나면 확인창이 열린 상태에서도 첫 로드 차단을 풀어 배경이 다시 조작 가능해진다 | `extension/options.js`, `extension/options-shell.js`, `tests/options-page-source.test.js`, `tests/options-shell.test.js` | 2·3⁗ | claimed | 수정 전 제공 재현: `F1 after remote change` → `modalOpen=true`, `appInert=false`, `inertAttribute=false`, `appliedGeneration=2`, `writes=0`; 수정 전 테스트 red `node --test tests/options-page-source.test.js tests/options-shell.test.js` → `ℹ tests 24`, `ℹ pass 22`, `ℹ fail 2`; 수정 후 테스트 → `ℹ tests 24`, `ℹ pass 24`, `ℹ fail 0`; `.git/smoke-inert-reasons/f1.cjs` → 재로드 뒤 app·설정 inert 유지, 확인 닫은 뒤 둘 다 해제, `defaultMain=remote-main`, 쓰기 0, jsdom 오류 0; `node --test` → `ℹ tests 407`, `ℹ pass 407`, `ℹ fail 0` | |
+| 5⁵ | 키보드 페이지 전환 뒤 편집기 잔류 | 레인 B · 복제 화면 | 키보드로 다른 페이지를 고르면 이전 페이지의 편집기가 남고 Escape가 페이지를 되돌린다 | `extension/options-replica.js`, `tests/options-replica.test.js` | 5⁗ | wip | 드라이버 재현 스크립트에서 페이지 전환 뒤 이전 편집기 잔류와 Escape 페이지 복귀 재현 | |
+| 7⁵ | 확인창 첫 Escape 처리 | 레인 C · 팝오버 편집기 | 확인창 첫 Escape를 배경 편집기가 소비해 셸 확인창을 닫지 못한다 | `extension/options-editor.js`, `tests/options-editor.test.js` | 7⁗ | wip | 드라이버 재현 스크립트에서 편집기 열린 상태로 변경 취소 확인 뒤 첫 Escape가 편집기를 닫고 확인창은 남는 경로 재현 | |
 | 4 | 복제 화면 | 레인 B · 복제 화면 | (a) 목록 페이지 미리보기가 실제 pill 모양을 그리지 않는다 (`extension/options.js:393; extension/content.js:504,524`)<br>(b) 800 px에서 목록·편집 막대 문구가 세로로 접히며 900 px 이하 배치는 실측되지 않았다 (2026-10-04 사용자 관찰) | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록. 주변 값은 이 모듈의 단일 `EXAMPLE_CONTEXT` 상수에 둔다: `octo-demo/sample-repo`, PR `#42`, issue `#17`, branch `example/options`, base `main`, 제목 `Add button presets`, repo 경로 `/work/sample-repo` | 1 | verified | 레인 B 커밋 `7fc851f` · 레인 B 하네스 5/5 페이지·목록 pill 2·storage 쓰기 0 · 드라이버 실제 브라우저 800px: 다섯 페이지 카드·브랜치 옆 버튼 3개·편집기 열림 · 재실행 361 pass | 7fc851f |
 | 5 | 프리셋 서랍 | 레인 B · 프리셋 서랍 | — | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록 | 1·4 | verified | 레인 B 커밋 c3f8b38 · 하네스: 서랍 카드 5/1/3/1/3·자리 강조·[추가]·위치 지정 끌어 놓기·확인 뒤 교체·대화상자 0·storage 쓰기 0 · 드라이버 재실행 380 pass · 프리셋 설명 13개를 실제 명령과 대조 | c3f8b38 |
 | 5′ | 복제 화면 줄바꿈 | 레인 B · 복제 화면 | 복제 화면의 언어 공통 `word-break: keep-all` 이 일본어·중국어 문구도 줄바꿈하지 못하게 한다 | `extension/options-replica.css`, `tests/options-replica.test.js` | 4 | verified | 드라이버 재실행 384 pass · replica에서 언어 무관 keep-all 제거 확인 | 097d025 |
@@ -147,6 +150,7 @@
 | D11 | 드라이버 | 연결할 옵션 재설계 이슈·PR 존재 여부 | 관련 이슈·PR 없음 — 출처는 이 루프의 PR이 된다 | `gh issue list --repo dazebug/terminal-checkout --state all --search "options in:title"` 결과 #78·#24만, 둘 다 무관; R0 실측 | — |
 | D12 | 드라이버 | 문서 항목 배정 변경 | 항목 10을 레인 B로 재배정 — 레인 A가 항목 8을 맡는 동안 문서를 병렬로 쓴다. 항목 9는 레인 C가 7′ 뒤에 맡는다 | 2026-10-05 사용자 지시 | — |
 | D13 | 드라이버 | 저장 직전 재읽기 뒤 쓰기 완료 전 원격 변경이 덮이는 창 | cold 분류 A 잔여 — `storage.sync` 에 비교 후 쓰기가 없어 남는 기존 잔여(설정 마이그레이션 때부터 명시), 이번 변경의 회귀 아님 | cold 검토 | 기록만 |
+| D14 | 사용자 | 3차 냉정 검토도 no(연속 3회) | 3건을 고치고 4차 냉정 검토 없이 PR로 간다 — PR 리뷰 봇이 다시 본다. 그 뒤 나오는 것은 GitHub 이슈로 | 2026-10-05 사용자 선택 | 4차 검토를 생략한 만큼 상호작용 결함이 남을 수 있다 |
 
 ## 전수 소탕 표
 
@@ -210,6 +214,14 @@
 - 차단: (1) 분류 A: 저장 재읽기 뒤 쓰기 완료 전 원격 변경 덮어쓰기 — 기존 잔여 (2) 동기화 알림이 교체 확인 포커스를 지움 (3) 셸 확인창 aria-modal인데 배경 조작 가능 (4) 다시 그려진 버튼의 옛 좌표에 편집기 고정 (5) 끌기 뒤 다음 클릭을 삼킴 (6) P3 영어 풍경 lang 미지정 — (2)∼(6) 분류 B
 - 수정: 항목 7⁗(레인 C: 2·4)·5⁗(레인 B: 5·6)·3⁗(레인 A: 3), (1)은 기존 원장 행대로 기록만
 - 실측: 드라이버가 재현 스크립트 확인
+- 판정: 이 구현에 합의하는가: no
+- 처리 결과: 2차 결함 수정·승격: d08e9d4·d4aeb55·3cd871b
+
+#### 리뷰 cold 3 — b8d8f48..3cd871b · 새 스레드 01a10852-7321-7e00-aa7c-7c666e8cbe98
+
+- 차단: (1) 동기화 재로드가 확인창의 배경 차단을 품 (2) 확인창의 첫 Escape를 배경 편집기가 소비 (3) 키보드로 페이지를 바꾸면 이전 편집기가 남고 Escape가 페이지를 되돌림 — 전부 분류 B
+- 수정: 항목 3⁵(레인 A: 1)·7⁵(레인 C: 2)·5⁵(레인 B: 3)
+- 실측: 드라이버가 재현 스크립트로 3건 재현
 - 판정: 이 구현에 합의하는가: no
 
 ## 열린 질문

@@ -159,12 +159,8 @@ test('shell key handling leaves IME composition keys to the input method', () =>
 });
 
 test('shell confirmations isolate the whole page and reject background edits', () => {
-  const start = source.indexOf('function setConfirmationBackgroundInert(');
-  const end = source.indexOf('\n    function appendMigrationDiff(', start);
-  const isolation = source.slice(start, end);
-  assert.ok(start >= 0 && end > start);
   const targetsStart = source.indexOf('const confirmationBackground = [');
-  const targetsEnd = source.indexOf('\n    let confirmationBackgroundInertState', targetsStart);
+  const targetsEnd = source.indexOf('\n    function canRestoreFocus(', targetsStart);
   const targets = source.slice(targetsStart, targetsEnd);
   assert.ok(targetsStart >= 0 && targetsEnd > targetsStart);
   assert.match(source, /const appRoot = document\.getElementById\('app'\)/);
@@ -172,11 +168,8 @@ test('shell confirmations isolate the whole page and reject background edits', (
   assert.match(targets, /settingsRoot/);
   assert.match(targets, /saveBar/);
   assert.match(targets, /stale, migrationBadge, migrationPanel, loadError, status/);
-  assert.match(isolation, /confirmation\.inert = false/);
-  assert.match(isolation, /\.inert = true/);
-  assert.match(isolation, /element\.setAttribute\('inert', ''\)/);
-  assert.match(isolation, /element\.removeAttribute\('inert'\)/);
-  assert.match(isolation, /element\.inert = wasInert/);
+  assert.match(source, /function setConfirmationBackgroundInert\(inert\)\s*\{\s*engine\.setInertReason\('confirmation', confirmationBackground, inert\);\s*\}/);
+  assert.doesNotMatch(source, /\.inert\s*=|setAttribute\('inert'|removeAttribute\('inert'/);
   assert.match(source, /document\.addEventListener\('focusin', event => \{\s*if \(!confirmation\.hidden && !confirmation\.contains\(event\.target\)\) keepEditing\.focus\(\);/);
 
   const actionStart = source.indexOf('async function runAction(action)');

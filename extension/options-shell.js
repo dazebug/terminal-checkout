@@ -146,7 +146,6 @@ window.optionsShell = Object.freeze({
     sticky.append(saveBar, confirmation, stale, migrationBadge, migrationPanel, loadError, status);
 
     const settingsRegion = optionsShellElement('section', 'options-shell-settings');
-    settingsRegion.inert = true;
 
     const mainSettings = optionsShellElement('section', 'section options-shell-panel');
     mainSettings.setAttribute('aria-labelledby', 'shell-main-title');
@@ -218,28 +217,9 @@ window.optionsShell = Object.freeze({
     const confirmationBackground = [
       appRoot, settingsRoot, saveBar, stale, migrationBadge, migrationPanel, loadError, status,
     ].filter(Boolean);
-    let confirmationBackgroundInertState = null;
 
     function setConfirmationBackgroundInert(inert) {
-      if (inert) {
-        if (confirmationBackgroundInertState) return;
-        confirmationBackgroundInertState = confirmationBackground.map(element => [
-          element, element.hasAttribute('inert'), element.inert,
-        ]);
-        for (const [element] of confirmationBackgroundInertState) {
-          element.inert = true;
-          element.setAttribute('inert', '');
-        }
-        confirmation.inert = false;
-        return;
-      }
-      if (!confirmationBackgroundInertState) return;
-      for (const [element, hadAttribute, wasInert] of confirmationBackgroundInertState) {
-        if (hadAttribute) element.setAttribute('inert', '');
-        else element.removeAttribute('inert');
-        element.inert = wasInert;
-      }
-      confirmationBackgroundInertState = null;
+      engine.setInertReason('confirmation', confirmationBackground, inert);
     }
 
     function canRestoreFocus(element) {
@@ -418,7 +398,7 @@ window.optionsShell = Object.freeze({
 
     function renderSettings(snapshot) {
       const settings = optionsShellSettingsViewState(snapshot);
-      settingsRegion.inert = settings.inert;
+      engine.setInertReason('first-load', [settingsRegion], settings.inert);
       if (defaultMain.value !== settings.defaultMain) defaultMain.value = settings.defaultMain;
       defaultMain.disabled = settings.disabled;
       addOverride.disabled = settings.disabled;

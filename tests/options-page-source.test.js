@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
@@ -144,4 +145,41 @@ test('migration selection and panel state are owned by the engine and rendered b
   assert.match(source, /pending: state\.plan !== null && state\.loadedVersion !== null/);
   assert.match(shell, /type: 'migration-selection'/);
   assert.match(shell, /type: 'migration-panel-toggle'/);
+});
+
+test('page inert state is the union of independent engine reasons', () => {
+  const engine = read('options.js');
+  const shell = read('options-shell.js');
+  assert.match(engine, /@typedef \{'first-load'\|'confirmation'\} OptionsInertReason/);
+  assert.match(engine, /@property \{\(reason: OptionsInertReason, elements: ReadonlyArray<HTMLElement>, active: boolean\) => void\} setInertReason/);
+  assert.match(engine, /function updateLoadedGate\(\)\s*\{[^}]*setOptionsPageInertReason\('first-load', \[document\.getElementById\('app'\)\], !state\.loaded\)/s);
+  assert.match(engine, /setInertReason: setOptionsPageInertReason/);
+  assert.match(shell, /engine\.setInertReason\('confirmation', confirmationBackground, inert\)/);
+  assert.match(shell, /engine\.setInertReason\('first-load', \[settingsRegion\], settings\.inert\)/);
+  const inertWriters = [...engine.matchAll(/\.inert\s*=/g)];
+  assert.equal(inertWriters.length, 1, 'only the engine reason manager writes the inert property');
+  for (const name of ['options-shell.js', 'options-replica.js', 'options-editor.js']) {
+    assert.doesNotMatch(read(name), /\.inert\s*=(?!=)|setAttribute\('inert'|removeAttribute\('inert'/, `${name} delegates inert state to the engine`);
+  }
+
+  const start = engine.indexOf('const optionsPageInertReasons = new WeakMap();');
+  const end = engine.indexOf('\nfunction updateLoadedGate()', start);
+  assert.ok(start >= 0 && end > start, 'the engine must own the inert reason manager');
+  const context = vm.createContext({});
+  vm.runInContext(`${engine.slice(start, end)}\nglobalThis.setOptionsPageInertReason = setOptionsPageInertReason;`, context);
+  const element = {
+    attributes: new Set(),
+    get inert() { return this.attributes.has('inert'); },
+    set inert(value) { this.toggleAttribute('inert', value); },
+    toggleAttribute(name, force) {
+      if (force) this.attributes.add(name);
+      else this.attributes.delete(name);
+    },
+  };
+  context.setOptionsPageInertReason('first-load', [element], true);
+  context.setOptionsPageInertReason('confirmation', [element], true);
+  context.setOptionsPageInertReason('first-load', [element], false);
+  assert.equal(element.inert, true, 'finishing the load cannot release an open confirmation');
+  context.setOptionsPageInertReason('confirmation', [element], false);
+  assert.equal(element.inert, false, 'closing the last blocker releases the element');
 });
