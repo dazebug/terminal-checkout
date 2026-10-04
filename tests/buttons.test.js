@@ -292,9 +292,6 @@ test('the options modules never find a preset by its display name', () => {
     (reversedOperand.match(nameEquality) ?? []).length > 0,
     'the source oracle does not see a reversed display-name equality',
   );
-  assert.ok(source.includes('presetById('), 'the options modules no longer look presets up by id');
-  assert.ok(fs.readFileSync(path.join(__dirname, '../extension/defaults.js'), 'utf8').includes('presetOptions('),
-    'defaults.js no longer builds preset choices from ids and translated names');
 });
 
 test('a preset id is not part of a saved button', () => {

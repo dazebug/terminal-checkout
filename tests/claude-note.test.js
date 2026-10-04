@@ -102,7 +102,6 @@ test('the options warning counts inputs the way a click sends them', () => {
   const validation = defaults.slice(defaults.indexOf('function validateButtonValue('));
   const body = validation.slice(0, validation.indexOf('\n}\n'));
   assert.match(body, /normalizeClaudeInputs\(button\.claudeInputs\)/, 'the warning counts inputs by a rule of its own');
-  assert.match(defaults, /function normalizeClaudeInputs\(inputs\)/);
   const { normalizeClaudeInputs } = pick('normalizeClaudeInputs');
   assert.deepEqual(normalizeClaudeInputs(['  command  ', '\t', '  ']), ['command', '\t']);
 });

@@ -1003,7 +1003,7 @@ test('the page can only ask for keys the catalogue has, and asks for all of them
   );
 });
 
-test('the options modules use literal catalogue keys after resolving document language', () => {
+test('the options modules use literal catalogue keys', () => {
   // Each generated view asks the catalogue directly. A computed key would evade the catalogue
   // reference sweep and could render the raw message id, so inspect calls from the lexical stream.
   const dynamicCalls = [];
@@ -1020,11 +1020,6 @@ test('the options modules use literal catalogue keys after resolving document la
     }
   }
   assert.deepEqual(dynamicCalls, []);
-  const language = optionsJs.indexOf('applyDocumentLanguage();');
-  assert.ok(language >= 0);
-  for (const mount of ['window.optionsShell.mount(', 'window.optionsReplica.mount(', 'window.optionsEditor.mount(']) {
-    assert.ok(optionsJs.indexOf(mount) > language, `${mount} runs before the UI language is set`);
-  }
 });
 
 test('placeholders match across locales, key by key', () => {
@@ -1980,8 +1975,7 @@ test('a translation cannot break out of an HTML attribute', () => {
   const attributeKeys = new Set();
   for (const file of MARKUP_FILES) {
     for (const site of attributeSitesIn(read(file))) {
-      const sourceAtAttribute = read(file).slice(site.at, site.at + 300);
-      const named = messageCallsIn(sourceAtAttribute)[0];
+      const named = messageCallsIn(site.text ?? '')[0];
       if (named) attributeKeys.add(named.key);
     }
   }

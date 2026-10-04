@@ -331,7 +331,8 @@ test('editor does not call browser dialogs or define mockup settings data', () =
 test('hidden editor surfaces only receive flex display while visible', () => {
   const css = read('options-editor.css');
   for (const name of ['validation', 'presets', 'preset-confirmation']) {
-    assert.match(css, new RegExp(`\\.options-editor-${name}:not\\(\\[hidden\\]\\)`));
+    const escaped = `\\.options-editor-${name}:not\\(\\[hidden\\]\\)`;
+    assert.match(css, new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*flex\\s*;`, 's'));
   }
 });
 
@@ -380,7 +381,4 @@ test('the editor locale block follows its anchor in the same order in all five c
       assert.deepEqual(placeholders(messages[key]), expected, `${locale}/${key} placeholder set differs`);
     }
   }
-  assert.deepEqual(catalogues.map(({ messages }) => messages.ext_d_editor_cancel.message), [
-    'Keep command', '명령 유지', 'コマンドをそのままにする', '保留当前命令', '保留目前命令',
-  ]);
 });

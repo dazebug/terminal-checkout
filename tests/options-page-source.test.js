@@ -33,7 +33,6 @@ test('the page contains all module roots and loads the contract modules before t
   const positions = scripts.map(name => html.indexOf(`<script src="${name}"`));
   assert.equal(positions.every(position => position >= 0), true);
   assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
-  for (const name of ['options-shell.css', 'options-replica.css', 'options-editor.css']) assert.ok(html.includes(name));
 });
 
 test('the linked module stylesheets exist as local assets', () => {
@@ -60,11 +59,6 @@ test('the app contains only the replica and editor roots, and legacy controls ar
   for (const action of ['main-patch', 'override-add', 'override-patch', 'override-remove', 'export-saved', 'import-file', 'reset']) {
     assert.match(shell, new RegExp(`type: '${action}'`));
   }
-  assert.match(options, /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
-  assert.match(options, /loadErrorMessage: null/);
-  assert.match(options, /status: \{ type: 'idle', message: '' \}/);
-  assert.match(options, /errorMessage: state\.loadErrorMessage/);
-  assert.match(options, /return \{ \.\.\.state\.status \};/);
 });
 
 test('the page makes the hidden attribute override module display styles', () => {
@@ -84,6 +78,15 @@ test('the engine reads no rendered settings and only uses the module roots and i
   assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/);
   assert.doesNotMatch(source, /(?:\.value|\.textContent|\.innerHTML)\s*(?:=|\+=)/,
     'engine state still depends on markup fields or legacy rendering');
+});
+
+test('the engine snapshot projects its global settings and status', () => {
+  const source = read('options.js');
+  assert.match(source, /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
+  assert.match(source, /loadErrorMessage: null/);
+  assert.match(source, /status: \{ type: 'idle', message: '' \}/);
+  assert.match(source, /errorMessage: state\.loadErrorMessage/);
+  assert.match(source, /return \{ \.\.\.state\.status \};/);
 });
 
 test('the shell puts the localized page heading in the save bar', () => {

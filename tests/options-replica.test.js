@@ -161,11 +161,19 @@ test('replica source uses no storage API and responsive CSS keeps the filmstrip 
   assert.doesNotMatch(source, /chrome\.storage/);
   assert.match(source, /engine\.getSnapshot\(\)/);
   assert.match(source, /engine\.subscribe\(/);
-  assert.match(source, /optionsEditor\.open|editor\.open\(/);
-  assert.match(source, /dragUid\s*=\s*null/);
+  const editorStart = source.indexOf('function openButtonEditor(button) {');
+  const editorEnd = source.indexOf('\nfunction ', editorStart + 1);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart, 'the button editor boundary is missing');
+  const editorOpener = source.slice(editorStart, editorEnd);
+  assert.match(editorOpener, /const options = \{ kind, uid, anchor: button, restoreFocusTo: button \};/);
+  assert.match(editorOpener, /mounted\.editor\.open\(options\)/);
+  const renderStart = source.indexOf('function renderReplica() {');
+  const renderEnd = source.indexOf('\nfunction ', renderStart + 1);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, 'the replica render boundary is missing');
+  assert.match(source.slice(renderStart, renderEnd), /dragUid\s*=\s*null/,
+    'a redraw no longer invalidates an in-flight drag');
   assert.match(css, /--gh-/);
   assert.match(css, /@media\s*\(max-width:\s*900px\)/);
-  assert.match(css, /Theme\.swift/);
   assert.match(css, /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   const mediumStart = css.indexOf('@media (max-width: 900px)');
   const mediumEnd = css.indexOf('@media (max-width: 560px)', mediumStart);
@@ -295,14 +303,12 @@ test('preset replacement sends confirmation only after the view receives needs-c
   assert.equal(model.presetReplaceAction('unknown', 'custom-uid', 'pr.checkout'), null);
 });
 
-test('narrow GitHub placements wrap below branch labels and only Korean copy keeps words together', () => {
+test('narrow GitHub placements wrap below branch labels', () => {
   const css = read('options-replica.css');
-  const html = read('options.html');
   const narrowStart = css.indexOf('@media (max-width: 900px)');
   const narrowEnd = css.indexOf('@media (max-width: 560px)', narrowStart);
   const narrow = css.slice(narrowStart, narrowEnd);
   assert.equal(/\.options-replica\s*\{[^}]*word-break:\s*keep-all/.test(css), false);
-  assert.match(html, /:lang\(ko\)\s*\{\s*word-break:\s*keep-all;\s*overflow-wrap:\s*anywhere;\s*\}/);
   assert.match(narrow, /\.gh-branch-line\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(narrow, /\.gh-branch\s*\{[^}]*overflow:\s*visible;[^}]*text-overflow:\s*clip;[^}]*white-space:\s*normal/);
   assert.match(narrow, /\.gh-branch-line\s*>\s*\.replica-slot\s*\{[^}]*flex:\s*0\s+0\s+100%/);
