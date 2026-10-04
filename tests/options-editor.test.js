@@ -16,6 +16,8 @@ function loadEditor() {
   vm.runInContext(source, context);
   const model = vm.runInContext(`({
     calculatePopoverPosition: typeof calculatePopoverPosition === 'function' ? calculatePopoverPosition : null,
+    presetConfirmationNeedsRender: typeof presetConfirmationNeedsRender === 'function' ? presetConfirmationNeedsRender : null,
+    findReplicaAnchor: typeof findReplicaAnchor === 'function' ? findReplicaAnchor : null,
     isImeCompositionKeyEvent: typeof isImeCompositionKeyEvent === 'function' ? isImeCompositionKeyEvent : null,
     hasMeasurableViewport: typeof hasMeasurableViewport === 'function' ? hasMeasurableViewport : null,
     fitsFieldLimit: typeof fitsFieldLimit === 'function' ? fitsFieldLimit : null,
@@ -68,6 +70,50 @@ test('outside pointer classification follows the event path after the original t
 test('external snapshot close only restores focus when the focus owner was inside the popover', () => {
   assert.ok(/if \(!currentButton\(\)\) \{\s*const restoreFocus = currentPanel\(\)\?\.contains\(document\.activeElement\) \?\? false;\s*closePopover\(\{ restoreFocus \}\);/.test(source),
     'external close does not preserve focus ownership');
+});
+
+test('preset confirmation rendering recognizes unchanged confirmation content', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.presetConfirmationNeedsRender, 'function');
+  const existing = { dataset: { presetId: 'pr.checkout', presetName: 'Checkout' } };
+  assert.equal(model.presetConfirmationNeedsRender(existing, { id: 'pr.checkout', name: 'Checkout' }), false);
+  assert.equal(model.presetConfirmationNeedsRender(existing, { id: 'pr.fetch', name: 'Fetch' }), true);
+  assert.equal(model.presetConfirmationNeedsRender(existing, { id: 'pr.checkout', name: 'Checkout changed' }), true);
+  assert.equal(model.presetConfirmationNeedsRender(existing, null), true);
+  const renderer = source.slice(source.indexOf('function renderPresetConfirmation'), source.indexOf('function updatePanel'));
+  assert.match(renderer, /presetConfirmationNeedsRender\(confirmation, selected\)/,
+    'the confirmation renderer must skip rebuilding an unchanged region');
+  assert.match(renderer, /confirmation\.contains\(document\.activeElement\)/);
+  assert.match(renderer, /focusElement\(replacement \|\| toggle\)/,
+    'a changed confirmation must move focus to the same action or its toggle');
+});
+
+test('replica anchors are resolved by kind and uid under the documented replica root', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.findReplicaAnchor, 'function');
+  const replacement = { dataset: { kind: 'pr', uid: 'b2' } };
+  const root = { querySelectorAll: selector => {
+    assert.equal(selector, '[data-kind][data-uid]');
+    return [{ dataset: { kind: 'issue', uid: 'b2' } }, replacement];
+  } };
+  assert.equal(model.findReplicaAnchor(root, 'pr', 'b2'), replacement);
+  assert.equal(model.findReplicaAnchor(root, 'pr', 'missing'), null);
+  assert.equal(model.findReplicaAnchor(null, 'pr', 'b2'), null);
+  assert.match(source, /#options-replica-root[\s\S]*data-kind[\s\S]*data-uid/,
+    'the JSDoc must record the replica anchor attribute contract');
+  const placement = source.slice(source.indexOf('function positionPopover()'), source.indexOf('function updateEditorFacePreview'));
+  assert.match(placement, /findReplicaAnchor\(document\.getElementById\('options-replica-root'\), active\.kind, active\.uid\)/,
+    'every placement must resolve the current replica node by the active button identity');
+  assert.match(placement, /if \(!anchor\?\.isConnected\) return;/,
+    'a temporarily missing anchor must leave the last panel coordinates alone');
+});
+
+test('snapshot renderers preserve focus in the confirmation and Claude input regions', () => {
+  const claudeInputs = source.slice(source.indexOf('function renderClaudeInputs'), source.indexOf('function renderExampleDock'));
+  assert.match(claudeInputs, /rows\.contains\(document\.activeElement\)/,
+    'a Claude row that must be removed needs a focus bookmark');
+  assert.match(claudeInputs, /focusElement\(usableTarget\)/,
+    'a removed focused Claude control needs a same-role replacement');
 });
 
 test('popover placement flips above when below is short and keeps the surface inside the viewport', () => {

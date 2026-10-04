@@ -62,6 +62,14 @@ function requiresPresetConfirmation(button) {
   return button?.customCommand === true;
 }
 
+/** @param {{dataset?: DOMStringMap}|null} confirmation @param {{id: string, name: string}|null} selected @returns {boolean} */
+function presetConfirmationNeedsRender(confirmation, selected) {
+  const presetId = selected?.id || '';
+  const presetName = selected?.name || '';
+  return confirmation?.dataset?.presetId !== presetId
+    || confirmation?.dataset?.presetName !== presetName;
+}
+
 /** @returns {{type: 'button-move', kind: string, uid: string, beforeUid: string|null}|null} */
 function buttonMoveAction(source, kind, uid, direction) {
   const list = source?.buttons?.[kind] || [];
@@ -87,6 +95,22 @@ function presetReplaceAction(kind, uid, presetId, confirmed = false) {
 function eventPathIncludesEditor(event) {
   if (typeof event?.composedPath !== 'function') return false;
   return event.composedPath().some(node => node?.dataset?.optionsEditorSurface === 'popover');
+}
+
+/**
+ * Replica anchor contract: the current button is under #options-replica-root and has exact
+ * data-kind and data-uid attributes. Replica redraws replace button nodes, so resolve by identity.
+ * @param {ParentNode|null} replicaRoot
+ * @param {OptionsButtonKind} kind
+ * @param {string} uid
+ * @returns {HTMLElement|null}
+ */
+function findReplicaAnchor(replicaRoot, kind, uid) {
+  if (!replicaRoot || typeof replicaRoot.querySelectorAll !== 'function') return null;
+  for (const candidate of replicaRoot.querySelectorAll('[data-kind][data-uid]')) {
+    if (candidate.dataset?.kind === kind && candidate.dataset?.uid === uid) return candidate;
+  }
+  return null;
 }
 
 /** @returns {'shell'|'slash'|'directive'|'message'} */
@@ -533,7 +557,9 @@ function schedulePopoverPosition() {
 
 function positionPopover() {
   const panel = currentPanel();
-  if (!panel || !active?.anchor) return;
+  if (!panel || !active) return;
+  const anchor = findReplicaAnchor(document.getElementById('options-replica-root'), active.kind, active.uid);
+  if (!anchor?.isConnected) return;
   const viewport = readViewportSize();
   if (!hasMeasurableViewport(viewport)) {
     schedulePopoverPosition();
@@ -550,23 +576,7 @@ function positionPopover() {
     const fallbackHeight = Math.min(panel.scrollHeight || 560, viewportHeight - 24);
     popoverRect = { width: popoverRect.width || fallbackWidth, height: popoverRect.height || fallbackHeight };
   }
-  let anchorRect = active.anchorRect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
-  if (active.anchor?.isConnected) {
-    anchorRect = clientRect(active.anchor);
-    active.anchorRect = anchorRect;
-    active.anchorScrollX = window.scrollX || 0;
-    active.anchorScrollY = window.scrollY || 0;
-  } else if (active.anchorRect) {
-    const deltaX = (window.scrollX || 0) - (active.anchorScrollX || 0);
-    const deltaY = (window.scrollY || 0) - (active.anchorScrollY || 0);
-    anchorRect = {
-      ...active.anchorRect,
-      left: active.anchorRect.left - deltaX,
-      right: active.anchorRect.right - deltaX,
-      top: active.anchorRect.top - deltaY,
-      bottom: active.anchorRect.bottom - deltaY,
-    };
-  }
+  const anchorRect = clientRect(anchor);
   const placed = calculatePopoverPosition(
     anchorRect,
     popoverRect,
@@ -604,6 +614,13 @@ function renderClaudeInputs(button) {
   const panel = currentPanel();
   const rows = panel?.querySelector('.options-editor-input-rows');
   if (!rows) return;
+  const focusedElement = rows.contains(document.activeElement) ? document.activeElement : null;
+  const focusedRow = focusedElement?.closest('.options-editor-input-row');
+  const focusedAction = focusedElement?.dataset?.editorAction || '';
+  const focusedRole = focusedElement?.classList.contains('options-editor-input')
+    ? 'input'
+    : focusedElement?.classList.contains('options-editor-input-drag-handle') ? 'handle' : '';
+  const focusedIndex = Number(focusedRow?.dataset.inputIndex);
   cancelInputDrag();
   const values = Array.isArray(button.claudeInputs) ? button.claudeInputs : [];
   while (rows.children.length < values.length) rows.appendChild(buildClaudeInputRow());
@@ -645,6 +662,22 @@ function renderClaudeInputs(button) {
   warning.hidden = !(diagnostic?.warnings || []).includes('claude-inputs-without-claude-command');
   add.disabled = !canAddClaudeInput(values.length);
   limit.hidden = values.length < MAX_CLAUDE_INPUTS;
+  if (focusedElement && (!focusedElement.isConnected || document.activeElement !== focusedElement || focusedElement.disabled)) {
+    const targetIndex = rows.children.length > 0 && Number.isInteger(focusedIndex)
+      ? Math.min(Math.max(focusedIndex, 0), rows.children.length - 1)
+      : -1;
+    const targetRow = targetIndex >= 0 ? rows.children[targetIndex] : null;
+    const replacement = focusedAction
+      ? [...(targetRow?.querySelectorAll('[data-editor-action]') || [])]
+        .find(action => action.dataset.editorAction === focusedAction)
+      : targetRow?.querySelector(focusedRole === 'handle'
+        ? '.options-editor-input-drag-handle'
+        : '.options-editor-input');
+    const usableTarget = replacement && !replacement.disabled
+      ? replacement
+      : targetRow?.querySelector('.options-editor-input') || add;
+    focusElement(usableTarget);
+  }
   positionPopover();
 }
 
@@ -712,12 +745,26 @@ function renderPresetConfirmation(button) {
   const choices = panel?.querySelector('.options-editor-presets');
   const selected = BUTTON_KINDS[active.kind].presets.find(preset => preset.id === pendingPresetId) || null;
   if (!confirmation || !choices) return;
+  const toggle = panel.querySelector('.options-editor-preset-toggle');
+  const needsRender = presetConfirmationNeedsRender(confirmation, selected);
+  const previousAction = needsRender && confirmation.contains(document.activeElement)
+    ? document.activeElement.dataset?.editorAction || ''
+    : '';
   confirmation.hidden = !selected;
-  choices.hidden = panel.querySelector('.options-editor-preset-toggle').getAttribute('aria-expanded') !== 'true';
+  choices.hidden = toggle.getAttribute('aria-expanded') !== 'true';
   if (!selected) {
-    confirmation.replaceChildren();
+    if (needsRender) {
+      confirmation.replaceChildren();
+      confirmation.dataset.presetId = '';
+      confirmation.dataset.presetName = '';
+      if (previousAction) focusElement(toggle);
+    }
     return;
   }
+  choices.hidden = true;
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.textContent = editorMessage('replacePreset');
+  if (!needsRender) return;
   confirmation.replaceChildren();
   const note = makeElement('p', 'options-editor-confirm-copy', editorMessage('confirmReplace', selected.name));
   note.setAttribute('role', 'alert');
@@ -728,10 +775,13 @@ function renderPresetConfirmation(button) {
   confirm.dataset.presetId = selected.id;
   actions.append(cancel, confirm);
   confirmation.appendChild(actions);
-  choices.hidden = true;
-  const toggle = panel.querySelector('.options-editor-preset-toggle');
-  toggle.setAttribute('aria-expanded', 'false');
-  toggle.textContent = editorMessage('replacePreset');
+  confirmation.dataset.presetId = selected.id;
+  confirmation.dataset.presetName = selected.name;
+  if (previousAction) {
+    const replacement = [...confirmation.querySelectorAll('[data-editor-action]')]
+      .find(action => action.dataset.editorAction === previousAction);
+    focusElement(replacement || toggle);
+  }
 }
 
 function updatePanel() {
@@ -922,11 +972,7 @@ function refreshAnchorFromReplica() {
     ? target
     : (!currentPanel()?.contains(document.activeElement) ? document.activeElement : null);
   if (focused?.isConnected && focused !== document.body) {
-    active.anchor = focused;
     active.restoreFocusTo = focused;
-    active.anchorRect = clientRect(focused);
-    active.anchorScrollX = window.scrollX || 0;
-    active.anchorScrollY = window.scrollY || 0;
   }
   if (previousFocus?.isConnected && currentPanel()?.contains(previousFocus)) focusElement(previousFocus);
   positionPopover();
@@ -1408,11 +1454,7 @@ window.optionsEditor = Object.freeze({
     active = {
       kind: options.kind,
       uid: options.uid,
-      anchor: options.anchor,
       restoreFocusTo: options.restoreFocusTo,
-      anchorRect: clientRect(options.anchor),
-      anchorScrollX: window.scrollX || 0,
-      anchorScrollY: window.scrollY || 0,
     };
     pendingPresetId = null;
     failureMessage = '';
