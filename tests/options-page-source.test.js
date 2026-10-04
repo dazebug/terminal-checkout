@@ -64,6 +64,17 @@ test('the page makes the hidden attribute override module display styles', () =>
   assert.doesNotMatch(shellStyles, /\[hidden\][^{]*\{[^}]*display\s*:\s*(?!none\b)/s);
 });
 
+test('Korean wrapping rules follow only the Korean document language', () => {
+  const html = read('options.html');
+  const baseStyles = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] || '';
+  const languageRules = [...baseStyles.matchAll(/([^{}]*:lang\([^)]*\)[^{}]*)\{([^{}]*)\}/g)]
+    .filter(([, , declarations]) => /\b(?:word-break|overflow-wrap)\s*:/.test(declarations));
+  assert.equal(languageRules.length, 1);
+  assert.equal(languageRules[0][1].trim(), ':lang(ko)');
+  assert.match(languageRules[0][2], /\bword-break:\s*keep-all\s*;/);
+  assert.match(languageRules[0][2], /\boverflow-wrap:\s*anywhere\s*;/);
+});
+
 test('the engine dispatch contract is promise-based with structured outcomes', () => {
   const source = read('options.js');
   assert.match(source, /@typedef \{Object\} OptionsDispatchResult[\s\S]*?@property \{boolean\} ok[\s\S]*?@property \{\('not-loaded'\|'busy'\|'limit'\|'not-found'\|'needs-confirmation'\|'invalid'\|'failed'\)=\} \[reason\][\s\S]*?@property \{string=\} \[createdUid\][\s\S]*?@property \{OptionsEngineSnapshot\} snapshot/);
