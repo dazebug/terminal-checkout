@@ -482,6 +482,26 @@
       }
     }
   },
+  "ext_d_editor_addTitle": {
+    "message": "添加到此位置"
+  },
+  "ext_d_editor_addCount": {
+    "message": "当前 $ARG1$ 个，最多 $ARG2$ 个",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_editor_addBlank": {
+    "message": "空白按钮"
+  },
+  "ext_d_editor_addBlankDescription": {
+    "message": "自行编写命令。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "行为变更"
   },
@@ -803,39 +823,13 @@
     "message": "预设抽屉"
   },
   "ext_d_replica_drawer_instructions": {
-    "message": "选择一个预设，将它添加到此页面，或替换同一页面上的按钮。"
+    "message": "指向卡片时，按钮将要放入的位置会亮起。点“添加”会放到该位置末尾，拖到位置上会放在松手处，拖到现有按钮上则替换该按钮。"
   },
   "ext_d_replica_drawer_inUse": {
     "message": "正在使用"
   },
   "ext_d_replica_drawer_add": {
     "message": "添加"
-  },
-  "ext_d_replica_drawer_replace": {
-    "message": "替换"
-  },
-  "ext_d_replica_drawer_chooseTarget": {
-    "message": "选择要替换的按钮。"
-  },
-  "ext_d_replica_drawer_noReplaceTargets": {
-    "message": "此页面没有可替换的按钮。"
-  },
-  "ext_d_replica_drawer_confirmReplace": {
-    "message": "要将“$ARG1$”替换为“$ARG2$”预设吗？当前命令也会被替换。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_d_replica_drawer_confirm": {
-    "message": "替换按钮"
-  },
-  "ext_d_replica_drawer_cancel": {
-    "message": "取消"
   },
   "ext_d_replica_drawer_limit": {
     "message": "此页面已达到按钮数量上限。"

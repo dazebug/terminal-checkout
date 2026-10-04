@@ -482,6 +482,26 @@
       }
     }
   },
+  "ext_d_editor_addTitle": {
+    "message": "Add to this spot"
+  },
+  "ext_d_editor_addCount": {
+    "message": "$ARG1$ of $ARG2$ buttons",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_editor_addBlank": {
+    "message": "Blank button"
+  },
+  "ext_d_editor_addBlankDescription": {
+    "message": "Write the command yourself."
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "behavior change"
   },
@@ -803,39 +823,13 @@
     "message": "Preset drawer"
   },
   "ext_d_replica_drawer_instructions": {
-    "message": "Choose a preset, then add it here or replace a button on the same page."
+    "message": "Point at a card to light up the spot its button goes to. Add puts it at the end of that spot; drag it onto the spot to place it where you drop it, or onto a button to replace that button."
   },
   "ext_d_replica_drawer_inUse": {
     "message": "In use"
   },
   "ext_d_replica_drawer_add": {
     "message": "Add"
-  },
-  "ext_d_replica_drawer_replace": {
-    "message": "Replace"
-  },
-  "ext_d_replica_drawer_chooseTarget": {
-    "message": "Choose a button to replace."
-  },
-  "ext_d_replica_drawer_noReplaceTargets": {
-    "message": "There are no buttons on this page to replace."
-  },
-  "ext_d_replica_drawer_confirmReplace": {
-    "message": "Replace “$ARG1$” with “$ARG2$”? Its current command will be replaced.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_d_replica_drawer_confirm": {
-    "message": "Replace button"
-  },
-  "ext_d_replica_drawer_cancel": {
-    "message": "Cancel"
   },
   "ext_d_replica_drawer_limit": {
     "message": "This page has reached its button limit."

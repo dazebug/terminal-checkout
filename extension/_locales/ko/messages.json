@@ -482,6 +482,26 @@
       }
     }
   },
+  "ext_d_editor_addTitle": {
+    "message": "이 자리에 추가"
+  },
+  "ext_d_editor_addCount": {
+    "message": "지금 $ARG1$개 · 최대 $ARG2$개",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_editor_addBlank": {
+    "message": "빈 버튼"
+  },
+  "ext_d_editor_addBlankDescription": {
+    "message": "명령을 직접 씁니다."
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "동작 변경"
   },
@@ -803,39 +823,13 @@
     "message": "프리셋 서랍"
   },
   "ext_d_replica_drawer_instructions": {
-    "message": "프리셋을 골라 이 페이지에 추가하거나 같은 페이지의 버튼을 바꾸세요."
+    "message": "카드를 가리키면 버튼이 들어갈 자리가 빛납니다. 추가를 누르면 그 자리 끝에 들어가고, 자리로 끌어다 놓으면 놓은 곳에 들어갑니다. 기존 버튼 위에 놓으면 그 버튼을 바꿉니다."
   },
   "ext_d_replica_drawer_inUse": {
     "message": "사용 중"
   },
   "ext_d_replica_drawer_add": {
     "message": "추가"
-  },
-  "ext_d_replica_drawer_replace": {
-    "message": "바꾸기"
-  },
-  "ext_d_replica_drawer_chooseTarget": {
-    "message": "바꿀 버튼을 고르세요."
-  },
-  "ext_d_replica_drawer_noReplaceTargets": {
-    "message": "이 페이지에는 바꿀 버튼이 없습니다."
-  },
-  "ext_d_replica_drawer_confirmReplace": {
-    "message": "“$ARG1$” 버튼을 “$ARG2$” 프리셋으로 바꿀까요? 현재 명령이 교체됩니다.",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_d_replica_drawer_confirm": {
-    "message": "버튼 바꾸기"
-  },
-  "ext_d_replica_drawer_cancel": {
-    "message": "취소"
   },
   "ext_d_replica_drawer_limit": {
     "message": "이 페이지는 버튼을 더 추가할 수 없습니다."

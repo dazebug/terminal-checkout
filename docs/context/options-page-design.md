@@ -27,6 +27,15 @@ A fixed example keeps the GitHub locations stable while the buttons show the val
 
 The engine owns edit state, and views render its snapshots and request changes through dispatch so validation and dirty state have one authority. Confirmation belongs to the view that presents the action: it can explain what will be replaced in context and send the confirmed action only after the user agrees. Having the engine call `confirm()` would move a view decision into a browser modal and prevent the view from owning that interaction.
 
+## A spot's + adds to that spot; the drawer is for browsing
+
+**Type:** decision
+**Status:** active
+**Evidence:** confirmed — on 2026-10-05 the user could not tell what the area that opened below the page was for when + showed the whole preset drawer; shown the approved mockup's flow beside two alternatives (no drawer at all, or the drawer opened under the spot with only its presets), the user chose the mockup.
+**Revisit when:** the user asks for + to browse every page kind again, or the drawer stops opening from the edit bar
+
+Pressing + opens a small picker beside that spot with only what can go there — that kind's presets and a blank button — and choosing one adds it at the end of the spot and opens the new button's editor. The preset drawer lists every page kind and opens only from the edit bar; its cards add to the end of their spot or are dragged, and a preset dropped on a button is replaced in that button's editor, so replacing has one confirmation surface instead of one per surface. Wiring + to the drawer had made a control on one spot open presets for five pages below the page, and the drawer's own Replace hid which button it would replace until it was pressed.
+
 ## Hidden content stays hidden across modules
 
 **Type:** incident

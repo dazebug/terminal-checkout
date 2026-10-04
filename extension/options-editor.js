@@ -1,6 +1,7 @@
-/** @typedef {{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement}} OptionsEditorOpenOptions */
+/** @typedef {{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement, presetId?: string}} OptionsEditorOpenOptions */
+/** @typedef {{kind: OptionsButtonKind, anchor: HTMLElement, restoreFocusTo: HTMLElement}} OptionsEditorAddOptions */
 /** @typedef {{ok: boolean, reason?: 'not-loaded'|'busy'|'limit'|'not-found'|'needs-confirmation'|'invalid'|'failed', createdUid?: string, snapshot: OptionsEngineSnapshot}} OptionsDispatchResult */
-/** @typedef {{mount: (root: HTMLElement, engine: OptionsEngine) => void, open: (options: OptionsEditorOpenOptions) => void, close: () => void, isOpen: () => boolean}} OptionsEditor */
+/** @typedef {{mount: (root: HTMLElement, engine: OptionsEngine) => void, open: (options: OptionsEditorOpenOptions) => void, openAdd: (options: OptionsEditorAddOptions) => void, close: () => void, isOpen: () => boolean}} OptionsEditor */
 
 const SECTION_VARIABLE_HELP = Object.freeze({
   pr: () => tHTML('ext.section.pr.variables'),
@@ -135,6 +136,23 @@ function findReplicaAnchor(replicaRoot, kind, uid) {
     if (candidate.dataset?.kind === kind && candidate.dataset?.uid === uid) return candidate;
   }
   return null;
+}
+
+/** The + control of a slot. Replica redraws replace it, so the add picker finds it again by kind. */
+function findAddAnchor(replicaRoot, kind) {
+  if (!replicaRoot || typeof replicaRoot.querySelectorAll !== 'function') return null;
+  for (const candidate of replicaRoot.querySelectorAll('[data-action="slot-add"][data-slot-kind]')) {
+    if (candidate.dataset?.slotKind === kind) return candidate;
+  }
+  return null;
+}
+
+/** A blank button, or one of this kind's presets, appended to the slot. */
+function addChoiceAction(kind, presetId) {
+  if (typeof kind !== 'string' || !Object.hasOwn(BUTTON_KINDS, kind)) return null;
+  if (presetId === null) return { type: 'button-add', kind };
+  if (!presetById(BUTTON_KINDS[kind].presets, presetId)) return null;
+  return { type: 'preset-add', kind, presetId, beforeUid: null };
 }
 
 /** @returns {'shell'|'slash'|'directive'|'message'} */
@@ -402,6 +420,10 @@ function editorMessage(name, ...args) {
     case 'exampleNoInputs': return tr('ext.d.editor.exampleNoInputs');
     case 'exampleCdNote': return tr('ext.d.editor.exampleCdNote', ...args);
     case 'exampleUnsupported': return tr('ext.d.editor.exampleUnsupported', ...args);
+    case 'addTitle': return tr('ext.d.editor.addTitle');
+    case 'addCount': return tr('ext.d.editor.addCount', args[0], args[1]);
+    case 'addBlank': return tr('ext.d.editor.addBlank');
+    case 'addBlankDescription': return tr('ext.d.editor.addBlankDescription');
     default: return '';
   }
 }
@@ -521,6 +543,14 @@ function currentPanel() {
   return root?.querySelector('.options-editor-popover') || null;
 }
 
+function activeAnchor() {
+  if (!active) return null;
+  const replicaRoot = document.getElementById('options-replica-root');
+  return active.mode === 'add'
+    ? findAddAnchor(replicaRoot, active.kind)
+    : findReplicaAnchor(replicaRoot, active.kind, active.uid);
+}
+
 function fieldInPanel(name) {
   return currentPanel()?.querySelector(`[data-editor-field="${name}"]`) || null;
 }
@@ -583,7 +613,7 @@ function schedulePopoverPosition() {
 function positionPopover() {
   const panel = currentPanel();
   if (!panel || !active) return;
-  const anchor = findReplicaAnchor(document.getElementById('options-replica-root'), active.kind, active.uid);
+  const anchor = activeAnchor();
   if (!anchor?.isConnected) return;
   const viewport = readViewportSize();
   if (!hasMeasurableViewport(viewport)) {
@@ -809,6 +839,14 @@ function renderPresetConfirmation(button) {
   }
 }
 
+/** Write the button into its fields. A field being typed in keeps its text unless `force`: a whole-button replacement overrides it. */
+function syncFieldValues(button, { force = false } = {}) {
+  for (const name of ['face', 'label', 'command']) {
+    const field = fieldInPanel(name);
+    if (field && (force || document.activeElement !== field) && field.value !== button[name]) field.value = button[name];
+  }
+}
+
 function updatePanel() {
   if (!active || !root) return;
   const button = currentButton();
@@ -818,12 +856,7 @@ function updatePanel() {
   }
   const list = snapshot.buttons[active.kind];
   const index = buttonIndex(snapshot, active.kind, active.uid);
-  const face = fieldInPanel('face');
-  const label = fieldInPanel('label');
-  const command = fieldInPanel('command');
-  if (face && document.activeElement !== face && face.value !== button.face) face.value = button.face;
-  if (label && document.activeElement !== label && label.value !== button.label) label.value = button.label;
-  if (command && document.activeElement !== command && command.value !== button.command) command.value = button.command;
+  syncFieldValues(button);
   renderClaudeInputs(button);
   renderExampleDock(button);
   const heading = currentPanel().querySelector('.options-editor-heading-name');
@@ -888,6 +921,12 @@ function replaceVariableReferences(container, kind) {
   }
 }
 
+function makeCloseButton() {
+  const close = makeButton('×', 'options-editor-close', 'close');
+  close.setAttribute('aria-label', tr('ext.d.editor.close'));
+  return close;
+}
+
 function buildPresetChoices(kind) {
   const choices = makeElement('div', 'options-editor-presets');
   choices.hidden = true;
@@ -916,8 +955,7 @@ function buildPopover(button) {
   heading.id = `options-editor-heading-${++instanceCounter}`;
   preview.setAttribute('aria-labelledby', heading.id);
   identity.append(preview, heading);
-  const close = makeButton('×', 'options-editor-close', 'close');
-  close.setAttribute('aria-label', tr('ext.d.editor.close'));
+  const close = makeCloseButton();
   header.append(identity, close);
 
   const fields = makeElement('div', 'options-editor-fields');
@@ -989,6 +1027,69 @@ function buildPopover(button) {
   focusElement(fieldInPanel('face'));
 }
 
+function buildAddChoice(presetId, face, name, description) {
+  const choice = makeButton('', `options-editor-preset-choice options-editor-add-choice${presetId ? '' : ' is-blank'}`, 'add-choice');
+  if (presetId) choice.dataset.presetId = presetId;
+  choice.append(
+    makeElement('span', 'options-editor-preset-face', face),
+    makeElement('span', 'options-editor-preset-name', name),
+    makeElement('span', 'options-editor-add-description', description),
+  );
+  return choice;
+}
+
+function buildAddPopover(kind) {
+  const panel = makeElement('section', 'options-editor-popover options-editor-add');
+  panel.dataset.optionsEditorSurface = 'popover';
+  panel.setAttribute('role', 'dialog');
+  const inner = makeElement('div', 'options-editor-content');
+  const header = makeElement('header', 'options-editor-header');
+  const heading = makeElement('h2', 'options-editor-heading-name', editorMessage('addTitle'));
+  heading.id = `options-editor-heading-${++instanceCounter}`;
+  panel.setAttribute('aria-labelledby', heading.id);
+  const close = makeCloseButton();
+  header.append(heading, close);
+  const where = makeElement('p', 'options-editor-add-where');
+  where.append(
+    makeElement('span', 'options-editor-add-place', window.optionsReplica?.describePlace?.(kind) || ''),
+    makeElement('span', 'options-editor-add-count'),
+  );
+  const choices = makeElement('div', 'options-editor-add-choices');
+  choices.appendChild(buildAddChoice(null, '＋', editorMessage('addBlank'), editorMessage('addBlankDescription')));
+  for (const preset of BUTTON_KINDS[kind].presets) {
+    choices.appendChild(buildAddChoice(
+      preset.id, preset.face, preset.name, window.optionsReplica?.describePreset?.(preset.id) || '',
+    ));
+  }
+  const status = makeElement('p', 'options-editor-status');
+  status.setAttribute('role', 'status');
+  status.hidden = true;
+  inner.append(header, where, choices, status);
+  panel.appendChild(inner);
+  root.replaceChildren(panel);
+  updateAddPanel();
+  focusElement(choices.querySelector('button'));
+}
+
+function updateAddPanel() {
+  const panel = currentPanel();
+  if (!panel || !active) return;
+  const count = snapshot?.buttons?.[active.kind]?.length || 0;
+  const full = count >= MAX_BUTTONS;
+  const counter = panel.querySelector('.options-editor-add-count');
+  if (counter) counter.textContent = editorMessage('addCount', count, MAX_BUTTONS);
+  for (const choice of panel.querySelectorAll('[data-editor-action="add-choice"]')) {
+    choice.disabled = full || snapshot?.load?.loaded !== true;
+  }
+  const status = panel.querySelector('.options-editor-status');
+  const message = full ? editorMessage('limitReached') : failureMessage;
+  if (status) {
+    status.textContent = message;
+    status.hidden = !message;
+  }
+  positionPopover();
+}
+
 function refreshAnchorFromReplica() {
   if (!active) return null;
   const previousFocus = document.activeElement;
@@ -1008,6 +1109,10 @@ function acceptSnapshot(nextSnapshot) {
   if (!nextSnapshot || typeof nextSnapshot !== 'object') return;
   snapshot = nextSnapshot;
   if (!active) return;
+  if (active.mode === 'add') {
+    updateAddPanel();
+    return;
+  }
   if (!currentButton()) {
     const restoreFocus = currentPanel()?.contains(document.activeElement) ?? false;
     closePopover({ restoreFocus });
@@ -1109,12 +1214,41 @@ async function duplicateEditorButton() {
   window.optionsEditor.open({ kind, uid: result.createdUid, anchor: target, restoreFocusTo: target });
 }
 
+async function addFromChoice(presetId) {
+  if (!active || active.mode !== 'add') return;
+  const { kind } = active;
+  const action = addChoiceAction(kind, presetId);
+  if (!action) return;
+  const result = await dispatchAction(action);
+  if (!active || active.mode !== 'add' || active.kind !== kind) return;
+  if (!result?.ok || !result.createdUid) return;
+  await Promise.resolve();
+  const target = focusReplicaTarget(kind, result.createdUid);
+  if (!target) {
+    closePopover();
+    return;
+  }
+  window.optionsEditor.open({ kind, uid: result.createdUid, anchor: target, restoreFocusTo: target });
+}
+
+function choosePreset(presetId) {
+  if (requiresPresetConfirmation(currentButton())) {
+    pendingPresetId = presetId;
+    renderPresetConfirmation(currentButton());
+    focusElement(currentPanel()?.querySelector('[data-editor-action="cancel-preset"]'));
+    positionPopover();
+  } else {
+    void replaceWithPreset(presetId);
+  }
+}
+
 async function replaceWithPreset(presetId, confirmed = false) {
   if (!active || !presetId) return;
   const { kind, uid } = active;
   const result = await dispatchAction(presetReplaceAction(kind, uid, presetId, confirmed));
   if (!active || active.kind !== kind || active.uid !== uid) return;
   if (result?.ok) {
+    syncFieldValues(currentButton(), { force: true });
     refreshAnchorFromReplica();
     pendingPresetId = null;
     const choices = currentPanel()?.querySelector('.options-editor-presets');
@@ -1234,18 +1368,12 @@ function handleClick(event) {
       positionPopover();
       break;
     }
-    case 'choose-preset': {
-      const presetId = target.dataset.presetId;
-      if (requiresPresetConfirmation(currentButton())) {
-        pendingPresetId = presetId;
-        renderPresetConfirmation(currentButton());
-        focusElement(currentPanel()?.querySelector('[data-editor-action="cancel-preset"]'));
-        positionPopover();
-      } else {
-        void replaceWithPreset(presetId);
-      }
+    case 'choose-preset':
+      choosePreset(target.dataset.presetId);
       break;
-    }
+    case 'add-choice':
+      void addFromChoice(target.dataset.presetId || null);
+      break;
     case 'cancel-preset':
       pendingPresetId = null;
       renderPresetConfirmation(currentButton());
@@ -1302,9 +1430,7 @@ function handleInput(event) {
 function handleKeydown(event) {
   if (!active || isImeCompositionKeyEvent(event)) return;
   if (event.key === 'Escape') {
-    const anchor = findReplicaAnchor(
-      document.getElementById('options-replica-root'), active.kind, active.uid,
-    );
+    const anchor = activeAnchor();
     if (!eventBelongsToEditorOrAnchor(event, currentPanel(), anchor, document.activeElement)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1486,6 +1612,7 @@ window.optionsEditor = Object.freeze({
     window.optionsReplica?.closeDrawer?.();
     snapshot = next;
     active = {
+      mode: 'edit',
       kind: options.kind,
       uid: options.uid,
       restoreFocusTo: options.restoreFocusTo,
@@ -1493,6 +1620,19 @@ window.optionsEditor = Object.freeze({
     pendingPresetId = null;
     failureMessage = '';
     buildPopover(currentButton());
+    if (typeof options.presetId === 'string') choosePreset(options.presetId);
+  },
+  /** @param {OptionsEditorAddOptions} options */
+  openAdd(options) {
+    if (!root || !engine || !options || !options.anchor || !options.restoreFocusTo) return;
+    const next = engine.getSnapshot();
+    if (!Object.hasOwn(next.buttons || {}, options.kind)) return;
+    window.optionsReplica?.closeDrawer?.();
+    snapshot = next;
+    active = { mode: 'add', kind: options.kind, uid: null, restoreFocusTo: options.restoreFocusTo };
+    pendingPresetId = null;
+    failureMessage = '';
+    buildAddPopover(options.kind);
   },
   close() {
     closePopover();

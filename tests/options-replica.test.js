@@ -28,6 +28,10 @@ test('replica publishes one immutable example context and the complete GitHub co
   assert.equal(typeof replica.openDrawer, 'function');
   assert.equal(typeof replica.closeDrawer, 'function');
   assert.equal(typeof replica.isDrawerOpen, 'function');
+  assert.equal(replica.describePlace('pr'), 'ext.d.replica.place.pr');
+  assert.equal(replica.describePlace('issue-list'), 'ext.d.replica.place.issueList');
+  assert.equal(replica.describePreset('pr.checkout'), 'ext.d.replica.presetDescription.prCheckout');
+  assert.equal(replica.describePreset('missing.preset'), '');
   assert.equal(replica.getExampleContext(), replica.EXAMPLE_CONTEXT);
   assert.deepEqual(asArray(replica.EXAMPLE_CONTEXT), {
     owner: 'octo-demo',
@@ -132,6 +136,37 @@ test('a full redraw and the preset preview draw the shown page through one funct
     assert.doesNotMatch(body(name), /aria-current|is-preset-target|is-preview|previewPreset|mounted\.pageKind/,
       `${name} must leave the marks that follow the shown page to syncShownPage`);
   }
+});
+
+test('a slot\'s + opens the add picker beside it, not the preset drawer', () => {
+  const click = source.slice(source.indexOf('function handleReplicaClick(event) {'), source.indexOf('\n/** @param {KeyboardEvent} event */\nfunction handleReplicaKeydown('));
+  const slotAdd = click.slice(click.indexOf("action === 'slot-add'"));
+  assert.match(slotAdd, /mounted\.editor\.openAdd\(\{ kind, anchor: actionTarget, restoreFocusTo: actionTarget \}\)/);
+  assert.doesNotMatch(slotAdd.slice(0, slotAdd.indexOf('} else if')), /openDrawerInternal\(/);
+  const slot = source.slice(source.indexOf('function renderSlot('), source.indexOf('\nfunction ', source.indexOf('function renderSlot(') + 1));
+  assert.match(slot, /class="replica-slot-add"[^`]*aria-haspopup="dialog"/);
+  assert.doesNotMatch(slot, /aria-controls="replica-drawer"/);
+  const visible = source.slice(source.indexOf('function setDrawerVisible('), source.indexOf('\nfunction ', source.indexOf('function setDrawerVisible(') + 1));
+  assert.doesNotMatch(visible, /slot-add/, 'the drawer no longer belongs to the + controls');
+});
+
+test('the drawer adds and drags presets; replacing a button happens in that button\'s editor', () => {
+  const card = source.slice(source.indexOf('function renderPresetCard('), source.indexOf('\nfunction ', source.indexOf('function renderPresetCard(') + 1));
+  assert.match(card, /data-action="preset-add"/);
+  assert.doesNotMatch(card, /preset-replace/);
+  for (const gone of ['replacePicker', 'pendingReplace', 'renderPresetReplaceTargets', 'preset-replace-confirm', 'function replacePreset(']) {
+    assert.equal(source.includes(gone), false, `${gone} belonged to the drawer's own replace flow`);
+  }
+  const drop = source.slice(source.indexOf('function handleReplicaDrop(event) {'), source.indexOf('\nfunction ', source.indexOf('function handleReplicaDrop(event) {') + 1));
+  assert.match(drop, /if \(isPreset && target\.hasAttribute\('data-replica-button'\)\) \{[\s\S]*?openButtonEditor\(target, source\.presetId\);/);
+  const opener = source.slice(source.indexOf('function openButtonEditor('), source.indexOf('\nfunction ', source.indexOf('function openButtonEditor(') + 1));
+  assert.match(opener, /presetId/);
+  assert.match(opener, /mounted\.editor\.open\(options\)/);
+});
+
+test('a preset added from the drawer opens the new button\'s editor', () => {
+  const add = source.slice(source.indexOf('async function addPreset('), source.indexOf('\nfunction ', source.indexOf('async function addPreset(') + 1));
+  assert.match(add, /if \(result\?\.ok\) \{[\s\S]*?renderReplica\(\);[\s\S]*?openCreatedButtonEditor\(kind, result\.createdUid\)/);
 });
 
 test('replica event blocking recognizes an inert surface or inert event-path ancestor', () => {
@@ -262,18 +297,6 @@ test('extension icon preview follows its routed kind instead of a hidden list bu
 });
 
 test('transient option surfaces clear state and redraw or hide the matching view', () => {
-  const closeStart = source.indexOf('function closeDrawerInternal(restoreFocus) {');
-  const closeEnd = source.indexOf('\nfunction ', closeStart + 1);
-  const openStart = source.indexOf('function openDrawerInternal(focusClose, kind = mounted?.pageKind, opener = null) {');
-  const openEnd = source.indexOf('\nfunction ', openStart + 1);
-  assert.ok(closeStart >= 0 && closeEnd > closeStart);
-  assert.ok(openStart >= 0 && openEnd > openStart);
-  const resetsAndRedraws = body => /mounted\.pendingReplace = null;[\s\S]*?mounted\.replacePicker = null;[\s\S]*?renderReplica\(\);/.test(body);
-  assert.ok(
-    resetsAndRedraws(source.slice(closeStart, closeEnd))
-      || resetsAndRedraws(source.slice(openStart, openEnd)),
-    'clearing replacement state must redraw the drawer before it is shown again',
-  );
   const shellCloseStart = shellSource.indexOf('function closeConfirmation(restoreFocus = true) {');
   const shellCloseEnd = shellSource.indexOf('\n    function ', shellCloseStart + 1);
   assert.ok(shellCloseStart >= 0 && shellCloseEnd > shellCloseStart);
@@ -333,12 +356,12 @@ test('keyboard movement and drag placement produce beforeUid actions without arr
 
 test('drawer outside-click classification follows the dispatch path, including a detached old drawer', () => {
   const oldDrawerRoot = { dataset: { replicaDrawerSurface: 'true' }, isConnected: false };
-  const replaceButton = { dataset: { action: 'preset-replace-picker' }, isConnected: false };
+  const detachedAddButton = { dataset: { action: 'preset-add' }, isConnected: false };
   const slotAddButton = { dataset: { action: 'slot-add' }, isConnected: true };
   const drawerToggle = { dataset: { action: 'drawer-toggle' }, isConnected: true };
   const outsideButton = { dataset: { action: 'placeholders-toggle' }, isConnected: true };
 
-  assert.equal(model.isOutsideDrawerEventPath([replaceButton, oldDrawerRoot]), false);
+  assert.equal(model.isOutsideDrawerEventPath([detachedAddButton, oldDrawerRoot]), false);
   assert.equal(model.isOutsideDrawerEventPath([slotAddButton]), false);
   assert.equal(model.isOutsideDrawerEventPath([drawerToggle]), false);
   assert.equal(model.isOutsideDrawerEventPath([outsideButton, { nodeName: 'BODY' }]), true);
@@ -370,7 +393,7 @@ test('replica source uses no storage API and responsive CSS keeps the filmstrip 
   assert.doesNotMatch(source, /chrome\.storage/);
   assert.match(source, /engine\.getSnapshot\(\)/);
   assert.match(source, /engine\.subscribe\(/);
-  const editorStart = source.indexOf('function openButtonEditor(button) {');
+  const editorStart = source.indexOf('function openButtonEditor(button, presetId = null) {');
   const editorEnd = source.indexOf('\nfunction ', editorStart + 1);
   assert.ok(editorStart >= 0 && editorEnd > editorStart, 'the button editor boundary is missing');
   const editorOpener = source.slice(editorStart, editorEnd);
@@ -500,16 +523,6 @@ test('preset drops choose the insertion slot and spotlight the matching page car
   )), {
     type: 'preset-add', kind: 'pr', presetId: 'pr.worktree', beforeUid: 'second',
   });
-});
-
-test('preset replacement sends confirmation only after the view receives needs-confirmation', () => {
-  assert.deepEqual(asArray(model.presetReplaceAction('pr', 'custom-uid', 'pr.checkout')), {
-    type: 'preset-replace', kind: 'pr', uid: 'custom-uid', presetId: 'pr.checkout',
-  });
-  assert.deepEqual(asArray(model.presetReplaceAction('pr', 'custom-uid', 'pr.checkout', true)), {
-    type: 'preset-replace', kind: 'pr', uid: 'custom-uid', presetId: 'pr.checkout', confirmed: true,
-  });
-  assert.equal(model.presetReplaceAction('unknown', 'custom-uid', 'pr.checkout'), null);
 });
 
 test('narrow GitHub placements wrap below branch labels', () => {

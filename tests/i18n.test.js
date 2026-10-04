@@ -710,13 +710,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **255 argument-supplying sites are expected.** The count is
+  // **253 argument-supplying sites are expected.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 255, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 253, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -847,14 +847,14 @@ test('_locales rejects a translation whose placeholder binding moves away from e
       if (file !== editedPath) return originalValue;
       const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
       const messages = JSON.parse(text);
-      messages.ext_d_replica_drawer_confirmReplace.placeholders.ARG2.content = '$1';
+      messages.ext_d_editor_addCount.placeholders.ARG2.content = '$1';
       const edited = `${JSON.stringify(messages, null, 2)}\n`;
       return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
     };
     const failures = checkLiveLocaleStructure().failures;
     assert.ok(
       failures.some(failure => failure.includes(
-        '_locales/ko/messages.json: ext_d_replica_drawer_confirmReplace argument bindings differ from en',
+        '_locales/ko/messages.json: ext_d_editor_addCount argument bindings differ from en',
       )),
       failures.join('\n'),
     );

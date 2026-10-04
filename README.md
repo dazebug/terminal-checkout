@@ -115,7 +115,7 @@ Your saved buttons keep the exact command you already had — nothing is rewritt
 <details>
 <summary>All 13 presets</summary>
 
-Choose a preset for the page kind from the preset drawer. Each preset shows where its button will appear; click [Add] or drag it to a slot, or choose [Replace] to pick a button on the same page. Replacing a custom command asks for confirmation. You can also write your own commands with [variables](#variables).
+Press + beside a button spot to add a button there: pick one of that spot's presets or [Blank button], and the new button's editor opens. [Open preset drawer] shows every preset by page kind and lights up where each one goes; [Add] puts it at the end of its spot, dragging it to the spot places it where you drop it, and dropping it on a button replaces that button. To turn an existing button into a preset, click the button and choose [Replace with preset…]. Replacing a custom command asks for confirmation. You can also write your own commands with [variables](#variables).
 
 | Page | Face | Preset | What it runs |
 |:---|:---:|:---|:---|
