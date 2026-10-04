@@ -4,10 +4,10 @@
 
 **Type:** decision
 **Status:** active
-**Evidence:** confirmed — the user said the grouped B view felt dense and that separated sections made buttons hard to find; they wanted each button's place to be visible and chose the GitHub-like D view.
+**Evidence:** confirmed — the 2026-10-02 session record ranks A and C below B without distinct criticism and records the later requests in order: visible button placement, one screen rather than separate sections, then a closer GitHub likeness.
 **Revisit when:** the user changes the priority between seeing placement in context and editing a compact grouped list
 
-The page shows each button where it belongs on its corresponding GitHub page, so the user can see placement while editing. The user rejected B because it felt dense and splitting it into sections meant searching for a button. The preserved decision says A and C were rejected but does not record a separate reason for either; it supports the placement criterion for D, not a retrospective claim about their individual flaws.
+The page shows each button where it belongs on its corresponding GitHub page, so the user can see placement while editing. The user rejected B because it felt dense and splitting it into sections meant searching for a button. The session record ranks A and C below B but preserves no separate criticism of them. The user next asked to see each button's GitHub placement, then to keep the views together rather than split the page into sections that require searching, and finally for a page close to GitHub itself; that sequence led to D. The preset drawer and outside-click dismissal were added after that choice.
 
 ## The scenery is fixed; the buttons are live
 
