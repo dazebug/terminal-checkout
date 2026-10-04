@@ -56,3 +56,30 @@ test('dispatch mutates engine state without DOM edits, synthetic events, or brow
   const dispatch = source.slice(start, end);
   assert.doesNotMatch(dispatch, /document\.|\.click\s*\(|dispatchEvent\s*\(|\.value\s*=|\b(?:confirm|alert|prompt)\s*\(/);
 });
+
+test('legacy face inputs read their limit from defaults.js', () => {
+  const defaults = read('defaults.js');
+  const options = read('options.js');
+  assert.match(defaults, /const FACE_MAX_LENGTH = 24;/);
+  assert.match(options, /maxlength="\$\{FACE_MAX_LENGTH\}"/);
+  assert.doesNotMatch(options, /maxlength=["']24["']/);
+});
+
+test('legacy migration controls and the shell dispatch share selection and panel actions', () => {
+  const source = read('options.js');
+  assert.match(source, /@typedef \{\{type: 'migration-selection', uid: string, selected: boolean\}\} OptionsMigrationSelectionAction/);
+  assert.match(source, /@typedef \{\{type: 'migration-panel-toggle'\}\} OptionsMigrationPanelToggleAction/);
+  const legacy = source.slice(
+    source.indexOf("document.getElementById('migration-badge').addEventListener"),
+    source.indexOf("document.getElementById('migration-apply').addEventListener"),
+  );
+  assert.match(legacy, /runPreparedReview\(prepareMigrationPanelToggle\(\)\)/);
+  assert.match(legacy, /runPreparedReview\(prepareMigrationSelection\(id, checked\)\)/);
+  const dispatchStart = source.indexOf('async function dispatchOptionsEngineAction(');
+  const dispatchEnd = source.indexOf('\n/** @type {OptionsEngine} */', dispatchStart);
+  const dispatch = source.slice(dispatchStart, dispatchEnd);
+  assert.match(dispatch, /case 'migration-selection':\s*outcome = runPreparedReview\(prepareMigrationSelection\(action\.uid, action\.selected\)\)/);
+  assert.match(dispatch, /case 'migration-panel-toggle':\s*outcome = runPreparedReview\(prepareMigrationPanelToggle\(\)\)/);
+  assert.match(source, /panelOpen: state\.migrationPanelOpen/);
+  assert.match(source, /pending: state\.plan !== null && state\.loadedVersion !== null/);
+});

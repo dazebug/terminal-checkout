@@ -365,6 +365,7 @@ const PR_BRANCH_LINK_SELECTOR =
 const DEFAULT_MAIN = 'main';
 // Face choices shared by the legacy card editor and the replacement views.
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
+const FACE_MAX_LENGTH = 24;
 // Maximum buttons per page kind. A synced device running a version with a lower cap keeps only the
 // first entries — every reader enforces it through adoptStoredButtons — and removes the rest if it
 // saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this count, is what stops a

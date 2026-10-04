@@ -57,6 +57,51 @@
   "ext_button_save": {
     "message": "保存"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "接受另一台设备的设置并丢弃尚未保存的更改吗？"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "接受最新设置"
+  },
+  "ext_d_shell_deferred": {
+    "message": "当前设置仍保留在此页面。你可以稍后接受另一台设备的设置。"
+  },
+  "ext_d_shell_discard": {
+    "message": "放弃更改"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "放弃尚未保存的更改并重新读取已保存的设置吗？"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "继续编辑"
+  },
+  "ext_d_shell_later": {
+    "message": "稍后"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "预设更新审核"
+  },
+  "ext_d_shell_reload": {
+    "message": "重新读取"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "无法重新读取设置。当前编辑内容仍保留。"
+  },
+  "ext_d_shell_saving": {
+    "message": "正在保存…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "修改过命令前缀"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "与预设完全匹配"
+  },
+  "ext_d_shell_stale": {
+    "message": "另一台设备更改了设置。"
+  },
+  "ext_d_shell_waiting": {
+    "message": "正在等待设置…"
+  },
   "ext_card_delete": {
     "message": "删除"
   },

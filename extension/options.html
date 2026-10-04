@@ -358,27 +358,25 @@
   <link rel="stylesheet" href="options-editor.css">
 </head>
 <body>
-  <!-- Everything the user can act on lives inside #app, which is inert until the settings have
-       been read. The status line and [Retry] below are deliberately outside it: a load that fails
-       still has to be able to say so and offer a way back. -->
-  <main id="app" inert>
   <div id="options-shell-root"></div>
+  <!-- The legacy settings form stays inert until the settings have been read. -->
+  <main id="app" inert>
   <div id="options-replica-root"></div>
   <div id="options-editor-root"></div>
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · <span data-i18n="ext.header.options"></span><span class="cursor">▊</span></h1>
     <p class="term-sub" data-i18n="ext.header.subtitle"></p>
-    <button id="migration-badge" hidden data-i18n="ext.migration.badge"></button>
+    <button id="migration-badge" class="legacy-shell-ui" hidden data-i18n="ext.migration.badge"></button>
     <!-- Raised as soon as another device's change arrives, so the warning is on screen before Save is
          pressed. Save re-reads and decides for itself: a change event can be missed, and a banner
          that never appeared must not be read as "nothing changed". -->
-    <p id="stale-banner" hidden data-i18n="ext.banner.stale"></p>
+    <p id="stale-banner" class="legacy-shell-ui" hidden data-i18n="ext.banner.stale"></p>
   </header>
 
   <!-- Shown only when the stored settings were reviewed against an older generation of the presets.
        Applying fills the edit state and leaves the write to the same Save button as everything
        else — nothing here touches storage on its own. -->
-  <section class="section" id="migration-section" hidden>
+  <section class="section legacy-shell-ui" id="migration-section" hidden>
     <h2 class="section-prompt"><span class="prompt">❯</span> <span data-i18n="ext.section.update.title"></span></h2>
     <p class="help" id="migration-describe"></p>
     <div id="migration-actionable"></div>
@@ -481,16 +479,16 @@
   </section>
 
   <div class="actions">
-    <button class="btn-primary" id="save-btn" data-i18n="ext.button.save"></button>
+    <button class="btn-primary legacy-shell-ui" id="save-btn" data-i18n="ext.button.save"></button>
     <button class="btn-secondary" id="reset-btn" data-i18n="ext.button.reset"></button>
-    <span id="dirty-indicator" hidden data-i18n="ext.status.unsaved"></span>
+    <span id="dirty-indicator" class="legacy-shell-ui" hidden data-i18n="ext.status.unsaved"></span>
   </div>
   </main>
 
-  <div id="load-error" hidden>
+  <div id="load-error" class="legacy-shell-ui" hidden>
     <button class="btn-secondary" id="retry-btn" data-i18n="ext.button.retry"></button>
   </div>
-  <div id="status" class="status"></div>
+  <div id="status" class="legacy-shell-ui status"></div>
 
   <script src="i18n.js"></script>
   <script src="defaults.js"></script>

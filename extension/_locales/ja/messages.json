@@ -57,6 +57,51 @@
   "ext_button_save": {
     "message": "保存"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "別のデバイスの設定を適用して、未保存の変更を破棄しますか？"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "最新の設定を適用"
+  },
+  "ext_d_shell_deferred": {
+    "message": "現在の設定はこのページに保持されています。別のデバイスの設定は後で適用できます。"
+  },
+  "ext_d_shell_discard": {
+    "message": "変更を破棄"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "未保存の変更を破棄して、保存済みの設定を再読み込みしますか？"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "編集を続ける"
+  },
+  "ext_d_shell_later": {
+    "message": "後で"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "プリセット更新の確認"
+  },
+  "ext_d_shell_reload": {
+    "message": "再読み込み"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "設定を再読み込みできませんでした。現在の編集内容は保持されています。"
+  },
+  "ext_d_shell_saving": {
+    "message": "保存中…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "コマンドの先頭部分を編集"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "プリセットと完全一致"
+  },
+  "ext_d_shell_stale": {
+    "message": "別のデバイスで設定が変更されました。"
+  },
+  "ext_d_shell_waiting": {
+    "message": "設定を待っています…"
+  },
   "ext_card_delete": {
     "message": "削除"
   },

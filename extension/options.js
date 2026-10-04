@@ -107,6 +107,8 @@
 /** @typedef {{type: 'import-file', file: File}} OptionsImportAction */
 /** @typedef {{type: 'migration-apply'}} OptionsMigrationApplyAction */
 /** @typedef {{type: 'migration-keep'}} OptionsMigrationKeepAction */
+/** @typedef {{type: 'migration-selection', uid: string, selected: boolean}} OptionsMigrationSelectionAction */
+/** @typedef {{type: 'migration-panel-toggle'}} OptionsMigrationPanelToggleAction */
 /** @typedef {{type: 'main-patch', value: string}} OptionsMainPatchAction */
 /** @typedef {{type: 'override-add'}} OptionsOverrideAddAction */
 /** @typedef {{type: 'override-patch', index: number, patch: Partial<{repo: string, branch: string}>}} OptionsOverridePatchAction */
@@ -127,7 +129,8 @@
  * @typedef {
  *   OptionsSaveAction|OptionsDiscardAction|OptionsRetryLoadAction|OptionsReloadLatestAction|
  *   OptionsAdoptLatestAction|OptionsDeferLatestAction|OptionsResetAction|OptionsExportAction|
- *   OptionsImportAction|OptionsMigrationApplyAction|OptionsMigrationKeepAction|OptionsMainPatchAction|
+ *   OptionsImportAction|OptionsMigrationApplyAction|OptionsMigrationKeepAction|
+ *   OptionsMigrationSelectionAction|OptionsMigrationPanelToggleAction|OptionsMainPatchAction|
  *   OptionsOverrideAddAction|OptionsOverridePatchAction|OptionsOverrideRemoveAction|
  *   OptionsButtonPatchAction|OptionsButtonAddAction|OptionsButtonDuplicateAction|OptionsButtonRemoveAction|
  *   OptionsButtonMoveAction|OptionsPresetAddAction|OptionsPresetReplaceAction|OptionsInputAddAction|
@@ -144,7 +147,7 @@
  * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Registers for state changes coalesced into one microtask; registration never invokes the listener, so mount calls getSnapshot for its first render. Returns an unsubscribe function.
  * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action through the same state changes as the legacy handlers. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
  *
- * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. Button and input moves use the existing before-index ordering.
+ * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. `migration-selection` takes a migration candidate uid and boolean `selected`; it records review intent without marking settings dirty. `migration-panel-toggle` changes the shared migration panel visibility and records review intent. Button and input moves use the existing before-index ordering.
  */
 
 // PR, PR-list, issue, issue-list, and repository buttons differ in both their storage key and the
@@ -275,6 +278,7 @@ const state = {
   reviewTouched: false,
   reviewed: false,
   plan: null,
+  migrationPanelOpen: false,
   // Ids of the checked candidates — they start checked, so this starts as all of them.
   selection: new Set(),
 };
@@ -476,7 +480,7 @@ function renderButtons(kind) {
       <div class="btn-row">
         <div class="field field-face">
           <label for="${kind}-${i}-face">${t('ext.field.face')}</label>
-          <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="24">
+          <input id="${kind}-${i}-face" class="face-input" data-field="face" maxlength="${FACE_MAX_LENGTH}">
         </div>
         <div class="field field-preview">
           <label>${t('ext.field.preview')}</label>
@@ -1254,11 +1258,35 @@ function setPlan(plan) {
   scheduleOptionsEngineNotify();
 }
 
+function prepareMigrationSelection(uid, selected) {
+  if (!state.plan || typeof uid !== 'string' || typeof selected !== 'boolean'
+    || !state.plan.actionable.some(item => item.id === uid)) return rejectedEdit('not-found');
+  if (state.selection.has(uid) === selected) return preparedEdit(() => {}, undefined, false);
+  return preparedEdit(() => {
+    if (selected) state.selection.add(uid);
+    else state.selection.delete(uid);
+    state.migrationPanelOpen = true;
+    renderMigration();
+  });
+}
+
+function prepareMigrationPanelToggle() {
+  if (!state.plan || state.loadedVersion >= state.plan.targetVersion) return rejectedEdit('not-found');
+  return preparedEdit(() => {
+    state.migrationPanelOpen = !state.migrationPanelOpen;
+    renderMigration();
+    if (state.migrationPanelOpen) {
+      document.getElementById('migration-section').scrollIntoView?.({ block: 'nearest' });
+    }
+  });
+}
+
 // The user has decided about this generation — by applying some or none of it, by declining, or by
 // resetting. That decision is what lets the next save move the version.
 function recordMigrationReviewed() {
   state.reviewed = true;
   state.plan = null;
+  state.migrationPanelOpen = false;
   state.selection = new Set();
   scheduleOptionsEngineNotify();
 }
@@ -1342,8 +1370,8 @@ function renderMigration() {
   const pending = !!plan && state.loadedVersion < plan.targetVersion;
 
   badge.hidden = !pending;
+  panel.hidden = !pending || !state.migrationPanelOpen;
   if (!pending) {
-    panel.hidden = true;
     return;
   }
 
@@ -1388,6 +1416,10 @@ function applyMigration() {
   if (!requireLoaded()) return;
   const operation = prepareMigrationApply();
   if (!operation.ok || !editAndReview(operation.apply)) return;
+  completeMigrationApply(operation);
+}
+
+function completeMigrationApply(operation) {
   SECTIONS.forEach(({ kind }) => renderButtons(kind));
   renderMigration();
   // Two complete messages, not one message with a clause bolted on. The English needed
@@ -1967,27 +1999,14 @@ document.getElementById('reset-btn').addEventListener('click', resetSettings);
 
 document.getElementById('migration-badge').addEventListener('click', () => {
   // Opening the review is the start of deciding about it
-  review(() => {
-    const panel = document.getElementById('migration-section');
-    panel.hidden = !panel.hidden;
-    if (!panel.hidden) panel.scrollIntoView({ block: 'nearest' });
-  });
+  runPreparedReview(prepareMigrationPanelToggle());
 });
 
 document.getElementById('migration-actionable').addEventListener('change', (e) => {
   if (!e.target.classList.contains('mig-check')) return;
   const { id } = e.target.closest('.mig-item').dataset;
   const { checked } = e.target;
-  // Choosing which candidates to accept is not a "dirty" edit — nothing to save yet — but it is the
-  // user speaking about this plan, so a snapshot that arrives from sync afterwards must not silently
-  // reset their choices back to the defaults.
-  review(() => {
-    if (checked) state.selection.add(id);
-    else state.selection.delete(id);
-    renderMigration();
-    // Re-opening after a redraw would be surprising: the panel was open, keep it open
-    document.getElementById('migration-section').hidden = false;
-  });
+  runPreparedReview(prepareMigrationSelection(id, checked));
 });
 
 document.getElementById('migration-apply').addEventListener('click', applyMigration);
@@ -1999,9 +2018,13 @@ document.getElementById('migration-keep').addEventListener('click', () => {
   if (!requireLoaded()) return;
   const operation = prepareMigrationKeep();
   if (!operation.ok || !editAndReview(operation.apply)) return;
+  completeMigrationKeep();
+});
+
+function completeMigrationKeep() {
   renderMigration();
   showStatus('info', t('ext.migration.markedReviewed', t('ext.button.save')));
-});
+}
 
 // A save on another machine on this account arrives here as a storage change. Adopting it is what
 // makes the notice disappear everywhere once anyone has dealt with it — but never at the cost of
@@ -2131,10 +2154,10 @@ function getOptionsEngineSnapshot() {
   const migration = {
     fromVersion: state.plan?.fromVersion ?? state.loadedVersion,
     targetVersion,
-    pending: state.loadedVersion !== null && state.loadedVersion < targetVersion,
+    pending: state.plan !== null && state.loadedVersion !== null && state.loadedVersion < targetVersion,
     reviewed: state.reviewed,
     reviewTouched: state.reviewTouched,
-    panelOpen: !document.getElementById('migration-section').hidden,
+    panelOpen: state.migrationPanelOpen,
     selectedUids: [...state.selection].filter(uid => typeof uid === 'string'),
     summary: planSummary,
     actionable: (state.plan?.actionable || []).map(item => ({
@@ -2224,6 +2247,13 @@ function runPreparedEdit(operation, { review: isReview = false } = {}) {
   return { ok: true, ...(operation.createdUid ? { createdUid: operation.createdUid } : {}) };
 }
 
+function runPreparedReview(operation) {
+  if (!operation.ok) return operation;
+  if (operation.changed === false) return { ok: true };
+  if (!review(operation.apply)) return rejectedEdit(state.loaded ? 'busy' : 'not-loaded');
+  return { ok: true };
+}
+
 async function discardOptionsEdits(confirmed) {
   if (!state.loaded) return rejectedEdit('not-loaded');
   if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
@@ -2270,6 +2300,7 @@ async function dispatchOptionsEngineAction(action) {
   const type = action.type;
   const editsSettings = new Set([
     'discard', 'adopt-latest', 'reset', 'migration-apply', 'migration-keep', 'main-patch',
+    'migration-selection', 'migration-panel-toggle',
     'override-add', 'override-patch', 'override-remove', 'button-patch', 'button-add',
     'button-duplicate', 'button-remove', 'button-move', 'preset-add', 'preset-replace',
     'input-add', 'input-patch', 'input-remove', 'input-move',
@@ -2288,7 +2319,10 @@ async function dispatchOptionsEngineAction(action) {
         else {
           const validation = validateEditState();
           if (validation.buttons.some(button => button.errors.length)
-            || validation.overrides.some(row => row.errors.length)) outcome = rejectedEdit('invalid');
+            || validation.overrides.some(row => row.errors.length)) {
+            await saveSettings();
+            outcome = rejectedEdit('invalid');
+          }
           else outcome = await saveSettings() ? { ok: true } : rejectedEdit('failed');
         }
         break;
@@ -2329,10 +2363,21 @@ async function dispatchOptionsEngineAction(action) {
         else outcome = await importSettings(action.file) ? { ok: true } : rejectedEdit('failed');
         break;
       case 'migration-apply':
-        outcome = runPreparedEdit(prepareMigrationApply(), { review: true });
+        {
+          const operation = prepareMigrationApply();
+          outcome = runPreparedEdit(operation, { review: true });
+          if (outcome.ok) completeMigrationApply(operation);
+        }
         break;
       case 'migration-keep':
         outcome = runPreparedEdit(prepareMigrationKeep(), { review: true });
+        if (outcome.ok) completeMigrationKeep();
+        break;
+      case 'migration-selection':
+        outcome = runPreparedReview(prepareMigrationSelection(action.uid, action.selected));
+        break;
+      case 'migration-panel-toggle':
+        outcome = runPreparedReview(prepareMigrationPanelToggle());
         break;
       case 'main-patch':
         outcome = runPreparedEdit(prepareMainPatch(action.value));

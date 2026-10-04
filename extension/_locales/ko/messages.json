@@ -57,6 +57,51 @@
   "ext_button_save": {
     "message": "저장"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "다른 기기의 설정을 적용하고 저장하지 않은 변경 사항을 버릴까요?"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "최신 설정 적용"
+  },
+  "ext_d_shell_deferred": {
+    "message": "현재 설정은 그대로 있습니다. 다른 기기의 설정은 나중에 적용할 수 있습니다."
+  },
+  "ext_d_shell_discard": {
+    "message": "변경 취소"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "저장하지 않은 변경 사항을 버리고 저장된 설정을 다시 읽을까요?"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "계속 편집"
+  },
+  "ext_d_shell_later": {
+    "message": "나중에"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "프리셋 업데이트 검토"
+  },
+  "ext_d_shell_reload": {
+    "message": "다시 읽기"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "설정을 다시 읽지 못했습니다. 현재 편집 내용은 그대로 있습니다."
+  },
+  "ext_d_shell_saving": {
+    "message": "저장 중…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "명령 앞부분 수정"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "프리셋과 완전히 일치"
+  },
+  "ext_d_shell_stale": {
+    "message": "다른 기기에서 설정이 변경되었습니다."
+  },
+  "ext_d_shell_waiting": {
+    "message": "설정을 기다리는 중…"
+  },
   "ext_card_delete": {
     "message": "삭제"
   },

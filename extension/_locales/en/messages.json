@@ -57,6 +57,51 @@
   "ext_button_save": {
     "message": "Save"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "Accept settings from the other device and discard your unsaved changes?"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "Accept latest"
+  },
+  "ext_d_shell_deferred": {
+    "message": "Your current settings are still here. You can accept the other device’s settings later."
+  },
+  "ext_d_shell_discard": {
+    "message": "Discard changes"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "Discard unsaved changes and reload the saved settings?"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "Keep editing"
+  },
+  "ext_d_shell_later": {
+    "message": "Later"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "Preset update review"
+  },
+  "ext_d_shell_reload": {
+    "message": "Reload"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "Settings could not be reloaded. Your current edits are still here."
+  },
+  "ext_d_shell_saving": {
+    "message": "Saving…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "Edited command prefix"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "Exact preset match"
+  },
+  "ext_d_shell_stale": {
+    "message": "Settings changed on another device."
+  },
+  "ext_d_shell_waiting": {
+    "message": "Waiting for settings…"
+  },
   "ext_card_delete": {
     "message": "Delete"
   },

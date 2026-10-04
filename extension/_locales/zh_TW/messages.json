@@ -57,6 +57,51 @@
   "ext_button_save": {
     "message": "儲存"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "接受另一部裝置的設定並捨棄尚未儲存的變更嗎？"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "接受最新設定"
+  },
+  "ext_d_shell_deferred": {
+    "message": "目前的設定仍保留在此頁面。你可以稍後接受另一部裝置的設定。"
+  },
+  "ext_d_shell_discard": {
+    "message": "捨棄變更"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "捨棄尚未儲存的變更並重新讀取已儲存的設定嗎？"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "繼續編輯"
+  },
+  "ext_d_shell_later": {
+    "message": "稍後"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "預設更新檢視"
+  },
+  "ext_d_shell_reload": {
+    "message": "重新讀取"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "無法重新讀取設定。目前的編輯內容仍保留。"
+  },
+  "ext_d_shell_saving": {
+    "message": "正在儲存…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "修改過命令前綴"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "與預設完全相符"
+  },
+  "ext_d_shell_stale": {
+    "message": "另一部裝置變更了設定。"
+  },
+  "ext_d_shell_waiting": {
+    "message": "正在等待設定…"
+  },
   "ext_card_delete": {
     "message": "刪除"
   },
