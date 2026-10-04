@@ -1,4 +1,4 @@
-// Replica model and source contracts; DOM interaction is covered by the disposable jsdom harness.
+// Replica model and source contracts, without a DOM implementation.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

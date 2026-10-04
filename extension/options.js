@@ -149,15 +149,18 @@
  * @property {(action: OptionsEngineAction) => Promise<OptionsDispatchResult>} dispatch Applies an action to engine state. It never opens a browser dialog; a caller confirms in its own UI and resends confirmed: true.
  * @property {(reason: OptionsInertReason, elements: ReadonlyArray<HTMLElement>, active: boolean) => void} setInertReason Adds or removes one owner's page-interaction blocker; an element stays inert while any owner remains.
  *
- * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. `migration-selection` takes a migration candidate uid and boolean `selected`; it records review intent without marking settings dirty. `migration-panel-toggle` changes the shared migration panel visibility and records review intent. Button and input moves use the existing before-index ordering.
+ * `preset-replace` needs confirmed: true when the current command is non-empty and does not exactly match a preset for the same kind. `discard` and `adopt-latest` need confirmed: true only when there is unsaved work. Without it the result is needs-confirmation. `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. Confirmed discard/adopt re-read through that path; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. `migration-selection` takes a migration candidate uid and boolean `selected`; it records review intent without marking settings dirty. `migration-panel-toggle` changes the shared migration panel visibility and records review intent. `button-move` and `input-move` insert before `beforeUid` or `beforeIndex` as counted before the move; a null `beforeUid` or a `beforeIndex` equal to the length means last.
  */
 
 const SECTIONS = Object.entries(BUTTON_KINDS).map(([kind, section]) => ({ kind, ...section }));
 
+// Never pass `tHTML` anything a user typed — its result is set with innerHTML. It is `tr` under
+// another name because tests/i18n.test.js sorts keys by the name they are read through and fails
+// when a key that carries markup is read through `tr`, whose results (every engine message among
+// them) are set as text.
 /** @type {(key: string, ...args: Array<string|number>) => string} */
 const tHTML = tr;
 
-// Engine messages are plain text. The view modules own their text and markup insertion helpers.
 applyDocumentLanguage();
 document.title = `Terminal Checkout — ${tr('ext.header.options')}`;
 

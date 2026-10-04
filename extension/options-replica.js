@@ -300,7 +300,7 @@ function presetAddAction(kind, presetId, beforeUid = null) {
   return { type: 'preset-add', kind, presetId, beforeUid };
 }
 
-/** Build an unconfirmed preset replacement; the drawer retries only after the engine asks. */
+/** Build a preset replacement, confirmed only when the drawer resends it after the engine asked. */
 function presetReplaceAction(kind, uid, presetId, confirmed = false) {
   if (!Object.hasOwn(BUTTON_KINDS, kind) || typeof uid !== 'string' || !uid
     || !presetById(BUTTON_KINDS[kind].presets, presetId)) return null;
@@ -309,7 +309,7 @@ function presetReplaceAction(kind, uid, presetId, confirmed = false) {
   return action;
 }
 
-/** Project the live defaults into grouped cards without including mockup data or command copies. */
+/** Group the live presets by page kind into the drawer's cards. */
 function presetGroups(snapshot) {
   return REPLICA_KIND_ORDER.map(kind => {
     const buttons = Array.isArray(snapshot?.buttons?.[kind]) ? snapshot.buttons[kind] : [];
@@ -1310,12 +1310,12 @@ function focusReplicaButton(kind, uid) {
   return Boolean(add || slot);
 }
 
-/** Open the empty drawer surface, keeping it separate from the preset implementation. */
+/** Open the drawer as its toolbar control does, so closing it returns focus to that control. */
 function openReplicaDrawer() {
   openDrawerInternal(true, mounted?.pageKind, mounted?.root.querySelector('[data-focus-key="drawer-toggle"]'));
 }
 
-/** Close the drawer and return focus to its toolbar control. */
+/** Close the drawer and return focus to the control that opened it. */
 function closeReplicaDrawer() {
   closeDrawerInternal(true);
 }

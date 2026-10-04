@@ -1654,7 +1654,7 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // Every readable site in the tree, and the refusals that ran to produce them — one call per file,
   // so the list below cannot outlive the checks that guard it (`auditSource`).
   const found = MARKUP_FILES.flatMap(file => auditSource(file, read(file), DECLARED_COMPUTED_WRITES));
-  // The site list follows the generated editor controls now that the card builder has been removed.
+  // The site list follows the generated editor controls.
   // Keep the inventory exact so a new user-facing attribute cannot silently leave the catalogue path.
   // **File and attribute name were not enough either**: that pair repeats, so a
   // trade between two sites sharing one left this list identical — the swap the fixture above runs is

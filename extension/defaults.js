@@ -140,9 +140,9 @@ function presetById(presets, id) {
   return presets.find(preset => preset.id === id) ?? null;
 }
 
-// The edit view reports the exact preset whose command matches the current command after the same
-// outer whitespace trim used by the legacy preset confirmation. A non-empty unmatched command is
-// a hand-edited command and needs confirmation before replacement.
+// One rule for the snapshot's preset id and for the replace confirmation: after an outer trim, a
+// command equal to a preset's names that preset, and a non-empty command equal to none was edited by
+// hand, so replacing it needs confirmation.
 function classifyPresetCommand(command, presets) {
   const normalized = typeof command === 'string' ? command.trim() : '';
   const preset = normalized ? presets.find(candidate => candidate.command === normalized) : null;
@@ -152,8 +152,8 @@ function classifyPresetCommand(command, presets) {
   };
 }
 
-// Save and every view consume one validation result so required fields and the Claude warning
-// cannot drift between the card editor and the engine snapshot.
+// Save and the engine snapshot, which every view draws from, share this one verdict, so required
+// fields and the Claude warning cannot differ between what a view shows and what Save refuses.
 function validateButtonValue(button) {
   const errors = [];
   for (const field of ['face', 'label', 'command']) {
@@ -364,7 +364,6 @@ const PR_BRANCH_LINK_SELECTOR =
   'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
 
 const DEFAULT_MAIN = 'main';
-// Face choices shared by the legacy card editor and the replacement views.
 const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
 const FACE_MAX_LENGTH = 24;
 // Maximum buttons per page kind. A synced device running a version with a lower cap keeps only the
