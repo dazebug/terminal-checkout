@@ -797,5 +797,86 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub 페이지 미리보기"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "설정용 예시 화면(실제 GitHub 아님)"
+  },
+  "ext_d_replica_description": {
+    "message": "여기에 보이는 버튼은 현재 편집 중인 설정입니다. 버튼을 선택해 편집하거나 끌어 놓고 화살표 키로 순서를 바꾸세요."
+  },
+  "ext_d_replica_mode": {
+    "message": "편집 미리보기"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "풀 리퀘스트"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "풀 리퀘스트 목록"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "이슈"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "이슈 목록"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "저장소"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "확장 아이콘을 누르면 실행되는 버튼"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "설정된 버튼 없음"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "버튼 자리 표시"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "버튼 자리 숨기기"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "프리셋 서랍 열기"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "프리셋 서랍 닫기"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "PR head 브랜치 옆"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "PR 목록 필터 위"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "이슈 상태 옆"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "All issues 제목 옆"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "저장소 이름 옆"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "버튼 자리"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "버튼 추가"
+  },
+  "ext_d_replica_move_left": {
+    "message": "버튼을 왼쪽으로 이동"
+  },
+  "ext_d_replica_move_right": {
+    "message": "버튼을 오른쪽으로 이동"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "버튼에 포커스를 두고 왼쪽 또는 오른쪽 화살표 키를 눌러 순서를 바꾸세요. 버튼을 끌어 놓아도 됩니다."
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "여기에 프리셋 카드가 표시됩니다."
+  },
+  "ext_d_replica_action_failed": {
+    "message": "버튼을 옮기지 못했습니다. 설정은 바뀌지 않았습니다."
   }
 }

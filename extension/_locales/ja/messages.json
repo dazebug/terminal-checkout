@@ -797,5 +797,86 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub ページのプレビュー"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "設定用のサンプル画面です。実際の GitHub ではありません。"
+  },
+  "ext_d_replica_description": {
+    "message": "ここに表示されるボタンは編集中の設定です。ボタンを選んで編集するか、ドラッグまたは矢印キーで順序を変更します。"
+  },
+  "ext_d_replica_mode": {
+    "message": "編集プレビュー"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "プルリクエスト"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "プルリクエスト一覧"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "Issue"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "Issue 一覧"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "リポジトリ"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "拡張機能アイコンで実行するボタン"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "設定されたボタンはありません"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "ボタンの配置を表示"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "ボタンの配置を非表示"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "プリセットドロワーを開く"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "プリセットドロワーを閉じる"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "head ブランチの横"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "プルリクエストの絞り込みの上"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "Issue の状態の横"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "All issues の横"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "リポジトリ名の横"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "ボタンの配置"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "ボタンを追加"
+  },
+  "ext_d_replica_move_left": {
+    "message": "ボタンを左へ移動"
+  },
+  "ext_d_replica_move_right": {
+    "message": "ボタンを右へ移動"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "ボタンにフォーカスして左右の矢印キーを押すと順序を変更できます。ドラッグも使えます。"
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "ここにプリセットカードが表示されます。"
+  },
+  "ext_d_replica_action_failed": {
+    "message": "ボタンを移動できませんでした。設定は変更されていません。"
   }
 }

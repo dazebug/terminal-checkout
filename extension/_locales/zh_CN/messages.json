@@ -797,5 +797,86 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub 页面预览"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "这是设置示例页面，不是真正的 GitHub。"
+  },
+  "ext_d_replica_description": {
+    "message": "此处显示的是正在编辑的设置。选择按钮可进行编辑，也可拖动按钮或使用方向键调整顺序。"
+  },
+  "ext_d_replica_mode": {
+    "message": "编辑预览"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "拉取请求"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "拉取请求列表"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "议题"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "议题列表"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "仓库"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "扩展程序图标将运行的按钮"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "未配置按钮"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "显示按钮位置"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "隐藏按钮位置"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "打开预设抽屉"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "关闭预设抽屉"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "位于源分支旁"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "位于拉取请求筛选器上方"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "位于议题状态旁"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "位于 All issues 旁"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "位于仓库名称旁"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "按钮位置"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "添加按钮"
+  },
+  "ext_d_replica_move_left": {
+    "message": "向左移动按钮"
+  },
+  "ext_d_replica_move_right": {
+    "message": "向右移动按钮"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "聚焦按钮后按左或右方向键即可调整顺序，也可以拖动按钮。"
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "预设卡片将在此处显示。"
+  },
+  "ext_d_replica_action_failed": {
+    "message": "无法移动按钮。设置未更改。"
   }
 }

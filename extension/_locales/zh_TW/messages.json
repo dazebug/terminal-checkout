@@ -797,5 +797,86 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub 頁面預覽"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "這是設定用的範例頁面，不是真正的 GitHub。"
+  },
+  "ext_d_replica_description": {
+    "message": "此處顯示的是正在編輯的設定。選取按鈕可進行編輯，也可拖曳按鈕或使用方向鍵調整順序。"
+  },
+  "ext_d_replica_mode": {
+    "message": "編輯預覽"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "提取要求"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "提取要求清單"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "議題"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "議題清單"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "儲存庫"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "擴充功能圖示將執行的按鈕"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "未設定按鈕"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "顯示按鈕位置"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "隱藏按鈕位置"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "開啟預設抽屜"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "關閉預設抽屜"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "位於來源分支旁"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "位於提取要求篩選器上方"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "位於議題狀態旁"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "位於 All issues 旁"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "位於儲存庫名稱旁"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "按鈕位置"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "新增按鈕"
+  },
+  "ext_d_replica_move_left": {
+    "message": "將按鈕向左移動"
+  },
+  "ext_d_replica_move_right": {
+    "message": "將按鈕向右移動"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "聚焦按鈕後按左或右方向鍵即可調整順序，也可以拖曳按鈕。"
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "預設卡片會顯示在此處。"
+  },
+  "ext_d_replica_action_failed": {
+    "message": "無法移動按鈕。設定未變更。"
   }
 }

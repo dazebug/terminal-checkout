@@ -797,5 +797,86 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub page preview"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "Settings example page. This is not GitHub."
+  },
+  "ext_d_replica_description": {
+    "message": "The buttons here are the settings you are editing. Select one to edit it, drag it, or use the arrow keys to reorder it."
+  },
+  "ext_d_replica_mode": {
+    "message": "Edit preview"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "Pull request"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "Pull request list"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "Issue"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "Issue list"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "Repository"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "The extension icon will run"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "No button configured"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "Show button locations"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "Hide button locations"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "Open preset drawer"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "Close preset drawer"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "Beside the head branch"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "Above the pull request filters"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "Beside the issue status"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "Beside All issues"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "Beside the repository name"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "Button location"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "Add a button"
+  },
+  "ext_d_replica_move_left": {
+    "message": "Move button left"
+  },
+  "ext_d_replica_move_right": {
+    "message": "Move button right"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "Focus a button and press the left or right arrow to reorder it. You can also drag the button."
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "Preset cards will appear here."
+  },
+  "ext_d_replica_action_failed": {
+    "message": "The button could not be moved. Your settings were not changed."
   }
 }
