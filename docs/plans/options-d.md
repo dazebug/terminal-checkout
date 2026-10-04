@@ -4,7 +4,7 @@
 - 대상: `extension/options.html` · `extension/options.js` Chrome 확장 옵션 페이지
 - 시작 커밋: `b8d8f483aaa76e556e244e414fbdd0a0ea51ad21` (`b8d8f48`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/options-d-review` (`worktree-options-d-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-options-d-work` (`options-d-work`)
-- 현재: R0 · 마지막 승격 없음 · 리뷰 중 없음 · 게이트 그린(326)
+- 현재: R1 · 마지막 승격 7f434a3 · 리뷰 중 없음 · 게이트 그린(336)
 - 최근 검증자 판정: 계획을 레인 3개로 재편하면 시작에 합의한다 — 1단계 항목 1부터 · R0
 
 ## 배경 — 확인한 원천
@@ -94,7 +94,7 @@
 
 | # | 항목 | 부류 | 확정 결함 | 파일 집합 | 의존 | 상태 | 근거 | 승격 |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
-| 1 | 계약·골격 | 레인 A · 1단계 계약·골격 | — (저장 충돌 안내 결함은 항목 3) | `extension/options.js`, `extension/options.html` (마운트·스크립트·링크와 인라인 스타일), `extension/options-shell.js/css`, `extension/options-replica.js/css`, `extension/options-editor.js/css`, `tests/options-shell.test.js`, `tests/options-replica.test.js`, `tests/options-editor.test.js`, `tests/options-page-source.test.js`, 로케일 앵커 계약 | — | todo | 기존 화면을 그대로 유지하고 엔진·모듈 마운트·교차 모듈·예시 값·소스 감사 계약을 JSDoc으로 고정 | |
+| 1 | 계약·골격 | 레인 A · 1단계 계약·골격 | — (저장 충돌 안내 결함은 항목 3) | `extension/options.js`, `extension/options.html` (마운트·스크립트·링크와 인라인 스타일), `extension/options-shell.js/css`, `extension/options-replica.js/css`, `extension/options-editor.js/css`, `tests/options-shell.test.js`, `tests/options-replica.test.js`, `tests/options-editor.test.js`, `tests/options-page-source.test.js`, `tests/i18n.test.js` (새 CSS 자산 역할 등록), 로케일 앵커 계약 | — | claimed | 기존 화면 유지; `node --test` → `ℹ tests 336`, `ℹ pass 336`, `ℹ fail 0`, `exit_code=0`; `node .git/smoke-shell.cjs` → 깊은 동결 스냅샷·구독 1회·카드 7개·소유 digest 동일·`conflictButtons` 쓰기 없음 | |
 | 2 | 셸 | 레인 A · 셸 | — | `extension/options.js`, `extension/options-shell.js/css`, `tests/options-shell.test.js`, `tests/options-page-source.test.js`, A 로케일 블록 | 1 | todo | 저장 상태·변경 취소·Save, 동기화 변경·마이그레이션·로드 오류의 DOM 없는 모델 테스트와 jsdom 스모크 | |
 | 3 | 전역 설정·백업 | 레인 A · 전역 설정·백업 | (a) 저장 충돌 배너가 저장값만 내보내는 export로 편집 초안을 보존하라고 잘못 안내한다 (`extension/options.js:1105; extension/_locales/en/messages.json:11,167,211`) | `extension/options.js`, `extension/options-shell.js/css`, `tests/options-shell.test.js`, `tests/options-page-source.test.js`, A 로케일 블록 | 1 | todo | 기본 main·저장소별 override, 가져오기·내보내기·Reset, export가 저장값만 내보내는 사실을 확인 | |
 | 4 | 복제 화면 | 레인 B · 복제 화면 | (a) 목록 페이지 미리보기가 실제 pill 모양을 그리지 않는다 (`extension/options.js:393; extension/content.js:504,524`)<br>(b) 800 px에서 목록·편집 막대 문구가 세로로 접히며 900 px 이하 배치는 실측되지 않았다 (2026-10-04 사용자 관찰) | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록. 주변 값은 이 모듈의 단일 `EXAMPLE_CONTEXT` 상수에 둔다: `octo-demo/sample-repo`, PR `#42`, issue `#17`, branch `example/options`, base `main`, 제목 `Add button presets`, repo 경로 `/work/sample-repo` | 1 | todo | 다섯 GitHub형 페이지·자리·편집 중인 버튼·설정용 예시 배너·필름스트립·설명·확장 아이콘이 실행하는 버튼·자리 표시·자리 drag와 대안, 목록 pill, 900 px 이하 반응형 | |

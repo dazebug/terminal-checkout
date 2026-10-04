@@ -353,12 +353,18 @@
       .field-label { flex-basis: 100%; }
     }
   </style>
+  <link rel="stylesheet" href="options-shell.css">
+  <link rel="stylesheet" href="options-replica.css">
+  <link rel="stylesheet" href="options-editor.css">
 </head>
 <body>
   <!-- Everything the user can act on lives inside #app, which is inert until the settings have
        been read. The status line and [Retry] below are deliberately outside it: a load that fails
        still has to be able to say so and offer a way back. -->
   <main id="app" inert>
+  <div id="options-shell-root"></div>
+  <div id="options-replica-root"></div>
+  <div id="options-editor-root"></div>
   <header class="term-header">
     <h1 class="term-title"><span class="prompt">❯</span> terminal-checkout · <span data-i18n="ext.header.options"></span><span class="cursor">▊</span></h1>
     <p class="term-sub" data-i18n="ext.header.subtitle"></p>
@@ -489,6 +495,9 @@
   <script src="i18n.js"></script>
   <script src="defaults.js"></script>
   <script src="migrations.js"></script>
+  <script src="options-shell.js"></script>
+  <script src="options-replica.js"></script>
+  <script src="options-editor.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -1,6 +1,145 @@
 // defaults.js is the single source of truth for button defaults, presets, and face rules
 // (options.html loads it first)
 
+/** @typedef {'pr'|'pr-list'|'issue'|'issue-list'|'repo'} OptionsButtonKind */
+/** @typedef {'face'|'label'|'command'} OptionsButtonRequiredField */
+/** @typedef {'incomplete'|'duplicate'} OptionsOverrideErrorCode */
+/** @typedef {'claude-inputs-without-claude-command'} OptionsButtonWarningCode */
+
+/**
+ * @typedef {Object} OptionsButtonValue
+ * @property {string} face
+ * @property {string} label
+ * @property {string} command
+ * @property {ReadonlyArray<string>} claudeInputs
+ */
+
+/**
+ * @typedef {Object} OptionsButtonValidation
+ * @property {ReadonlyArray<OptionsButtonRequiredField>} errors Every empty required field, in face/label/command order.
+ * @property {ReadonlyArray<OptionsButtonWarningCode>} warnings Read-only diagnostics; Save still uses validateButtons().
+ */
+
+/**
+ * @typedef {Object} OptionsButtonSnapshot
+ * @property {string} uid Runtime-only identity minted by the edit engine.
+ * @property {string} face Stored button face value.
+ * @property {string} label Stored button tooltip value.
+ * @property {string} command Stored command value.
+ * @property {ReadonlyArray<string>} claudeInputs Stored Claude input rows in their current order.
+ * @property {OptionsButtonValidation} validation Read-only button diagnostics.
+ */
+
+/**
+ * @typedef {Object} OptionsOverrideSnapshot
+ * @property {number} index Current edit-array index used by override actions.
+ * @property {string} repo Raw editable repository text.
+ * @property {string} branch Raw editable branch text.
+ */
+
+/**
+ * @typedef {Object} OptionsMigrationActionableSnapshot
+ * @property {string} uid Runtime button uid identifying the candidate.
+ * @property {OptionsButtonKind} kind
+ * @property {number} index Current button index for display only.
+ * @property {string} label
+ * @property {string} from
+ * @property {string} to
+ * @property {'verbatim'|'prefix'} source
+ * @property {'unconditional'|'behavior-change'} effect
+ * @property {boolean} selected
+ * @property {string} describe Localized migration explanation.
+ * @property {ReadonlyArray<string>=} fromInputs Present when this candidate rewrites input rows.
+ * @property {ReadonlyArray<string>=} toInputs Present when this candidate rewrites input rows.
+ */
+
+/**
+ * @typedef {Object} OptionsMigrationInformationalSnapshot
+ * @property {string} uid Runtime button uid identifying the item.
+ * @property {OptionsButtonKind} kind
+ * @property {number} index Current button index for display only.
+ * @property {string} label
+ * @property {string} command
+ * @property {string} note
+ */
+
+/**
+ * @typedef {Object} OptionsMigrationSummarySnapshot
+ * @property {number} actionableCount
+ * @property {number} informationalCount
+ * @property {number} selectedCount
+ * @property {boolean} nothingToApply
+ * @property {boolean} reviewOnly
+ * @property {string} descriptions
+ */
+
+/**
+ * @typedef {Object} OptionsEngineSnapshot
+ * @property {Readonly<Record<OptionsButtonKind, ReadonlyArray<OptionsButtonSnapshot>>>} buttons Per-kind buttons in edit order, with runtime uids and stored fields.
+ * @property {boolean} dirty Whether button/global settings differ from the loaded edit state.
+ * @property {number} revision Monotonic edit revision.
+ * @property {{buttons: ReadonlyArray<{kind: OptionsButtonKind, uid: string, errors: ReadonlyArray<OptionsButtonRequiredField>, warnings: ReadonlyArray<OptionsButtonWarningCode>}>, overrides: ReadonlyArray<{index: number, errors: ReadonlyArray<OptionsOverrideErrorCode>}>}} validation Read-only diagnostics; never the Save decision.
+ * @property {{defaultMain: string, repoMainBranch: ReadonlyArray<OptionsOverrideSnapshot>}} globalSettings Raw editable default main and ordered overrides.
+ * @property {{status: 'unloaded'|'loading'|'loaded'|'reloading'|'error', loaded: boolean, generation: number, appliedGeneration: number, inFlight: number, errorMessage: string|null, retryAvailable: boolean}} load
+ * @property {{status: 'blocked'|'clean'|'dirty'|'saving', saving: boolean, importing: boolean, dirty: boolean, reviewTouched: boolean, hasUnsavedWork: boolean, canSave: boolean, loadedVersion: number|null, versionToWrite: number|null}} save
+ * @property {{staleSinceLoad: boolean, deferredChangePending: boolean, changedDuringSave: boolean}} sync
+ * @property {{fromVersion: number|null, targetVersion: number, pending: boolean, reviewed: boolean, reviewTouched: boolean, panelOpen: boolean, selectedUids: ReadonlyArray<string>, summary: OptionsMigrationSummarySnapshot, actionable: ReadonlyArray<OptionsMigrationActionableSnapshot>, informational: ReadonlyArray<OptionsMigrationInformationalSnapshot>}} migration
+ * @property {{type: 'idle'|'info'|'success'|'error', message: string}} status
+ */
+
+/**
+ * @typedef {Object} OptionsStorageWriteSite
+ * @property {'extension/options.js'} file
+ * @property {'saveSettings'} functionName
+ * @property {'chrome.storage.sync.set'} api
+ */
+
+/** @typedef {{type: 'save'}} OptionsSaveAction */
+/** @typedef {{type: 'discard', confirmed?: boolean}} OptionsDiscardAction `confirmed` is true only after the view has asked before dropping unsaved work. */
+/** @typedef {{type: 'retry-load'}} OptionsRetryLoadAction */
+/** @typedef {{type: 'reload-latest'}} OptionsReloadLatestAction */
+/** @typedef {{type: 'adopt-latest', confirmed?: boolean}} OptionsAdoptLatestAction `confirmed` is true only after the view has asked before dropping unsaved work. */
+/** @typedef {{type: 'defer-latest'}} OptionsDeferLatestAction */
+/** @typedef {{type: 'reset'}} OptionsResetAction */
+/** @typedef {{type: 'export-saved'}} OptionsExportAction */
+/** @typedef {{type: 'import-file', file: File}} OptionsImportAction */
+/** @typedef {{type: 'migration-apply'}} OptionsMigrationApplyAction */
+/** @typedef {{type: 'migration-keep'}} OptionsMigrationKeepAction */
+/** @typedef {{type: 'main-patch', value: string}} OptionsMainPatchAction */
+/** @typedef {{type: 'override-add'}} OptionsOverrideAddAction */
+/** @typedef {{type: 'override-patch', index: number, patch: Partial<{repo: string, branch: string}>}} OptionsOverridePatchAction */
+/** @typedef {{type: 'override-remove', index: number}} OptionsOverrideRemoveAction */
+/** @typedef {{type: 'button-patch', kind: OptionsButtonKind, uid: string, patch: Partial<Pick<OptionsButtonValue, 'face'|'label'|'command'>>}} OptionsButtonPatchAction */
+/** @typedef {{type: 'button-add', kind: OptionsButtonKind}} OptionsButtonAddAction */
+/** @typedef {{type: 'button-duplicate', kind: OptionsButtonKind, uid: string}} OptionsButtonDuplicateAction */
+/** @typedef {{type: 'button-remove', kind: OptionsButtonKind, uid: string}} OptionsButtonRemoveAction */
+/** @typedef {{type: 'button-move', kind: OptionsButtonKind, uid: string, beforeUid: string|null}} OptionsButtonMoveAction */
+/** @typedef {{type: 'preset-add', kind: OptionsButtonKind, presetId: string, beforeUid?: string|null}} OptionsPresetAddAction */
+/** @typedef {{type: 'preset-replace', kind: OptionsButtonKind, uid: string, presetId: string}} OptionsPresetReplaceAction */
+/** @typedef {{type: 'input-add', kind: OptionsButtonKind, buttonUid: string, value?: string}} OptionsInputAddAction */
+/** @typedef {{type: 'input-patch', kind: OptionsButtonKind, buttonUid: string, inputIndex: number, value: string}} OptionsInputPatchAction */
+/** @typedef {{type: 'input-remove', kind: OptionsButtonKind, buttonUid: string, inputIndex: number}} OptionsInputRemoveAction */
+/** @typedef {{type: 'input-move', kind: OptionsButtonKind, buttonUid: string, fromIndex: number, beforeIndex: number}} OptionsInputMoveAction */
+
+/**
+ * @typedef {
+ *   OptionsSaveAction|OptionsDiscardAction|OptionsRetryLoadAction|OptionsReloadLatestAction|
+ *   OptionsAdoptLatestAction|OptionsDeferLatestAction|OptionsResetAction|OptionsExportAction|
+ *   OptionsImportAction|OptionsMigrationApplyAction|OptionsMigrationKeepAction|OptionsMainPatchAction|
+ *   OptionsOverrideAddAction|OptionsOverridePatchAction|OptionsOverrideRemoveAction|
+ *   OptionsButtonPatchAction|OptionsButtonAddAction|OptionsButtonDuplicateAction|OptionsButtonRemoveAction|
+ *   OptionsButtonMoveAction|OptionsPresetAddAction|OptionsPresetReplaceAction|OptionsInputAddAction|
+ *   OptionsInputPatchAction|OptionsInputRemoveAction|OptionsInputMoveAction
+ * } OptionsEngineAction
+ * @typedef {OptionsEngineSnapshot|Promise<OptionsEngineSnapshot>} OptionsEngineDispatchResult
+ * @typedef {Object} OptionsEngine
+ * @property {() => OptionsEngineSnapshot} getSnapshot Returns a deeply frozen copy of the current edit and page state.
+ * @property {(listener: (snapshot: OptionsEngineSnapshot) => void) => () => void} subscribe Receives later state changes, not an initial call; returns an unsubscribe function.
+ * @property {(action: OptionsEngineAction) => OptionsEngineDispatchResult} dispatch Routes actions through the current page handlers and returns the resulting snapshot or its asynchronous result.
+ *
+ * `reload-latest` uses the existing load path and applies only when the edit state remains unchanged. `adopt-latest` and `discard` re-read through that path after confirmation; if the read fails, existing edits remain. `defer-latest` preserves the edit state and stale warning. Button and input moves use the existing before-index ordering.
+ */
+
 // PR, PR-list, issue, issue-list, and repository buttons differ in both their storage key and the
 // variables they can use (BUTTON_KINDS in defaults.js). Everything else about editing them is
 // identical, so here we only add the DOM slot each set of cards goes into and share one renderer and
@@ -135,6 +274,25 @@ const state = {
   selection: new Set(),
 };
 
+const optionsEngineListeners = new Set();
+let optionsEngineNotificationScheduled = false;
+
+function scheduleOptionsEngineNotify() {
+  if (!optionsEngineListeners.size || optionsEngineNotificationScheduled) return;
+  optionsEngineNotificationScheduled = true;
+  queueMicrotask(() => {
+    optionsEngineNotificationScheduled = false;
+    const snapshot = getOptionsEngineSnapshot();
+    for (const listener of [...optionsEngineListeners]) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.error('Terminal Checkout: options subscriber failed', error);
+      }
+    }
+  });
+}
+
 function section(kind) {
   return SECTIONS.find(s => s.kind === kind);
 }
@@ -261,6 +419,7 @@ function adoptDeferredChange() {
 function markStale() {
   state.staleSinceLoad = true;
   renderStaleBanner();
+  scheduleOptionsEngineNotify();
 }
 
 // Warns before the save is attempted. The verdict is still the re-read in saveSettings — a change
@@ -479,17 +638,23 @@ function touch({ dirty = false, review = false } = {}) {
 // pushed the button and asked afterwards, and so did [+ Add Override], the card inputs, delete,
 // duplicate, reorder and the review checkboxes (userAction in migrations.js).
 function edit(change) {
-  return userAction(() => touch({ dirty: true }), change);
+  const accepted = userAction(() => touch({ dirty: true }), change);
+  if (accepted) scheduleOptionsEngineNotify();
+  return accepted;
 }
 
 function review(change) {
-  return userAction(() => touch({ review: true }), change);
+  const accepted = userAction(() => touch({ review: true }), change);
+  if (accepted) scheduleOptionsEngineNotify();
+  return accepted;
 }
 
 // Applying, declining and resetting are all decisions about the migration *and* changes that have
 // to be saved, so they raise both signals.
 function editAndReview(change) {
-  return userAction(() => touch({ dirty: true, review: true }), change);
+  const accepted = userAction(() => touch({ dirty: true, review: true }), change);
+  if (accepted) scheduleOptionsEngineNotify();
+  return accepted;
 }
 
 function clearDirty() {
@@ -609,6 +774,7 @@ async function loadSettings() {
   // declare the window closed for the second.
   let data;
   state.loadsInFlight += 1;
+  scheduleOptionsEngineNotify();
   try {
     data = await chrome.storage.sync.get([...SETTINGS_KEYS, VERSION_KEY]);
   } catch (error) {
@@ -618,6 +784,7 @@ async function loadSettings() {
     return;
   } finally {
     state.loadsInFlight -= 1;
+    scheduleOptionsEngineNotify();
   }
 
   if (!shouldApplyLoadedSnapshot({
@@ -680,6 +847,7 @@ async function loadSettings() {
   // there is something to compare against, so ask again — which re-reads, this time knowing the
   // store moved.
   adoptDeferredChange();
+  scheduleOptionsEngineNotify();
 }
 
 async function saveSettings() {
@@ -735,6 +903,7 @@ async function saveSettings() {
   state.saving = true;
   state.changedDuringSave = false;
   updateSavingGate();
+  scheduleOptionsEngineNotify();
   try {
     // This page may have been open a long time, and another device on the account can have saved in
     // the meantime — a migration, say. Writing our payload over that would erase their decision with
@@ -791,6 +960,7 @@ async function saveSettings() {
     state.saving = false;
     state.pendingWrite = null;
     updateSavingGate();
+    scheduleOptionsEngineNotify();
     // A remote change that arrived during the save was held rather than acted on. Now that the save
     // has settled, ask the ordinary question again.
     adoptDeferredChange();
@@ -878,6 +1048,7 @@ function setPlan(plan) {
   // after reading it, never opted out of after missing it (defaultSelection in migrations.js).
   state.selection = new Set(defaultSelection(plan));
   renderMigration();
+  scheduleOptionsEngineNotify();
 }
 
 // The user has decided about this generation — by applying some or none of it, by declining, or by
@@ -887,6 +1058,7 @@ function markReviewed() {
   state.plan = null;
   state.selection = new Set();
   renderMigration();
+  scheduleOptionsEngineNotify();
 }
 
 function migrationItemRow(item, { checkbox }) {
@@ -1179,6 +1351,7 @@ async function importSettings(file) {
   const generationAtStart = state.loadGeneration;
 
   state.importing = true;
+  scheduleOptionsEngineNotify();
   try {
     let imported;
     let mergedVersion;
@@ -1218,6 +1391,7 @@ async function importSettings(file) {
       : t('ext.status.imported', t('ext.button.save')));
   } finally {
     state.importing = false;
+    scheduleOptionsEngineNotify();
     // Same settlement as the save: a change held while this ran gets asked again now
     adoptDeferredChange();
   }
@@ -1230,7 +1404,11 @@ function showStatus(type, message) {
   el.className = `status ${type}`;
   el.textContent = message;
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => { el.className = 'status'; }, 4000);
+  scheduleOptionsEngineNotify();
+  statusTimer = setTimeout(() => {
+    el.className = 'status';
+    scheduleOptionsEngineNotify();
+  }, 4000);
 }
 
 function showError({ message, focus }) {
@@ -1593,7 +1771,9 @@ document.getElementById('add-override').addEventListener('click', () => {
 
 // The field itself is what a save reads, so there is nothing in the edit state to change here — the
 // guard is still the first thing that runs, and before the first load it refuses.
-document.getElementById('default-main').addEventListener('input', () => touch({ dirty: true }));
+document.getElementById('default-main').addEventListener('input', () => {
+  if (touch({ dirty: true })) scheduleOptionsEngineNotify();
+});
 
 document.getElementById('save-btn').addEventListener('click', saveSettings);
 document.getElementById('reset-btn').addEventListener('click', resetSettings);
@@ -1705,6 +1885,390 @@ document.getElementById('retry-btn').addEventListener('click', () => {
   showStatus('info', LOADING_MESSAGE());
   loadSettings();
 });
+
+function freezeSnapshot(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) freezeSnapshot(child);
+  return Object.freeze(value);
+}
+
+function buttonValidation(button) {
+  const errors = [];
+  for (const field of ['face', 'label', 'command']) {
+    if (!button[field].trim()) errors.push(field);
+  }
+  const warnings = normalizeClaudeInputs(button.claudeInputs).length > 0
+    && !commandStartsClaude(button.command)
+    ? ['claude-inputs-without-claude-command']
+    : [];
+  return { errors, warnings };
+}
+
+function overrideValidation() {
+  const seen = new Map();
+  return state.overrides.map((row, index) => {
+    const repo = row.repo.trim();
+    const branch = row.branch.trim();
+    const errors = [];
+    if ((!repo && branch) || (repo && !branch)) errors.push('incomplete');
+    if (repo && branch && seen.has(repo)) errors.push('duplicate');
+    if (repo && branch && !seen.has(repo)) seen.set(repo, index);
+    return { index, errors };
+  });
+}
+
+function optionsStatusSnapshot() {
+  const element = document.getElementById('status');
+  const type = ['info', 'success', 'error'].find(value => element.classList.contains(value)) || 'idle';
+  return { type, message: type === 'idle' ? '' : element.textContent };
+}
+
+/** @returns {OptionsEngineSnapshot} */
+function getOptionsEngineSnapshot() {
+  const buttons = Object.fromEntries(SECTIONS.map(({ kind }) => [
+    kind,
+    state.buttons[kind].map(button => ({
+      uid: button.uid,
+      face: button.face,
+      label: button.label,
+      command: button.command,
+      claudeInputs: [...button.claudeInputs],
+      validation: buttonValidation(button),
+    })),
+  ]));
+  const buttonDiagnostics = SECTIONS.flatMap(({ kind }) => buttons[kind].map(button => ({
+    kind,
+    uid: button.uid,
+    errors: [...button.validation.errors],
+    warnings: [...button.validation.warnings],
+  })));
+  const loadError = !document.getElementById('load-error').hidden;
+  const loadStatus = state.loaded
+    ? (state.loadsInFlight ? 'reloading' : 'loaded')
+    : state.loadsInFlight
+      ? 'loading'
+      : loadError ? 'error' : 'unloaded';
+  const validation = { buttons: buttonDiagnostics, overrides: overrideValidation() };
+  const targetVersion = state.plan?.targetVersion ?? SETTINGS_VERSION;
+  const planSummary = state.plan
+    ? migrationSummary(state.plan, state.selection)
+    : {
+      actionableCount: 0,
+      informationalCount: 0,
+      selectedCount: 0,
+      nothingToApply: true,
+      reviewOnly: false,
+      descriptions: '',
+    };
+  const migration = {
+    fromVersion: state.plan?.fromVersion ?? state.loadedVersion,
+    targetVersion,
+    pending: state.loadedVersion !== null && state.loadedVersion < targetVersion,
+    reviewed: state.reviewed,
+    reviewTouched: state.reviewTouched,
+    panelOpen: !document.getElementById('migration-section').hidden,
+    selectedUids: [...state.selection].filter(uid => typeof uid === 'string'),
+    summary: planSummary,
+    actionable: (state.plan?.actionable || []).map(item => ({
+      uid: item.id,
+      kind: item.kind,
+      index: item.index,
+      label: item.label,
+      from: item.from,
+      to: item.to,
+      source: item.source,
+      effect: item.effect,
+      selected: state.selection.has(item.id),
+      describe: item.describe,
+      ...(Object.hasOwn(item, 'fromInputs') ? { fromInputs: [...item.fromInputs], toInputs: [...item.toInputs] } : {}),
+    })),
+    informational: (state.plan?.informational || []).map(item => ({
+      uid: item.id,
+      kind: item.kind,
+      index: item.index,
+      label: item.label,
+      command: item.command,
+      note: item.note || '',
+    })),
+  };
+  const saveBlocked = !shouldStartPageTask({ loaded: state.loaded, ...pageTasks() });
+  const saveStatus = state.saving ? 'saving'
+    : saveBlocked ? 'blocked'
+      : (state.dirty || state.reviewTouched) ? 'dirty' : 'clean';
+  const status = optionsStatusSnapshot();
+  return freezeSnapshot({
+    buttons,
+    dirty: state.dirty,
+    revision: state.revision,
+    validation,
+    globalSettings: {
+      defaultMain: document.getElementById('default-main').value,
+      repoMainBranch: state.overrides.map((row, index) => ({ index, repo: row.repo, branch: row.branch })),
+    },
+    load: {
+      status: loadStatus,
+      loaded: state.loaded,
+      generation: state.loadGeneration,
+      appliedGeneration: state.appliedGeneration,
+      inFlight: state.loadsInFlight,
+      errorMessage: loadError ? document.getElementById('status').textContent : null,
+      retryAvailable: !state.loaded && loadError,
+    },
+    save: {
+      status: saveStatus,
+      saving: state.saving,
+      importing: state.importing,
+      dirty: state.dirty,
+      reviewTouched: state.reviewTouched,
+      hasUnsavedWork: editsInProgress(),
+      canSave: !saveBlocked && !state.saving,
+      loadedVersion: state.loadedVersion,
+      versionToWrite: state.loaded ? versionToSave({ loadedVersion: state.loadedVersion, reviewed: state.reviewed }) : null,
+    },
+    sync: {
+      staleSinceLoad: state.staleSinceLoad,
+      deferredChangePending: state.deferredChange !== null,
+      changedDuringSave: state.changedDuringSave,
+    },
+    migration,
+    status,
+  });
+}
+
+/** @param {(snapshot: OptionsEngineSnapshot) => void} listener @returns {() => void} */
+function subscribeOptionsEngine(listener) {
+  if (typeof listener !== 'function') throw new TypeError('optionsEngine.subscribe expects a function');
+  optionsEngineListeners.add(listener);
+  return () => optionsEngineListeners.delete(listener);
+}
+
+function buttonIndexForUid(kind, uid) {
+  const buttonSection = section(kind);
+  if (!buttonSection || typeof uid !== 'string') return -1;
+  return state.buttons[buttonSection.kind].findIndex(button => button.uid === uid);
+}
+
+function buttonCardForUid(kind, uid) {
+  const index = buttonIndexForUid(kind, uid);
+  return index < 0 ? null : document.querySelector(`.btn-card[data-kind="${kind}"][data-index="${index}"]`);
+}
+
+function dispatchInput(element, value) {
+  if (!element || typeof value !== 'string') return false;
+  element.value = value;
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
+function dispatchButtonPatch(action) {
+  const card = buttonCardForUid(action.kind, action.uid);
+  if (!card || !action.patch || typeof action.patch !== 'object') return;
+  const fields = new Map([
+    ['face', '.face-input'],
+    ['label', '.label-input'],
+    ['command', '.command-input'],
+  ]);
+  for (const [field, selector] of fields) {
+    if (Object.hasOwn(action.patch, field)) dispatchInput(card.querySelector(selector), action.patch[field]);
+  }
+}
+
+function dispatchButtonMove(action) {
+  const buttonSection = section(action.kind);
+  const from = buttonIndexForUid(action.kind, action.uid);
+  if (!buttonSection || from < 0) return;
+  const buttons = state.buttons[buttonSection.kind];
+  const insertBefore = action.beforeUid === null
+    ? buttons.length
+    : buttonIndexForUid(action.kind, action.beforeUid);
+  if (insertBefore >= 0) reorderButtons(buttonSection.kind, from, insertBefore);
+}
+
+function dispatchPresetAdd(action) {
+  const buttonSection = section(action.kind);
+  if (!buttonSection || state.buttons[buttonSection.kind].length >= MAX_BUTTONS) return;
+  const oldUids = new Set(state.buttons[buttonSection.kind].map(button => button.uid));
+  document.getElementById(buttonSection.addButton).click();
+  const index = state.buttons[buttonSection.kind].findIndex(button => !oldUids.has(button.uid));
+  if (index < 0) return;
+  const uid = state.buttons[buttonSection.kind][index].uid;
+  const select = buttonCardForUid(buttonSection.kind, uid)?.querySelector('.preset-select');
+  if (select) {
+    select.value = action.presetId;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (action.beforeUid !== undefined) dispatchButtonMove({ kind: buttonSection.kind, uid, beforeUid: action.beforeUid });
+}
+
+async function discardOptionsEdits(confirmed) {
+  if (!state.loaded) return getOptionsEngineSnapshot();
+  if (!shouldStartPageTask({ loaded: state.loaded, ...pageTasks() })) {
+    showStatus('info', pageBusyMessage(pageTasks()));
+    return getOptionsEngineSnapshot();
+  }
+  const hadUnsavedWork = editsInProgress();
+  if (hadUnsavedWork && confirmed !== true) return getOptionsEngineSnapshot();
+
+  const revisionAtStart = state.revision;
+  const appliedGenerationAtStart = state.appliedGeneration;
+  const previousDirty = state.dirty;
+  const previousReviewTouched = state.reviewTouched;
+  if (hadUnsavedWork) {
+    clearDirty();
+    state.reviewTouched = false;
+    scheduleOptionsEngineNotify();
+  }
+  await loadSettings();
+  const applied = state.appliedGeneration !== appliedGenerationAtStart;
+  if (!applied && state.revision === revisionAtStart && hadUnsavedWork) {
+    state.dirty = previousDirty;
+    state.reviewTouched = previousReviewTouched;
+    document.getElementById('dirty-indicator').hidden = !previousDirty;
+    scheduleOptionsEngineNotify();
+  }
+  return getOptionsEngineSnapshot();
+}
+
+/** @param {OptionsEngineAction} action @returns {OptionsEngineDispatchResult} */
+function dispatchOptionsEngineAction(action) {
+  if (!action || typeof action !== 'object' || typeof action.type !== 'string') {
+    throw new TypeError('optionsEngine.dispatch expects an action object');
+  }
+  const type = action.type;
+  const editsSettings = new Set([
+    'discard', 'adopt-latest', 'reset', 'migration-apply', 'migration-keep', 'main-patch',
+    'override-add', 'override-patch', 'override-remove', 'button-patch', 'button-add',
+    'button-duplicate', 'button-remove', 'button-move', 'preset-add', 'preset-replace',
+    'input-add', 'input-patch', 'input-remove', 'input-move',
+  ]);
+  if (editsSettings.has(type) && !state.loaded) {
+    requireLoaded();
+    return getOptionsEngineSnapshot();
+  }
+
+  switch (type) {
+    case 'save':
+      return saveSettings().then(getOptionsEngineSnapshot);
+    case 'discard':
+      return discardOptionsEdits(action.confirmed);
+    case 'retry-load':
+      document.getElementById('retry-btn').click();
+      return getOptionsEngineSnapshot();
+    case 'reload-latest':
+      return loadSettings().then(getOptionsEngineSnapshot);
+    case 'adopt-latest':
+      return discardOptionsEdits(action.confirmed);
+    case 'defer-latest':
+      return getOptionsEngineSnapshot();
+    case 'reset':
+      document.getElementById('reset-btn').click();
+      return getOptionsEngineSnapshot();
+    case 'export-saved':
+      return exportSettings().then(getOptionsEngineSnapshot);
+    case 'import-file':
+      if (typeof File === 'undefined' || !(action.file instanceof File)) throw new TypeError('import-file requires a File');
+      return importSettings(action.file).then(getOptionsEngineSnapshot);
+    case 'migration-apply':
+      document.getElementById('migration-apply').click();
+      return getOptionsEngineSnapshot();
+    case 'migration-keep':
+      document.getElementById('migration-keep').click();
+      return getOptionsEngineSnapshot();
+    case 'main-patch':
+      dispatchInput(document.getElementById('default-main'), action.value);
+      return getOptionsEngineSnapshot();
+    case 'override-add':
+      document.getElementById('add-override').click();
+      return getOptionsEngineSnapshot();
+    case 'override-patch': {
+      if (!Number.isInteger(action.index) || action.index < 0 || !action.patch || typeof action.patch !== 'object') return getOptionsEngineSnapshot();
+      for (const field of ['repo', 'branch']) {
+        if (!Object.hasOwn(action.patch, field)) continue;
+        const input = document.querySelector(`#overrides-body tr[data-index="${action.index}"] .override-${field}`);
+        dispatchInput(input, action.patch[field]);
+      }
+      return getOptionsEngineSnapshot();
+    }
+    case 'override-remove': {
+      if (!Number.isInteger(action.index) || action.index < 0) return getOptionsEngineSnapshot();
+      document.querySelector(`#overrides-body tr[data-index="${action.index}"] .remove-row`)?.click();
+      return getOptionsEngineSnapshot();
+    }
+    case 'button-patch':
+      dispatchButtonPatch(action);
+      return getOptionsEngineSnapshot();
+    case 'button-add': {
+      const buttonSection = section(action.kind);
+      if (buttonSection) document.getElementById(buttonSection.addButton).click();
+      return getOptionsEngineSnapshot();
+    }
+    case 'button-duplicate':
+    case 'button-remove': {
+      const button = buttonCardForUid(action.kind, action.uid);
+      button?.querySelector(type === 'button-duplicate' ? '.duplicate-btn' : '.remove-btn')?.click();
+      return getOptionsEngineSnapshot();
+    }
+    case 'button-move':
+      dispatchButtonMove(action);
+      return getOptionsEngineSnapshot();
+    case 'preset-add':
+      dispatchPresetAdd(action);
+      return getOptionsEngineSnapshot();
+    case 'preset-replace': {
+      const select = buttonCardForUid(action.kind, action.uid)?.querySelector('.preset-select');
+      if (select) {
+        select.value = action.presetId;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return getOptionsEngineSnapshot();
+    }
+    case 'input-add': {
+      if (!buttonCardForUid(action.kind, action.buttonUid)) return getOptionsEngineSnapshot();
+      const currentIndex = buttonIndexForUid(action.kind, action.buttonUid);
+      document.querySelector(`.btn-card[data-kind="${action.kind}"][data-index="${currentIndex}"] .add-input-btn`)?.click();
+      if (typeof action.value === 'string') {
+        const inputIndex = state.buttons[action.kind][currentIndex]?.claudeInputs.length - 1;
+        dispatchInput(cardElement(action.kind, currentIndex, `.claude-row[data-ci="${inputIndex}"] .ci-input`), action.value);
+      }
+      return getOptionsEngineSnapshot();
+    }
+    case 'input-patch': {
+      const index = buttonIndexForUid(action.kind, action.buttonUid);
+      if (index < 0 || !Number.isInteger(action.inputIndex) || action.inputIndex < 0) return getOptionsEngineSnapshot();
+      dispatchInput(cardElement(action.kind, index, `.claude-row[data-ci="${action.inputIndex}"] .ci-input`), action.value);
+      return getOptionsEngineSnapshot();
+    }
+    case 'input-remove': {
+      const index = buttonIndexForUid(action.kind, action.buttonUid);
+      if (index < 0 || !Number.isInteger(action.inputIndex) || action.inputIndex < 0) return getOptionsEngineSnapshot();
+      cardElement(action.kind, index, `.claude-row[data-ci="${action.inputIndex}"] .ci-remove`)?.click();
+      return getOptionsEngineSnapshot();
+    }
+    case 'input-move': {
+      const index = buttonIndexForUid(action.kind, action.buttonUid);
+      if (index < 0) return getOptionsEngineSnapshot();
+      reorderClaudeInputs(action.kind, index, action.fromIndex, action.beforeIndex);
+      return getOptionsEngineSnapshot();
+    }
+    default:
+      throw new TypeError(`Unknown optionsEngine action: ${type}`);
+  }
+}
+
+/** @type {OptionsEngine} */
+window.optionsEngine = Object.freeze({
+  getSnapshot: getOptionsEngineSnapshot,
+  subscribe: subscribeOptionsEngine,
+  dispatch: dispatchOptionsEngineAction,
+});
+
+window.optionsShell.mount(document.getElementById('options-shell-root'), window.optionsEngine);
+window.optionsReplica.mount(
+  document.getElementById('options-replica-root'),
+  window.optionsEngine,
+  window.optionsEditor,
+);
+window.optionsEditor.mount(document.getElementById('options-editor-root'), window.optionsEngine);
 
 // Nothing on this page may act on settings until there are settings. The gate goes up before the
 // first load is even asked for, so the window where the controls are live but the state is empty

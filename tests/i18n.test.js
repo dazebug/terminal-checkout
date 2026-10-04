@@ -64,6 +64,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   for (const [role, files] of Object.entries({
     speakingSource: SPEAKING_FILES,
     markupSource: HTML_FILES,
+    styleSource: STYLE_FILES,
     manifest: MANIFEST_FILES,
     localeCatalogue: CATALOGUE_FILES,
     extensionIcon: ICON_ASSETS,
@@ -86,7 +87,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
     EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
-    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...ICON_ASSETS].sort(),
+    [...MARKUP_FILES, ...STYLE_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...ICON_ASSETS].sort(),
     'a file has a role that no set takes',
   );
 });
@@ -294,12 +295,14 @@ const roleOf = (relativePath) => {
   if (relativePath.startsWith('_locales/')) return null;
   if (relativePath.endsWith('.js')) return 'speakingSource';
   if (relativePath.endsWith('.html')) return 'markupSource';
+  if (relativePath.endsWith('.css')) return 'styleSource';
   return null;
 };
 const EXTENSION_FILES = walkFiles(extension, () => true);
 const filesInRole = role => EXTENSION_FILES.filter(file => roleOf(file) === role);
 
 const SPEAKING_FILES = filesInRole('speakingSource');
+const STYLE_FILES = filesInRole('styleSource');
 // The markup half on its own, for the checks whose subject is a page rather than the code that fills
 // one. **Read from the tree for the same reason**: there is one page today, so a
 // scan of `options.html` and a scan of every page agree — by accident, and only until the second one.
