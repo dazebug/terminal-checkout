@@ -470,13 +470,7 @@ function buildClaudeInputRow() {
   later.setAttribute('aria-label', tr('ext.d.editor.moveLater'));
   const remove = makeButton('×', 'btn-secondary options-editor-input-remove', 'input-remove');
   remove.setAttribute('aria-label', tr('ext.d.editor.inputRemove', 1));
-  const tooltip = makeElement('span', 'options-editor-reorder-tooltip', tr('ext.reorder.tooltip'));
-  tooltip.id = `options-editor-reorder-tooltip-${++instanceCounter}`;
-  tooltip.setAttribute('role', 'tooltip');
-  handle.setAttribute('aria-describedby', tooltip.id);
-  earlier.setAttribute('aria-describedby', tooltip.id);
-  later.setAttribute('aria-describedby', tooltip.id);
-  row.append(handle, number, type, inputLabel, input, example, earlier, later, remove, tooltip);
+  row.append(handle, number, type, inputLabel, input, example, earlier, later, remove);
   return row;
 }
 
@@ -492,10 +486,13 @@ function buildClaudeInputSection() {
   warning.hidden = true;
   warning.setAttribute('role', 'status');
   const rows = makeElement('div', 'options-editor-input-rows');
+  const reorderHint = makeElement('p', 'options-editor-reorder-hint', tr('ext.reorder.tooltip'));
+  reorderHint.id = `options-editor-reorder-hint-${++instanceCounter}`;
+  reorderHint.hidden = true;
   const limit = makeElement('p', 'options-editor-input-limit', editorMessage('inputLimit', MAX_CLAUDE_INPUTS));
   limit.hidden = true;
   const add = makeButton(tr('ext.button.addInput'), 'btn-secondary options-editor-input-add', 'input-add');
-  section.append(heading, help, hint, warning, rows, limit, add);
+  section.append(heading, help, hint, warning, rows, reorderHint, limit, add);
   return section;
 }
 
@@ -620,9 +617,11 @@ function positionPopover() {
     schedulePopoverPosition();
     return;
   }
+  const content = panel.querySelector('.options-editor-content');
+  // Clearing the max-height to measure clamps the scroll to the top; every keystroke places the popover again.
+  const scrollTop = content?.scrollTop ?? 0;
   panel.style.width = '';
   panel.style.maxHeight = '';
-  const content = panel.querySelector('.options-editor-content');
   if (content) content.style.maxHeight = '';
   let popoverRect = panel.getBoundingClientRect();
   const { width: viewportWidth, height: viewportHeight } = viewport;
@@ -642,6 +641,7 @@ function positionPopover() {
   panel.style.width = `${placed.width}px`;
   panel.style.maxHeight = `${placed.maxHeight}px`;
   if (content) content.style.maxHeight = `${Math.max(0, placed.maxHeight - 2)}px`;
+  if (content) content.scrollTop = scrollTop;
   panel.style.setProperty('--editor-arrow-x', `${placed.arrowX}px`);
   panel.dataset.placement = placed.placement;
 }
@@ -678,6 +678,8 @@ function renderClaudeInputs(button) {
   const focusedIndex = Number(focusedRow?.dataset.inputIndex);
   cancelInputDrag();
   const values = Array.isArray(button.claudeInputs) ? button.claudeInputs : [];
+  const reorderHint = panel.querySelector('.options-editor-reorder-hint');
+  reorderHint.hidden = values.length < 2;
   while (rows.children.length < values.length) rows.appendChild(buildClaudeInputRow());
   while (rows.children.length > values.length) rows.lastElementChild.remove();
 
@@ -703,6 +705,9 @@ function renderClaudeInputs(button) {
     earlier.disabled = index <= 0;
     later.disabled = index >= values.length - 1;
     handle.setAttribute('aria-label', tr('ext.claudeInput.reorder.aria', index + 1));
+    handle.setAttribute('aria-describedby', reorderHint.id);
+    earlier.setAttribute('aria-describedby', reorderHint.id);
+    later.setAttribute('aria-describedby', reorderHint.id);
     row.querySelector('.options-editor-input-remove')
       ?.setAttribute('aria-label', tr('ext.d.editor.inputRemove', index + 1));
   });

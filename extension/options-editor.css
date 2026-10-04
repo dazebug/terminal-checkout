@@ -39,13 +39,20 @@
   border-width: 0 1px 1px 0;
 }
 
+/* No bottom padding: the sticky action bar stops at the scroll container's padding edge, and scrolled
+   content would show through the strip beneath it. The add picker has no bar and restores the padding. */
 .options-editor-content {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
+  padding: 14px 14px 0;
   overflow-y: auto;
   border-radius: 10px;
+}
+
+/* The content scrolls; a section squeezed to fit would paint its overflow over the sections after it. */
+.options-editor-content > * {
+  flex-shrink: 0;
 }
 
 .options-editor-sr-only {
@@ -340,6 +347,10 @@
   width: min(380px, calc(100vw - 24px));
 }
 
+.options-editor-add .options-editor-content {
+  padding-bottom: 14px;
+}
+
 .options-editor-add-where {
   display: flex;
   flex-wrap: wrap;
@@ -389,7 +400,6 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 1px;
 }
 
 .options-editor-claude-section,
@@ -575,25 +585,11 @@
   cursor: not-allowed;
 }
 
-.options-editor-reorder-tooltip {
-  position: absolute;
-  z-index: 1;
-  top: 100%;
-  left: 4px;
-  display: none;
-  max-width: 240px;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  background: var(--panel);
-  font-size: 10px;
+.options-editor-reorder-hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
   line-height: 1.4;
-}
-
-.options-editor-input-row:focus-within .options-editor-reorder-tooltip,
-.options-editor-input-row:hover .options-editor-reorder-tooltip {
-  display: block;
 }
 
 .options-editor-example-command,
@@ -639,6 +635,6 @@
 
   .options-editor-content {
     gap: 10px;
-    padding: 11px;
+    padding: 11px 11px 0;
   }
 }

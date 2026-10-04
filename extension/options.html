@@ -24,6 +24,8 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     :lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
+    /* One page column for the save bar, the replica and the settings; the modules fill it. */
+    #options-shell-root, #app, #options-shell-settings-root { width: min(1360px, 100%); margin-inline: auto; }
     body {
       margin: 0 auto;
       padding: 28px 24px 48px;
