@@ -628,6 +628,9 @@ body {
 .replica-edit-button:active { cursor: grabbing; }
 .replica-edit-button:hover { background-color: var(--gh-tc-hover); }
 .replica-edit-button.gh-button-filled:hover { background-color: var(--gh-green-hover); }
+.replica-edit-entry { display: inline-flex; min-width: 0; flex: none; flex-direction: column; align-items: center; gap: 3px; }
+.replica-button-hidden-note { display: flex; max-width: 160px; flex-direction: column; gap: 2px; color: var(--gh-muted); font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
+.replica-button-hidden-label { color: var(--gh-edit-outline); font-weight: 700; }
 .replica-edit-button:focus-visible,
 .replica-page-card:focus-visible,
 .replica-control:focus-visible,

@@ -8,6 +8,9 @@ const vm = require('node:vm');
 const extension = path.join(__dirname, '../extension');
 const read = name => fs.readFileSync(path.join(extension, name), 'utf8');
 const source = read('options-replica.js');
+const shellSource = read('options-shell.js');
+const editorSource = read('options-editor.js');
+const engineSource = read('options.js');
 const context = vm.createContext({
   window: {},
   tr: (key, ...args) => key.replace(/%1\$s/g, String(args[0] ?? '')),
@@ -71,17 +74,39 @@ test('GitHub button shape matches content.js for detail, list, and repository bu
   assert.equal(model.replicaButtonHasCaret({ command: '{cd}', claudeInputs: ['!gh pr view {number}'] }), false);
 });
 
-test('only list slots hide buttons whose variables the page cannot supply', () => {
+test('list buttons unavailable on GitHub remain editable and explain the unavailable variable', () => {
   const unsupported = { uid: 'bad', face: '🤖', command: '{cd} && git checkout {branch}', claudeInputs: [] };
   const supported = { uid: 'good', face: '📂', command: '{cd}', claudeInputs: [] };
-  assert.deepEqual(asArray(model.replicaButtonsForSlot('pr-list', [unsupported, supported])), [supported]);
-  assert.deepEqual(asArray(model.replicaButtonsForSlot('issue-list', [unsupported, supported])), [supported]);
+  const unsupportedInput = { uid: 'bad-input', face: '📝', command: '{cd}', claudeInputs: ['!gh pr view {branch}'] };
+  assert.deepEqual(asArray(model.replicaButtonsForSlot('pr-list', [unsupported, supported])), [unsupported, supported]);
+  assert.deepEqual(asArray(model.replicaButtonsForSlot('issue-list', [unsupported, supported])), [unsupported, supported]);
+  assert.deepEqual(asArray(model.replicaButtonPageStatus('pr-list', unsupported)), {
+    hiddenOnGitHub: true,
+    unavailableVariables: ['branch'],
+  });
+  assert.deepEqual(asArray(model.replicaButtonPageStatus('issue-list', supported)), {
+    hiddenOnGitHub: false,
+    unavailableVariables: [],
+  });
+  assert.deepEqual(asArray(model.replicaButtonPageStatus('pr-list', unsupportedInput)), {
+    hiddenOnGitHub: true,
+    unavailableVariables: ['branch'],
+  });
   for (const kind of ['pr', 'issue', 'repo']) {
     assert.deepEqual(asArray(model.replicaButtonsForSlot(kind, [unsupported, supported])), [unsupported, supported]);
+    assert.equal(model.replicaButtonPageStatus(kind, unsupported).hiddenOnGitHub, false);
   }
+  const slotStart = source.indexOf('function renderSlot(kind, snapshot, showPlaceholders) {');
+  const slotEnd = source.indexOf('\nfunction ', slotStart + 1);
+  assert.ok(slotStart >= 0 && slotEnd > slotStart);
+  const slotRenderer = source.slice(slotStart, slotEnd);
+  assert.match(slotRenderer, /buttons\.map\(button => renderReplicaEditEntry\(kind, button/);
+  assert.match(slotRenderer, /\$\{all\.length\}\/\$\{MAX_BUTTONS\}/);
+  assert.match(source, /class="replica-button-hidden-note"/);
+  assert.match(source, /replicaButtonsShownOnGitHub\(kind, buttons\)\[0\]/);
 });
 
-test('extension icon preview follows the background page-to-kind rule and uses the first button', () => {
+test('extension icon preview follows its routed kind instead of a hidden list button', () => {
   const buttons = {
     pr: [{ uid: 'pr-first' }, { uid: 'pr-next' }],
     'pr-list': [{ uid: 'pr-list-first' }],
@@ -101,6 +126,61 @@ test('extension icon preview follows the background page-to-kind rule and uses t
   assert.equal(model.iconButtonForPage('issue-list', snapshot).uid, 'repo-first');
   assert.equal(model.iconButtonForPage('repo', snapshot).uid, 'repo-first');
   assert.equal(model.iconButtonForPage('repo', { buttons: { repo: [] } }), null);
+  const unavailableListButton = { uid: 'hidden-list', command: '{cd} {branch}', claudeInputs: [] };
+  assert.equal(model.iconButtonForPage('pr-list', {
+    buttons: { 'pr-list': [unavailableListButton], repo: [{ uid: 'icon-runnable' }] },
+  }).uid, 'icon-runnable');
+});
+
+test('transient option surfaces clear state and redraw or hide the matching view', () => {
+  const closeStart = source.indexOf('function closeDrawerInternal(restoreFocus) {');
+  const closeEnd = source.indexOf('\nfunction ', closeStart + 1);
+  const openStart = source.indexOf('function openDrawerInternal(focusClose, kind = mounted?.pageKind, opener = null) {');
+  const openEnd = source.indexOf('\nfunction ', openStart + 1);
+  assert.ok(closeStart >= 0 && closeEnd > closeStart);
+  assert.ok(openStart >= 0 && openEnd > openStart);
+  const resetsAndRedraws = body => /mounted\.pendingReplace = null;[\s\S]*?mounted\.replacePicker = null;[\s\S]*?renderReplica\(\);/.test(body);
+  assert.ok(
+    resetsAndRedraws(source.slice(closeStart, closeEnd))
+      || resetsAndRedraws(source.slice(openStart, openEnd)),
+    'clearing replacement state must redraw the drawer before it is shown again',
+  );
+  const shellCloseStart = shellSource.indexOf('function closeConfirmation(restoreFocus = true) {');
+  const shellCloseEnd = shellSource.indexOf('\n    function ', shellCloseStart + 1);
+  assert.ok(shellCloseStart >= 0 && shellCloseEnd > shellCloseStart);
+  assert.match(shellSource.slice(shellCloseStart, shellCloseEnd), /pendingConfirmation = null;[\s\S]*confirmation\.hidden = true;/);
+  const editorCloseStart = editorSource.indexOf('function closePopover({ restoreFocus = true } = {}) {');
+  const editorCloseEnd = editorSource.indexOf('\nfunction ', editorCloseStart + 1);
+  assert.ok(editorCloseStart >= 0 && editorCloseEnd > editorCloseStart);
+  assert.match(editorSource.slice(editorCloseStart, editorCloseEnd), /active = null;[\s\S]*pendingPresetId = null;[\s\S]*root\?\.replaceChildren\(\);/);
+});
+
+test('every option keydown handler lets IME composition keys pass through', () => {
+  const handlers = [
+    {
+      name: 'shell confirmation Escape',
+      source: shellSource,
+      pattern: /document\.addEventListener\('keydown', event => \{\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/,
+    },
+    {
+      name: 'editor Escape and input-row arrows',
+      source: editorSource,
+      pattern: /function handleKeydown\(event\) \{\s*if \(!active \|\| isImeCompositionKeyEvent\(event\)\) return;/,
+    },
+    {
+      name: 'replica button reorder arrows',
+      source,
+      pattern: /function handleReplicaKeydown\(event\) \{\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/,
+    },
+    {
+      name: 'drawer Escape',
+      source,
+      pattern: /function handleDocumentKeydown\(event\) \{\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/,
+    },
+  ];
+  for (const handler of handlers) assert.match(handler.source, handler.pattern, handler.name);
+  assert.match(editorSource, /function isImeCompositionKeyEvent\(event\) \{\s*return event\?\.isComposing === true \|\| event\?\.keyCode === 229;/);
+  assert.doesNotMatch(engineSource, /keydown/, 'the engine must not own keyboard shortcuts');
 });
 
 test('keyboard movement and drag placement produce beforeUid actions without array indexes', () => {

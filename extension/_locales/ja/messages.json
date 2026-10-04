@@ -864,6 +864,20 @@
   "ext_d_replica_slot_add": {
     "message": "ボタンを追加"
   },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "GitHub では非表示。"
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "このページで使えない変数: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "このボタンには、このページで使えない値があります。"
+  },
   "ext_d_replica_move_left": {
     "message": "ボタンを左へ移動"
   },

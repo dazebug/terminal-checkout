@@ -864,6 +864,20 @@
   "ext_d_replica_slot_add": {
     "message": "버튼 추가"
   },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "GitHub에서 숨김."
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "이 페이지에서 쓸 수 없는 변수: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "이 버튼에 이 페이지에서 쓸 수 없는 값이 있습니다."
+  },
   "ext_d_replica_move_left": {
     "message": "버튼을 왼쪽으로 이동"
   },

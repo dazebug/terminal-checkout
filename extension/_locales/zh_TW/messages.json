@@ -864,6 +864,20 @@
   "ext_d_replica_slot_add": {
     "message": "新增按鈕"
   },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "在 GitHub 上隱藏。"
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "此頁面不支援的變數：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "此按鈕包含 GitHub 在此頁面上無法使用的值。"
+  },
   "ext_d_replica_move_left": {
     "message": "將按鈕向左移動"
   },

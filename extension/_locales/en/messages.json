@@ -864,6 +864,20 @@
   "ext_d_replica_slot_add": {
     "message": "Add a button"
   },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "Hidden on GitHub."
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "Unavailable variable on this page: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "This button has a value GitHub cannot use on this page."
+  },
   "ext_d_replica_move_left": {
     "message": "Move button left"
   },

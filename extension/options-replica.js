@@ -126,6 +126,9 @@ const REPLICA_MESSAGE_READERS = Object.freeze({
   'place.repo': () => tr('ext.d.replica.place.repo'),
   'slot.empty': () => tr('ext.d.replica.slot.empty'),
   'slot.add': () => tr('ext.d.replica.slot.add'),
+  'slot.hiddenOnGitHub': () => tr('ext.d.replica.slot.hiddenOnGitHub'),
+  'slot.hiddenReason': variables => tr('ext.d.replica.slot.hiddenReason', variables),
+  'slot.hiddenReasonGeneric': () => tr('ext.d.replica.slot.hiddenReasonGeneric'),
   'move.left': () => tr('ext.d.replica.move.left'),
   'move.right': () => tr('ext.d.replica.move.right'),
   'move.instructions': () => tr('ext.d.replica.move.instructions'),
@@ -202,13 +205,42 @@ function replicaButtonHasCaret(button) {
   return buttonTakesClaudeNote(button);
 }
 
-/** List pages omit buttons with variables that content.js cannot supply. */
+/** Keep every configured button available as an edit entry point in the replica. */
 function replicaButtonsForSlot(kind, buttons) {
   if (!Object.hasOwn(BUTTON_KINDS, kind) || !Array.isArray(buttons)) return [];
-  if (kind === 'pr-list' || kind === 'issue-list') {
-    return buttons.filter(button => buttonUsesAllowedVariables(kind, button));
-  }
   return buttons.slice();
+}
+
+/** Identify variables rejected by the page-availability predicate, for an explanation. */
+function replicaUnavailablePageVariables(kind, button) {
+  if (!button || typeof button.command !== 'string') return [];
+  const templates = [button.command, ...(Array.isArray(button.claudeInputs) ? button.claudeInputs : [])];
+  const names = new Set();
+  for (const template of templates) {
+    if (typeof template !== 'string') continue;
+    for (const [, name] of template.matchAll(/\{(\w+)\}/g)) names.add(name);
+  }
+  return [...names].filter(name => !buttonUsesAllowedVariables(kind, {
+    command: `{${name}}`,
+    claudeInputs: [],
+  }));
+}
+
+/** Mirror content.js list visibility while keeping hidden actions editable here. */
+function replicaButtonPageStatus(kind, button) {
+  const isListPage = kind === 'pr-list' || kind === 'issue-list';
+  const hiddenOnGitHub = isListPage && !buttonUsesAllowedVariables(kind, button);
+  return {
+    hiddenOnGitHub,
+    unavailableVariables: hiddenOnGitHub ? replicaUnavailablePageVariables(kind, button) : [],
+  };
+}
+
+/** Return only the buttons GitHub would draw, for scenery that previews an actual page action. */
+function replicaButtonsShownOnGitHub(kind, buttons) {
+  if (!Object.hasOwn(BUTTON_KINDS, kind) || !Array.isArray(buttons)) return [];
+  if (kind !== 'pr-list' && kind !== 'issue-list') return buttons.slice();
+  return buttons.filter(button => buttonUsesAllowedVariables(kind, button));
 }
 
 /** Return true only when the engine identifies a button with this exact kind's preset id. */
@@ -357,6 +389,8 @@ const model = Object.freeze({
   replicaButtonLook,
   replicaButtonHasCaret,
   replicaButtonsForSlot,
+  replicaButtonPageStatus,
+  replicaButtonsShownOnGitHub,
   presetInUse,
   presetAddAvailability,
   presetHighlightTarget,
@@ -431,34 +465,46 @@ function renderDecorativeButton(kind, button) {
   return `<span class="gh-button gh-button-${look}${caret ? ' has-split-caret' : ''}" aria-hidden="true"><span>${replicaEscape(face)}</span>${caret}</span>`;
 }
 
-/** @param {string} kind @param {OptionsButtonSnapshot} button @param {boolean} loaded */
-function renderEditButton(kind, button, loaded) {
+/** @param {string} kind @param {OptionsButtonSnapshot} button @param {boolean} loaded @param {string} describedBy */
+function renderEditButton(kind, button, loaded, describedBy = '') {
   const face = buttonFace(button);
   const label = typeof button.label === 'string' && button.label ? button.label : face;
   const shape = replicaButtonLook(kind, button);
   const hasCaret = replicaButtonHasCaret(button);
   const caret = hasCaret ? '<span class="gh-button-caret" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 5.75 8 10.25l4.5-4.5"/></svg></span>' : '';
-  return `<button type="button" class="gh-button gh-button-${shape}${hasCaret ? ' has-split-caret' : ''} replica-edit-button" data-replica-button="true" data-kind="${replicaEscape(kind)}" data-uid="${replicaEscape(button.uid)}" data-focus-key="button:${replicaEscape(kind)}:${replicaEscape(button.uid)}" aria-describedby="replica-reorder-instructions" aria-keyshortcuts="ArrowLeft ArrowRight" draggable="${loaded}"${loaded ? '' : ' disabled'}><span class="replica-sr-only">${replicaEscape(label)}</span><span class="replica-button-face" aria-hidden="true">${replicaEscape(face)}</span>${caret}</button>`;
+  const describedByIds = ['replica-reorder-instructions', describedBy].filter(Boolean).join(' ');
+  return `<button type="button" class="gh-button gh-button-${shape}${hasCaret ? ' has-split-caret' : ''} replica-edit-button" data-replica-button="true" data-kind="${replicaEscape(kind)}" data-uid="${replicaEscape(button.uid)}" data-focus-key="button:${replicaEscape(kind)}:${replicaEscape(button.uid)}" aria-describedby="${replicaEscape(describedByIds)}" aria-keyshortcuts="ArrowLeft ArrowRight" draggable="${loaded}"${loaded ? '' : ' disabled'}><span class="replica-sr-only">${replicaEscape(label)}</span><span class="replica-button-face" aria-hidden="true">${replicaEscape(face)}</span>${caret}</button>`;
+}
+
+/** Keep an unexecutable GitHub-list button editable and explain why beside its face. */
+function renderReplicaEditEntry(kind, button, loaded) {
+  const pageStatus = replicaButtonPageStatus(kind, button);
+  if (!pageStatus.hiddenOnGitHub) return renderEditButton(kind, button, loaded);
+  const noteId = `replica-hidden-${kind}-${button.uid}`;
+  const reason = pageStatus.unavailableVariables.length
+    ? replicaText('slot.hiddenReason', pageStatus.unavailableVariables.join(', '))
+    : replicaText('slot.hiddenReasonGeneric');
+  return `<span class="replica-edit-entry is-hidden-on-github">${renderEditButton(kind, button, loaded, noteId)}<span class="replica-button-hidden-note" id="${replicaEscape(noteId)}" role="note"><span class="replica-button-hidden-label">${replicaEscape(replicaText('slot.hiddenOnGitHub'))}</span><span>${replicaEscape(reason)}</span></span></span>`;
 }
 
 /** @param {string} kind @param {OptionsEngineSnapshot} snapshot @param {boolean} showPlaceholders */
 function renderSlot(kind, snapshot, showPlaceholders) {
   const all = snapshot.buttons?.[kind] || [];
-  const visible = replicaButtonsForSlot(kind, all);
+  const buttons = replicaButtonsForSlot(kind, all);
   const location = placeName(kind);
   const canAdd = all.length < MAX_BUTTONS;
-  const controls = visible.map(button => renderEditButton(kind, button, Boolean(snapshot.load?.loaded))).join('');
-  const emptySlotHint = showPlaceholders && visible.length === 0
+  const controls = buttons.map(button => renderReplicaEditEntry(kind, button, Boolean(snapshot.load?.loaded))).join('');
+  const emptySlotHint = showPlaceholders && all.length === 0
     ? `<span class="replica-slot-empty">${replicaEscape(replicaText('slot.empty'))}</span>`
     : '';
   const presetTarget = mounted.previewPreset?.kind === kind;
-  return `<div class="replica-slot${showPlaceholders ? ' is-marked' : ' is-quiet'}${visible.length ? ' has-buttons' : ' is-empty'}${presetTarget ? ' is-preset-target' : ''}" role="group" aria-labelledby="replica-slot-label-${replicaEscape(kind)}" data-drop-kind="${replicaEscape(kind)}" data-focus-key="slot:${replicaEscape(kind)}" tabindex="-1"><span id="replica-slot-label-${replicaEscape(kind)}" class="replica-slot-label${showPlaceholders ? '' : ' is-visually-hidden'}">${replicaEscape(location)}</span><span class="replica-slot-buttons">${controls}${emptySlotHint}</span><button type="button" class="replica-slot-add" data-action="slot-add" data-slot-kind="${replicaEscape(kind)}" data-focus-key="slot-add:${replicaEscape(kind)}" aria-controls="replica-drawer" aria-labelledby="replica-slot-label-${replicaEscape(kind)} replica-slot-add-name-${replicaEscape(kind)}" aria-expanded="${mounted.drawerOpen}"${canAdd && snapshot.load?.loaded ? '' : ' disabled'}><span class="replica-sr-only" id="replica-slot-add-name-${replicaEscape(kind)}">${replicaEscape(replicaText('slot.add'))}</span><span aria-hidden="true">+</span></button><span class="replica-slot-count">${visible.length}/${MAX_BUTTONS}</span></div>`;
+  return `<div class="replica-slot${showPlaceholders ? ' is-marked' : ' is-quiet'}${all.length ? ' has-buttons' : ' is-empty'}${presetTarget ? ' is-preset-target' : ''}" role="group" aria-labelledby="replica-slot-label-${replicaEscape(kind)}" data-drop-kind="${replicaEscape(kind)}" data-focus-key="slot:${replicaEscape(kind)}" tabindex="-1"><span id="replica-slot-label-${replicaEscape(kind)}" class="replica-slot-label${showPlaceholders ? '' : ' is-visually-hidden'}">${replicaEscape(location)}</span><span class="replica-slot-buttons">${controls}${emptySlotHint}</span><button type="button" class="replica-slot-add" data-action="slot-add" data-slot-kind="${replicaEscape(kind)}" data-focus-key="slot-add:${replicaEscape(kind)}" aria-controls="replica-drawer" aria-labelledby="replica-slot-label-${replicaEscape(kind)} replica-slot-add-name-${replicaEscape(kind)}" aria-expanded="${mounted.drawerOpen}"${canAdd && snapshot.load?.loaded ? '' : ' disabled'}><span class="replica-sr-only" id="replica-slot-add-name-${replicaEscape(kind)}">${replicaEscape(replicaText('slot.add'))}</span><span aria-hidden="true">+</span></button><span class="replica-slot-count">${all.length}/${MAX_BUTTONS}</span></div>`;
 }
 
 /** @param {string} kind @param {OptionsEngineSnapshot} snapshot */
 function renderFilmstripCard(kind, snapshot) {
   const buttons = snapshot.buttons?.[kind] || [];
-  const previewButton = replicaButtonsForSlot(kind, buttons)[0] || null;
+  const previewButton = replicaButtonsShownOnGitHub(kind, buttons)[0] || null;
   const preview = previewButton
     ? renderDecorativeButton(kind, previewButton)
     : `<span class="replica-filmstrip-empty" aria-hidden="true">+</span>`;
@@ -837,7 +883,6 @@ function openButtonEditor(button) {
   const { kind, uid } = button.dataset;
   if (mounted.drawerOpen) {
     mounted.drawerOpen = false;
-    mounted.previewPreset = null;
     mounted.pointerPreset = null;
     mounted.focusedPreset = null;
     mounted.drawerRestoreElement = null;
@@ -940,6 +985,7 @@ function handleReplicaClick(event) {
 
 /** @param {KeyboardEvent} event */
 function handleReplicaKeydown(event) {
+  if (event.isComposing || event.keyCode === 229) return;
   const target = event.target instanceof Element ? event.target.closest('[data-replica-button]') : null;
   if (!target || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
   event.preventDefault();
@@ -1059,6 +1105,7 @@ function openDrawerInternal(focusClose, kind = mounted?.pageKind, opener = null)
   if (typeof mounted.editor?.close === 'function') mounted.editor.close();
   mounted.drawerKind = Object.hasOwn(BUTTON_KINDS, kind) ? kind : mounted.pageKind;
   setDrawerVisible(true);
+  renderReplica();
   if (focusClose) mounted.root.querySelector('[data-focus-key="drawer-close"]')?.focus();
 }
 
@@ -1073,6 +1120,7 @@ function closeDrawerInternal(restoreFocus) {
   mounted.replacePicker = null;
   updatePresetPreview(null);
   setDrawerVisible(false);
+  renderReplica();
   if (restoreFocus) {
     const saved = mounted.drawerRestoreElement;
     if (saved?.isConnected) saved.focus();
@@ -1095,6 +1143,7 @@ function handleDocumentClick(event) {
 
 /** @param {KeyboardEvent} event */
 function handleDocumentKeydown(event) {
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key !== 'Escape' || !mounted?.drawerOpen) return;
   event.preventDefault();
   closeDrawerInternal(true);
