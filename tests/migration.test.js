@@ -651,7 +651,8 @@ test('a save onto a settings object that moved is refused, not merged', () => {
   // The way out has to be in the message: what happened, how to see it, how not to lose your edits
   assert.match(SAVE_CONFLICT_MESSAGE(), /another device/i);
   assert.match(SAVE_CONFLICT_MESSAGE(), /reload/i);
-  assert.match(SAVE_CONFLICT_MESSAGE(), /export/i);
+  assert.match(SAVE_CONFLICT_MESSAGE(), /accept the latest settings, reapply your edits, then Save/i);
+  assert.doesNotMatch(SAVE_CONFLICT_MESSAGE(), /export/i);
   // B's settings stay exactly as B left them
   assert.deepEqual(savedByB, { buttons: [{ command: '{cd} && claude' }], version: 1 });
 });

@@ -7,22 +7,8 @@
     "message": "GitHub の PR・issue・リポジトリのページから、ターミナル (iTerm2/WezTerm/Warp/cmux) でコマンドを実行します",
     "description": "Chrome が名前の横に表示する 1 行の説明。"
   },
-  "ext_banner_stale": {
-    "message": "⚠ このページを開いたあと、別のデバイスで設定が変更されました。再読み込みすると表示されます — 保存していない編集を残したい場合は、先にエクスポートしてください。"
-  },
-  "ext_button_addButton": {
-    "message": "+ ボタンを追加"
-  },
   "ext_button_addInput": {
     "message": "+ 入力を追加"
-  },
-  "ext_button_addLimit": {
-    "message": "ボタンは最大 $ARG1$ 個まで追加できます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ 個別設定を追加"
@@ -57,14 +43,70 @@
   "ext_button_save": {
     "message": "保存"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "別のデバイスの設定を適用して、未保存の変更を破棄しますか？"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "最新の設定を適用"
+  },
+  "ext_d_shell_deferred": {
+    "message": "現在の設定はこのページに保持されています。別のデバイスの設定は後で適用できます。"
+  },
+  "ext_d_shell_discard": {
+    "message": "変更を破棄"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "未保存の変更を破棄して、保存済みの設定を再読み込みしますか？"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "編集を続ける"
+  },
+  "ext_d_shell_later": {
+    "message": "後で"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "プリセット更新の確認"
+  },
+  "ext_d_shell_reload": {
+    "message": "再読み込み"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "設定を再読み込みできませんでした。現在の編集内容は保持されています。"
+  },
+  "ext_d_shell_resetConfirm": {
+    "message": "現在の編集内容を既定のプリセットに置き換え、リポジトリ別の上書きをすべて削除しますか？$ARG1$を押すまで保存されません。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_shell_saving": {
+    "message": "保存中…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "コマンドの先頭部分を編集"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "プリセットと完全一致"
+  },
+  "ext_d_shell_stale": {
+    "message": "別のデバイスで設定が変更されました。"
+  },
+  "ext_d_shell_staleHelp": {
+    "message": "保存していない編集はこのページに残ります。未保存の編集がない場合にのみ、再読み込みで最新の設定が適用されます。別のデバイスで設定が変わったあとに保存するには、最新の設定を受け入れ、編集をやり直してから保存してください。"
+  },
+  "ext_d_shell_waiting": {
+    "message": "設定を待っています…"
+  },
+  "ext_d_shell_saved": {
+    "message": "保存済み"
+  },
   "ext_card_delete": {
     "message": "削除"
   },
   "ext_card_duplicate": {
     "message": "複製"
-  },
-  "ext_card_duplicate_tooltip": {
-    "message": "このボタンを複製します"
   },
   "ext_card_palette_label": {
     "message": "表示に追加:"
@@ -76,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "並べ替え"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "入力 $ARG1$ を並べ替え",
@@ -132,17 +171,6 @@
   "ext_claudeNote_send": {
     "message": "送信"
   },
-  "ext_confirm_presetOverwrite": {
-    "message": "ボタン $ARG1$ を「$ARG2$」プリセットで上書きします。続けますか?",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
   "ext_error_backupFromFuture": {
     "message": "このバックアップは、より新しいバージョンの拡張機能でエクスポートされました。拡張機能を更新するか(git pull のあと chrome://extensions で再読み込み)、$ARG1$ で現在のプリセットから始めてください。",
     "placeholders": {
@@ -164,7 +192,7 @@
     "message": "すでに保存中です — 少しお待ちください。"
   },
   "ext_error_saveConflict": {
-    "message": "設定を保存できませんでした: このページを開いている間に、別のデバイスで変更されました。保存されている内容を見るには再読み込みしてください — 編集を残したい場合は、先にエクスポートしてください。"
+    "message": "別のデバイスで設定が変更されたため、保存できませんでした。編集はこのページに残っています。未保存の編集がない場合にのみ、再読み込みで最新の設定が適用されます。保存するには、最新の設定を受け入れ、編集をやり直してから保存してください。"
   },
   "ext_error_saveLoading": {
     "message": "設定を読み直しています — 少し待ってから $ARG1$ をもう一度押してください。",
@@ -237,26 +265,11 @@
   "ext_field_face": {
     "message": "表示"
   },
-  "ext_field_preset": {
-    "message": "プリセット"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "プリセットを適用…"
-  },
-  "ext_field_preview": {
-    "message": "プレビュー"
-  },
   "ext_field_tooltip": {
     "message": "ツールチップ"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "ボタンのツールチップ"
-  },
   "ext_header_options": {
     "message": "設定"
-  },
-  "ext_header_subtitle": {
-    "message": "PR・issue・リポジトリのボタン、コマンド、main ブランチ — ターミナルの選択、権限、リポジトリのベースフォルダは Terminal Checkout アプリの設定ウインドウにあります"
   },
   "ext_import_fileTooLarge": {
     "message": "設定ファイルが大きすぎます (最大 256KB)。"
@@ -344,6 +357,130 @@
   },
   "ext_migration_badge": {
     "message": "● 保存されたボタンが現在のプリセットより古いです — 確認する"
+  },
+  "ext_d_editor_title": {
+    "message": "ボタンを編集"
+  },
+  "ext_d_editor_close": {
+    "message": "エディターを閉じる"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "カーソル位置に$ARG1$を挿入",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "前へ移動"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "後ろへ移動"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "プリセットに置き換える…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "カスタムコマンドを「$ARG1$」プリセットに置き換えますか？現在のコマンドは置き換わります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "コマンドを置き換える"
+  },
+  "ext_d_editor_cancel": {
+    "message": "コマンドをそのままにする"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "ボタンを更新できませんでした。"
+  },
+  "ext_d_editor_limitReached": {
+    "message": "この種類のボタン数が上限に達しました。"
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "各 GitHub の場所にはボタンが 1 つ以上必要です。"
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "入力は最大 $ARG1$ 件",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "例: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 入力 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "Claude 入力 $ARG1$ を削除",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "シェルモード"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "スラッシュコマンド"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "入力ディレクティブ"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "メッセージ"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "実行例"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "表示用の例です。実際のコマンドはボタンを押したときにアプリが組み立てます。"
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "コマンド"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "コマンドが設定されていません。"
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude への入力"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "Claude への入力はありません。"
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "ここでは例として {cd} が $ARG1$ に移動します。実際の場所はアプリが zoxide と設定済みのベースディレクトリを使って決めます。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "このページまたは例で使えない変数はそのまま表示します: $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "動作の変更"
@@ -475,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— エクスポート、インポート、アカウント同期</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "<code>!</code> で始まる claude 入力は claude のシェルモードに入力されるので、コマンドはそのセッションで実際に実行されます — 既定のプリセットは <code>gh</code> を使って、issue の本文とコメント、そしてその issue に言及している issue を claude の前に置きます。連続する <code>!</code> 入力は 1 行として入力されます。"
-  },
-  "ext_section_issue_help": {
-    "message": "issue ページでステータスバッジ (Open/Closed) の横に置かれるボタンです (最大 $ARG1$ 個)。PR ボタンとは別に設定し、issue ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。並べ替え (<code>⠿</code> をドラッグ、または <code>↑</code> <code>↓</code>) と複製は PR ボタンと同じです。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— issue ページ</span>"
-  },
   "ext_section_issue_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> <code>{main}</code> — issue には PR のブランチがないため、<code>{branch}</code> 系と <code>{base}</code> は使えません。"
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "デフォルトのリストボタンは claude を起動し、<code>!gh issue view {number} --comments</code> を claude のシェルモードに入力します。"
-  },
-  "ext_section_issueList_help": {
-    "message": "issue リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 issue を別のターミナルセッションで実行するコマンドを設定します。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— issue リストページ</span>"
   },
   "ext_section_issueList_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(issue 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。"
@@ -515,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main ブランチ"
   },
-  "ext_section_pr_help1": {
-    "message": "PR ページでブランチ名の横に置かれるボタンです (最大 $ARG1$ 個)。<b>$ARG2$</b> はボタンに表示されるもので、絵文字 1 つ、複数 (🌳🤖)、または短い名前 (Review, WT) です。<b>$ARG3$</b> はホバーしたときに出ます。プリセットを選ぶと、そのテンプレートでカードが埋まります。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "カード左側の <code>⠿</code> ハンドルをドラッグするか、<code>↑</code> <code>↓</code> キーで並べ替えます — これが GitHub 上でボタンが並ぶ順序で、拡張機能のアイコンを押すと最初のものが実行されます。<b>$ARG1$</b> は既存のボタンと同じものをもう 1 つ作るためのもので、複製のツールチップには <code>(1)</code> のような番号が付きます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "私たちが配布したプリセットの書き換えは、あらかじめ選択されています。ご自身で変更したコマンドは<b>選択なし</b>で提示され、動作の変更として印が付きます: 先頭の移動だけが置き換わり、残りは新しい進入節が着地した場所で実行されます。すべてのプリセットは <code>{cd}</code> で始まります。それは zoxide で、リポジトリとまったく同じ名前のフォルダへ移動し、<code>z {repo}</code> のように名前にリポジトリ名を含むだけのワークツリーへは移動しません。ベースフォルダを設定していれば、そのフォルダへフォールバックし、リポジトリがなければ clone します — そのため、ローカルで一度も開いたことのないリポジトリでもボタンが動きます。"
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR ページ</span>"
-  },
   "ext_section_pr_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリがリポジトリのベースフォルダ設定から埋めるので、どのページでも動きます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> <code>{branch}</code> <span class=\"faint\">(head — マージされるブランチ)</span> <code>{base}</code> <span class=\"faint\">(base — マージ先のブランチ)</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">(ブランチの / を _ に置き換えたもの)</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "PR リストページ用のボタンです（最大 $ARG1$ 個）。選択した各 PR を別のターミナルセッションで実行するコマンドを設定します。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR リストページ</span>"
   },
   "ext_section_prList_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">(PR 番号、数字のみ)</span> — リストページには <code>{branch}</code> と <code>{base}</code> がありません。ブランチをローカルで解決するには <code>gh pr checkout {number}</code> を使います。"
   },
-  "ext_section_repo_help": {
-    "message": "リポジトリページ (コード、issue 一覧、Actions など) のヘッダーで、リポジトリ名の横に置かれるボタンです — 最大 $ARG1$ 個。PR・issue のボタンと違って GitHub の緑のアクションボタンのように見えるので、<b>$ARG3$</b> には絵文字より <code>$ARG2$</code> のような名前が向いています。PR でも issue でもない GitHub ページで拡張機能のアイコンを押すと、ここの最初のボタンが実行されます。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG3": {
-        "content": "$3"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— リポジトリページ</span>"
-  },
   "ext_section_repo_variables": {
     "message": "使用できる変数: <code>{cd}</code> <span class=\"faint\">(リポジトリへ移動 — アプリが埋めます)</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — リポジトリページには PR や issue の番号もブランチもないため、<code>{number}</code>、<code>{branch}</code> 系、<code>{base}</code> は使えません。<code>{main}</code> は GitHub がページに埋め込んでいるリポジトリの既定ブランチから決まります — <code>master</code> のリポジトリも個別設定なしで正しく出ます。"
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— 保存されたコマンドと現在のプリセット</span>"
   },
   "ext_status_exportFailed": {
     "message": "エクスポートできませんでした: $ARG1$",
@@ -703,5 +753,180 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub ページのプレビュー"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "設定用のサンプル画面です。実際の GitHub ではありません。"
+  },
+  "ext_d_replica_description": {
+    "message": "ここに表示されるボタンは編集中の設定です。ボタンを選んで編集するか、ドラッグまたは矢印キーで順序を変更します。"
+  },
+  "ext_d_replica_mode": {
+    "message": "編集プレビュー"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "プルリクエスト"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "プルリクエスト一覧"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "Issue"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "Issue 一覧"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "リポジトリ"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "拡張機能アイコンで実行するボタン"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "設定されたボタンはありません"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "ボタンの配置を表示"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "ボタンの配置を非表示"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "プリセットドロワーを開く"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "プリセットドロワーを閉じる"
+  },
+  "ext_d_replica_drawer_title": {
+    "message": "プリセット一覧"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "プリセットを選び、このページに追加するか、同じページのボタンを置き換えます。"
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "使用中"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "追加"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "置き換え"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "置き換えるボタンを選択してください。"
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "このページに置き換え可能なボタンはありません。"
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "「$ARG1$」を「$ARG2$」プリセットに置き換えますか？現在のコマンドは置き換わります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "ボタンを置き換える"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "キャンセル"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "このページにはこれ以上ボタンを追加できません。"
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "プリセットを適用できませんでした。"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "head ブランチの横"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "プルリクエストの絞り込みの上"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "Issue の状態の横"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "All issues の横"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "リポジトリ名の横"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "ボタンの配置"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "ボタンを追加"
+  },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "GitHub では非表示。"
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "このページで使えない変数: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "このボタンには、このページで使えない値があります。"
+  },
+  "ext_d_replica_move_left": {
+    "message": "ボタンを左へ移動"
+  },
+  "ext_d_replica_move_right": {
+    "message": "ボタンを右へ移動"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "ボタンにフォーカスして左右の矢印キーを押すと順序を変更できます。ドラッグも使えます。"
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "ここにプリセットカードが表示されます。"
+  },
+  "ext_d_replica_action_failed": {
+    "message": "ボタンを移動できませんでした。設定は変更されていません。"
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "origin を取得して PR ブランチをチェックアウトし、失敗した場合は規則に沿った worktree フォルダーへ移動します。"
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "origin を取得して PR ブランチをチェックアウトし（失敗時は規則に沿った worktree フォルダーを使用）、Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "PR の worktree を作成または再利用し、origin のブランチまで fast-forward してから Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "PR の worktree を作成または再利用し、origin のブランチまで fast-forward します。"
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "Claude を起動し、PR のコメントと diff をシェルコマンドとして読み込みます。"
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "選択した各 PR の detached worktree を作成または再利用し、gh でチェックアウトして Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "Claude を起動し、issue の本文・コメントと相互参照された issue・PR の番号を読み込みます。"
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "設定済み main ブランチから issue の worktree を作成または再利用し、Claude を起動してコメントを読み込みます。"
+  },
+  "ext_d_replica_presetDescription_open": {
+    "message": "リポジトリのフォルダーでターミナルを開きます。"
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "選択した各 issue について Claude を起動し、コメントを読み込みます。"
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "リポジトリのフォルダーでターミナルを開き、Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "設定済み main ブランチをチェックアウトし、fast-forward のみで pull します。"
   }
 }

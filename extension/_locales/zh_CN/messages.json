@@ -7,22 +7,8 @@
     "message": "从 GitHub 的 PR、issue 和仓库页面在你的终端（iTerm2/WezTerm/Warp/cmux）中运行命令",
     "description": "Chrome 显示在名称旁边的一行说明。"
   },
-  "ext_banner_stale": {
-    "message": "⚠ 自本页面加载以来，设置在另一台设备上发生了更改。重新加载即可看到 — 若想保留未保存的编辑，请先导出。"
-  },
-  "ext_button_addButton": {
-    "message": "+ 添加按钮"
-  },
   "ext_button_addInput": {
     "message": "+ 添加输入"
-  },
-  "ext_button_addLimit": {
-    "message": "最多可以添加 $ARG1$ 个按钮。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
   },
   "ext_button_addOverride": {
     "message": "+ 添加覆盖项"
@@ -57,14 +43,70 @@
   "ext_button_save": {
     "message": "保存"
   },
+  "ext_d_shell_acceptConfirm": {
+    "message": "接受另一台设备的设置并丢弃尚未保存的更改吗？"
+  },
+  "ext_d_shell_acceptLatest": {
+    "message": "接受最新设置"
+  },
+  "ext_d_shell_deferred": {
+    "message": "当前设置仍保留在此页面。你可以稍后接受另一台设备的设置。"
+  },
+  "ext_d_shell_discard": {
+    "message": "放弃更改"
+  },
+  "ext_d_shell_discardConfirm": {
+    "message": "放弃尚未保存的更改并重新读取已保存的设置吗？"
+  },
+  "ext_d_shell_keepEditing": {
+    "message": "继续编辑"
+  },
+  "ext_d_shell_later": {
+    "message": "稍后"
+  },
+  "ext_d_shell_migrationTitle": {
+    "message": "预设更新审核"
+  },
+  "ext_d_shell_reload": {
+    "message": "重新读取"
+  },
+  "ext_d_shell_reloadFailed": {
+    "message": "无法重新读取设置。当前编辑内容仍保留。"
+  },
+  "ext_d_shell_resetConfirm": {
+    "message": "要将当前编辑替换为默认预设并清除所有仓库覆盖吗？按下 $ARG1$ 前不会保存。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_shell_saving": {
+    "message": "正在保存…"
+  },
+  "ext_d_shell_sourcePrefix": {
+    "message": "修改过命令前缀"
+  },
+  "ext_d_shell_sourceVerbatim": {
+    "message": "与预设完全匹配"
+  },
+  "ext_d_shell_stale": {
+    "message": "另一台设备更改了设置。"
+  },
+  "ext_d_shell_staleHelp": {
+    "message": "未保存的编辑会保留在此页面。只有在没有未保存的编辑时，重新加载才会应用最新设置。若要在另一台设备更改设置后保存编辑，请先接受最新设置，再重新应用编辑并保存。"
+  },
+  "ext_d_shell_waiting": {
+    "message": "正在等待设置…"
+  },
+  "ext_d_shell_saved": {
+    "message": "已保存"
+  },
   "ext_card_delete": {
     "message": "删除"
   },
   "ext_card_duplicate": {
     "message": "复制"
-  },
-  "ext_card_duplicate_tooltip": {
-    "message": "复制这个按钮"
   },
   "ext_card_palette_label": {
     "message": "添加到显示："
@@ -76,9 +118,6 @@
         "content": "$1"
       }
     }
-  },
-  "ext_card_reorder_aria": {
-    "message": "重新排序"
   },
   "ext_claudeInput_reorder_aria": {
     "message": "重新排序输入 $ARG1$",
@@ -132,17 +171,6 @@
   "ext_claudeNote_send": {
     "message": "发送"
   },
-  "ext_confirm_presetOverwrite": {
-    "message": "按钮 $ARG1$ 将被“$ARG2$”预设覆盖。要继续吗？",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
   "ext_error_backupFromFuture": {
     "message": "该备份由更新版本的扩展程序导出。请更新扩展程序（git pull 后在 chrome://extensions 重新加载），或用 $ARG1$ 从当前预设重新开始。",
     "placeholders": {
@@ -164,7 +192,7 @@
     "message": "正在保存 — 请稍候。"
   },
   "ext_error_saveConflict": {
-    "message": "你的设置未被保存：在本页面打开期间，它们在另一台设备上发生了更改。重新加载可查看已存储的内容 — 若想保留你的编辑，请先导出。"
+    "message": "设置未能保存，因为另一台设备更改了设置。编辑仍保留在此页面。只有在没有未保存的编辑时，重新加载才会应用最新设置。若要保存编辑，请接受最新设置，再重新应用编辑并保存。"
   },
   "ext_error_saveLoading": {
     "message": "正在重新读取设置 — 请稍后再按一次 $ARG1$。",
@@ -237,26 +265,11 @@
   "ext_field_face": {
     "message": "显示"
   },
-  "ext_field_preset": {
-    "message": "预设"
-  },
-  "ext_field_preset_placeholder": {
-    "message": "应用预设…"
-  },
-  "ext_field_preview": {
-    "message": "预览"
-  },
   "ext_field_tooltip": {
     "message": "工具提示"
   },
-  "ext_field_tooltip_placeholder": {
-    "message": "按钮工具提示"
-  },
   "ext_header_options": {
     "message": "设置"
-  },
-  "ext_header_subtitle": {
-    "message": "PR、issue 和仓库按钮、命令、main 分支 — 终端选择、权限以及仓库基准文件夹在 Terminal Checkout 应用的设置窗口中"
   },
   "ext_import_fileTooLarge": {
     "message": "设置文件太大（最大 256KB）。"
@@ -344,6 +357,130 @@
   },
   "ext_migration_badge": {
     "message": "● 你保存的按钮早于当前预设 — 去查看"
+  },
+  "ext_d_editor_title": {
+    "message": "编辑按钮"
+  },
+  "ext_d_editor_close": {
+    "message": "关闭编辑器"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "在光标处插入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "上移"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "下移"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "替换为预设…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "要将此自定义命令替换为“$ARG1$”预设吗？当前命令将被替换。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "替换命令"
+  },
+  "ext_d_editor_cancel": {
+    "message": "保留当前命令"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "无法更新此按钮。"
+  },
+  "ext_d_editor_limitReached": {
+    "message": "此类按钮已达到数量上限。"
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "每个 GitHub 页面位置至少需要一个按钮。"
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "最多 $ARG1$ 条输入",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "示例：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "删除 Claude 输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "Shell 模式"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "斜杠命令"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "输入指令"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "消息"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "执行示例"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "仅供显示。实际命令由应用在按下按钮时组装。"
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "命令"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "未设置命令。"
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude 输入"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "没有 Claude 输入。"
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "此处用 $ARG1$ 作为 {cd} 的示例位置。实际位置由应用使用 zoxide 和设置的基础目录决定。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "此页面或示例无法提供的变量会原样保留：$ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "行为变更"
@@ -475,36 +612,8 @@
   "ext_section_backup_title": {
     "message": "backup <span class=\"section-where\">— 导出、导入、账号同步</span>"
   },
-  "ext_section_issue_claudeHelp": {
-    "message": "以 <code>!</code> 开头的 claude 输入会被键入 claude 的 shell 模式，因此命令真的在该会话中运行 — 默认预设用 <code>gh</code> 把 issue 正文、它的评论以及提到它的 issue 摆在 claude 面前。连续的 <code>!</code> 输入会作为一行键入。"
-  },
-  "ext_section_issue_help": {
-    "message": "在 issue 页面上位于状态徽章（Open/Closed）旁边的按钮（最多 $ARG1$ 个）。它们与 PR 按钮分开配置；在 issue 页面上点击扩展程序图标会运行这里的第一个按钮。重新排序（拖动 <code>⠿</code>，或用 <code>↑</code> <code>↓</code>）和复制的方式与 PR 按钮相同。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issue_title": {
-    "message": "issueButtons <span class=\"section-where\">— issue 页面</span>"
-  },
   "ext_section_issue_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> <code>{main}</code> — issue 没有 PR 分支，因此 <code>{branch}</code> 系列和 <code>{base}</code> 不可用。"
-  },
-  "ext_section_issueList_claudeHelp": {
-    "message": "默认列表按钮会打开 claude，并在 claude 的 shell 模式中输入 <code>!gh issue view {number} --comments</code>。"
-  },
-  "ext_section_issueList_help": {
-    "message": "Issue 列表页按钮（最多 $ARG1$ 个）。设置每个选中 Issue 要在独立终端会话中运行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_issueList_title": {
-    "message": "issueListButtons <span class=\"section-where\">— Issue 列表页</span>"
   },
   "ext_section_issueList_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（issue 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>。"
@@ -515,73 +624,14 @@
   "ext_section_main_title": {
     "message": "main 分支"
   },
-  "ext_section_pr_help1": {
-    "message": "在 PR 页面上位于分支名旁边的按钮（最多 $ARG1$ 个）。<b>$ARG2$</b> 是按钮显示的内容 — 一个表情符号、几个（🌳🤖），或者一个短名称（Review、WT）。<b>$ARG3$</b> 在悬停时出现；选择一个预设会用该模板填充卡片。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      },
-      "ARG3": {
-        "content": "$3"
-      }
-    }
-  },
-  "ext_section_pr_help2": {
-    "message": "拖动卡片左侧的 <code>⠿</code> 手柄，或使用 <code>↑</code> <code>↓</code> 键重新排序 — 这就是按钮在 GitHub 上出现的顺序，点击扩展程序图标会运行第一个。<b>$ARG1$</b> 用于再做一个和现有按钮一样的按钮 — 副本的工具提示会附上诸如 <code>(1)</code> 的编号。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_pr_migrationHelp": {
-    "message": "我们随附的预设的重写会被预先勾选。你自定义过的命令会以<b>未勾选</b>的方式提供，并标为行为变更：只有开头的跳转被替换，其余部分现在会在新的进入子句落地的地方运行。每个预设都以 <code>{cd}</code> 开头。它用 zoxide 跳转到与仓库名称完全相同的文件夹，不会像 <code>z {repo}</code> 那样跳进名称中仅仅包含仓库名的工作树；设置了基准文件夹的话，它会回退到该文件夹，并在仓库不存在时克隆 — 所以即便是你从未在本地打开过的仓库，按钮也能工作。"
-  },
-  "ext_section_pr_title": {
-    "message": "buttons <span class=\"section-where\">— PR 页面</span>"
-  },
   "ext_section_pr_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 应用会从它的仓库基准文件夹设置填充，因此在每个页面都有效）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> <code>{branch}</code> <span class=\"faint\">（head — 正在被合并的分支）</span> <code>{base}</code> <span class=\"faint\">（base — 合并进去的那个分支）</span> <code>{main}</code> <code>{branch_underbar}</code> <span class=\"faint\">（把分支中的 / 换成 _）</span>"
-  },
-  "ext_section_prList_help": {
-    "message": "PR 列表页按钮（最多 $ARG1$ 个）。设置每个选中 PR 要在独立终端会话中运行的命令。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      }
-    }
-  },
-  "ext_section_prList_title": {
-    "message": "prListButtons <span class=\"section-where\">— PR 列表页</span>"
   },
   "ext_section_prList_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{number}</code> <span class=\"faint\">（PR 编号，仅数字）</span> — 列表页没有 <code>{branch}</code> 或 <code>{base}</code>；使用 <code>gh pr checkout {number}</code> 在本地解析分支。"
   },
-  "ext_section_repo_help": {
-    "message": "在仓库页面（代码、issue 列表、Actions 等）的标题栏中位于仓库名旁边的按钮 — 最多 $ARG1$ 个。与 PR 和 issue 按钮不同，它们看起来像 GitHub 的绿色操作按钮，因此 <b>$ARG3$</b> 用 <code>$ARG2$</code> 这样的名称比表情符号更合适。在既不是 PR 也不是 issue 的 GitHub 页面上点击扩展程序图标，会运行这里的第一个按钮。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG3": {
-        "content": "$3"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_section_repo_title": {
-    "message": "repoButtons <span class=\"section-where\">— 仓库页面</span>"
-  },
   "ext_section_repo_variables": {
     "message": "可用变量：<code>{cd}</code> <span class=\"faint\">（进入仓库 — 由应用填充）</span> <code>{repo}</code> <code>{owner}</code> <code>{main}</code> — 仓库页面既没有 PR 或 issue 编号，也没有分支，因此 <code>{number}</code>、<code>{branch}</code> 系列和 <code>{base}</code> 不可用。<code>{main}</code> 由 GitHub 嵌在页面里的仓库默认分支解析得出 — 使用 <code>master</code> 的仓库无需覆盖项也能正确得出。"
-  },
-  "ext_section_update_title": {
-    "message": "update <span class=\"section-where\">— 已保存的命令与当前预设</span>"
   },
   "ext_status_exportFailed": {
     "message": "无法导出：$ARG1$",
@@ -703,5 +753,180 @@
         "content": "$2"
       }
     }
+  },
+  "ext_d_replica_label": {
+    "message": "GitHub 页面预览"
+  },
+  "ext_d_replica_exampleBanner": {
+    "message": "这是设置示例页面，不是真正的 GitHub。"
+  },
+  "ext_d_replica_description": {
+    "message": "此处显示的是正在编辑的设置。选择按钮可进行编辑，也可拖动按钮或使用方向键调整顺序。"
+  },
+  "ext_d_replica_mode": {
+    "message": "编辑预览"
+  },
+  "ext_d_replica_page_pr": {
+    "message": "拉取请求"
+  },
+  "ext_d_replica_page_prList": {
+    "message": "拉取请求列表"
+  },
+  "ext_d_replica_page_issue": {
+    "message": "议题"
+  },
+  "ext_d_replica_page_issueList": {
+    "message": "议题列表"
+  },
+  "ext_d_replica_page_repo": {
+    "message": "仓库"
+  },
+  "ext_d_replica_iconAction": {
+    "message": "扩展程序图标将运行的按钮"
+  },
+  "ext_d_replica_iconEmpty": {
+    "message": "未配置按钮"
+  },
+  "ext_d_replica_placeholders_show": {
+    "message": "显示按钮位置"
+  },
+  "ext_d_replica_placeholders_hide": {
+    "message": "隐藏按钮位置"
+  },
+  "ext_d_replica_drawer_open": {
+    "message": "打开预设抽屉"
+  },
+  "ext_d_replica_drawer_close": {
+    "message": "关闭预设抽屉"
+  },
+  "ext_d_replica_drawer_title": {
+    "message": "预设抽屉"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "选择一个预设，将它添加到此页面，或替换同一页面上的按钮。"
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "正在使用"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "添加"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "替换"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "选择要替换的按钮。"
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "此页面没有可替换的按钮。"
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "要将“$ARG1$”替换为“$ARG2$”预设吗？当前命令也会被替换。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "替换按钮"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "取消"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "此页面已达到按钮数量上限。"
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "无法完成预设操作。"
+  },
+  "ext_d_replica_place_pr": {
+    "message": "位于源分支旁"
+  },
+  "ext_d_replica_place_prList": {
+    "message": "位于拉取请求筛选器上方"
+  },
+  "ext_d_replica_place_issue": {
+    "message": "位于议题状态旁"
+  },
+  "ext_d_replica_place_issueList": {
+    "message": "位于 All issues 旁"
+  },
+  "ext_d_replica_place_repo": {
+    "message": "位于仓库名称旁"
+  },
+  "ext_d_replica_slot_empty": {
+    "message": "按钮位置"
+  },
+  "ext_d_replica_slot_add": {
+    "message": "添加按钮"
+  },
+  "ext_d_replica_slot_hiddenOnGitHub": {
+    "message": "在 GitHub 上隐藏。"
+  },
+  "ext_d_replica_slot_hiddenReason": {
+    "message": "此页面不支持的变量：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_replica_slot_hiddenReasonGeneric": {
+    "message": "此按钮包含 GitHub 在此页面上无法使用的值。"
+  },
+  "ext_d_replica_move_left": {
+    "message": "向左移动按钮"
+  },
+  "ext_d_replica_move_right": {
+    "message": "向右移动按钮"
+  },
+  "ext_d_replica_move_instructions": {
+    "message": "聚焦按钮后按左或右方向键即可调整顺序，也可以拖动按钮。"
+  },
+  "ext_d_replica_drawer_empty": {
+    "message": "预设卡片将在此处显示。"
+  },
+  "ext_d_replica_action_failed": {
+    "message": "无法移动按钮。设置未更改。"
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "获取 origin 后检出 PR 分支；如果失败，则进入该分支对应的 worktree 目录。"
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "获取 origin 并检出 PR 分支（失败时进入对应的 worktree 目录），然后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "创建或复用 PR worktree，将其快进合并到 origin 分支，然后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "创建或复用 PR worktree，并将其快进合并到 origin 分支。"
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "启动 Claude，并以 shell 命令的方式载入 PR 评论和 diff。"
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "为每个选中的 PR 创建或复用分离式 worktree，通过 gh 检出后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "启动 Claude，并载入 issue 正文、评论，以及交叉引用的 issue 和 PR 编号。"
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "从已配置的 main 分支创建或复用 issue worktree，启动 Claude 并载入 issue 评论。"
+  },
+  "ext_d_replica_presetDescription_open": {
+    "message": "在仓库目录中打开终端。"
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "为每个选中的 issue 启动 Claude，并载入其评论。"
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "在仓库目录中打开终端并启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "检出已配置的 main 分支，然后仅执行快进 pull。"
   }
 }

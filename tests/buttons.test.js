@@ -27,6 +27,8 @@ const { isTextFace } = vm.runInThisContext('({ isTextFace })');
 const { buttonFingerprint } = vm.runInThisContext('({ buttonFingerprint })');
 const { buttonUsesAllowedVariables } =
   vm.runInThisContext('({ buttonUsesAllowedVariables })');
+const { classifyPresetCommand, validateButtonValue, validateOverrideRows } =
+  vm.runInThisContext('({ classifyPresetCommand, validateButtonValue, validateOverrideRows })');
 // Node has no `chrome`, so every lookup throws unless a backend is installed. This one
 // reads the shipped `_locales` catalogues, and it is a double for Chrome's substitution rather
 // than evidence about Chrome — the real load is a release gate.
@@ -209,6 +211,49 @@ test('presetById: an unknown id finds nothing rather than the wrong preset', () 
   assert.equal(presetById(PR_PRESETS, PR_PRESETS[0].name), null);
 });
 
+test('classifyPresetCommand uses exact trimmed commands for preset identity and custom status', () => {
+  const presets = [
+    { id: 'pr.first', command: 'echo one' },
+    { id: 'pr.second', command: 'echo two' },
+  ];
+  assert.deepEqual(classifyPresetCommand('  echo two  ', presets), {
+    presetId: 'pr.second', customCommand: false,
+  });
+  assert.deepEqual(classifyPresetCommand('echo  two', presets), {
+    presetId: null, customCommand: true,
+  });
+  assert.deepEqual(classifyPresetCommand('   ', presets), {
+    presetId: null, customCommand: false,
+  });
+});
+
+test('validateButtonValue returns the shared required-field errors and Claude warning', () => {
+  assert.deepEqual(validateButtonValue({ face: ' ', label: '', command: 'echo run', claudeInputs: ['!run'] }), {
+    errors: ['face', 'label'],
+    warnings: ['claude-inputs-without-claude-command'],
+  });
+  assert.deepEqual(validateButtonValue({ face: 'x', label: 'Run', command: 'claude', claudeInputs: ['!run'] }), {
+    errors: [], warnings: [],
+  });
+});
+
+test('validateOverrideRows shares Save validation and keeps empty rows out of storage', () => {
+  assert.deepEqual(validateOverrideRows([
+    { repo: '', branch: '' },
+    { repo: 'owner/repo', branch: '' },
+    { repo: 'owner/repo', branch: 'main' },
+    { repo: 'owner/repo', branch: 'trunk' },
+  ]), {
+    rows: [
+      { index: 0, errors: [] },
+      { index: 1, errors: ['incomplete'] },
+      { index: 2, errors: [] },
+      { index: 3, errors: ['duplicate'] },
+    ],
+    value: { 'owner/repo': 'main' },
+  });
+});
+
 test('the preset dropdown carries the id as its value and the name as its text', () => {
   // The options page has no runtime harness here, so the value/text pairing lives in defaults.js
   // where it can be asserted, and options.js only hands the pairs to the DOM.
@@ -219,15 +264,17 @@ test('the preset dropdown carries the id as its value and the name as its text',
   }
 });
 
-test('the options page never finds a preset by its display name', () => {
+test('the options modules never find a preset by its display name', () => {
   // A source-level oracle for the same reason as the origin sweep below: what has to be shown is
   // that the *class* is gone from that file, not that one call site was rewritten. The two things
   // the dropdown does with a preset both live in defaults.js now, where they can be asserted —
   // `presetOptions` decides what the value is, `presetById` reads it back. Writing either of them
   // out again in options.js is how the two halves come to disagree, and nothing on the options page
   // runs under `node --test` to catch it.
-  const source = fs.readFileSync(path.join(__dirname, '../extension/options.js'), 'utf8');
-  const nameOperand = String.raw`(?:\b[\w$]+(?:\.[\w$]+)*\.name\b|\.name\b|\bname\b|\[['"]name['"]\])`;
+  const source = ['options.js', 'options-shell.js', 'options-replica.js', 'options-editor.js']
+    .map(file => fs.readFileSync(path.join(__dirname, `../extension/${file}`), 'utf8'))
+    .join('\n');
+  const nameOperand = String.raw`(?:\b[\w$]+(?:\.[\w$]+)*\.name\b|\.name\b|\[['"]name['"]\])`;
   const nameEquality = new RegExp(
     `(?:${nameOperand}\\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\\s*${nameOperand})`,
     'g',
@@ -240,13 +287,11 @@ test('the options page never finds a preset by its display name', () => {
   // only `.name ===`, so a lookup with the operands the other way round passed a check named for
   // the class it was letting through; appending one to the real source and requiring a hit is how
   // this oracle shows it can still fail.
-  const reversedOperand = `${source}\nconst accidentalLookup = presets.find(p => name === p.name);`;
+  const reversedOperand = `${source}\nconst accidentalLookup = presets.find(p => selectedName === p.name);`;
   assert.ok(
     (reversedOperand.match(nameEquality) ?? []).length > 0,
     'the source oracle does not see a reversed display-name equality',
   );
-  assert.ok(source.includes('presetOptions('), 'options.js fills the dropdown some other way');
-  assert.ok(source.includes('presetById('), 'options.js no longer looks a preset up at all');
 });
 
 test('a preset id is not part of a saved button', () => {

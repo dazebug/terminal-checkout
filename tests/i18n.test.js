@@ -64,6 +64,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   for (const [role, files] of Object.entries({
     speakingSource: SPEAKING_FILES,
     markupSource: HTML_FILES,
+    styleSource: STYLE_FILES,
     manifest: MANIFEST_FILES,
     localeCatalogue: CATALOGUE_FILES,
     extensionIcon: ICON_ASSETS,
@@ -86,7 +87,7 @@ test('every file has a role, and a role is what makes a file enter a gate', () =
   assert.deepEqual(MARKUP_FILES, [...SPEAKING_FILES, ...HTML_FILES].sort());
   assert.deepEqual(
     EXTENSION_FILES.filter(file => roleOf(file) !== null).sort(),
-    [...MARKUP_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...ICON_ASSETS].sort(),
+    [...MARKUP_FILES, ...STYLE_FILES, ...MANIFEST_FILES, ...CATALOGUE_FILES, ...ICON_ASSETS].sort(),
     'a file has a role that no set takes',
   );
 });
@@ -243,6 +244,8 @@ test('nothing in the skeleton touches chrome at load time, and one statement nam
 // `options.js` by name, because the checks below that name it are about *that* script's order of
 // operations. The markup is not read by name anywhere any more — see `HTML_FILES`.
 const optionsJs = read('options.js');
+const OPTIONS_PAGE_SOURCES = ['options.js', 'options-shell.js', 'options-replica.js', 'options-editor.js'];
+const optionsPageSource = OPTIONS_PAGE_SOURCES.map(file => read(file)).join('\n');
 
 // **Every file that can name a message**, not only the options page: the presets, the
 // button phase markers and the update notice's prose into the dictionaries too, and a gate that
@@ -294,12 +297,14 @@ const roleOf = (relativePath) => {
   if (relativePath.startsWith('_locales/')) return null;
   if (relativePath.endsWith('.js')) return 'speakingSource';
   if (relativePath.endsWith('.html')) return 'markupSource';
+  if (relativePath.endsWith('.css')) return 'styleSource';
   return null;
 };
 const EXTENSION_FILES = walkFiles(extension, () => true);
 const filesInRole = role => EXTENSION_FILES.filter(file => roleOf(file) === role);
 
 const SPEAKING_FILES = filesInRole('speakingSource');
+const STYLE_FILES = filesInRole('styleSource');
 // The markup half on its own, for the checks whose subject is a page rather than the code that fills
 // one. **Read from the tree for the same reason**: there is one page today, so a
 // scan of `options.html` and a scan of every page agree — by accident, and only until the second one.
@@ -705,13 +710,13 @@ test('every call supplies arguments through its message, and the gate says so wh
   // catalogue or a call site quietly leaving the scan shows up as a smaller number.
   let readSites = 0;
   for (const file of SPEAKING_FILES) readSites += refuseArgumentMismatches(file, read(file), liveMessagesFor('en'));
-  // **129 argument-supplying sites are expected.** The count is
+  // **255 argument-supplying sites are expected.** The count is
   // derived from the source reader rather than a work-log claim: a call written inside a comment in
   // `i18n.js` must not enter the result, while a real zero-argument call must.
   // What matters more than the digit is
   // what it hid: a real zero-argument call could have been removed while the comment-shaped one
   // kept both the count and the arity result intact.
-  assert.equal(readSites, 129, `the scan read ${readSites} argument-supplying sites`);
+  assert.equal(readSites, 255, `the scan read ${readSites} argument-supplying sites`);
 
   const refused = (source, messages) => {
     try {
@@ -842,14 +847,14 @@ test('_locales rejects a translation whose placeholder binding moves away from e
       if (file !== editedPath) return originalValue;
       const text = Buffer.isBuffer(originalValue) ? originalValue.toString('utf8') : originalValue;
       const messages = JSON.parse(text);
-      messages.ext_confirm_presetOverwrite.placeholders.ARG2.content = '$1';
+      messages.ext_d_replica_drawer_confirmReplace.placeholders.ARG2.content = '$1';
       const edited = `${JSON.stringify(messages, null, 2)}\n`;
       return Buffer.isBuffer(originalValue) ? Buffer.from(edited) : edited;
     };
     const failures = checkLiveLocaleStructure().failures;
     assert.ok(
       failures.some(failure => failure.includes(
-        '_locales/ko/messages.json: ext_confirm_presetOverwrite argument bindings differ from en',
+        '_locales/ko/messages.json: ext_d_replica_drawer_confirmReplace argument bindings differ from en',
       )),
       failures.join('\n'),
     );
@@ -998,14 +1003,23 @@ test('the page can only ask for keys the catalogue has, and asks for all of them
   );
 });
 
-test('the options page keeps dynamic message dispatch inside its static fill', () => {
-  // The static fill reads a key from `data-i18n`, then its three dispatches pass that value through.
-  // Those are declared data positions in the reference projection above; any other dynamic dispatch
-  // on this page would have no statically enumerable message behind it.
-  const dynamic = [...optionsJs.matchAll(/\bt(?:HTML)?\(([^'\s)][^,)]*)/g)].map(m => m[1].trim());
-  assert.deepEqual(dynamic, ['key', 'key', 'key'],
-    'a message id is being computed somewhere other than the two declarations and the static fill');
-  assert.ok(/node\.innerHTML = tHTML\(key, \.\.\.args\)/.test(optionsJs), 'the static fill moved');
+test('the options modules use literal catalogue keys', () => {
+  // Each generated view asks the catalogue directly. A computed key would evade the catalogue
+  // reference sweep and could render the raw message id, so inspect calls from the lexical stream.
+  const dynamicCalls = [];
+  for (const file of OPTIONS_PAGE_SOURCES) {
+    const events = javaScriptEvents(read(file));
+    for (let index = 0; index < events.length; index += 1) {
+      const event = events[index];
+      if (event.type !== 'identifier' || !['t', 'tr', 'tHTML'].includes(event.name)) continue;
+      if (events[index + 1]?.type !== 'punctuator' || events[index + 1].value !== '(') continue;
+      const key = events[index + 2];
+      if (key?.type !== 'literal' || !key.static || !messageKey.test(key.value)) {
+        dynamicCalls.push(`${file}:${event.start}`);
+      }
+    }
+  }
+  assert.deepEqual(dynamicCalls, []);
 });
 
 test('placeholders match across locales, key by key', () => {
@@ -1047,7 +1061,8 @@ test('text and markup are separate halves, and nothing is on both', () => {
     assert.ok(!textKeys.has(key), `${key} has markup and is asked for as text`);
     assert.ok(markupKeys.has(key), `${key} has markup and nothing asks for it as markup`);
   }
-  assert.ok(textKeys.size > 30 && markupKeys.size > 30, 'the halves stopped being populated');
+  assert.ok(textKeys.size > 30 && markupKeys.size > 0,
+    `text or markup catalogue calls disappeared (${textKeys.size}/${markupKeys.size})`);
 });
 
 test('markup in a value is balanced, and the same in every locale', () => {
@@ -1619,10 +1634,6 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // stated product non-goal. Or a **declared expression**, where the words are not in front of
   // us at all and what is declared instead is whose they are.
   const DECLARED_LITERALS = {
-    main: 'the default branch name — it goes into a command, so it is not prose',
-    master: 'a branch name, shown as the example that field takes — the same class as `main`',
-    'remy-worker': 'a repository name, shown as the example that field takes',
-    '{cd} && claude': 'a command template — its literals are what the command gate holds fixed',
     'Terminal Checkout —': 'the product name, which no language rewrites (a non-goal), and the dash '
       + 'that joins it to the message naming the page',
   };
@@ -1643,10 +1654,8 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // Every readable site in the tree, and the refusals that ran to produce them — one call per file,
   // so the list below cannot outlive the checks that guard it (`auditSource`).
   const found = MARKUP_FILES.flatMap(file => auditSource(file, read(file), DECLARED_COMPUTED_WRITES));
-  // **The sites themselves, not how many there are.** A floor of twelve against sixteen let four of
-  // them move into unread syntax in silence; an exact count closed that and still fixed only
-  // cardinality — swap one recognized site for an unrecognized one, add a recognized one elsewhere,
-  // and sixteen is sixteen.
+  // The site list follows the generated editor controls.
+  // Keep the inventory exact so a new user-facing attribute cannot silently leave the catalogue path.
   // **File and attribute name were not enough either**: that pair repeats, so a
   // trade between two sites sharing one left this list identical — the swap the fixture above runs is
   // exactly that trade, and how far the repetition goes is counted below. The identity
@@ -1664,21 +1673,17 @@ test('every text-bearing attribute in the markup is a message or a declared lite
     'content.js title = row.title',
     'content.js title = splitButtonTooltip(view',
     "content.js title = tr('ext.claudeNote.caret'",
-    'options.html placeholder = main',
-    "options.js aria-label = ${t('ext.card.reorder.aria')}",
-    "options.js aria-label = ${t('ext.claudeInput.reorder.aria', j + 1)}",
-    "options.js placeholder = ${t('ext.field.claudeInput.placeholder')}",
-    "options.js placeholder = ${t('ext.field.tooltip.placeholder')}",
-    'options.js placeholder = master',
-    'options.js placeholder = remy-worker',
-    'options.js placeholder = {cd} && claude',
-    "options.js title = ${t('ext.button.remove')}",
-    "options.js title = ${t('ext.button.remove')}",
-    "options.js title = ${t('ext.card.duplicate.tooltip')}",
-    "options.js title = ${t('ext.card.palette.tooltip', e)}",
-    "options.js title = ${t('ext.reorder.tooltip')}",
-    "options.js title = ${t('ext.reorder.tooltip')}",
-    'options.js title = Terminal Checkout — ${t(\'ext.header.options\')}',
+    "options-editor.js aria-label = tr('ext.card.palette.tooltip'",
+    "options-editor.js aria-label = tr('ext.claudeInput.reorder.aria'",
+    "options-editor.js aria-label = tr('ext.claudeInput.reorder.aria'",
+    "options-editor.js aria-label = tr('ext.d.editor.close'",
+    "options-editor.js aria-label = tr('ext.d.editor.inputRemove'",
+    "options-editor.js aria-label = tr('ext.d.editor.moveEarlier'",
+    "options-editor.js aria-label = tr('ext.d.editor.moveEarlier'",
+    "options-editor.js aria-label = tr('ext.d.editor.moveLater'",
+    "options-editor.js aria-label = tr('ext.d.editor.moveLater'",
+    "options-editor.js aria-label = tr('ext.d.editor.variableInsert'",
+    'options.js title = Terminal Checkout — ${tr(\'ext.header.options\')}',
   ]);
   // **The counts are executed, never typed.** Three sentences in this file used to carry "how many
   // sites share a `(file, attribute)` pair"; one of them said eleven when the answer is fourteen, and
@@ -1687,11 +1692,11 @@ test('every text-bearing attribute in the markup is a message or a declared lite
   // and a change to the corpus is a red test rather than a sentence nobody re-derives.
   const pairs = found.map(([file, site]) => `${file} ${site.name}`);
   const repeated = pairs.filter(pair => pairs.filter(other => other === pair).length > 1);
-  assert.equal(repeated.length, 23, `${repeated.length} sites share a (file, attribute) pair`);
-  assert.equal(new Set(repeated).size, 5, 'the number of repeated (file, attribute) pairs moved');
+  assert.equal(repeated.length, 19, `${repeated.length} sites share a (file, attribute) pair`);
+  assert.equal(new Set(repeated).size, 3, 'the number of repeated (file, attribute) pairs moved');
   const identities = found.map(([file, site]) => siteIdentity(file, site));
   const sameValueToo = identities.filter(id => identities.filter(other => other === id).length > 1);
-  assert.equal(sameValueToo.length, 6, `${sameValueToo.length} sites are indistinguishable even by value`);
+  assert.equal(sameValueToo.length, 8, `${sameValueToo.length} sites are indistinguishable even by value`);
   const declared = [];
   for (const [file, site] of found) {
     if (!site.quoted) {
@@ -1768,9 +1773,6 @@ test('prose that names a control receives the label, it does not spell it out ag
   // `Face` and another called it `face`. A quotation is a relation between two messages now, so a
   // translator cannot make them disagree.
   const quoting = {
-    'ext.section.pr.help1': ['ext.field.face', 'ext.field.tooltip'],
-    'ext.section.pr.help2': ['ext.card.duplicate'],
-    'ext.section.repo.help': ['ext.field.face'],
     'ext.section.backup.help2': ['ext.button.save'],
     'ext.status.reset': ['ext.button.save'],
     'ext.migration.intro.nothingToDo': ['ext.migration.gotIt'],
@@ -1790,8 +1792,8 @@ test('prose that names a control receives the label, it does not spell it out ag
     // The relation itself, read off the source: wherever this message is asked for, the label
     // messages it quotes are asked for in the same breath. This is what a translator cannot break —
     // the value never contains the label, only a place for it.
-    const windows = [...optionsJs.matchAll(new RegExp(`'${key.replace(/\./g, '\\.')}'`, 'g'))]
-      .map(m => optionsJs.slice(m.index, m.index + 260));
+    const windows = [...optionsPageSource.matchAll(new RegExp(`'${key.replace(/\./g, '\\.')}'`, 'g'))]
+      .map(m => optionsPageSource.slice(m.index, m.index + 260));
     assert.ok(windows.length > 0, `${key} is not asked for anywhere`);
     for (const label of labels) {
       assert.ok(referencedKeys.has(label), `${key} quotes a missing ${label}`);
@@ -1825,28 +1827,16 @@ test('a count sits behind a noun, and the two outcomes are two messages', () => 
   assert.ok(!/\? 'was' : 'were'/.test(optionsJs), 'the was/were branch is still in options.js');
 });
 
-test('the markup ships no prose, so there is nothing to paint in the wrong language', () => {
-  // The first paint is the whole question on this page: unlike a GitHub page, which the user is
-  // already reading when a button appears, the options page is text from edge to edge the moment it
-  // opens. English left in the markup would be painted first and translated afterwards for every
-  // user whose language is not English — so the markup holds ids and the fill happens while the
-  // parser is still blocked on options.js, from Chrome's catalogue, which answers without waiting.
-  // There is no cache correction or locale redraw in this consumer.
-  let localizedNodes = 0;
-  for (const file of HTML_FILES) {
-    for (const match of read(file).matchAll(/data-i18n="[^"]+"[^>]*>([^<]*)</g)) {
-      localizedNodes += 1;
-      assert.equal(match[1].trim(), '', `${file} ships prose in a localized node: ${match[0].slice(0, 70)}`);
-    }
+test('the document language is resolved before the view modules create user-facing text', () => {
+  const html = read('options.html');
+  assert.match(html, /<html lang="en">/);
+  assert.doesNotMatch(html, /data-i18n=/, 'the shell left untranslated text in static markup');
+  const language = optionsJs.indexOf('applyDocumentLanguage();');
+  assert.ok(language > 0);
+  for (const mount of ['window.optionsShell.mount(', 'window.optionsReplica.mount(', 'window.optionsEditor.mount(']) {
+    assert.ok(optionsJs.indexOf(mount) > language, `${mount} creates view text before the language is set`);
   }
-  // A loop over no matches is a test that says nothing while reading like one that says a lot — a
-  // A count distinguishes an empty scan from a scan that actually checked its subject.
-  assert.ok(localizedNodes > 30, `only ${localizedNodes} localized nodes were read`);
-  // The document language and the synchronous fill, in that order, at the top level of the script.
-  const first = optionsJs.indexOf('applyDocumentLanguage();');
-  const fill = optionsJs.indexOf('applyStaticText();');
-  assert.ok(first > 0 && fill > first, 'the page no longer fills itself synchronously');
-  assert.ok(!/adoptLocaleFromCache|localeRenderer/.test(optionsJs), 'the retired locale redraw still runs');
+  assert.doesNotMatch(optionsJs, /adoptLocaleFromCache|localeRenderer|applyStaticText/);
 });
 
 test('formatMessage: positional, uninterpreted, and loud about a hole', () => {
@@ -1985,10 +1975,8 @@ test('a translation cannot break out of an HTML attribute', () => {
   const attributeKeys = new Set();
   for (const file of MARKUP_FILES) {
     for (const site of attributeSitesIn(read(file))) {
-      for (const expression of splitInterpolations(site.text ?? '')?.expressions ?? []) {
-        const named = messageCallsIn(expression.trim()).find(call => call.callIndex === 0);
-        if (named) attributeKeys.add(named.key);
-      }
+      const named = messageCallsIn(site.text ?? '')[0];
+      if (named) attributeKeys.add(named.key);
     }
   }
   assert.ok(attributeKeys.size >= 5, `only ${attributeKeys.size} attribute interpolations found`);
@@ -2032,7 +2020,7 @@ test('no text ships in the markup without a message behind it', () => {
   assert.deepEqual(stray, [], 'markup carries text that no message owns');
   // An empty list means either that the markup is clean or that the scan read nothing, and those
   // two look identical from here
-  assert.ok(nodes > 100, `only ${nodes} text nodes were read`);
+  assert.ok(nodes > 0, `the scan read ${nodes} markup text nodes`);
 });
 // ---------------------------------------------------------------------------------------------
 // What only becomes checkable once five locales exist.

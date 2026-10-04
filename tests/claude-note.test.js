@@ -86,17 +86,24 @@ test('the claude word test has one home, and the options warning asks it', () =>
     const found = (readExtension(file).match(regexLiteral) ?? []).length;
     assert.equal(found, file === 'defaults.js' ? 1 : 0, `${file} spells the claude word test ${found} time(s)`);
   }
-  assert.match(readExtension('options.js'), /commandStartsClaude\(/, 'the options warning no longer asks the shared predicate');
+  const options = readExtension('options.js');
+  const validation = options.slice(options.indexOf('function validateEditState('));
+  assert.match(validation.slice(0, validation.indexOf('\n}\n')), /validateButtonValue\(button\)/,
+    'the engine snapshot and Save no longer ask the shared validator');
+  const defaults = readExtension('defaults.js');
+  const validator = defaults.slice(defaults.indexOf('function validateButtonValue('));
+  assert.match(validator.slice(0, validator.indexOf('\n}\n')), /commandStartsClaude\(button\.command\)/, 'the shared validator no longer uses the shared predicate');
 });
 
 test('the options warning counts inputs the way a click sends them', () => {
   // Also a lint. It counted with `trim()`, which drops a tab-only input that the send keeps and the
   // app then refuses — so the warning stayed hidden over a button that could only fail.
-  const options = readExtension('options.js');
-  const warning = options.slice(options.indexOf('function updateClaudeWarn('));
-  const body = warning.slice(0, warning.indexOf('\n}\n'));
-  assert.match(body, /normalizeClaudeInputs\(btn\.claudeInputs\)/, 'the warning counts inputs by a rule of its own');
-  assert.doesNotMatch(body, /\.trim\(\)/, 'the warning trims inputs with trim()');
+  const defaults = readExtension('defaults.js');
+  const validation = defaults.slice(defaults.indexOf('function validateButtonValue('));
+  const body = validation.slice(0, validation.indexOf('\n}\n'));
+  assert.match(body, /normalizeClaudeInputs\(button\.claudeInputs\)/, 'the warning counts inputs by a rule of its own');
+  const { normalizeClaudeInputs } = pick('normalizeClaudeInputs');
+  assert.deepEqual(normalizeClaudeInputs(['  command  ', '\t', '  ']), ['command', '\t']);
 });
 
 test('a button takes a note only when its command starts claude', () => {

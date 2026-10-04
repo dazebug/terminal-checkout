@@ -92,7 +92,7 @@ Then refresh the extension at `chrome://extensions` (↻ on the Terminal Checkou
 <details>
 <summary>Presets improved since you last saved?</summary>
 
-Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When the presets move on, the options page shows an update notice listing each affected button as `old → new`, saying what the change does, with a checkbox per item. Rewrites of presets we shipped are pre-checked; a command you customized is offered unchecked and marked as a behavior change, because the rest of it will now run wherever the new entry clause lands. Applying only fills the form; the write goes through the same **Save** as any other edit, and declining ("Keep mine") is recorded too, so the notice doesn't come back. If another device changed your settings while this page was open, Save is refused rather than overwriting them — reload to see them, exporting first if you have unsaved edits. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
+Your saved buttons keep the exact command you already had — nothing is rewritten behind your back. When presets change, the options page lists each affected button as `old → new`, explains the change and provides a checkbox. Shipped preset rewrites are pre-checked; a customized command is unchecked and marked as a behavior change because the rest will run in the directory chosen by the new entry clause. Applying selected changes updates the draft; [Save] writes it, while [Keep mine] records the review without changing your command. If another device changes settings after this page loads, Save is refused rather than overwriting them, and your edits stay on this page. Reload applies the latest settings only when there are no unsaved edits. To keep your edits, accept the latest settings, reapply your changes, then press [Save]. Export contains only saved settings. A command you customized is rewritten only when its first clause is exactly the old one — anything else is listed for you to handle. Since the schema version travels in `storage.sync`, deciding once settles it on every machine on your account.
 
 </details>
 
@@ -115,7 +115,7 @@ Your saved buttons keep the exact command you already had — nothing is rewritt
 <details>
 <summary>All 13 presets</summary>
 
-Choose presets in the extension options page, or write your own commands with [variables](#variables).
+Choose a preset for the page kind from the preset drawer. Each preset shows where its button will appear; click [Add] or drag it to a slot, or choose [Replace] to pick a button on the same page. Replacing a custom command asks for confirmation. You can also write your own commands with [variables](#variables).
 
 | Page | Face | Preset | What it runs |
 |:---|:---:|:---|:---|
@@ -148,7 +148,7 @@ Read Issue (claude) schedules these shell-mode lines; Start Work on Issue and Tr
 
 ### claude input
 
-If a button's command runs `claude`, the options page lets you schedule up to 10 inputs for it — for example `!gh pr diff {number}` followed by `Summarize the risky parts`. The app supplies an eligible opening message at launch or types inputs into the running session:
+If a button's command runs `claude`, select it on the example page to edit up to 10 inputs in its popover — for example `!gh pr diff {number}` followed by `Summarize the risky parts`; reorder rows by dragging or with `↑`/`↓`. The example panel shows the command and inputs filled with example values for display only; the app builds the real command when the button runs. The app supplies an eligible opening message at launch or types inputs into the running session:
 
 - **`!` inputs are typed into claude's shell mode**, so they run as real shell commands and their output stays in the session. Consecutive ones are merged into one line only when the safety checks pass and the line fits within 4 KiB.
 - **Exactly one plain-text input can become the opening message** when the command, shell and executable checks below pass; otherwise it is typed.
@@ -233,17 +233,17 @@ The shortcut works whichever app is in front, Slack included. The clipboard deci
 
 ## Configuration
 
-The app's General, GitHub and Slack panes hold its settings. Buttons, commands and the main branch live in the extension options page — after the app receives an extension request, choose [Edit GitHub buttons…] in General, or open `chrome://extensions` → Terminal Checkout → Extension options.
+The app's General, GitHub and Slack panes hold its settings. Buttons, commands and the main branch live in the extension options page — after the app receives an extension request, choose [Edit GitHub buttons…] in General, or open `chrome://extensions` → Terminal Checkout → Extension options. The page shows an example GitHub view for editing, not a live GitHub page.
 
-- Extension settings are written only when you press **Save**.
-- Reorder button cards by dragging the `⠿` handle, or focus it and press `↑` `↓`; [Duplicate] copies a card right after the original. The order is the order on GitHub, and the first button is what the extension icon runs.
+- The save bar shows whether your edits are unsaved, saving or saved. [Discard changes] discards unsaved edits, and [Save] is the only action that writes extension settings.
+- Select a button to open its popover, where you can edit, duplicate, delete or move it. Drag buttons or use `←`/`→` to reorder them; this is the order on GitHub, and the extension icon runs the first button.
 - Settings live in Chrome's `storage.sync`, so Chromes signed into the same Google account with "Extensions" sync enabled share them.
-- The **backup** section's [Export (JSON)] / [Import…] cover moving without an account and reinstalling. Import only fills the form — review and press **Save** to apply.
+- The **backup** section contains [Reset to Defaults], [Export (JSON)] and [Import…]. Reset requires confirmation and updates the draft; export contains saved settings only, and import fills the draft for review before [Save].
 
 <details>
 <summary>More on sync and backups</summary>
 
-Sync works across machines because the extension ID is pinned by the manifest `key`, so it is the same everywhere. A duplicated card's tooltip gets a `(1)`-style suffix.
+Sync works across machines because the extension ID is pinned by the manifest `key`, so it is the same everywhere. Duplicating a button adds a `(1)`-style suffix to its tooltip.
 
 The backup file records which generation of the presets it was written against: an older backup gets the same update notice as saved buttons do, covering the whole form afterwards rather than just the keys the file carried, and a backup from a newer extension is refused instead of half-read.
 

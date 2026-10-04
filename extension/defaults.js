@@ -140,6 +140,52 @@ function presetById(presets, id) {
   return presets.find(preset => preset.id === id) ?? null;
 }
 
+// One rule for the snapshot's preset id and for the replace confirmation: after an outer trim, a
+// command equal to a preset's names that preset, and a non-empty command equal to none was edited by
+// hand, so replacing it needs confirmation.
+function classifyPresetCommand(command, presets) {
+  const normalized = typeof command === 'string' ? command.trim() : '';
+  const preset = normalized ? presets.find(candidate => candidate.command === normalized) : null;
+  return {
+    presetId: preset?.id ?? null,
+    customCommand: normalized !== '' && !preset,
+  };
+}
+
+// Save and the engine snapshot, which every view draws from, share this one verdict, so required
+// fields and the Claude warning cannot differ between what a view shows and what Save refuses.
+function validateButtonValue(button) {
+  const errors = [];
+  for (const field of ['face', 'label', 'command']) {
+    if (!button[field].trim()) errors.push(field);
+  }
+  const warnings = normalizeClaudeInputs(button.claudeInputs).length > 0
+    && !commandStartsClaude(button.command)
+    ? ['claude-inputs-without-claude-command']
+    : [];
+  return { errors, warnings };
+}
+
+// Pure counterpart to override serialization. Empty rows are omitted; partial rows and duplicate
+// repositories are reported in row order; the first complete repository wins as it does in Save.
+function validateOverrideRows(rows) {
+  const seen = new Map();
+  const entries = new Map();
+  const diagnostics = rows.map((row, index) => {
+    const repo = row.repo.trim();
+    const branch = row.branch.trim();
+    const errors = [];
+    if ((!repo && branch) || (repo && !branch)) errors.push('incomplete');
+    if (repo && branch && seen.has(repo)) errors.push('duplicate');
+    if (repo && branch && !seen.has(repo)) {
+      seen.set(repo, index);
+      entries.set(repo, branch);
+    }
+    return { index, errors };
+  });
+  return { rows: diagnostics, value: Object.fromEntries(entries) };
+}
+
 // What the options page's dropdown is built from — the id as the value, the name as the text. The
 // pairing lives here rather than in options.js because *which field identifies a preset* is a
 // defaults.js decision, and because there is nowhere to assert it on the options page.
@@ -213,10 +259,11 @@ const BUTTON_KINDS = {
   },
 };
 
-// A button is visible only when every placeholder in its command and every scheduled claude input
-// can be supplied for its page kind. Keeping this predicate here makes the list of variables in
-// BUTTON_KINDS the one authority shared by the content script and service worker; the app's own
-// renderer remains the final fail-closed check when a request leaves the extension.
+// This predicate checks whether every command and scheduled input placeholder is available for a
+// page kind. The content script hides invalid buttons only on list pages; detail and repository
+// buttons remain visible and the app rejects an unsupported value when the command is assembled.
+// Keeping this predicate here makes BUTTON_KINDS the shared authority for the content script,
+// service worker, and options page.
 function buttonUsesAllowedVariables(kind, button) {
   if (typeof kind !== 'string' || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
   if (!button || typeof button !== 'object' || typeof button.command !== 'string') return false;
@@ -317,6 +364,8 @@ const PR_BRANCH_LINK_SELECTOR =
   'a[data-component="BranchName"][href*="/tree/"], .base-ref a[href*="/tree/"], .head-ref a[href*="/tree/"]';
 
 const DEFAULT_MAIN = 'main';
+const FACE_EMOJI = ['⏏️', '🤖', '🌳', '🪵', '🔍', '🧪', '📝', '🚀', '🔧', '⚡', '📋', '📂'];
+const FACE_MAX_LENGTH = 24;
 // Maximum buttons per page kind. A synced device running a version with a lower cap keeps only the
 // first entries — every reader enforces it through adoptStoredButtons — and removes the rest if it
 // saves. Each kind is one storage.sync key, so MAX_STORED_ITEM_BYTES, not this count, is what stops a
