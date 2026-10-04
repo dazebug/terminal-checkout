@@ -410,9 +410,6 @@
   "ext_d_editor_close": {
     "message": "关闭编辑器"
   },
-  "ext_d_editor_commandPlaceholder": {
-    "message": "{cd} && claude"
-  },
   "ext_d_editor_variableInsert": {
     "message": "在光标处插入 $ARG1$",
     "placeholders": {

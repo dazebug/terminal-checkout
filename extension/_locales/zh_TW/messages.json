@@ -410,9 +410,6 @@
   "ext_d_editor_close": {
     "message": "關閉編輯器"
   },
-  "ext_d_editor_commandPlaceholder": {
-    "message": "{cd} && claude"
-  },
   "ext_d_editor_variableInsert": {
     "message": "在游標處插入 $ARG1$",
     "placeholders": {

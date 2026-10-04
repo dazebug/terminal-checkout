@@ -410,9 +410,6 @@
   "ext_d_editor_close": {
     "message": "Close editor"
   },
-  "ext_d_editor_commandPlaceholder": {
-    "message": "{cd} && claude"
-  },
   "ext_d_editor_variableInsert": {
     "message": "Insert $ARG1$ at the cursor.",
     "placeholders": {

@@ -151,14 +151,12 @@
   border: 0;
 }
 
-.options-editor-variable-help,
-.options-editor-command-example {
+.options-editor-variable-help {
   color: var(--dim);
   font-size: 11px;
   line-height: 1.6;
 }
 
-.options-editor-variables,
 .options-editor-palette {
   display: flex;
   flex-wrap: wrap;
@@ -168,6 +166,8 @@
 
 .options-editor-variable,
 .options-editor-emoji {
+  display: inline-block;
+  vertical-align: baseline;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--accent);
@@ -230,7 +230,7 @@
   font: 600 11px var(--ui);
 }
 
-.options-editor-validation {
+.options-editor-validation:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -252,9 +252,14 @@
 }
 
 .options-editor-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   flex-wrap: wrap;
-  padding-top: 10px;
+  padding: 10px 0 14px;
   border-top: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: 0 -6px 10px var(--panel);
 }
 
 .options-editor-actions button {
@@ -282,7 +287,7 @@
   line-height: 1.5;
 }
 
-.options-editor-presets {
+.options-editor-presets:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -331,7 +336,7 @@
   white-space: nowrap;
 }
 
-.options-editor-preset-confirmation {
+.options-editor-preset-confirmation:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 8px;

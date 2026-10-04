@@ -410,9 +410,6 @@
   "ext_d_editor_close": {
     "message": "편집기 닫기"
   },
-  "ext_d_editor_commandPlaceholder": {
-    "message": "{cd} && claude"
-  },
   "ext_d_editor_variableInsert": {
     "message": "커서 위치에 $ARG1$ 삽입",
     "placeholders": {

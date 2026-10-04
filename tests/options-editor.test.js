@@ -16,6 +16,7 @@ function loadEditor() {
   vm.runInContext(source, context);
   const model = vm.runInContext(`({
     calculatePopoverPosition: typeof calculatePopoverPosition === 'function' ? calculatePopoverPosition : null,
+    hasMeasurableViewport: typeof hasMeasurableViewport === 'function' ? hasMeasurableViewport : null,
     fitsFieldLimit: typeof fitsFieldLimit === 'function' ? fitsFieldLimit : null,
     appendFaceCharacter: typeof appendFaceCharacter === 'function' ? appendFaceCharacter : null,
     variablesForKind: typeof variablesForKind === 'function' ? variablesForKind : null,
@@ -93,6 +94,23 @@ test('a taller editor gets an internal height bound instead of leaving the viewp
   assert.equal(placed.maxHeight, 276);
   assert.ok(placed.top >= 12);
   assert.ok(placed.top + placed.height <= 488);
+});
+
+test('popover placement waits for a nonzero viewport and recalculates after resize', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.hasMeasurableViewport, 'function');
+  assert.equal(model.hasMeasurableViewport({ width: 0, height: 600 }), false);
+  assert.equal(model.hasMeasurableViewport({ width: 800, height: 0 }), false);
+  assert.equal(model.hasMeasurableViewport({ width: 800, height: 600 }), true);
+
+  const anchor = { left: 740, right: 780, top: 120, bottom: 140, width: 40, height: 20 };
+  const large = model.calculatePopoverPosition(anchor, { width: 440, height: 360 }, { width: 800, height: 600 });
+  const resized = model.calculatePopoverPosition(anchor, { width: 440, height: 360 }, { width: 380, height: 500 });
+  assert.equal(large.width, 440);
+  assert.equal(resized.width, 356);
+  assert.equal(resized.left, 12);
+  assert.equal(resized.placement, 'bottom');
+  assert.equal(model.hasMeasurableViewport({ width: 0, height: 0 }), false);
 });
 
 test('face limit uses the same UTF-16 length unit as maxlength', () => {
@@ -292,9 +310,30 @@ test('editor does not call browser dialogs or define mockup settings data', () =
   assert.doesNotMatch(source, /\bconst\s+(?:KINDS|SAVED|PRESETS)\s*=/);
 });
 
+test('hidden editor surfaces only receive flex display while visible', () => {
+  const css = read('options-editor.css');
+  for (const name of ['validation', 'presets', 'preset-confirmation']) {
+    assert.match(css, new RegExp(`\\.options-editor-${name}:not\\(\\[hidden\\]\\)`));
+  }
+});
+
+test('variables are inline accessible insertion controls inside their explanatory text', () => {
+  assert.match(source, /replaceVariableReferences\(variablesHelp, kind\)/);
+  assert.doesNotMatch(source, /makeElement\('div', 'options-editor-variables'\)/);
+  assert.doesNotMatch(source, /options-editor-command-example/);
+  assert.doesNotMatch(source, /commandPlaceholder/);
+});
+
+test('the action bar is an opaque sticky end to the scrollable editor content', () => {
+  const css = read('options-editor.css');
+  assert.match(css, /\.options-editor-actions\s*\{[^}]*position:\s*sticky/s);
+  assert.match(css, /\.options-editor-actions\s*\{[^}]*background:\s*var\(--panel\)/s);
+  assert.match(css, /\.options-editor-actions\s*\{[^}]*padding:\s*\d+px\s+0\s+\d+px/s);
+});
+
 test('the editor locale block follows its anchor in the same order in all five catalogues', () => {
   const keys = [
-    'ext_d_editor_title', 'ext_d_editor_close', 'ext_d_editor_commandPlaceholder',
+    'ext_d_editor_title', 'ext_d_editor_close',
     'ext_d_editor_variableInsert', 'ext_d_editor_moveEarlier', 'ext_d_editor_moveLater',
     'ext_d_editor_replacePreset', 'ext_d_editor_confirmReplace', 'ext_d_editor_confirm',
     'ext_d_editor_cancel', 'ext_d_editor_cannotUpdate', 'ext_d_editor_limitReached',

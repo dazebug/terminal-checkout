@@ -269,6 +269,12 @@ function calculatePopoverPosition(anchor, popover, viewport, margin = 12, gap = 
   return { top, left, width, height, maxHeight, arrowX, placement };
 }
 
+/** @returns {boolean} */
+function hasMeasurableViewport(viewport) {
+  return Number.isFinite(viewport?.width) && viewport.width > 0
+    && Number.isFinite(viewport?.height) && viewport.height > 0;
+}
+
 let root = null;
 let engine = null;
 let snapshot = null;
@@ -279,6 +285,8 @@ let failureMessage = '';
 let instanceCounter = 0;
 let inputDrag = null;
 let armedInputDragRow = null;
+let popoverPositionFrame = null;
+let cancelPopoverPositionFrame = null;
 
 function disarmInputDrag() {
   if (armedInputDragRow) armedInputDragRow.draggable = false;
@@ -306,7 +314,6 @@ function editorMessage(name, ...args) {
   switch (name) {
     case 'title': return tr('ext.d.editor.title');
     case 'close': return tr('ext.d.editor.close');
-    case 'commandPlaceholder': return tr('ext.d.editor.commandPlaceholder');
     case 'variableInsert': return tr('ext.d.editor.variableInsert', ...args);
     case 'moveEarlier': return tr('ext.d.editor.moveEarlier');
     case 'moveLater': return tr('ext.d.editor.moveLater');
@@ -488,6 +495,9 @@ function closePopover({ restoreFocus = true } = {}) {
   if (!active) return;
   const { kind, uid, restoreFocusTo } = active;
   cancelInputDrag();
+  if (popoverPositionFrame !== null) cancelPopoverPositionFrame?.();
+  popoverPositionFrame = null;
+  cancelPopoverPositionFrame = null;
   active = null;
   pendingPresetId = null;
   failureMessage = '';
@@ -497,15 +507,47 @@ function closePopover({ restoreFocus = true } = {}) {
   else focusFallback(kind, uid);
 }
 
+function readViewportSize() {
+  const rootElement = document.documentElement;
+  return {
+    width: Number.isFinite(window.innerWidth) ? window.innerWidth : Number(rootElement.clientWidth) || 0,
+    height: Number.isFinite(window.innerHeight) ? window.innerHeight : Number(rootElement.clientHeight) || 0,
+  };
+}
+
+function schedulePopoverPosition() {
+  if (!active || popoverPositionFrame !== null) return;
+  const place = () => {
+    popoverPositionFrame = null;
+    cancelPopoverPositionFrame = null;
+    if (active && hasMeasurableViewport(readViewportSize())) positionPopover();
+  };
+  if (typeof window.requestAnimationFrame === 'function') {
+    popoverPositionFrame = window.requestAnimationFrame(place);
+    cancelPopoverPositionFrame = () => window.cancelAnimationFrame?.(popoverPositionFrame);
+  } else {
+    popoverPositionFrame = window.setTimeout(place, 0);
+    cancelPopoverPositionFrame = () => window.clearTimeout(popoverPositionFrame);
+  }
+}
+
 function positionPopover() {
   const panel = currentPanel();
   if (!panel || !active?.anchor) return;
+  const viewport = readViewportSize();
+  if (!hasMeasurableViewport(viewport)) {
+    schedulePopoverPosition();
+    return;
+  }
+  panel.style.width = '';
+  panel.style.maxHeight = '';
+  const content = panel.querySelector('.options-editor-content');
+  if (content) content.style.maxHeight = '';
   let popoverRect = panel.getBoundingClientRect();
-  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+  const { width: viewportWidth, height: viewportHeight } = viewport;
   if (!popoverRect.width || !popoverRect.height) {
-    const fallbackWidth = Math.min(440, Math.max(0, viewportWidth - 24));
-    const fallbackHeight = Math.min(panel.scrollHeight || 560, Math.max(0, viewportHeight - 24));
+    const fallbackWidth = Math.min(440, viewportWidth - 24);
+    const fallbackHeight = Math.min(panel.scrollHeight || 560, viewportHeight - 24);
     popoverRect = { width: popoverRect.width || fallbackWidth, height: popoverRect.height || fallbackHeight };
   }
   let anchorRect = active.anchorRect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
@@ -534,7 +576,6 @@ function positionPopover() {
   panel.style.top = `${placed.top}px`;
   panel.style.width = `${placed.width}px`;
   panel.style.maxHeight = `${placed.maxHeight}px`;
-  const content = panel.querySelector('.options-editor-content');
   if (content) content.style.maxHeight = `${Math.max(0, placed.maxHeight - 2)}px`;
   panel.style.setProperty('--editor-arrow-x', `${placed.arrowX}px`);
   panel.dataset.placement = placed.placement;
@@ -751,6 +792,26 @@ function createField({ name, labelKey, value, type = 'input', maxLength = null }
   return { field, control };
 }
 
+function replaceVariableReferences(container, kind) {
+  const allowed = new Set(variablesForKind(kind));
+  for (const code of container.querySelectorAll('code')) {
+    const match = code.textContent.match(/^\{([A-Za-z_]\w*)\}$/);
+    const name = match?.[1];
+    if (!name || !allowed.has(name)) continue;
+    const token = makeButton(code.textContent, 'options-editor-variable', 'insert-variable');
+    token.dataset.variable = name;
+    addAccessibleLabel(token, 'ext.d.editor.variableInsert', code.textContent);
+    const description = code.nextElementSibling?.classList.contains('faint')
+      ? code.nextElementSibling
+      : null;
+    if (description) {
+      description.id = description.id || `options-editor-variable-description-${++instanceCounter}`;
+      token.setAttribute('aria-describedby', description.id);
+    }
+    code.replaceWith(token);
+  }
+}
+
 function buildPresetChoices(kind) {
   const choices = makeElement('div', 'options-editor-presets');
   choices.hidden = true;
@@ -805,20 +866,11 @@ function buildPopover(button) {
   const commandBox = makeElement('div', 'options-editor-command-box');
   commandBox.append(prompt, commandField.control);
   commandField.field.appendChild(commandBox);
-  commandField.field.appendChild(makeElement(
-    'span', 'options-editor-command-example', editorMessage('commandPlaceholder'),
-  ));
   const variablesHelp = makeElement('div', 'options-editor-variable-help');
   // These five existing catalogue entries are trusted extension markup; no setting value is used here.
   variablesHelp.innerHTML = SECTION_VARIABLE_HELP[kind]();
-  const variableList = makeElement('div', 'options-editor-variables');
-  for (const name of variablesForKind(kind)) {
-    const token = makeButton(`{${name}}`, 'options-editor-variable', 'insert-variable');
-    token.dataset.variable = name;
-    addAccessibleLabel(token, 'ext.d.editor.variableInsert', `{${name}}`);
-    variableList.appendChild(token);
-  }
-  commandSection.append(commandField.field, variablesHelp, variableList);
+  replaceVariableReferences(variablesHelp, kind);
+  commandSection.append(commandField.field, variablesHelp);
 
   const validation = makeElement('div', 'options-editor-validation');
   validation.setAttribute('aria-live', 'polite');
@@ -852,7 +904,7 @@ function buildPopover(button) {
   dialogHeading.id = `options-editor-title-${++instanceCounter}`;
   panel.setAttribute('aria-labelledby', dialogHeading.id);
   panel.appendChild(dialogHeading);
-  inner.append(header, fields, palette, commandSection, validation, futureSlot, actions, presetChoices, confirmation, status);
+  inner.append(header, fields, palette, commandSection, validation, futureSlot, presetChoices, confirmation, status, actions);
   panel.appendChild(inner);
   root.replaceChildren(panel);
   updatePanel();
@@ -1202,7 +1254,7 @@ function handlePointerDown(event) {
 }
 
 function handleWindowChange() {
-  positionPopover();
+  schedulePopoverPosition();
 }
 
 function handleMouseDown(event) {

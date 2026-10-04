@@ -410,9 +410,6 @@
   "ext_d_editor_close": {
     "message": "エディターを閉じる"
   },
-  "ext_d_editor_commandPlaceholder": {
-    "message": "{cd} && claude"
-  },
   "ext_d_editor_variableInsert": {
     "message": "カーソル位置に$ARG1$を挿入",
     "placeholders": {
