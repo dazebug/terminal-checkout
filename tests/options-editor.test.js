@@ -96,6 +96,14 @@ test('choosing in the add picker adds the button, then opens that button\'s edit
     'a snapshot must not close the add picker for lacking a current button');
 });
 
+test('a whole-button preset replacement rewrites every field, the focused one included', () => {
+  assert.match(functionBody('updatePanel'), /syncFieldValues\(button\);/);
+  assert.match(functionBody('syncFieldValues'), /force \|\| document\.activeElement !== field/);
+  assert.match(functionBody('replaceWithPreset'),
+    /if \(result\?\.ok\) \{[\s\S]*?syncFieldValues\(currentButton\(\), \{ force: true \}\)/,
+    'a dropped preset replaces the button while buildPopover has focused the face field');
+});
+
 test('open can start replacing the button with a preset dropped on it', () => {
   const choose = functionBody('choosePreset');
   assert.match(choose, /requiresPresetConfirmation\(currentButton\(\)\)[\s\S]*replaceWithPreset\(presetId\)/);

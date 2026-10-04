@@ -839,6 +839,14 @@ function renderPresetConfirmation(button) {
   }
 }
 
+/** Write the button into its fields. A field being typed in keeps its text unless `force`: a whole-button replacement overrides it. */
+function syncFieldValues(button, { force = false } = {}) {
+  for (const name of ['face', 'label', 'command']) {
+    const field = fieldInPanel(name);
+    if (field && (force || document.activeElement !== field) && field.value !== button[name]) field.value = button[name];
+  }
+}
+
 function updatePanel() {
   if (!active || !root) return;
   const button = currentButton();
@@ -848,12 +856,7 @@ function updatePanel() {
   }
   const list = snapshot.buttons[active.kind];
   const index = buttonIndex(snapshot, active.kind, active.uid);
-  const face = fieldInPanel('face');
-  const label = fieldInPanel('label');
-  const command = fieldInPanel('command');
-  if (face && document.activeElement !== face && face.value !== button.face) face.value = button.face;
-  if (label && document.activeElement !== label && label.value !== button.label) label.value = button.label;
-  if (command && document.activeElement !== command && command.value !== button.command) command.value = button.command;
+  syncFieldValues(button);
   renderClaudeInputs(button);
   renderExampleDock(button);
   const heading = currentPanel().querySelector('.options-editor-heading-name');
@@ -1245,6 +1248,7 @@ async function replaceWithPreset(presetId, confirmed = false) {
   const result = await dispatchAction(presetReplaceAction(kind, uid, presetId, confirmed));
   if (!active || active.kind !== kind || active.uid !== uid) return;
   if (result?.ok) {
+    syncFieldValues(currentButton(), { force: true });
     refreshAnchorFromReplica();
     pendingPresetId = null;
     const choices = currentPanel()?.querySelector('.options-editor-presets');
