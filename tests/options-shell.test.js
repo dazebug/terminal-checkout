@@ -71,3 +71,57 @@ test('save bar state comes from the engine snapshot and keeps the first-load gat
   assert.equal(clean.discardDisabled, true);
   assert.equal(clean.showStatus, false);
 });
+
+test('sync conflict copy does not offer export as a way to preserve unsaved edits', () => {
+  const root = path.join(__dirname, '../extension/_locales');
+  const exportTerms = {
+    en: /\bexport\b/i,
+    ko: /내보내기/,
+    ja: /エクスポート/,
+    zh_CN: /导出/,
+    zh_TW: /匯出/,
+  };
+  for (const [locale, term] of Object.entries(exportTerms)) {
+    const messages = JSON.parse(fs.readFileSync(path.join(root, locale, 'messages.json'), 'utf8'));
+    for (const key of ['ext_banner_stale', 'ext_error_saveConflict', 'ext_d_shell_staleHelp']) {
+      assert.doesNotMatch(messages[key].message, term, `${locale}/${key} recommends export`);
+    }
+  }
+
+  const english = JSON.parse(fs.readFileSync(path.join(root, 'en/messages.json'), 'utf8'));
+  assert.match(english.ext_error_saveConflict.message, /accept the latest settings, reapply your edits, then Save/i);
+  assert.match(english.ext_d_shell_staleHelp.message, /accept the latest settings, reapply your edits, then Save/i);
+});
+
+test('global settings view state follows the snapshot and maps override validation', () => {
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(source, context);
+  const viewState = vm.runInContext('optionsShellSettingsViewState', context);
+  const snapshot = {
+    load: { loaded: true },
+    save: { saving: false, importing: false },
+    globalSettings: {
+      defaultMain: '',
+      repoMainBranch: [
+        { index: 0, repo: 'partial-repo', branch: '' },
+        { index: 1, repo: 'same-repo', branch: 'main' },
+      ],
+    },
+    validation: {
+      overrides: [
+        { index: 0, errors: ['incomplete'] },
+        { index: 1, errors: ['duplicate'] },
+      ],
+    },
+  };
+  const result = JSON.parse(JSON.stringify(viewState(snapshot)));
+  assert.equal(result.disabled, false);
+  assert.equal(result.defaultMain, '');
+  assert.equal(result.showEmptyOverrides, false);
+  assert.deepEqual(result.overrides.map(row => row.validationMessage), [
+    { key: 'ext.validate.override.incomplete', args: [1] },
+    { key: 'ext.validate.override.duplicate', args: [2, 'same-repo'] },
+  ]);
+  assert.equal(viewState({ ...snapshot, save: { saving: false, importing: true } }).disabled, true);
+  assert.equal(viewState({ ...snapshot, load: { loaded: false } }).disabled, true);
+});

@@ -1,10 +1,32 @@
 .options-shell {
+  position: relative;
+  padding: 8px 0 12px;
+}
+
+.options-shell-sticky {
   position: sticky;
   top: 0;
   z-index: 20;
   padding: 8px 0 12px;
   background: var(--bg);
 }
+
+.options-shell-panel {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.options-shell-panel label { display: block; }
+.options-shell-main-input { width: 220px; margin-bottom: 18px; }
+.options-shell-settings-actions,
+.options-shell-backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.options-shell-override-table { margin-top: 4px; }
+.options-shell-override-table td { vertical-align: top; }
+.options-shell-override-table input { width: 100%; }
+.options-shell-override-table .btn-secondary { padding: 5px 8px; }
+.options-shell-override-error { margin-top: 5px; color: var(--err); font-size: 10px; line-height: 1.4; }
 
 .options-shell-savebar,
 .options-shell-actions,
@@ -68,7 +90,8 @@
 .options-shell-confirm-message,
 .options-shell-notice-title,
 .options-shell-migration-intro,
-.options-shell-migration-hint {
+.options-shell-migration-hint,
+.options-shell-stale-help {
   margin-bottom: 9px;
   color: var(--dim);
   font-size: 12px;
@@ -80,6 +103,7 @@
 .options-shell-stale { border-color: rgba(224, 108, 117, 0.45); }
 .options-shell-stale .options-shell-notice-title { color: var(--err); }
 .options-shell-inline-message { margin-top: 8px; color: var(--dim); font-size: 11px; }
+.options-shell-stale-help { margin-top: 6px; }
 .options-shell-migration-badge {
   margin-top: 8px;
   padding: 6px 11px;
@@ -161,4 +185,7 @@
   .options-shell-save-state { flex-basis: 100%; }
   .options-shell-actions { flex-wrap: wrap; }
   .options-shell-load-error { align-items: flex-start; flex-direction: column; }
+  .options-shell-panel { padding: 12px; }
+  .options-shell-override-table th { font-size: 9px; }
+  .options-shell-override-table td { padding-right: 4px; }
 }

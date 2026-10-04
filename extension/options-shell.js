@@ -30,6 +30,26 @@ function optionsShellViewState(snapshot) {
   };
 }
 
+/** @param {OptionsEngineSnapshot} snapshot @returns {{disabled: boolean, defaultMain: string, showEmptyOverrides: boolean, overrides: Array<{index: number, repo: string, branch: string, validationMessage: {key: string, args: Array<string|number>}|null}>}} */
+function optionsShellSettingsViewState(snapshot) {
+  const diagnostics = new Map(snapshot.validation.overrides.map(row => [row.index, row.errors]));
+  const overrides = snapshot.globalSettings.repoMainBranch.map(row => {
+    const errors = diagnostics.get(row.index) || [];
+    const validationMessage = errors.includes('duplicate')
+      ? { key: 'ext.validate.override.duplicate', args: [row.index + 1, row.repo.trim()] }
+      : errors.includes('incomplete')
+        ? { key: 'ext.validate.override.incomplete', args: [row.index + 1] }
+        : null;
+    return { ...row, validationMessage };
+  });
+  return {
+    disabled: !snapshot.load.loaded || snapshot.save.saving || snapshot.save.importing,
+    defaultMain: snapshot.globalSettings.defaultMain,
+    showEmptyOverrides: overrides.length === 0,
+    overrides,
+  };
+}
+
 function optionsShellElement(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -48,6 +68,12 @@ function optionsShellMessage(value) {
   return value || tr('ext.migration.noTooltip');
 }
 
+function optionsShellHtmlElement(tag, className, html) {
+  const node = optionsShellElement(tag, className);
+  node.innerHTML = html;
+  return node;
+}
+
 /** @type {{mount: (root: HTMLElement, engine: OptionsEngine) => void}} */
 window.optionsShell = Object.freeze({
   /** @param {HTMLElement} root @param {OptionsEngine} engine */
@@ -55,6 +81,7 @@ window.optionsShell = Object.freeze({
     if (!root || !engine) return;
 
     const shell = optionsShellElement('section', 'options-shell');
+    const sticky = optionsShellElement('div', 'options-shell-sticky');
     const saveBar = optionsShellElement('div', 'options-shell-savebar');
     saveBar.setAttribute('role', 'region');
     const regionName = optionsShellElement('span', 'options-shell-sr-only', tr('ext.header.options'));
@@ -84,6 +111,7 @@ window.optionsShell = Object.freeze({
     stale.setAttribute('aria-labelledby', 'shell-stale-title');
     const staleTitle = optionsShellElement('p', 'options-shell-notice-title', tr('ext.d.shell.stale'));
     staleTitle.id = 'shell-stale-title';
+    const staleHelp = optionsShellElement('p', 'options-shell-stale-help', tr('ext.d.shell.staleHelp'));
     const staleActions = optionsShellElement('div', 'options-shell-actions');
     const staleReload = optionsShellButton('shell-stale-reload', 'btn-secondary', tr('ext.d.shell.reload'));
     const staleAccept = optionsShellButton('shell-stale-accept', 'btn-secondary', tr('ext.d.shell.acceptLatest'));
@@ -91,7 +119,7 @@ window.optionsShell = Object.freeze({
     staleActions.append(staleReload, staleAccept, staleLater);
     const staleMessage = optionsShellElement('p', 'options-shell-inline-message');
     staleMessage.hidden = true;
-    stale.append(staleTitle, staleActions, staleMessage);
+    stale.append(staleTitle, staleHelp, staleActions, staleMessage);
 
     const migrationBadge = optionsShellButton('shell-migration-badge', 'options-shell-migration-badge', '');
     migrationBadge.hidden = true;
@@ -113,7 +141,61 @@ window.optionsShell = Object.freeze({
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
 
-    shell.append(saveBar, confirmation, stale, migrationBadge, migrationPanel, loadError, status);
+    sticky.append(saveBar, confirmation, stale, migrationBadge, migrationPanel, loadError, status);
+
+    const mainSettings = optionsShellElement('section', 'section options-shell-panel');
+    mainSettings.setAttribute('aria-labelledby', 'shell-main-title');
+    const mainTitle = optionsShellHtmlElement('h2', 'section-prompt', tHTML('ext.section.main.title'));
+    mainTitle.id = 'shell-main-title';
+    const mainHelp = optionsShellHtmlElement('p', 'help', tHTML('ext.section.main.help'));
+    mainHelp.id = 'shell-main-help';
+    const defaultMainLabel = optionsShellElement('label', '', tr('ext.field.defaultMain'));
+    defaultMainLabel.htmlFor = 'shell-default-main';
+    const defaultMain = document.createElement('input');
+    defaultMain.type = 'text';
+    defaultMain.id = 'shell-default-main';
+    defaultMain.className = 'options-shell-main-input';
+    const overrideTable = optionsShellElement('table', 'override-table options-shell-override-table');
+    const overrideHead = document.createElement('thead');
+    const overrideHeaderRow = document.createElement('tr');
+    const repoHeading = optionsShellElement('th', '', tr('ext.table.repository'));
+    repoHeading.scope = 'col';
+    const branchHeading = optionsShellElement('th', '', tr('ext.table.mainBranch'));
+    branchHeading.scope = 'col';
+    const removeHeading = document.createElement('th');
+    removeHeading.scope = 'col';
+    overrideHeaderRow.append(repoHeading, branchHeading, removeHeading);
+    overrideHead.appendChild(overrideHeaderRow);
+    const overrideBody = document.createElement('tbody');
+    overrideBody.id = 'shell-overrides-body';
+    overrideTable.append(overrideHead, overrideBody);
+    const overridesEmpty = optionsShellElement('div', 'override-empty', tr('ext.override.empty'));
+    overridesEmpty.id = 'shell-overrides-empty';
+    const addOverride = optionsShellButton('shell-add-override', 'btn-secondary', tr('ext.button.addOverride'));
+    const mainActions = optionsShellElement('div', 'options-shell-settings-actions');
+    mainActions.appendChild(addOverride);
+    mainSettings.append(mainTitle, mainHelp, defaultMainLabel, defaultMain, overrideTable, overridesEmpty, mainActions);
+
+    const backup = optionsShellElement('section', 'section options-shell-panel');
+    backup.setAttribute('aria-labelledby', 'shell-backup-title');
+    const backupTitle = optionsShellHtmlElement('h2', 'section-prompt', tHTML('ext.section.backup.title'));
+    backupTitle.id = 'shell-backup-title';
+    const backupHelp1 = optionsShellHtmlElement('p', 'help', tHTML('ext.section.backup.help1'));
+    const backupHelp2 = optionsShellHtmlElement('p', 'help', tHTML('ext.section.backup.help2', tr('ext.button.save')));
+    const backupHelp3 = optionsShellHtmlElement('p', 'help', tHTML('ext.section.backup.help3'));
+    const backupActions = optionsShellElement('div', 'options-shell-backup-actions');
+    const exportButton = optionsShellButton('shell-export', 'btn-secondary', tr('ext.button.export'));
+    const importButton = optionsShellButton('shell-import', 'btn-secondary', tr('ext.button.import'));
+    const resetButton = optionsShellButton('shell-reset', 'btn-secondary', tr('ext.button.reset'));
+    const importFile = document.createElement('input');
+    importFile.type = 'file';
+    importFile.id = 'shell-import-file';
+    importFile.accept = 'application/json,.json';
+    importFile.hidden = true;
+    backupActions.append(exportButton, importButton, resetButton, importFile);
+    backup.append(backupTitle, backupHelp1, backupHelp2, backupHelp3, backupActions);
+
+    shell.append(sticky, mainSettings, backup);
     root.replaceChildren(shell);
 
     let pendingConfirmation = null;
@@ -121,6 +203,7 @@ window.optionsShell = Object.freeze({
     let localStaleMessage = '';
     let migrationSignature = '';
     let migrationFocusUid = null;
+    let overrideSignature = null;
 
     function closeConfirmation(restoreFocus = true) {
       pendingConfirmation = null;
@@ -133,12 +216,15 @@ window.optionsShell = Object.freeze({
       pendingConfirmation = action;
       confirmationReturnFocus = document.activeElement;
       const isAccept = action.type === 'adopt-latest';
+      const isReset = action.type === 'reset';
       confirmationMessage.textContent = isAccept
         ? tr('ext.d.shell.acceptConfirm')
-        : tr('ext.d.shell.discardConfirm');
+        : isReset
+          ? tr('ext.d.shell.resetConfirm', tr('ext.button.save'))
+          : tr('ext.d.shell.discardConfirm');
       confirmAction.textContent = isAccept
         ? tr('ext.d.shell.acceptLatest')
-        : tr('ext.d.shell.discard');
+        : isReset ? tr('ext.button.reset') : tr('ext.d.shell.discard');
       confirmation.hidden = false;
       keepEditing.focus();
     }
@@ -246,6 +332,72 @@ window.optionsShell = Object.freeze({
       }
     }
 
+    function createOverrideRow(row) {
+      const trElement = document.createElement('tr');
+      trElement.dataset.index = String(row.index);
+
+      const repoCell = document.createElement('td');
+      const repoLabel = optionsShellElement('label', 'options-shell-sr-only', `${tr('ext.table.repository')} ${row.index + 1}`);
+      repoLabel.htmlFor = `shell-override-${row.index}-repo`;
+      const repoInput = document.createElement('input');
+      repoInput.type = 'text';
+      repoInput.id = repoLabel.htmlFor;
+      repoInput.dataset.overrideField = 'repo';
+      const error = optionsShellElement('p', 'options-shell-override-error');
+      error.hidden = true;
+      error.setAttribute('aria-live', 'polite');
+      repoCell.append(repoLabel, repoInput, error);
+
+      const branchCell = document.createElement('td');
+      const branchLabel = optionsShellElement('label', 'options-shell-sr-only', `${tr('ext.table.mainBranch')} ${row.index + 1}`);
+      branchLabel.htmlFor = `shell-override-${row.index}-branch`;
+      const branchInput = document.createElement('input');
+      branchInput.type = 'text';
+      branchInput.id = branchLabel.htmlFor;
+      branchInput.dataset.overrideField = 'branch';
+      branchCell.append(branchLabel, branchInput);
+
+      const actionsCell = document.createElement('td');
+      const remove = optionsShellButton(`shell-override-remove-${row.index}`, 'btn-secondary', tr('ext.button.remove'));
+      remove.dataset.overrideRemove = String(row.index);
+      actionsCell.appendChild(remove);
+      trElement.append(repoCell, branchCell, actionsCell);
+      return trElement;
+    }
+
+    function renderSettings(snapshot) {
+      const settings = optionsShellSettingsViewState(snapshot);
+      if (defaultMain.value !== settings.defaultMain) defaultMain.value = settings.defaultMain;
+      defaultMain.disabled = settings.disabled;
+      addOverride.disabled = settings.disabled;
+      exportButton.disabled = settings.disabled;
+      importButton.disabled = settings.disabled;
+      resetButton.disabled = settings.disabled;
+      importFile.disabled = settings.disabled;
+      overrideTable.hidden = settings.showEmptyOverrides;
+      overridesEmpty.hidden = !settings.showEmptyOverrides;
+
+      const signature = settings.overrides.map(row => row.index).join(',');
+      if (signature !== overrideSignature) {
+        overrideBody.replaceChildren(...settings.overrides.map(createOverrideRow));
+        overrideSignature = signature;
+      }
+      for (const row of settings.overrides) {
+        const rowElement = overrideBody.querySelector(`tr[data-index="${row.index}"]`);
+        if (!rowElement) continue;
+        const repoInput = rowElement.querySelector('[data-override-field="repo"]');
+        const branchInput = rowElement.querySelector('[data-override-field="branch"]');
+        if (repoInput.value !== row.repo) repoInput.value = row.repo;
+        if (branchInput.value !== row.branch) branchInput.value = row.branch;
+        const error = rowElement.querySelector('.options-shell-override-error');
+        error.hidden = !row.validationMessage;
+        error.textContent = !row.validationMessage ? ''
+          : row.validationMessage.key === 'ext.validate.override.duplicate'
+            ? tr('ext.validate.override.duplicate', row.validationMessage.args[0], row.validationMessage.args[1])
+            : tr('ext.validate.override.incomplete', row.validationMessage.args[0]);
+      }
+    }
+
     function render(snapshot) {
       const viewState = optionsShellViewState(snapshot);
       const saveLabels = {
@@ -269,6 +421,7 @@ window.optionsShell = Object.freeze({
       status.className = `options-shell-status ${snapshot.status.type}`;
       status.textContent = snapshot.status.message;
       renderMigration(snapshot.migration, viewState);
+      renderSettings(snapshot);
       if (!viewState.showStaleBanner) localStaleMessage = '';
     }
 
@@ -277,7 +430,9 @@ window.optionsShell = Object.freeze({
     keepEditing.addEventListener('click', () => closeConfirmation());
     confirmAction.addEventListener('click', async () => {
       if (!pendingConfirmation) return;
-      const action = { ...pendingConfirmation, confirmed: true };
+      const action = pendingConfirmation.type === 'reset'
+        ? pendingConfirmation
+        : { ...pendingConfirmation, confirmed: true };
       closeConfirmation(false);
       const result = await runAction(action);
       if (result.ok) save.focus();
@@ -319,6 +474,40 @@ window.optionsShell = Object.freeze({
       if (!button) return;
       void runAction({ type: button.id === 'shell-migration-apply' ? 'migration-apply' : 'migration-keep' });
     });
+    defaultMain.addEventListener('input', () => {
+      void runAction({ type: 'main-patch', value: defaultMain.value });
+    });
+    overrideBody.addEventListener('input', event => {
+      const input = event.target.closest('[data-override-field]');
+      const row = input?.closest('tr[data-index]');
+      if (!input || !row) return;
+      const patch = { [input.dataset.overrideField]: input.value };
+      void runAction({ type: 'override-patch', index: Number(row.dataset.index), patch });
+    });
+    addOverride.addEventListener('click', async () => {
+      const result = await runAction({ type: 'override-add' });
+      if (!result.ok) return;
+      const lastIndex = result.snapshot.globalSettings.repoMainBranch.length - 1;
+      overrideBody.querySelector(`#shell-override-${lastIndex}-repo`)?.focus();
+    });
+    overrideBody.addEventListener('click', async event => {
+      const button = event.target.closest('[data-override-remove]');
+      if (!button) return;
+      const index = Number(button.dataset.overrideRemove);
+      const result = await runAction({ type: 'override-remove', index });
+      if (!result.ok) return;
+      const nextIndex = Math.min(index, result.snapshot.globalSettings.repoMainBranch.length - 1);
+      if (nextIndex >= 0) overrideBody.querySelector(`#shell-override-${nextIndex}-repo`)?.focus();
+      else addOverride.focus();
+    });
+    exportButton.addEventListener('click', () => { void runAction({ type: 'export-saved' }); });
+    importButton.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', () => {
+      const file = importFile.files?.[0];
+      importFile.value = '';
+      if (file) void runAction({ type: 'import-file', file });
+    });
+    resetButton.addEventListener('click', () => showConfirmation({ type: 'reset' }));
 
     render(engine.getSnapshot());
     engine.subscribe(render);

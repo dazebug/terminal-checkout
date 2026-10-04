@@ -42,6 +42,20 @@ test('the linked module stylesheets exist as local assets', () => {
   }
 });
 
+test('the shell replaces the legacy global settings, backup, and reset surfaces', () => {
+  const html = read('options.html');
+  const shell = read('options-shell.js');
+  const styles = read('options-shell.css');
+  assert.match(html, /<section class="section legacy-shell-ui" id="legacy-main-settings">/);
+  assert.match(html, /<section class="section legacy-shell-ui" id="legacy-backup-settings">/);
+  assert.match(html, /<div class="actions legacy-shell-ui">/);
+  assert.match(styles, /\.legacy-shell-ui\s*\{\s*display:\s*none\s*!important;/);
+  for (const action of ['main-patch', 'override-add', 'override-patch', 'override-remove', 'export-saved', 'import-file', 'reset']) {
+    assert.match(shell, new RegExp(`type: '${action}'`));
+  }
+  assert.match(read('options.js'), /const defaultMain = state\.defaultMain\.trim\(\) \|\| DEFAULT_MAIN/);
+});
+
 test('the engine dispatch contract is promise-based with structured outcomes', () => {
   const source = read('options.js');
   assert.match(source, /@typedef \{Object\} OptionsDispatchResult[\s\S]*?@property \{boolean\} ok[\s\S]*?@property \{\('not-loaded'\|'busy'\|'limit'\|'not-found'\|'needs-confirmation'\|'invalid'\|'failed'\)=\} \[reason\][\s\S]*?@property \{string=\} \[createdUid\][\s\S]*?@property \{OptionsEngineSnapshot\} snapshot/);

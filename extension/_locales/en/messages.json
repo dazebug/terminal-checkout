@@ -8,7 +8,7 @@
     "description": "The one-line description Chrome shows next to the name."
   },
   "ext_banner_stale": {
-    "message": "⚠ Settings changed on another device since this page loaded. Reload to see them — export first if you want to keep unsaved edits."
+    "message": "⚠ Settings changed on another device since this page loaded. Reload applies the latest settings only when there are no unsaved edits. Your edits stay on this page. To save them, accept the latest settings, reapply your edits, then Save."
   },
   "ext_button_addButton": {
     "message": "+ Add Button"
@@ -87,6 +87,14 @@
   "ext_d_shell_reloadFailed": {
     "message": "Settings could not be reloaded. Your current edits are still here."
   },
+  "ext_d_shell_resetConfirm": {
+    "message": "Replace the current edits with the default presets and clear repository overrides? Nothing is saved until you press $ARG1$.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
   "ext_d_shell_saving": {
     "message": "Saving…"
   },
@@ -98,6 +106,9 @@
   },
   "ext_d_shell_stale": {
     "message": "Settings changed on another device."
+  },
+  "ext_d_shell_staleHelp": {
+    "message": "Your unsaved edits stay on this page. Reload applies the latest settings only when there are no unsaved edits. To save your edits after another device changed settings, accept the latest settings, reapply your edits, then Save."
   },
   "ext_d_shell_waiting": {
     "message": "Waiting for settings…"
@@ -209,7 +220,7 @@
     "message": "Already saving — one moment."
   },
   "ext_error_saveConflict": {
-    "message": "Your settings were not saved: they changed on another device while this page was open. Reload to see what is stored — export first if you want to keep your edits."
+    "message": "Your settings were not saved because they changed on another device. Your edits remain here. Reload applies the latest settings only when there are no unsaved edits. To save your edits, accept the latest settings, reapply your edits, then Save."
   },
   "ext_error_saveLoading": {
     "message": "Settings are being re-read — press $ARG1$ again in a moment.",
