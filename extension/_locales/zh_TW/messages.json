@@ -935,6 +935,50 @@
   "ext_d_replica_drawer_close": {
     "message": "關閉預設抽屜"
   },
+  "ext_d_replica_drawer_title": {
+    "message": "預設抽屜"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "選擇預設，將它新增至此頁面，或取代同一頁面上的按鈕。"
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "使用中"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "新增"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "取代"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "選擇要取代的按鈕。"
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "此頁面沒有可取代的按鈕。"
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "要將「$ARG1$」取代為「$ARG2$」預設嗎？目前的命令也會被取代。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "取代按鈕"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "取消"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "此頁面已達按鈕數量上限。"
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "無法完成預設操作。"
+  },
   "ext_d_replica_place_pr": {
     "message": "位於來源分支旁"
   },
@@ -970,5 +1014,44 @@
   },
   "ext_d_replica_action_failed": {
     "message": "無法移動按鈕。設定未變更。"
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "取得 origin 後簽出 PR 分支；若失敗，則進入該分支對應的 worktree 資料夾。"
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "取得 origin 並簽出 PR 分支（失敗時進入對應的 worktree 資料夾），然後啟動 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "建立或重複使用 PR worktree，快轉合併至 origin 分支後啟動 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "建立或重複使用 PR worktree，並快轉合併至 origin 分支。"
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "啟動 Claude，並以 shell 命令載入 PR 留言和 diff。"
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "為每個選取的 PR 建立或重複使用分離式 worktree，透過 gh 簽出後啟動 Claude。"
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "啟動 Claude，並載入 issue 內容、留言，以及交叉參照的 issue 和 PR 編號。"
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "從已設定的 main 分支建立或重複使用 issue worktree，啟動 Claude 並載入 issue 留言。"
+  },
+  "ext_d_replica_presetDescription_issueOpen": {
+    "message": "在儲存庫資料夾中開啟終端機。"
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "為每個選取的 issue 啟動 Claude，並載入其留言。"
+  },
+  "ext_d_replica_presetDescription_repoOpen": {
+    "message": "在儲存庫資料夾中開啟終端機。"
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "在儲存庫資料夾中開啟終端機並啟動 Claude。"
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "簽出已設定的 main 分支，接著只執行快轉 pull。"
   }
 }

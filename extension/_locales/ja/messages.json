@@ -935,6 +935,50 @@
   "ext_d_replica_drawer_close": {
     "message": "プリセットドロワーを閉じる"
   },
+  "ext_d_replica_drawer_title": {
+    "message": "プリセット一覧"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "プリセットを選び、このページに追加するか、同じページのボタンを置き換えます。"
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "使用中"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "追加"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "置き換え"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "置き換えるボタンを選択してください。"
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "このページに置き換え可能なボタンはありません。"
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "「$ARG1$」を「$ARG2$」プリセットに置き換えますか？現在のコマンドは置き換わります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "ボタンを置き換える"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "キャンセル"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "このページにはこれ以上ボタンを追加できません。"
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "プリセットを適用できませんでした。"
+  },
   "ext_d_replica_place_pr": {
     "message": "head ブランチの横"
   },
@@ -970,5 +1014,44 @@
   },
   "ext_d_replica_action_failed": {
     "message": "ボタンを移動できませんでした。設定は変更されていません。"
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "origin を取得して PR ブランチをチェックアウトし、失敗した場合は規則に沿った worktree フォルダーへ移動します。"
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "origin を取得して PR ブランチをチェックアウトし（失敗時は規則に沿った worktree フォルダーを使用）、Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "PR の worktree を作成または再利用し、origin のブランチまで fast-forward してから Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "PR の worktree を作成または再利用し、origin のブランチまで fast-forward します。"
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "Claude を起動し、PR のコメントと diff をシェルコマンドとして読み込みます。"
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "選択した各 PR の detached worktree を作成または再利用し、gh でチェックアウトして Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "Claude を起動し、issue の本文・コメントと相互参照された issue・PR の番号を読み込みます。"
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "設定済み main ブランチから issue の worktree を作成または再利用し、Claude を起動してコメントを読み込みます。"
+  },
+  "ext_d_replica_presetDescription_issueOpen": {
+    "message": "リポジトリのフォルダーでターミナルを開きます。"
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "選択した各 issue について Claude を起動し、コメントを読み込みます。"
+  },
+  "ext_d_replica_presetDescription_repoOpen": {
+    "message": "リポジトリのフォルダーでターミナルを開きます。"
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "リポジトリのフォルダーでターミナルを開き、Claude を起動します。"
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "設定済み main ブランチをチェックアウトし、fast-forward のみで pull します。"
   }
 }

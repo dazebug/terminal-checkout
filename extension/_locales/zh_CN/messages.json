@@ -935,6 +935,50 @@
   "ext_d_replica_drawer_close": {
     "message": "关闭预设抽屉"
   },
+  "ext_d_replica_drawer_title": {
+    "message": "预设抽屉"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "选择一个预设，将它添加到此页面，或替换同一页面上的按钮。"
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "正在使用"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "添加"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "替换"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "选择要替换的按钮。"
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "此页面没有可替换的按钮。"
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "要将“$ARG1$”替换为“$ARG2$”预设吗？当前命令也会被替换。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "替换按钮"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "取消"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "此页面已达到按钮数量上限。"
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "无法完成预设操作。"
+  },
   "ext_d_replica_place_pr": {
     "message": "位于源分支旁"
   },
@@ -970,5 +1014,44 @@
   },
   "ext_d_replica_action_failed": {
     "message": "无法移动按钮。设置未更改。"
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "获取 origin 后检出 PR 分支；如果失败，则进入该分支对应的 worktree 目录。"
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "获取 origin 并检出 PR 分支（失败时进入对应的 worktree 目录），然后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "创建或复用 PR worktree，将其快进合并到 origin 分支，然后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "创建或复用 PR worktree，并将其快进合并到 origin 分支。"
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "启动 Claude，并以 shell 命令的方式载入 PR 评论和 diff。"
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "为每个选中的 PR 创建或复用分离式 worktree，通过 gh 检出后启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "启动 Claude，并载入 issue 正文、评论，以及交叉引用的 issue 和 PR 编号。"
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "从已配置的 main 分支创建或复用 issue worktree，启动 Claude 并载入 issue 评论。"
+  },
+  "ext_d_replica_presetDescription_issueOpen": {
+    "message": "在仓库目录中打开终端。"
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "为每个选中的 issue 启动 Claude，并载入其评论。"
+  },
+  "ext_d_replica_presetDescription_repoOpen": {
+    "message": "在仓库目录中打开终端。"
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "在仓库目录中打开终端并启动 Claude。"
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "检出已配置的 main 分支，然后仅执行快进 pull。"
   }
 }

@@ -935,6 +935,50 @@
   "ext_d_replica_drawer_close": {
     "message": "프리셋 서랍 닫기"
   },
+  "ext_d_replica_drawer_title": {
+    "message": "프리셋 서랍"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "프리셋을 골라 이 페이지에 추가하거나 같은 페이지의 버튼을 바꾸세요."
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "사용 중"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "추가"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "바꾸기"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "바꿀 버튼을 고르세요."
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "이 페이지에는 바꿀 버튼이 없습니다."
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "“$ARG1$” 버튼을 “$ARG2$” 프리셋으로 바꿀까요? 현재 명령이 교체됩니다.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "버튼 바꾸기"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "취소"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "이 페이지는 버튼을 더 추가할 수 없습니다."
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "프리셋 작업을 완료하지 못했습니다."
+  },
   "ext_d_replica_place_pr": {
     "message": "PR head 브랜치 옆"
   },
@@ -970,5 +1014,44 @@
   },
   "ext_d_replica_action_failed": {
     "message": "버튼을 옮기지 못했습니다. 설정은 바뀌지 않았습니다."
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "origin을 가져온 뒤 PR 브랜치를 체크아웃하고, 실패하면 해당 브랜치의 규칙에 맞는 worktree 폴더로 이동합니다."
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "origin을 가져와 PR 브랜치를 체크아웃하고(실패하면 규칙에 맞는 worktree 폴더 사용), Claude를 시작합니다."
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "PR worktree를 만들거나 재사용하고 origin 브랜치까지 fast-forward한 뒤 Claude를 시작합니다."
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "PR worktree를 만들거나 재사용하고 origin 브랜치까지 fast-forward합니다."
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "Claude를 시작하고 PR 댓글과 diff를 셸 명령으로 불러옵니다."
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "선택한 각 PR의 분리 worktree를 만들거나 재사용하고 gh로 체크아웃한 뒤 Claude를 시작합니다."
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "Claude를 시작하고 이슈 본문·댓글과 교차 참조된 이슈·PR 번호를 불러옵니다."
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "설정된 main 브랜치에서 이슈 worktree를 만들거나 재사용하고 Claude를 시작해 이슈 댓글을 불러옵니다."
+  },
+  "ext_d_replica_presetDescription_issueOpen": {
+    "message": "저장소 폴더에서 터미널을 엽니다."
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "선택한 각 이슈에 대해 Claude를 시작하고 댓글을 불러옵니다."
+  },
+  "ext_d_replica_presetDescription_repoOpen": {
+    "message": "저장소 폴더에서 터미널을 엽니다."
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "저장소 폴더에서 터미널을 열고 Claude를 시작합니다."
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "설정된 main 브랜치를 체크아웃한 뒤 fast-forward 방식으로만 pull합니다."
   }
 }

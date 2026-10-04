@@ -61,6 +61,8 @@ body {
   color: var(--text, #dee3ec);
   font-family: var(--ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif);
   font-size: 13px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .replica-example-banner {
@@ -708,6 +710,8 @@ body {
 .replica-filmstrip-empty { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 1px dashed var(--gh-muted-border); border-radius: 4px; color: var(--gh-muted); }
 
 .replica-drawer {
+  max-height: min(72vh, 760px);
+  overflow-y: auto;
   padding: 14px;
   border-top: 1px solid var(--border, #2a2f3a);
   background: var(--panel, #1b1e26);
@@ -716,8 +720,51 @@ body {
 .replica-drawer[hidden] { display: none; }
 .replica-drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .replica-drawer-heading h2 { margin: 0; color: var(--text, #dee3ec); font-size: 13px; }
-.replica-drawer > p { margin: 10px 0 2px; color: var(--dim, #8b93a3); line-height: 1.5; }
+.replica-drawer-instructions { margin: 10px 0 14px; color: var(--dim, #8b93a3); line-height: 1.5; }
 .replica-drawer-close { width: 30px; min-width: 30px; padding: 0; font-size: 17px; }
+
+.replica-preset-groups { display: grid; gap: 16px; }
+.replica-preset-group { min-width: 0; }
+.replica-preset-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.replica-preset-group-heading h3 { margin: 0; color: var(--text, #dee3ec); font-size: 12px; }
+.replica-preset-group-heading p { margin: 2px 0 0; color: var(--dim, #8b93a3); font-size: 11px; }
+.replica-preset-count { flex: none; color: var(--dim, #8b93a3); font: 10px var(--mono, ui-monospace, monospace); }
+.replica-preset-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 8px; }
+.replica-preset-card { min-width: 0; padding: 10px; border: 1px solid var(--border, #2a2f3a); border-radius: 7px; background: var(--panel, #1b1e26); cursor: grab; }
+.replica-preset-card:active { cursor: grabbing; }
+.replica-preset-card:hover,
+.replica-preset-card.is-preview { border-color: var(--gh-edit-outline); background: var(--gh-edit-wash); }
+.replica-preset-card:focus-visible,
+.replica-preset-action:focus-visible,
+.replica-preset-target-button:focus-visible { outline: 2px solid var(--gh-accent); outline-offset: 2px; }
+.replica-preset-card.is-dragging { opacity: 0.45; }
+.replica-preset-card-main { display: flex; min-width: 0; align-items: flex-start; gap: 8px; }
+.replica-preset-face { display: inline-flex; min-width: 32px; min-height: 30px; flex: none; align-items: center; justify-content: center; border: 1px solid var(--gh-border); border-radius: 5px; background: var(--gh-canvas); }
+.replica-preset-face .gh-button { cursor: default; }
+.replica-preset-copy { min-width: 0; flex: 1; }
+.replica-preset-copy h4 { margin: 0; color: var(--text, #dee3ec); font-size: 12px; }
+.replica-preset-copy p { margin: 4px 0 0; color: var(--dim, #8b93a3); font-size: 11px; line-height: 1.45; }
+.replica-preset-use { display: inline-block; margin-top: 5px; color: var(--gh-tc-green); font-size: 10px; font-weight: 600; }
+.replica-preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.replica-preset-action,
+.replica-preset-target-button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--border, #2a2f3a); border-radius: 5px; background: var(--panel, #1b1e26); color: var(--text, #dee3ec); font: 11px var(--ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); cursor: pointer; }
+.replica-preset-action:hover:not(:disabled),
+.replica-preset-target-button:hover { border-color: var(--gh-dim); }
+.replica-preset-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.replica-preset-action.is-primary { border-color: var(--gh-green); background: var(--gh-green); color: var(--gh-green-fg); }
+.replica-preset-limit { margin: 8px 0; color: var(--gh-warning); font-size: 11px; line-height: 1.45; }
+.replica-preset-replace-targets { display: grid; gap: 6px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border, #2a2f3a); }
+.replica-preset-replace-targets > p { margin: 0; color: var(--dim, #8b93a3); font-size: 11px; }
+.replica-preset-replace-targets > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.replica-preset-target-button { display: inline-flex; align-items: center; gap: 6px; }
+.replica-preset-target-number { color: var(--dim, #8b93a3); font: 10px var(--mono, ui-monospace, monospace); }
+.replica-preset-confirmation { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--gh-warning); border-radius: 6px; background: var(--gh-white-wash); }
+.replica-preset-confirmation p { margin: 0; color: var(--text, #dee3ec); line-height: 1.5; }
+.replica-preset-confirmation > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.replica-preset-group > .replica-preset-limit { margin: 0 0 8px; }
+.replica-slot.is-preset-target { border-color: var(--gh-edit-outline); background: var(--gh-edit-wash); box-shadow: 0 0 0 2px var(--gh-edit-border); }
+.replica-page-card.is-preset-target { border-color: var(--gh-edit-outline); box-shadow: 0 0 0 2px var(--gh-edit-border); }
+.replica-preset-card.is-drop-target { outline: 2px solid var(--gh-edit-outline); outline-offset: 2px; }
 
 @media (max-width: 900px) {
   .replica-workspace { grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -737,6 +784,15 @@ body {
   .gh-pr-grid,
   .gh-repo-grid { grid-template-columns: minmax(0, 1fr); }
   .gh-sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+  .gh-branch-line { flex-wrap: wrap; overflow: visible; }
+  .gh-branch { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+  .gh-repo-header { flex-wrap: wrap; }
+  .gh-branch-line > .replica-slot { flex: 0 0 100%; width: 100%; }
+  .gh-status-line > .replica-slot { flex: 0 0 100%; width: 100%; }
+  .gh-issue-list-heading > .replica-slot { flex: 0 0 100%; width: 100%; }
+  .gh-repo-header > .replica-slot { flex: 0 0 100%; width: 100%; }
+  .gh-list-tools { display: flex; flex-direction: column; }
+  .gh-list-tools > .replica-slot { display: flex; flex: 0 0 auto; width: calc(100% - 18px); margin: 9px 9px 0; }
 }
 
 @media (max-width: 560px) {
@@ -755,7 +811,7 @@ body {
   .gh-nav-item { padding: 0 6px; font-size: 11px; }
   .gh-main { padding: 17px 12px 24px; }
   .gh-branch-line { align-items: flex-start; flex-wrap: wrap; }
-  .gh-branch { max-width: 42vw; }
+  .gh-branch { max-width: none; }
   .replica-slot { min-width: 30px; }
   .replica-slot-label { max-width: 100%; }
   .gh-sidebar { grid-template-columns: minmax(0, 1fr); }

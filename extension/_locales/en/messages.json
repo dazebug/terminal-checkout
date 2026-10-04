@@ -935,6 +935,50 @@
   "ext_d_replica_drawer_close": {
     "message": "Close preset drawer"
   },
+  "ext_d_replica_drawer_title": {
+    "message": "Preset drawer"
+  },
+  "ext_d_replica_drawer_instructions": {
+    "message": "Choose a preset, then add it here or replace a button on the same page."
+  },
+  "ext_d_replica_drawer_inUse": {
+    "message": "In use"
+  },
+  "ext_d_replica_drawer_add": {
+    "message": "Add"
+  },
+  "ext_d_replica_drawer_replace": {
+    "message": "Replace"
+  },
+  "ext_d_replica_drawer_chooseTarget": {
+    "message": "Choose a button to replace."
+  },
+  "ext_d_replica_drawer_noReplaceTargets": {
+    "message": "There are no buttons on this page to replace."
+  },
+  "ext_d_replica_drawer_confirmReplace": {
+    "message": "Replace “$ARG1$” with “$ARG2$”? Its current command will be replaced.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_replica_drawer_confirm": {
+    "message": "Replace button"
+  },
+  "ext_d_replica_drawer_cancel": {
+    "message": "Cancel"
+  },
+  "ext_d_replica_drawer_limit": {
+    "message": "This page has reached its button limit."
+  },
+  "ext_d_replica_drawer_actionFailed": {
+    "message": "The preset action could not be completed."
+  },
   "ext_d_replica_place_pr": {
     "message": "Beside the head branch"
   },
@@ -970,5 +1014,44 @@
   },
   "ext_d_replica_action_failed": {
     "message": "The button could not be moved. Your settings were not changed."
+  },
+  "ext_d_replica_presetDescription_prCheckout": {
+    "message": "Fetch origin, check out the pull request branch, and use its conventional worktree directory if checkout fails."
+  },
+  "ext_d_replica_presetDescription_prCheckoutClaude": {
+    "message": "Fetch origin, check out the pull request branch (or use its conventional worktree directory), then start Claude."
+  },
+  "ext_d_replica_presetDescription_prWorktreeClaude": {
+    "message": "Create or reuse the pull request worktree, fast-forward it from origin, then start Claude."
+  },
+  "ext_d_replica_presetDescription_prWorktree": {
+    "message": "Create or reuse the pull request worktree and fast-forward it from origin."
+  },
+  "ext_d_replica_presetDescription_prReview": {
+    "message": "Start Claude with the pull request comments and diff loaded as shell commands."
+  },
+  "ext_d_replica_presetDescription_prListCheckoutClaude": {
+    "message": "For each selected pull request, create or reuse a detached worktree, check it out with gh, then start Claude."
+  },
+  "ext_d_replica_presetDescription_issueRead": {
+    "message": "Start Claude with the issue body, comments, and numbers of cross-referenced issues and pull requests."
+  },
+  "ext_d_replica_presetDescription_issueStartWork": {
+    "message": "Create or reuse an issue worktree from the configured main branch, start Claude, and load the issue comments."
+  },
+  "ext_d_replica_presetDescription_issueOpen": {
+    "message": "Open a terminal in the repository folder."
+  },
+  "ext_d_replica_presetDescription_issueListTriageClaude": {
+    "message": "For each selected issue, start Claude with its comments loaded."
+  },
+  "ext_d_replica_presetDescription_repoOpen": {
+    "message": "Open a terminal in the repository folder."
+  },
+  "ext_d_replica_presetDescription_repoOpenClaude": {
+    "message": "Open a terminal in the repository folder and start Claude."
+  },
+  "ext_d_replica_presetDescription_repoUpdateMain": {
+    "message": "Check out the configured main branch, then pull with fast-forward only."
   }
 }
