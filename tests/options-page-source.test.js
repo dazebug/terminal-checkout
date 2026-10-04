@@ -183,3 +183,10 @@ test('page inert state is the union of independent engine reasons', () => {
   context.setOptionsPageInertReason('confirmation', [element], false);
   assert.equal(element.inert, false, 'closing the last blocker releases the element');
 });
+
+test('the save bar, the replica and the settings share one page column', () => {
+  const html = read('options.html');
+  assert.match(html, /#options-shell-root,\s*#app,\s*#options-shell-settings-root\s*\{[^}]*width:\s*min\(1360px,\s*100%\);[^}]*margin-inline:\s*auto;/);
+  assert.doesNotMatch(read('options-replica.css'), /min\(1360px/, 'the page width is set once, by the page');
+  assert.doesNotMatch(read('options-shell.css'), /min\(1360px/);
+});

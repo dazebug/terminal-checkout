@@ -584,6 +584,48 @@ test('variables are inline accessible insertion controls inside their explanator
   assert.doesNotMatch(source, /commandPlaceholder/);
 });
 
+test('placing the popover keeps where its content was scrolled to', () => {
+  // Measuring the natural height clears the content's max-height, which clamps its scroll to the top;
+  // every keystroke and every scroll inside the popover places it again.
+  const place = functionBody('positionPopover');
+  const saved = place.indexOf('const scrollTop = content?.scrollTop ?? 0;');
+  const cleared = place.indexOf("if (content) content.style.maxHeight = '';");
+  const restored = place.indexOf('if (content) content.scrollTop = scrollTop;');
+  const reapplied = place.indexOf('if (content) content.style.maxHeight = `${Math.max(0, placed.maxHeight - 2)}px`;');
+  assert.ok(saved >= 0 && saved < cleared, 'the scroll position is read before the max-height is cleared');
+  assert.ok(reapplied >= 0 && restored > reapplied, 'it is written back after the max-height is applied again');
+});
+
+test('editor sections keep their height and scroll instead of being squeezed', () => {
+  // A section allowed to shrink in the height-limited column painted its overflow over the action bar.
+  const css = read('options-editor.css');
+  assert.match(css, /\.options-editor-content\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0;/);
+  assert.doesNotMatch(css, /\.options-editor-followup-slot\s*\{[^}]*min-height/);
+});
+
+test('nothing scrolls into view beneath the sticky action bar', () => {
+  const css = read('options-editor.css');
+  // A sticky child stops at the scroll container's padding edge, so a bottom padding would leave a
+  // strip under the bar where scrolled content shows.
+  assert.match(css, /\.options-editor-content\s*\{[^}]*padding:\s*14px\s+14px\s+0;/);
+  assert.match(css, /\.options-editor-add\s+\.options-editor-content\s*\{[^}]*padding-bottom:\s*14px;/,
+    'the add picker has no action bar, so it keeps a bottom padding');
+});
+
+test('the reorder hint is one line under the inputs, shown only when there is something to reorder', () => {
+  const css = read('options-editor.css');
+  assert.doesNotMatch(source, /options-editor-reorder-tooltip/, 'a hint drawn over the next control is what overlapped Add input');
+  assert.doesNotMatch(css, /options-editor-reorder-tooltip/);
+  assert.match(functionBody('buildClaudeInputSection'),
+    /const reorderHint = makeElement\('p', 'options-editor-reorder-hint', tr\('ext\.reorder\.tooltip'\)\);[\s\S]*section\.append\(heading, help, hint, warning, rows, reorderHint, limit, add\);/);
+  const render = functionBody('renderClaudeInputs');
+  assert.match(render, /reorderHint\.hidden = values\.length < 2;/);
+  for (const control of ['handle', 'earlier', 'later']) {
+    assert.match(render, new RegExp(`${control}\\.setAttribute\\('aria-describedby', reorderHint\\.id\\)`));
+  }
+  assert.doesNotMatch(css, /\.options-editor-reorder-hint\s*\{[^}]*position:\s*absolute/);
+});
+
 test('the action bar is an opaque sticky end to the scrollable editor content', () => {
   const css = read('options-editor.css');
   assert.match(css, /\.options-editor-actions\s*\{[^}]*position:\s*sticky/s);
