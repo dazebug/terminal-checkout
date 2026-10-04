@@ -917,14 +917,11 @@
   "ext_d_replica_presetDescription_issueStartWork": {
     "message": "설정된 main 브랜치에서 이슈 worktree를 만들거나 재사용하고 Claude를 시작해 이슈 댓글을 불러옵니다."
   },
-  "ext_d_replica_presetDescription_issueOpen": {
+  "ext_d_replica_presetDescription_open": {
     "message": "저장소 폴더에서 터미널을 엽니다."
   },
   "ext_d_replica_presetDescription_issueListTriageClaude": {
     "message": "선택한 각 이슈에 대해 Claude를 시작하고 댓글을 불러옵니다."
-  },
-  "ext_d_replica_presetDescription_repoOpen": {
-    "message": "저장소 폴더에서 터미널을 엽니다."
   },
   "ext_d_replica_presetDescription_repoOpenClaude": {
     "message": "저장소 폴더에서 터미널을 열고 Claude를 시작합니다."

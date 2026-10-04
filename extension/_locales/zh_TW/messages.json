@@ -917,14 +917,11 @@
   "ext_d_replica_presetDescription_issueStartWork": {
     "message": "從已設定的 main 分支建立或重複使用 issue worktree，啟動 Claude 並載入 issue 留言。"
   },
-  "ext_d_replica_presetDescription_issueOpen": {
+  "ext_d_replica_presetDescription_open": {
     "message": "在儲存庫資料夾中開啟終端機。"
   },
   "ext_d_replica_presetDescription_issueListTriageClaude": {
     "message": "為每個選取的 issue 啟動 Claude，並載入其留言。"
-  },
-  "ext_d_replica_presetDescription_repoOpen": {
-    "message": "在儲存庫資料夾中開啟終端機。"
   },
   "ext_d_replica_presetDescription_repoOpenClaude": {
     "message": "在儲存庫資料夾中開啟終端機並啟動 Claude。"

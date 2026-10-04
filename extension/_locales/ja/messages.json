@@ -917,14 +917,11 @@
   "ext_d_replica_presetDescription_issueStartWork": {
     "message": "設定済み main ブランチから issue の worktree を作成または再利用し、Claude を起動してコメントを読み込みます。"
   },
-  "ext_d_replica_presetDescription_issueOpen": {
+  "ext_d_replica_presetDescription_open": {
     "message": "リポジトリのフォルダーでターミナルを開きます。"
   },
   "ext_d_replica_presetDescription_issueListTriageClaude": {
     "message": "選択した各 issue について Claude を起動し、コメントを読み込みます。"
-  },
-  "ext_d_replica_presetDescription_repoOpen": {
-    "message": "リポジトリのフォルダーでターミナルを開きます。"
   },
   "ext_d_replica_presetDescription_repoOpenClaude": {
     "message": "リポジトリのフォルダーでターミナルを開き、Claude を起動します。"

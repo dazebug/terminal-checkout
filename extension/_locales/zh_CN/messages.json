@@ -917,14 +917,11 @@
   "ext_d_replica_presetDescription_issueStartWork": {
     "message": "从已配置的 main 分支创建或复用 issue worktree，启动 Claude 并载入 issue 评论。"
   },
-  "ext_d_replica_presetDescription_issueOpen": {
+  "ext_d_replica_presetDescription_open": {
     "message": "在仓库目录中打开终端。"
   },
   "ext_d_replica_presetDescription_issueListTriageClaude": {
     "message": "为每个选中的 issue 启动 Claude，并载入其评论。"
-  },
-  "ext_d_replica_presetDescription_repoOpen": {
-    "message": "在仓库目录中打开终端。"
   },
   "ext_d_replica_presetDescription_repoOpenClaude": {
     "message": "在仓库目录中打开终端并启动 Claude。"

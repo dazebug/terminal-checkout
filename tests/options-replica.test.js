@@ -381,9 +381,9 @@ test('preset drawer groups all live defaults as localized cards with their real 
     'pr-list.checkoutClaude': 'prListCheckoutClaude',
     'issue.read': 'issueRead',
     'issue.startWork': 'issueStartWork',
-    'issue.open': 'issueOpen',
+    'issue.open': 'open',
     'issue-list.triageClaude': 'issueListTriageClaude',
-    'repo.open': 'repoOpen',
+    'repo.open': 'open',
     'repo.openClaude': 'repoOpenClaude',
     'repo.updateMain': 'repoUpdateMain',
   };

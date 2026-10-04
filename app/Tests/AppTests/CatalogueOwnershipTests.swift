@@ -187,7 +187,7 @@ final class CatalogueOwnershipTests: XCTestCase {
 
     /// Two keys in one catalogue holding the same sentence. Each pair is a judgement — the same
     /// words, deliberately, in two places that mean different things — so each is listed with the
-    /// reason it is not a duplicate to remove. There are two such judgements.
+    /// reason it is not a duplicate to remove. There are three such judgements.
     ///
     /// **Keyed by the pair of keys, not by the sentence.** The first version of this table was keyed
     /// by the English text, and the gate caught it on its first run: the same two pairs share a
@@ -205,6 +205,11 @@ final class CatalogueOwnershipTests: XCTestCase {
         // gate's job here was to make the collapse visible, and it is.
         ["ext_button_remove", "ext_card_delete"]:
             "Japanese uses one word where English has two, and a second one would be worse UI",
+        // The options replica's page card for the repository page and the override table's
+        // repository column. English keeps "Repository" and "repository" apart; Korean, Japanese and
+        // both Chinese catalogues say each with the one word for repository.
+        ["ext_d_replica_page_repo", "ext_table_repository"]:
+            "a replica page's name and a table column that several languages say with one word",
     ]
 
     func testDuplicateValuesWithinAStoreAreDeclared() throws {

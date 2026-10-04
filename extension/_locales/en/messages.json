@@ -917,14 +917,11 @@
   "ext_d_replica_presetDescription_issueStartWork": {
     "message": "Create or reuse an issue worktree from the configured main branch, start Claude, and load the issue comments."
   },
-  "ext_d_replica_presetDescription_issueOpen": {
+  "ext_d_replica_presetDescription_open": {
     "message": "Open a terminal in the repository folder."
   },
   "ext_d_replica_presetDescription_issueListTriageClaude": {
     "message": "For each selected issue, start Claude with its comments loaded."
-  },
-  "ext_d_replica_presetDescription_repoOpen": {
-    "message": "Open a terminal in the repository folder."
   },
   "ext_d_replica_presetDescription_repoOpenClaude": {
     "message": "Open a terminal in the repository folder and start Claude."

@@ -142,9 +142,8 @@ const REPLICA_MESSAGE_READERS = Object.freeze({
   'presetDescription.prListCheckoutClaude': () => tr('ext.d.replica.presetDescription.prListCheckoutClaude'),
   'presetDescription.issueRead': () => tr('ext.d.replica.presetDescription.issueRead'),
   'presetDescription.issueStartWork': () => tr('ext.d.replica.presetDescription.issueStartWork'),
-  'presetDescription.issueOpen': () => tr('ext.d.replica.presetDescription.issueOpen'),
+  'presetDescription.open': () => tr('ext.d.replica.presetDescription.open'),
   'presetDescription.issueListTriageClaude': () => tr('ext.d.replica.presetDescription.issueListTriageClaude'),
-  'presetDescription.repoOpen': () => tr('ext.d.replica.presetDescription.repoOpen'),
   'presetDescription.repoOpenClaude': () => tr('ext.d.replica.presetDescription.repoOpenClaude'),
   'presetDescription.repoUpdateMain': () => tr('ext.d.replica.presetDescription.repoUpdateMain'),
 });
@@ -153,6 +152,7 @@ const REPLICA_MESSAGE_KEYS = Object.freeze(
 );
 
 const REPLICA_KIND_ORDER = Object.freeze(Object.keys(BUTTON_KINDS));
+// issue.open and repo.open run the same command, so they share one sentence rather than two copies.
 const PRESET_DESCRIPTION_SUFFIX_BY_ID = Object.freeze({
   'pr.checkout': 'presetDescription.prCheckout',
   'pr.checkoutClaude': 'presetDescription.prCheckoutClaude',
@@ -162,9 +162,9 @@ const PRESET_DESCRIPTION_SUFFIX_BY_ID = Object.freeze({
   'pr-list.checkoutClaude': 'presetDescription.prListCheckoutClaude',
   'issue.read': 'presetDescription.issueRead',
   'issue.startWork': 'presetDescription.issueStartWork',
-  'issue.open': 'presetDescription.issueOpen',
+  'issue.open': 'presetDescription.open',
   'issue-list.triageClaude': 'presetDescription.issueListTriageClaude',
-  'repo.open': 'presetDescription.repoOpen',
+  'repo.open': 'presetDescription.open',
   'repo.openClaude': 'presetDescription.repoOpenClaude',
   'repo.updateMain': 'presetDescription.repoUpdateMain',
 });
