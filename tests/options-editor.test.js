@@ -33,6 +33,7 @@ function loadEditor() {
     requiresPresetConfirmation: typeof requiresPresetConfirmation === 'function' ? requiresPresetConfirmation : null,
     buttonMoveAction: typeof buttonMoveAction === 'function' ? buttonMoveAction : null,
     presetReplaceAction: typeof presetReplaceAction === 'function' ? presetReplaceAction : null,
+    eventPathIncludesEditor: typeof eventPathIncludesEditor === 'function' ? eventPathIncludesEditor : null,
   })`, context);
   return { context, model, api: context.window.optionsEditor };
 }
@@ -49,6 +50,23 @@ test('editor publishes mount, open, close, and isOpen contracts', () => {
 test('editor open contract keeps the placement anchor separate from focus restoration', () => {
   assert.match(source, /@typedef \{\{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement\}\} OptionsEditorOpenOptions/);
   assert.match(source, /@param \{OptionsEditorOpenOptions\} options/);
+});
+
+test('outside pointer classification follows the event path after the original target detaches', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.eventPathIncludesEditor, 'function');
+  const marker = { dataset: { optionsEditorSurface: 'popover' } };
+  const detachedControl = { isConnected: false };
+  assert.equal(model.eventPathIncludesEditor({ composedPath: () => [detachedControl, marker] }), true);
+  assert.equal(model.eventPathIncludesEditor({ composedPath: () => [detachedControl, { dataset: {} }] }), false);
+  assert.ok(/panel\.dataset\.optionsEditorSurface = 'popover'/.test(source), 'popover path marker is missing');
+  assert.ok(/if \(!active \|\| eventPathIncludesEditor\(event\)\) return;/.test(source),
+    'outside pointer handler does not use the captured path');
+});
+
+test('external snapshot close only restores focus when the focus owner was inside the popover', () => {
+  assert.ok(/if \(!currentButton\(\)\) \{\s*const restoreFocus = currentPanel\(\)\?\.contains\(document\.activeElement\) \?\? false;\s*closePopover\(\{ restoreFocus \}\);/.test(source),
+    'external close does not preserve focus ownership');
 });
 
 test('popover placement flips above when below is short and keeps the surface inside the viewport', () => {

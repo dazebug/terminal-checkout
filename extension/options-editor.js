@@ -86,6 +86,12 @@ function presetReplaceAction(kind, uid, presetId, confirmed = false) {
   };
 }
 
+/** @param {Event} event @returns {boolean} */
+function eventPathIncludesEditor(event) {
+  if (typeof event?.composedPath !== 'function') return false;
+  return event.composedPath().some(node => node?.dataset?.optionsEditorSurface === 'popover');
+}
+
 /** @returns {'shell'|'slash'|'directive'|'message'} */
 function classifyClaudeInput(value) {
   const text = typeof value === 'string' ? value.replace(/^ +/, '') : '';
@@ -830,6 +836,7 @@ function buildPresetChoices(kind) {
 function buildPopover(button) {
   const kind = active.kind;
   const panel = makeElement('section', 'options-editor-popover');
+  panel.dataset.optionsEditorSurface = 'popover';
   panel.setAttribute('role', 'dialog');
   const inner = makeElement('div', 'options-editor-content');
   const header = makeElement('header', 'options-editor-header');
@@ -936,7 +943,8 @@ function acceptSnapshot(nextSnapshot) {
   snapshot = nextSnapshot;
   if (!active) return;
   if (!currentButton()) {
-    closePopover();
+    const restoreFocus = currentPanel()?.contains(document.activeElement) ?? false;
+    closePopover({ restoreFocus });
     return;
   }
   updatePanel();
@@ -1249,7 +1257,7 @@ function handleKeydown(event) {
 }
 
 function handlePointerDown(event) {
-  if (!active || root?.contains(event.target)) return;
+  if (!active || eventPathIncludesEditor(event)) return;
   closePopover();
 }
 
