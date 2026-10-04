@@ -610,6 +610,17 @@ test('nothing scrolls into view beneath the sticky action bar', () => {
   assert.match(css, /\.options-editor-content\s*\{[^}]*padding:\s*14px\s+14px\s+0;/);
   assert.match(css, /\.options-editor-add\s+\.options-editor-content\s*\{[^}]*padding-bottom:\s*14px;/,
     'the add picker has no action bar, so it keeps a bottom padding');
+  // Every rule for the column, breakpoints included, so a narrower layout cannot put the padding back.
+  const columnRules = [...css.matchAll(/^\s*\.options-editor-content\s*\{([^}]*)\}/gm)].map(match => match[1]);
+  assert.ok(columnRules.length >= 2, 'the base rule and the narrow-width rule');
+  for (const body of columnRules) {
+    for (const [, value] of body.matchAll(/(?:^|;)\s*padding:\s*([^;]+);/g)) {
+      const sides = value.trim().split(/\s+/);
+      const bottom = sides.length >= 3 ? sides[2] : sides[0];
+      assert.equal(bottom, '0', `padding: ${value} leaves a strip under the action bar`);
+    }
+    assert.doesNotMatch(body, /padding-bottom:\s*(?!0\b)/);
+  }
 });
 
 test('the reorder hint is one line under the inputs, shown only when there is something to reorder', () => {

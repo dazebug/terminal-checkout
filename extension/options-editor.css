@@ -635,6 +635,6 @@
 
   .options-editor-content {
     gap: 10px;
-    padding: 11px;
+    padding: 11px 11px 0;
   }
 }
