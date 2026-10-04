@@ -737,8 +737,7 @@ body {
 .replica-preset-card:hover,
 .replica-preset-card.is-preview { border-color: var(--gh-edit-outline); background: var(--gh-edit-wash); }
 .replica-preset-card:focus-visible,
-.replica-preset-action:focus-visible,
-.replica-preset-target-button:focus-visible { outline: 2px solid var(--gh-accent); outline-offset: 2px; }
+.replica-preset-action:focus-visible { outline: 2px solid var(--gh-accent); outline-offset: 2px; }
 .replica-preset-card.is-dragging { opacity: 0.45; }
 .replica-preset-card-main { display: flex; min-width: 0; align-items: flex-start; gap: 8px; }
 .replica-preset-face { display: inline-flex; min-width: 32px; min-height: 30px; flex: none; align-items: center; justify-content: center; border: 1px solid var(--gh-border); border-radius: 5px; background: var(--gh-canvas); }
@@ -748,21 +747,10 @@ body {
 .replica-preset-copy p { margin: 4px 0 0; color: var(--dim, #8b93a3); font-size: 11px; line-height: 1.45; }
 .replica-preset-use { display: inline-block; margin-top: 5px; color: var(--gh-tc-green); font-size: 10px; font-weight: 600; }
 .replica-preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-.replica-preset-action,
-.replica-preset-target-button { min-height: 30px; padding: 5px 9px; border: 1px solid var(--border, #2a2f3a); border-radius: 5px; background: var(--panel, #1b1e26); color: var(--text, #dee3ec); font: 11px var(--ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); cursor: pointer; }
-.replica-preset-action:hover:not(:disabled),
-.replica-preset-target-button:hover { border-color: var(--gh-dim); }
+.replica-preset-action { min-height: 30px; padding: 5px 9px; border: 1px solid var(--border, #2a2f3a); border-radius: 5px; background: var(--panel, #1b1e26); color: var(--text, #dee3ec); font: 11px var(--ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); cursor: pointer; }
+.replica-preset-action:hover:not(:disabled) { border-color: var(--gh-dim); }
 .replica-preset-action:disabled { opacity: 0.5; cursor: not-allowed; }
-.replica-preset-action.is-primary { border-color: var(--gh-green); background: var(--gh-green); color: var(--gh-green-fg); }
 .replica-preset-limit { margin: 8px 0; color: var(--gh-warning); font-size: 11px; line-height: 1.45; }
-.replica-preset-replace-targets { display: grid; gap: 6px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border, #2a2f3a); }
-.replica-preset-replace-targets > p { margin: 0; color: var(--dim, #8b93a3); font-size: 11px; }
-.replica-preset-replace-targets > div { display: flex; flex-wrap: wrap; gap: 5px; }
-.replica-preset-target-button { display: inline-flex; align-items: center; gap: 6px; }
-.replica-preset-target-number { color: var(--dim, #8b93a3); font: 10px var(--mono, ui-monospace, monospace); }
-.replica-preset-confirmation { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--gh-warning); border-radius: 6px; background: var(--gh-white-wash); }
-.replica-preset-confirmation p { margin: 0; color: var(--text, #dee3ec); line-height: 1.5; }
-.replica-preset-confirmation > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .replica-preset-group > .replica-preset-limit { margin: 0 0 8px; }
 .replica-slot.is-preset-target { border-color: var(--gh-edit-outline); background: var(--gh-edit-wash); box-shadow: 0 0 0 2px var(--gh-edit-border); }
 .replica-page-card.is-preset-target { border-color: var(--gh-edit-outline); box-shadow: 0 0 0 2px var(--gh-edit-border); }

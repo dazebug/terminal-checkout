@@ -15,10 +15,11 @@
  *   'about'|'readme'|'activity'|'branches'|'updated'|'timeline'
  * } GitHubUICopyKey
  * @typedef {Readonly<Record<GitHubUICopyKey, string>>} GitHubUICopy
- * @typedef {{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement}} ReplicaEditorOpenOptions
+ * @typedef {{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement, presetId?: string}} ReplicaEditorOpenOptions
  * @typedef {{mount: (root: HTMLElement, engine: OptionsEngine, editor: OptionsEditor) => void,
  *   focusButton: (kind: OptionsButtonKind, uid: string) => boolean,
  *   openDrawer: () => void, closeDrawer: () => void, isDrawerOpen: () => boolean,
+ *   describePlace: (kind: OptionsButtonKind) => string, describePreset: (presetId: string) => string,
  *   getExampleContext: () => Readonly<ExampleContext>}} OptionsReplica
  */
 
@@ -111,12 +112,6 @@ const REPLICA_MESSAGE_READERS = Object.freeze({
   'drawer.instructions': () => tr('ext.d.replica.drawer.instructions'),
   'drawer.inUse': () => tr('ext.d.replica.drawer.inUse'),
   'drawer.add': () => tr('ext.d.replica.drawer.add'),
-  'drawer.replace': () => tr('ext.d.replica.drawer.replace'),
-  'drawer.chooseTarget': () => tr('ext.d.replica.drawer.chooseTarget'),
-  'drawer.noReplaceTargets': () => tr('ext.d.replica.drawer.noReplaceTargets'),
-  'drawer.confirmReplace': (label, presetName) => tr('ext.d.replica.drawer.confirmReplace', label, presetName),
-  'drawer.confirm': () => tr('ext.d.replica.drawer.confirm'),
-  'drawer.cancel': () => tr('ext.d.replica.drawer.cancel'),
   'drawer.limit': () => tr('ext.d.replica.drawer.limit'),
   'drawer.actionFailed': () => tr('ext.d.replica.drawer.actionFailed'),
   'place.pr': () => tr('ext.d.replica.place.pr'),
@@ -300,15 +295,6 @@ function presetAddAction(kind, presetId, beforeUid = null) {
   return { type: 'preset-add', kind, presetId, beforeUid };
 }
 
-/** Build a preset replacement, confirmed only when the drawer resends it after the engine asked. */
-function presetReplaceAction(kind, uid, presetId, confirmed = false) {
-  if (!Object.hasOwn(BUTTON_KINDS, kind) || typeof uid !== 'string' || !uid
-    || !presetById(BUTTON_KINDS[kind].presets, presetId)) return null;
-  const action = { type: 'preset-replace', kind, uid, presetId };
-  if (confirmed === true) action.confirmed = true;
-  return action;
-}
-
 /** Group the live presets by page kind into the drawer's cards. */
 function presetGroups(snapshot) {
   return REPLICA_KIND_ORDER.map(kind => {
@@ -408,7 +394,6 @@ const model = Object.freeze({
   presetHighlightTarget,
   presetInsertionBeforeUid,
   presetAddAction,
-  presetReplaceAction,
   presetGroups,
   presetDescription,
   iconRunKind,
@@ -535,7 +520,7 @@ function renderSlot(kind, snapshot, showPlaceholders) {
     ? `<span class="replica-slot-empty">${replicaEscape(replicaText('slot.empty'))}</span>`
     : '';
   const presetTarget = mounted.previewPreset?.kind === kind;
-  return `<div class="replica-slot${showPlaceholders ? ' is-marked' : ' is-quiet'}${all.length ? ' has-buttons' : ' is-empty'}${presetTarget ? ' is-preset-target' : ''}" role="group" aria-labelledby="replica-slot-label-${replicaEscape(kind)}" data-drop-kind="${replicaEscape(kind)}" data-focus-key="slot:${replicaEscape(kind)}" tabindex="-1"><span id="replica-slot-label-${replicaEscape(kind)}" class="replica-slot-label${showPlaceholders ? '' : ' is-visually-hidden'}">${replicaEscape(location)}</span><span class="replica-slot-buttons">${controls}${emptySlotHint}</span><button type="button" class="replica-slot-add" data-action="slot-add" data-slot-kind="${replicaEscape(kind)}" data-focus-key="slot-add:${replicaEscape(kind)}" aria-controls="replica-drawer" aria-labelledby="replica-slot-label-${replicaEscape(kind)} replica-slot-add-name-${replicaEscape(kind)}" aria-expanded="${mounted.drawerOpen}"${canAdd && snapshot.load?.loaded ? '' : ' disabled'}><span class="replica-sr-only" id="replica-slot-add-name-${replicaEscape(kind)}">${replicaEscape(replicaText('slot.add'))}</span><span aria-hidden="true">+</span></button><span class="replica-slot-count">${all.length}/${MAX_BUTTONS}</span></div>`;
+  return `<div class="replica-slot${showPlaceholders ? ' is-marked' : ' is-quiet'}${all.length ? ' has-buttons' : ' is-empty'}${presetTarget ? ' is-preset-target' : ''}" role="group" aria-labelledby="replica-slot-label-${replicaEscape(kind)}" data-drop-kind="${replicaEscape(kind)}" data-focus-key="slot:${replicaEscape(kind)}" tabindex="-1"><span id="replica-slot-label-${replicaEscape(kind)}" class="replica-slot-label${showPlaceholders ? '' : ' is-visually-hidden'}">${replicaEscape(location)}</span><span class="replica-slot-buttons">${controls}${emptySlotHint}</span><button type="button" class="replica-slot-add" data-action="slot-add" data-slot-kind="${replicaEscape(kind)}" data-focus-key="slot-add:${replicaEscape(kind)}" aria-haspopup="dialog" aria-labelledby="replica-slot-label-${replicaEscape(kind)} replica-slot-add-name-${replicaEscape(kind)}"${canAdd && snapshot.load?.loaded ? '' : ' disabled'}><span class="replica-sr-only" id="replica-slot-add-name-${replicaEscape(kind)}">${replicaEscape(replicaText('slot.add'))}</span><span aria-hidden="true">+</span></button><span class="replica-slot-count">${all.length}/${MAX_BUTTONS}</span></div>`;
 }
 
 /** @param {string} kind @param {OptionsEngineSnapshot} snapshot */
@@ -555,13 +540,8 @@ function renderPresetCard(group, card, snapshot) {
   const focusPrefix = `preset:${kind}:${presetId}`;
   const limitId = `replica-drawer-limit-${kind}`;
   const canAdd = group.availability === 'available';
-  const canReplace = snapshot.load?.loaded === true;
-  const isPickerOpen = mounted.replacePicker?.kind === kind && mounted.replacePicker?.presetId === presetId;
   const useStatus = card.inUse
     ? `<span class="replica-preset-use">${replicaEscape(replicaText('drawer.inUse'))}</span>`
-    : '';
-  const replaceTargets = isPickerOpen
-    ? renderPresetReplaceTargets(kind, presetId, snapshot, focusPrefix)
     : '';
   return `<article class="replica-preset-card" role="group" aria-labelledby="${focusPrefix}-name" tabindex="0" draggable="${snapshot.load?.loaded === true}" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-focus-key="${focusPrefix}-card">
     <div class="replica-preset-card-main">
@@ -574,39 +554,13 @@ function renderPresetCard(group, card, snapshot) {
     </div>
     <div class="replica-preset-actions">
       <button type="button" class="replica-preset-action" data-action="preset-add" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-focus-key="${focusPrefix}-add"${canAdd ? '' : ' disabled'}${group.availability === 'limit' ? ` aria-describedby="${limitId}"` : ''}>${replicaEscape(replicaText('drawer.add'))}</button>
-      <button type="button" class="replica-preset-action replica-preset-replace-toggle" data-action="preset-replace-picker" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-focus-key="${focusPrefix}-replace" aria-expanded="${isPickerOpen}"${isPickerOpen ? ` aria-controls="${focusPrefix}-targets"` : ''}${canReplace ? '' : ' disabled'}>${replicaEscape(replicaText('drawer.replace'))}</button>
     </div>
-    ${replaceTargets}
   </article>`;
-}
-
-/** @param {string} kind @param {string} presetId @param {OptionsEngineSnapshot} snapshot @param {string} focusPrefix */
-function renderPresetReplaceTargets(kind, presetId, snapshot, focusPrefix) {
-  const buttons = snapshot.buttons?.[kind] || [];
-  if (buttons.length === 0) {
-    return `<div class="replica-preset-replace-targets" id="${focusPrefix}-targets"><p>${replicaEscape(replicaText('drawer.noReplaceTargets'))}</p></div>`;
-  }
-  const targets = buttons.map((button, index) => {
-    const label = typeof button.label === 'string' && button.label ? button.label : buttonFace(button);
-    return `<button type="button" class="replica-preset-target-button" data-action="preset-replace-target" data-preset-kind="${replicaEscape(kind)}" data-preset-id="${replicaEscape(presetId)}" data-target-uid="${replicaEscape(button.uid)}" data-focus-key="${focusPrefix}-target-${replicaEscape(button.uid)}"><span class="replica-preset-target-number">${index + 1}</span><span>${replicaEscape(label)}</span></button>`;
-  }).join('');
-  return `<div class="replica-preset-replace-targets" id="${focusPrefix}-targets"><p>${replicaEscape(replicaText('drawer.chooseTarget'))}</p><div>${targets}</div></div>`;
 }
 
 /** @param {OptionsEngineSnapshot} snapshot */
 function renderPresetDrawer(snapshot) {
   const groups = presetGroups(snapshot);
-  const pending = mounted.pendingReplace;
-  const pendingButton = pending
-    ? (snapshot.buttons?.[pending.kind] || []).find(button => button.uid === pending.uid)
-    : null;
-  const pendingPreset = pending ? presetById(BUTTON_KINDS[pending.kind]?.presets || [], pending.presetId) : null;
-  const confirmation = pending && pendingButton && pendingPreset
-    ? `<div class="replica-preset-confirmation" role="alert" aria-labelledby="replica-preset-confirmation-copy">
-        <p id="replica-preset-confirmation-copy">${replicaEscape(replicaText('drawer.confirmReplace', pendingButton.label || buttonFace(pendingButton), pendingPreset.name))}</p>
-        <div><button type="button" class="replica-preset-action" data-action="preset-replace-cancel" data-focus-key="preset-replace-cancel">${replicaEscape(replicaText('drawer.cancel'))}</button><button type="button" class="replica-preset-action is-primary" data-action="preset-replace-confirm" data-focus-key="preset-replace-confirm">${replicaEscape(replicaText('drawer.confirm'))}</button></div>
-      </div>`
-    : '';
   return `<p class="replica-drawer-instructions">${replicaEscape(replicaText('drawer.instructions'))}</p><div class="replica-preset-groups">${groups.map(group => {
     const limitId = `replica-drawer-limit-${group.kind}`;
     return `<section class="replica-preset-group" aria-labelledby="replica-preset-group-${group.kind}">
@@ -614,7 +568,7 @@ function renderPresetDrawer(snapshot) {
       ${group.availability === 'limit' ? `<p class="replica-preset-limit" id="${limitId}">${replicaEscape(replicaText('drawer.limit'))}</p>` : ''}
       <div class="replica-preset-cards">${group.cards.map(card => renderPresetCard(group, card, snapshot)).join('')}</div>
     </section>`;
-  }).join('')}${confirmation}</div>`;
+  }).join('')}</div>`;
 }
 
 /** @param {string} kind @param {OptionsEngineSnapshot} snapshot @param {boolean} showPlaceholders */
@@ -672,9 +626,6 @@ function setDrawerVisible(open) {
     toggle.setAttribute('aria-expanded', String(open));
     toggle.textContent = replicaText(open ? 'drawer.close' : 'drawer.open');
   }
-  mounted.root.querySelectorAll('[data-action="slot-add"]').forEach(button => {
-    button.setAttribute('aria-expanded', String(open));
-  });
 }
 
 /** Redraw from the engine snapshot. Replacing the view deliberately ends any native drag. */
@@ -855,8 +806,6 @@ async function addPreset(kind, presetId, beforeUid = null) {
     if (result?.ok) {
       mounted.status = '';
       mounted.pageKind = kind;
-      mounted.pendingReplace = null;
-      mounted.replacePicker = null;
       mounted.pointerPreset = null;
       mounted.focusedPreset = null;
       mounted.previewPreset = null;
@@ -865,7 +814,7 @@ async function addPreset(kind, presetId, beforeUid = null) {
       mounted.drawerRestoreFocusKey = null;
       setDrawerVisible(false);
       renderReplica();
-      if (result.createdUid) focusReplicaButton(kind, result.createdUid);
+      if (result.createdUid) openCreatedButtonEditor(kind, result.createdUid);
     } else {
       mounted.status = result?.reason === 'limit'
         ? replicaText('drawer.limit')
@@ -881,63 +830,34 @@ async function addPreset(kind, presetId, beforeUid = null) {
   }
 }
 
-/** Ask the engine first; only its needs-confirmation response opens this view's confirmation UI. */
-async function replacePreset(kind, uid, presetId, confirmed = false) {
-  if (!mounted) return null;
-  const action = presetReplaceAction(kind, uid, presetId, confirmed);
-  if (!action) return null;
-  try {
-    const result = await mounted.engine.dispatch(action);
-    mounted.snapshot = result?.snapshot || mounted.engine.getSnapshot();
-    if (result?.reason === 'needs-confirmation' && !confirmed) {
-      mounted.pendingReplace = { kind, uid, presetId };
-      mounted.status = '';
-      renderReplica();
-      mounted.root.querySelector('[data-action="preset-replace-confirm"]')?.focus();
-    } else if (result?.ok) {
-      mounted.pendingReplace = null;
-      mounted.replacePicker = null;
-      mounted.status = '';
-      mounted.pageKind = kind;
-      mounted.pointerPreset = null;
-      mounted.focusedPreset = null;
-      mounted.previewPreset = null;
-      mounted.drawerOpen = false;
-      mounted.drawerRestoreElement = null;
-      mounted.drawerRestoreFocusKey = null;
-      setDrawerVisible(false);
-      renderReplica();
-      focusReplicaButton(kind, uid);
-    } else {
-      mounted.status = result?.reason === 'limit'
-        ? replicaText('drawer.limit')
-        : replicaText('drawer.actionFailed');
-      renderReplica();
-    }
-    return result;
-  } catch {
-    mounted.snapshot = mounted.engine.getSnapshot();
-    mounted.status = replicaText('drawer.actionFailed');
-    renderReplica();
-    return null;
-  }
+/** Open the editor on a button that was just added, or focus its place when it is not drawn. */
+function openCreatedButtonEditor(kind, uid) {
+  const button = [...mounted.root.querySelectorAll('[data-replica-button]')]
+    .find(node => node.dataset.kind === kind && node.dataset.uid === uid);
+  if (button) openButtonEditor(button);
+  else focusReplicaButton(kind, uid);
 }
 
-/** @param {HTMLElement} button */
-function openButtonEditor(button) {
+/** A popover replaces the drawer; hiding it without a redraw keeps the control that opened the popover. */
+function hideDrawerForPopover() {
+  if (!mounted?.drawerOpen) return;
+  mounted.drawerOpen = false;
+  mounted.pointerPreset = null;
+  mounted.focusedPreset = null;
+  mounted.drawerRestoreElement = null;
+  mounted.drawerRestoreFocusKey = null;
+  setDrawerVisible(false);
+}
+
+/** @param {HTMLElement} button @param {string|null} presetId a preset dropped on the button, to replace it with */
+function openButtonEditor(button, presetId = null) {
   if (!mounted || !button) return;
   const { kind, uid } = button.dataset;
-  if (mounted.drawerOpen) {
-    mounted.drawerOpen = false;
-    mounted.pointerPreset = null;
-    mounted.focusedPreset = null;
-    mounted.drawerRestoreElement = null;
-    mounted.drawerRestoreFocusKey = null;
-    setDrawerVisible(false);
-  }
+  hideDrawerForPopover();
   if (typeof mounted.editor?.open === 'function') {
     /** @type {ReplicaEditorOpenOptions} */
     const options = { kind, uid, anchor: button, restoreFocusTo: button };
+    if (presetId) options.presetId = presetId;
     mounted.editor.open(options);
   }
 }
@@ -956,8 +876,6 @@ function selectReplicaPage(kind) {
     mounted.drawerRestoreFocusKey = null;
     setDrawerVisible(false);
   }
-  mounted.pendingReplace = null;
-  mounted.replacePicker = null;
   mounted.pointerPreset = null;
   mounted.focusedPreset = null;
   mounted.previewPreset = null;
@@ -993,38 +911,6 @@ function handleReplicaClick(event) {
     addPreset(actionTarget.dataset.presetKind, actionTarget.dataset.presetId);
     return;
   }
-  if (action === 'preset-replace-picker') {
-    event.preventDefault();
-    const { presetKind: kind, presetId } = actionTarget.dataset;
-    mounted.replacePicker = mounted.replacePicker?.kind === kind && mounted.replacePicker?.presetId === presetId
-      ? null
-      : { kind, presetId };
-    renderReplica();
-    focusReplicaKey(`preset:${kind}:${presetId}-replace`);
-    return;
-  }
-  if (action === 'preset-replace-target') {
-    event.preventDefault();
-    replacePreset(actionTarget.dataset.presetKind, actionTarget.dataset.targetUid, actionTarget.dataset.presetId);
-    return;
-  }
-  if (action === 'preset-replace-confirm') {
-    event.preventDefault();
-    const pending = mounted.pendingReplace;
-    if (pending) replacePreset(pending.kind, pending.uid, pending.presetId, true);
-    return;
-  }
-  if (action === 'preset-replace-cancel') {
-    event.preventDefault();
-    mounted.pendingReplace = null;
-    mounted.status = '';
-    renderReplica();
-    const key = mounted.replacePicker
-      ? `preset:${mounted.replacePicker.kind}:${mounted.replacePicker.presetId}-replace`
-      : 'drawer-close';
-    focusReplicaKey(key);
-    return;
-  }
   const pageCard = target?.closest('[data-page-kind]');
   if (pageCard) {
     event.preventDefault();
@@ -1046,7 +932,11 @@ function handleReplicaClick(event) {
     else openDrawerInternal(true, mounted.pageKind, actionTarget);
   } else if (action === 'slot-add') {
     event.preventDefault();
-    openDrawerInternal(true, actionTarget.dataset.slotKind || mounted.pageKind, actionTarget);
+    const kind = actionTarget.dataset.slotKind;
+    hideDrawerForPopover();
+    if (typeof mounted.editor?.openAdd === 'function') {
+      mounted.editor.openAdd({ kind, anchor: actionTarget, restoreFocusTo: actionTarget });
+    }
   } else if (action === 'drawer-close') {
     event.preventDefault();
     closeDrawerInternal(true);
@@ -1121,7 +1011,7 @@ function handleReplicaDrop(event) {
     dragPreset = null;
     mounted.dragClickCandidateUid = target.dataset.uid;
     mounted.root.querySelectorAll('.is-drop-target, .is-dragging').forEach(node => node.classList.remove('is-drop-target', 'is-dragging'));
-    replacePreset(source.kind, target.dataset.uid, source.presetId);
+    openButtonEditor(target, source.presetId);
     return;
   }
   if (isPreset) {
@@ -1176,8 +1066,6 @@ function openDrawerInternal(focusClose, kind = mounted?.pageKind, opener = null)
   mounted.pointerPreset = null;
   mounted.focusedPreset = null;
   mounted.previewPreset = null;
-  mounted.pendingReplace = null;
-  mounted.replacePicker = null;
   if (typeof mounted.editor?.close === 'function') mounted.editor.close();
   mounted.drawerKind = Object.hasOwn(BUTTON_KINDS, kind) ? kind : mounted.pageKind;
   setDrawerVisible(true);
@@ -1192,8 +1080,6 @@ function closeDrawerInternal(restoreFocus) {
   mounted.pointerPreset = null;
   mounted.focusedPreset = null;
   mounted.previewPreset = null;
-  mounted.pendingReplace = null;
-  mounted.replacePicker = null;
   updatePresetPreview(null);
   setDrawerVisible(false);
   renderReplica();
@@ -1260,8 +1146,6 @@ function mountReplica(root, engine, editor) {
     previewPreset: null,
     pointerPreset: null,
     focusedPreset: null,
-    replacePicker: null,
-    pendingReplace: null,
     status: '',
     dragClickCandidateUid: null,
     snapshot: engine.getSnapshot(),
@@ -1334,6 +1218,10 @@ window.optionsReplica = Object.freeze({
   openDrawer: openReplicaDrawer,
   closeDrawer: closeReplicaDrawer,
   isDrawerOpen: isReplicaDrawerOpen,
+  /** @param {OptionsButtonKind} kind */
+  describePlace: placeName,
+  /** @param {string} presetId */
+  describePreset: presetDescription,
   /** @returns {Readonly<ExampleContext>} */
   getExampleContext() { return EXAMPLE_CONTEXT; },
   EXAMPLE_CONTEXT,

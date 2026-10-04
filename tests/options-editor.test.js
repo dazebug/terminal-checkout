@@ -39,21 +39,72 @@ function loadEditor() {
     eventPathIncludesEditor: typeof eventPathIncludesEditor === 'function' ? eventPathIncludesEditor : null,
     editorSurfaceIsBlocked: typeof editorSurfaceIsBlocked === 'function' ? editorSurfaceIsBlocked : null,
     eventBelongsToEditorOrAnchor: typeof eventBelongsToEditorOrAnchor === 'function' ? eventBelongsToEditorOrAnchor : null,
+    addChoiceAction: typeof addChoiceAction === 'function' ? addChoiceAction : null,
+    findAddAnchor: typeof findAddAnchor === 'function' ? findAddAnchor : null,
   })`, context);
   return { context, model, api: context.window.optionsEditor };
 }
 
-test('editor publishes mount, open, close, and isOpen contracts', () => {
+const functionBody = name => {
+  const start = source.search(new RegExp(`\\n(?:async )?function ${name}\\(`));
+  const end = source.slice(start + 1).search(/\n(?:async )?function |\n\/\*\* @type \{OptionsEditor\} \*\//);
+  assert.ok(start >= 0 && end > 0, `${name} is missing`);
+  return source.slice(start, start + 1 + end);
+};
+
+test('editor publishes mount, open, openAdd, close, and isOpen contracts', () => {
   const { api } = loadEditor();
-  assert.deepEqual(Object.keys(api), ['mount', 'open', 'close', 'isOpen']);
+  assert.deepEqual(Object.keys(api), ['mount', 'open', 'openAdd', 'close', 'isOpen']);
   assert.equal(api.mount.length, 2);
   assert.equal(api.open.length, 1);
+  assert.equal(api.openAdd.length, 1);
   assert.equal(api.close.length, 0);
   assert.equal(api.isOpen.length, 0);
 });
 
+test('a choice in the add picker is a blank button or this kind\'s preset, added last', () => {
+  const { model } = loadEditor();
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.equal(typeof model.addChoiceAction, 'function');
+  assert.deepEqual(plain(model.addChoiceAction('pr', null)), { type: 'button-add', kind: 'pr' });
+  assert.deepEqual(plain(model.addChoiceAction('pr', 'pr.worktree')),
+    { type: 'preset-add', kind: 'pr', presetId: 'pr.worktree', beforeUid: null });
+  assert.equal(model.addChoiceAction('pr', 'issue.open'), null, 'another kind\'s preset cannot go in this slot');
+  assert.equal(model.addChoiceAction('unknown', null), null);
+});
+
+test('the add picker anchors to its slot\'s + control, found again after every redraw', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.findAddAnchor, 'function');
+  const plus = kind => ({ dataset: { action: 'slot-add', slotKind: kind } });
+  const root = { querySelectorAll: selector => (selector.includes('slot-add') ? [plus('repo'), plus('pr')] : []) };
+  assert.equal(model.findAddAnchor(root, 'pr').dataset.slotKind, 'pr');
+  assert.equal(model.findAddAnchor(root, 'issue'), null);
+  assert.equal(model.findAddAnchor(null, 'pr'), null);
+  for (const name of ['positionPopover', 'handleKeydown']) {
+    assert.match(functionBody(name), /activeAnchor\(\)/, `${name} must resolve the anchor of either mode`);
+  }
+  assert.match(functionBody('activeAnchor'), /findAddAnchor\([\s\S]*findReplicaAnchor\(/);
+});
+
+test('choosing in the add picker adds the button, then opens that button\'s editor', () => {
+  const choose = functionBody('addFromChoice');
+  assert.match(choose, /const action = addChoiceAction\(kind, presetId\);[\s\S]*?dispatchAction\(action\)/);
+  assert.match(choose, /focusReplicaTarget\(kind, result\.createdUid\)/);
+  assert.match(choose, /window\.optionsEditor\.open\(\{ kind, uid: result\.createdUid, anchor: target, restoreFocusTo: target \}\)/);
+  assert.match(functionBody('acceptSnapshot'), /active\.mode === 'add'/,
+    'a snapshot must not close the add picker for lacking a current button');
+});
+
+test('open can start replacing the button with a preset dropped on it', () => {
+  const choose = functionBody('choosePreset');
+  assert.match(choose, /requiresPresetConfirmation\(currentButton\(\)\)[\s\S]*replaceWithPreset\(presetId\)/);
+  assert.match(source, /case 'choose-preset':\s*choosePreset\(target\.dataset\.presetId\);/);
+  assert.match(source, /if \(typeof options\.presetId === 'string'\) choosePreset\(options\.presetId\);/);
+});
+
 test('editor open contract keeps the placement anchor separate from focus restoration', () => {
-  assert.match(source, /@typedef \{\{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement\}\} OptionsEditorOpenOptions/);
+  assert.match(source, /@typedef \{\{kind: OptionsButtonKind, uid: string, anchor: HTMLElement, restoreFocusTo: HTMLElement, presetId\?: string\}\} OptionsEditorOpenOptions/);
   assert.match(source, /@param \{OptionsEditorOpenOptions\} options/);
 });
 
@@ -169,8 +220,10 @@ test('replica anchors are resolved by kind and uid under the documented replica 
   assert.match(source, /#options-replica-root[\s\S]*data-kind[\s\S]*data-uid/,
     'the JSDoc must record the replica anchor attribute contract');
   const placement = source.slice(source.indexOf('function positionPopover()'), source.indexOf('function updateEditorFacePreview'));
-  assert.match(placement, /findReplicaAnchor\(document\.getElementById\('options-replica-root'\), active\.kind, active\.uid\)/,
-    'every placement must resolve the current replica node by the active button identity');
+  assert.match(placement, /const anchor = activeAnchor\(\);/,
+    'every placement must resolve the current replica node by the active identity');
+  assert.match(source, /findReplicaAnchor\(replicaRoot, active\.kind, active\.uid\)/,
+    'an open button editor resolves its button by kind and uid');
   assert.match(placement, /if \(!anchor\?\.isConnected\) return;/,
     'a temporarily missing anchor must leave the last panel coordinates alone');
 });
@@ -542,6 +595,7 @@ test('the editor locale block follows its anchor in the same order in all five c
     'ext_d_editor_inputTypeMessage', 'ext_d_editor_exampleTitle', 'ext_d_editor_exampleNotice',
     'ext_d_editor_exampleCommand', 'ext_d_editor_exampleEmptyCommand', 'ext_d_editor_exampleInputs', 'ext_d_editor_exampleNoInputs',
     'ext_d_editor_exampleCdNote', 'ext_d_editor_exampleUnsupported',
+    'ext_d_editor_addTitle', 'ext_d_editor_addCount', 'ext_d_editor_addBlank', 'ext_d_editor_addBlankDescription',
   ];
   const catalogues = ['en', 'ko', 'ja', 'zh_CN', 'zh_TW'].map(locale => ({
     locale,

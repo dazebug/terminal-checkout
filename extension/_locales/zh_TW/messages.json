@@ -482,6 +482,26 @@
       }
     }
   },
+  "ext_d_editor_addTitle": {
+    "message": "新增到此位置"
+  },
+  "ext_d_editor_addCount": {
+    "message": "目前 $ARG1$ 個，最多 $ARG2$ 個",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_editor_addBlank": {
+    "message": "空白按鈕"
+  },
+  "ext_d_editor_addBlankDescription": {
+    "message": "自行撰寫指令。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "行為變更"
   },
@@ -803,39 +823,13 @@
     "message": "預設抽屜"
   },
   "ext_d_replica_drawer_instructions": {
-    "message": "選擇預設，將它新增至此頁面，或取代同一頁面上的按鈕。"
+    "message": "指向卡片時，按鈕要放入的位置會亮起。按「新增」會放到該位置末尾，拖到位置上會放在放開處，拖到現有按鈕上則取代該按鈕。"
   },
   "ext_d_replica_drawer_inUse": {
     "message": "使用中"
   },
   "ext_d_replica_drawer_add": {
     "message": "新增"
-  },
-  "ext_d_replica_drawer_replace": {
-    "message": "取代"
-  },
-  "ext_d_replica_drawer_chooseTarget": {
-    "message": "選擇要取代的按鈕。"
-  },
-  "ext_d_replica_drawer_noReplaceTargets": {
-    "message": "此頁面沒有可取代的按鈕。"
-  },
-  "ext_d_replica_drawer_confirmReplace": {
-    "message": "要將「$ARG1$」取代為「$ARG2$」預設嗎？目前的命令也會被取代。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_d_replica_drawer_confirm": {
-    "message": "取代按鈕"
-  },
-  "ext_d_replica_drawer_cancel": {
-    "message": "取消"
   },
   "ext_d_replica_drawer_limit": {
     "message": "此頁面已達按鈕數量上限。"

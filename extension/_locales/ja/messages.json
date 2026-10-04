@@ -482,6 +482,26 @@
       }
     }
   },
+  "ext_d_editor_addTitle": {
+    "message": "この場所に追加"
+  },
+  "ext_d_editor_addCount": {
+    "message": "現在 $ARG1$ 個・最大 $ARG2$ 個",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      },
+      "ARG2": {
+        "content": "$2"
+      }
+    }
+  },
+  "ext_d_editor_addBlank": {
+    "message": "空のボタン"
+  },
+  "ext_d_editor_addBlankDescription": {
+    "message": "コマンドを自分で書きます。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "動作の変更"
   },
@@ -803,39 +823,13 @@
     "message": "プリセット一覧"
   },
   "ext_d_replica_drawer_instructions": {
-    "message": "プリセットを選び、このページに追加するか、同じページのボタンを置き換えます。"
+    "message": "カードを指すと、ボタンが入る場所が光ります。追加を押すとその場所の最後に入り、場所へドラッグすると置いた位置に入ります。既存のボタンの上に置くと、そのボタンを置き換えます。"
   },
   "ext_d_replica_drawer_inUse": {
     "message": "使用中"
   },
   "ext_d_replica_drawer_add": {
     "message": "追加"
-  },
-  "ext_d_replica_drawer_replace": {
-    "message": "置き換え"
-  },
-  "ext_d_replica_drawer_chooseTarget": {
-    "message": "置き換えるボタンを選択してください。"
-  },
-  "ext_d_replica_drawer_noReplaceTargets": {
-    "message": "このページに置き換え可能なボタンはありません。"
-  },
-  "ext_d_replica_drawer_confirmReplace": {
-    "message": "「$ARG1$」を「$ARG2$」プリセットに置き換えますか？現在のコマンドは置き換わります。",
-    "placeholders": {
-      "ARG1": {
-        "content": "$1"
-      },
-      "ARG2": {
-        "content": "$2"
-      }
-    }
-  },
-  "ext_d_replica_drawer_confirm": {
-    "message": "ボタンを置き換える"
-  },
-  "ext_d_replica_drawer_cancel": {
-    "message": "キャンセル"
   },
   "ext_d_replica_drawer_limit": {
     "message": "このページにはこれ以上ボタンを追加できません。"
