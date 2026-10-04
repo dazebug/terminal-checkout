@@ -345,6 +345,55 @@
   "ext_migration_badge": {
     "message": "● 你儲存的按鈕早於目前預設 — 去檢視"
   },
+  "ext_d_editor_title": {
+    "message": "編輯按鈕"
+  },
+  "ext_d_editor_close": {
+    "message": "關閉編輯器"
+  },
+  "ext_d_editor_commandPlaceholder": {
+    "message": "{cd} && claude"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "在游標處插入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "上移"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "下移"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "替換為預設…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "要將這個自訂命令替換為「$ARG1$」預設嗎？目前的命令將被取代。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "替換命令"
+  },
+  "ext_d_editor_cancel": {
+    "message": "繼續編輯"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "無法更新此按鈕。"
+  },
+  "ext_d_editor_limitReached": {
+    "message": "此類按鈕已達數量上限。"
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "每個 GitHub 頁面位置至少需要一個按鈕。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "行為變更"
   },

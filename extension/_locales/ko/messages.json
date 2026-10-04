@@ -345,6 +345,55 @@
   "ext_migration_badge": {
     "message": "● 저장된 버튼이 현재 프리셋보다 오래되었습니다 — 확인하기"
   },
+  "ext_d_editor_title": {
+    "message": "버튼 편집"
+  },
+  "ext_d_editor_close": {
+    "message": "편집기 닫기"
+  },
+  "ext_d_editor_commandPlaceholder": {
+    "message": "{cd} && claude"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "커서 위치에 $ARG1$ 삽입",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "앞으로 이동"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "뒤로 이동"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "프리셋으로 바꾸기…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "현재 사용자 지정 명령을 “$ARG1$” 프리셋으로 바꿀까요? 지금 명령은 사라집니다.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "명령 바꾸기"
+  },
+  "ext_d_editor_cancel": {
+    "message": "계속 편집"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "버튼을 변경하지 못했습니다."
+  },
+  "ext_d_editor_limitReached": {
+    "message": "이 종류의 버튼 최대 개수에 도달했습니다."
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "각 GitHub 위치에는 버튼이 하나 이상 있어야 합니다."
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "동작 변경"
   },

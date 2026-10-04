@@ -345,6 +345,55 @@
   "ext_migration_badge": {
     "message": "● 你保存的按钮早于当前预设 — 去查看"
   },
+  "ext_d_editor_title": {
+    "message": "编辑按钮"
+  },
+  "ext_d_editor_close": {
+    "message": "关闭编辑器"
+  },
+  "ext_d_editor_commandPlaceholder": {
+    "message": "{cd} && claude"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "在光标处插入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "上移"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "下移"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "替换为预设…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "要将此自定义命令替换为“$ARG1$”预设吗？当前命令将被替换。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "替换命令"
+  },
+  "ext_d_editor_cancel": {
+    "message": "继续编辑"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "无法更新此按钮。"
+  },
+  "ext_d_editor_limitReached": {
+    "message": "此类按钮已达到数量上限。"
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "每个 GitHub 页面位置至少需要一个按钮。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "行为变更"
   },

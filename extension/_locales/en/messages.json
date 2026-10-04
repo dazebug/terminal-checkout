@@ -345,6 +345,55 @@
   "ext_migration_badge": {
     "message": "● Your saved buttons predate the current presets — review"
   },
+  "ext_d_editor_title": {
+    "message": "Edit button"
+  },
+  "ext_d_editor_close": {
+    "message": "Close editor"
+  },
+  "ext_d_editor_commandPlaceholder": {
+    "message": "{cd} && claude"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "Insert $ARG1$ at the cursor.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "Move earlier"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "Move later"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "Replace with preset…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "Replace this customized command with the “$ARG1$” preset? The current command will be replaced.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "Replace command"
+  },
+  "ext_d_editor_cancel": {
+    "message": "Keep command"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "Could not update this button."
+  },
+  "ext_d_editor_limitReached": {
+    "message": "This button kind has reached its button limit."
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "Each GitHub location needs at least one button."
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "behavior change"
   },

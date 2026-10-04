@@ -345,6 +345,55 @@
   "ext_migration_badge": {
     "message": "● 保存されたボタンが現在のプリセットより古いです — 確認する"
   },
+  "ext_d_editor_title": {
+    "message": "ボタンを編集"
+  },
+  "ext_d_editor_close": {
+    "message": "エディターを閉じる"
+  },
+  "ext_d_editor_commandPlaceholder": {
+    "message": "{cd} && claude"
+  },
+  "ext_d_editor_variableInsert": {
+    "message": "カーソル位置に$ARG1$を挿入",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_moveEarlier": {
+    "message": "前へ移動"
+  },
+  "ext_d_editor_moveLater": {
+    "message": "後ろへ移動"
+  },
+  "ext_d_editor_replacePreset": {
+    "message": "プリセットに置き換える…"
+  },
+  "ext_d_editor_confirmReplace": {
+    "message": "カスタムコマンドを「$ARG1$」プリセットに置き換えますか？現在のコマンドは置き換わります。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_confirm": {
+    "message": "コマンドを置き換える"
+  },
+  "ext_d_editor_cancel": {
+    "message": "編集を続ける"
+  },
+  "ext_d_editor_cannotUpdate": {
+    "message": "ボタンを更新できませんでした。"
+  },
+  "ext_d_editor_limitReached": {
+    "message": "この種類のボタン数が上限に達しました。"
+  },
+  "ext_d_editor_deleteUnavailable": {
+    "message": "各 GitHub の場所にはボタンが 1 つ以上必要です。"
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "動作の変更"
   },
