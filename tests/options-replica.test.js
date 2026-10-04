@@ -281,16 +281,14 @@ test('preset replacement sends confirmation only after the view receives needs-c
   assert.equal(model.presetReplaceAction('unknown', 'custom-uid', 'pr.checkout'), null);
 });
 
-test('narrow GitHub placements wrap below branch labels and extension copy keeps Korean words together', () => {
+test('narrow GitHub placements wrap below branch labels and only Korean copy keeps words together', () => {
   const css = read('options-replica.css');
+  const html = read('options.html');
   const narrowStart = css.indexOf('@media (max-width: 900px)');
   const narrowEnd = css.indexOf('@media (max-width: 560px)', narrowStart);
   const narrow = css.slice(narrowStart, narrowEnd);
-  assert.ok(
-    css.match(/\.options-replica\s*\{[^}]*\}/g)?.some(rule =>
-      /word-break:\s*keep-all/.test(rule) && /overflow-wrap:\s*anywhere/.test(rule),
-    ),
-  );
+  assert.equal(/\.options-replica\s*\{[^}]*word-break:\s*keep-all/.test(css), false);
+  assert.match(html, /:lang\(ko\)\s*\{\s*word-break:\s*keep-all;\s*overflow-wrap:\s*anywhere;\s*\}/);
   assert.match(narrow, /\.gh-branch-line\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(narrow, /\.gh-branch\s*\{[^}]*overflow:\s*visible;[^}]*text-overflow:\s*clip;[^}]*white-space:\s*normal/);
   assert.match(narrow, /\.gh-branch-line\s*>\s*\.replica-slot\s*\{[^}]*flex:\s*0\s+0\s+100%/);
