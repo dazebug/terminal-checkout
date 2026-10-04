@@ -178,6 +178,17 @@ test('shell confirmations isolate the whole page and reject background edits', (
   assert.match(runAction, /if \(!confirmation\.hidden\)/);
 });
 
+test('the confirmation consumes the Escape that closes it, so nothing behind it acts on the same key', () => {
+  const start = source.indexOf("document.addEventListener('keydown', event => {");
+  const end = source.indexOf('\n    });', start);
+  const handler = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  const escape = handler.slice(handler.indexOf("if (event.key === 'Escape') {"), handler.indexOf("if (event.key === 'Tab') {"));
+  const consumed = escape.indexOf('event.stopImmediatePropagation();');
+  assert.ok(consumed >= 0 && consumed < escape.indexOf('closeConfirmation();'),
+    'closing lifts inert from the page, so a document listener after this one (the drawer) would act on the same Escape');
+});
+
 test('shell modal traps Tab and restores focus on every close path', () => {
   const start = source.indexOf("document.addEventListener('keydown', event => {");
   const end = source.indexOf('\n    });', start);

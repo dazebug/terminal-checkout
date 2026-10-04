@@ -478,6 +478,8 @@ window.optionsShell = Object.freeze({
       if (confirmation.hidden) return;
       if (event.key === 'Escape') {
         event.preventDefault();
+        // Closing lifts inert from the page, so a document listener after this one (the drawer) would act on the same key.
+        event.stopImmediatePropagation();
         closeConfirmation();
         return;
       }
