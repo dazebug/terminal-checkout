@@ -45,6 +45,13 @@
   border-radius: 8px;
 }
 
+.options-shell-title {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .options-shell-save-state {
   flex: 1;
   color: var(--dim);

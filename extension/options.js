@@ -1570,7 +1570,11 @@ window.optionsEngine = Object.freeze({
   dispatch: dispatchOptionsEngineAction,
 });
 
-window.optionsShell.mount(document.getElementById('options-shell-root'), window.optionsEngine);
+window.optionsShell.mount(
+  document.getElementById('options-shell-root'),
+  window.optionsEngine,
+  document.getElementById('options-shell-settings-root'),
+);
 window.optionsReplica.mount(
   document.getElementById('options-replica-root'),
   window.optionsEngine,

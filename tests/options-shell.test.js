@@ -7,18 +7,19 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../extension/options-shell.js'), 'utf8');
 
-test('options shell exposes its mount contract', () => {
+test('options shell exposes the save area, engine, and settings mount contract', () => {
   const context = vm.createContext({ window: {} });
   vm.runInContext(source, context);
   const api = context.window.optionsShell;
   assert.deepEqual(Object.keys(api), ['mount']);
   assert.equal(typeof api.mount, 'function');
-  assert.equal(api.mount.length, 2);
+  assert.equal(api.mount.length, 3);
 });
 
-test('options shell documents its root and engine parameters', () => {
+test('options shell documents both roots and the engine parameter', () => {
   assert.match(source, /@param \{HTMLElement\} root/);
   assert.match(source, /@param \{OptionsEngine\} engine/);
+  assert.match(source, /@param \{HTMLElement\} settingsRoot/);
 });
 
 test('save bar state comes from the engine snapshot and keeps the first-load gate closed', () => {
@@ -116,6 +117,7 @@ test('global settings view state follows the snapshot and maps override validati
   };
   const result = JSON.parse(JSON.stringify(viewState(snapshot)));
   assert.equal(result.disabled, false);
+  assert.equal(result.inert, false);
   assert.equal(result.defaultMain, '');
   assert.equal(result.showEmptyOverrides, false);
   assert.deepEqual(result.overrides.map(row => row.validationMessage), [
@@ -123,7 +125,9 @@ test('global settings view state follows the snapshot and maps override validati
     { key: 'ext.validate.override.duplicate', args: [2, 'same-repo'] },
   ]);
   assert.equal(viewState({ ...snapshot, save: { saving: false, importing: true } }).disabled, true);
-  assert.equal(viewState({ ...snapshot, load: { loaded: false } }).disabled, true);
+  const blocked = viewState({ ...snapshot, load: { loaded: false } });
+  assert.equal(blocked.disabled, true);
+  assert.equal(blocked.inert, true);
 });
 
 test('a clean save bar uses a state label, not the successful-save announcement', () => {

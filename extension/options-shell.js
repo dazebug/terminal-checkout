@@ -30,7 +30,7 @@ function optionsShellViewState(snapshot) {
   };
 }
 
-/** @param {OptionsEngineSnapshot} snapshot @returns {{disabled: boolean, defaultMain: string, showEmptyOverrides: boolean, overrides: Array<{index: number, repo: string, branch: string, validationMessage: {key: string, args: Array<string|number>}|null}>}} */
+/** @param {OptionsEngineSnapshot} snapshot @returns {{disabled: boolean, inert: boolean, defaultMain: string, showEmptyOverrides: boolean, overrides: Array<{index: number, repo: string, branch: string, validationMessage: {key: string, args: Array<string|number>}|null}>}} */
 function optionsShellSettingsViewState(snapshot) {
   const diagnostics = new Map(snapshot.validation.overrides.map(row => [row.index, row.errors]));
   const overrides = snapshot.globalSettings.repoMainBranch.map(row => {
@@ -44,6 +44,7 @@ function optionsShellSettingsViewState(snapshot) {
   });
   return {
     disabled: !snapshot.load.loaded || snapshot.save.saving || snapshot.save.importing,
+    inert: !snapshot.load.loaded,
     defaultMain: snapshot.globalSettings.defaultMain,
     showEmptyOverrides: overrides.length === 0,
     overrides,
@@ -74,24 +75,24 @@ function optionsShellHtmlElement(tag, className, html) {
   return node;
 }
 
-/** @type {{mount: (root: HTMLElement, engine: OptionsEngine) => void}} */
+/** @type {{mount: (root: HTMLElement, engine: OptionsEngine, settingsRoot: HTMLElement) => void}} */
 window.optionsShell = Object.freeze({
-  /** @param {HTMLElement} root @param {OptionsEngine} engine */
-  mount(root, engine) {
-    if (!root || !engine) return;
+  /** @param {HTMLElement} root @param {OptionsEngine} engine @param {HTMLElement} settingsRoot */
+  mount(root, engine, settingsRoot) {
+    if (!root || !engine || !settingsRoot) return;
 
     const shell = optionsShellElement('section', 'options-shell');
     const sticky = optionsShellElement('div', 'options-shell-sticky');
     const saveBar = optionsShellElement('div', 'options-shell-savebar');
     saveBar.setAttribute('role', 'region');
-    const regionName = optionsShellElement('span', 'options-shell-sr-only', tr('ext.header.options'));
-    regionName.id = 'shell-region-name';
+    const heading = optionsShellElement('h1', 'options-shell-title', `Terminal Checkout — ${tr('ext.header.options')}`);
+    heading.id = 'shell-region-name';
     saveBar.setAttribute('aria-labelledby', 'shell-region-name');
     const saveState = optionsShellElement('span', 'options-shell-save-state');
     saveState.setAttribute('aria-live', 'polite');
     const discard = optionsShellButton('shell-discard', 'btn-secondary', tr('ext.d.shell.discard'));
     const save = optionsShellButton('shell-save', 'btn-primary', tr('ext.button.save'));
-    saveBar.append(regionName, saveState, discard, save);
+    saveBar.append(heading, saveState, discard, save);
 
     const confirmation = optionsShellElement('div', 'options-shell-confirm');
     confirmation.hidden = true;
@@ -142,6 +143,9 @@ window.optionsShell = Object.freeze({
     status.setAttribute('aria-live', 'polite');
 
     sticky.append(saveBar, confirmation, stale, migrationBadge, migrationPanel, loadError, status);
+
+    const settingsRegion = optionsShellElement('section', 'options-shell-settings');
+    settingsRegion.inert = true;
 
     const mainSettings = optionsShellElement('section', 'section options-shell-panel');
     mainSettings.setAttribute('aria-labelledby', 'shell-main-title');
@@ -195,8 +199,10 @@ window.optionsShell = Object.freeze({
     backupActions.append(exportButton, importButton, resetButton, importFile);
     backup.append(backupTitle, backupHelp1, backupHelp2, backupHelp3, backupActions);
 
-    shell.append(sticky, mainSettings, backup);
+    shell.append(sticky);
     root.replaceChildren(shell);
+    settingsRegion.append(mainSettings, backup);
+    settingsRoot.replaceChildren(settingsRegion);
 
     let pendingConfirmation = null;
     let confirmationReturnFocus = null;
@@ -367,6 +373,7 @@ window.optionsShell = Object.freeze({
 
     function renderSettings(snapshot) {
       const settings = optionsShellSettingsViewState(snapshot);
+      settingsRegion.inert = settings.inert;
       if (defaultMain.value !== settings.defaultMain) defaultMain.value = settings.defaultMain;
       defaultMain.disabled = settings.disabled;
       addOverride.disabled = settings.disabled;

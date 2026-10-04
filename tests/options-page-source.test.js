@@ -24,9 +24,11 @@ test('the typed storage write site is the only sync.set call and belongs to Save
 
 test('the page contains all module roots and loads the contract modules before the engine', () => {
   const html = read('options.html');
-  for (const id of ['options-shell-root', 'options-replica-root', 'options-editor-root']) {
+  for (const id of ['options-shell-root', 'options-replica-root', 'options-editor-root', 'options-shell-settings-root']) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
+  assert.ok(html.indexOf('id="options-shell-root"') < html.indexOf('<main id="app"'));
+  assert.ok(html.indexOf('id="options-shell-settings-root"') > html.indexOf('</main>'));
   const scripts = ['options-shell.js', 'options-replica.js', 'options-editor.js', 'options.js'];
   const positions = scripts.map(name => html.indexOf(`<script src="${name}"`));
   assert.equal(positions.every(position => position >= 0), true);
@@ -77,11 +79,17 @@ test('the engine reads no rendered settings and only uses the module roots and i
   const source = read('options.js');
   const lookups = [...source.matchAll(/document\.getElementById\('([^']+)'\)/g)].map(([, id]) => id);
   assert.deepEqual([...new Set(lookups)].sort(), [
-    'app', 'options-editor-root', 'options-replica-root', 'options-shell-root',
+    'app', 'options-editor-root', 'options-replica-root', 'options-shell-root', 'options-shell-settings-root',
   ]);
   assert.doesNotMatch(source, /document\.(?:querySelector|querySelectorAll)\s*\(/);
   assert.doesNotMatch(source, /(?:\.value|\.textContent|\.innerHTML)\s*(?:=|\+=)/,
     'engine state still depends on markup fields or legacy rendering');
+});
+
+test('the shell puts the localized page heading in the save bar', () => {
+  const shell = read('options-shell.js');
+  assert.match(shell, /optionsShellElement\('h1', 'options-shell-title', `Terminal Checkout — \$\{tr\('ext\.header\.options'\)\}`\)/);
+  assert.match(shell, /saveBar\.append\(heading, saveState, discard, save\)/);
 });
 
 test('Korean wrapping rules follow only the Korean document language', () => {
