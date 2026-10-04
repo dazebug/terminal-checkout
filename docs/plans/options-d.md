@@ -4,7 +4,7 @@
 - 대상: `extension/options.html` · `extension/options.js` Chrome 확장 옵션 페이지
 - 시작 커밋: `b8d8f483aaa76e556e244e414fbdd0a0ea51ad21` (`b8d8f48`)
 - 기준 트리: `/Users/choongjaelee/Codes/terminal-checkout/.claude/worktrees/options-d-review` (`worktree-options-d-review`) · 작업 트리: `/Users/choongjaelee/Codes/terminal-checkout-options-d-work` (`options-d-work`)
-- 현재: R1 · 마지막 승격 5ac1026 · 리뷰 중 없음 · 게이트 그린(397)
+- 현재: R1 · 마지막 승격 b62595f · 리뷰 중 없음 · 게이트 그린(401)
 - 최근 검증자 판정: 계획을 레인 3개로 재편하면 시작에 합의한다 — 1단계 항목 1부터 · R0
 
 ## 배경 — 확인한 원천
@@ -107,16 +107,19 @@
 | 3′ | 셸 표시 결함 | 레인 A · 셸 표시 | (a) `hidden` 영역을 CSS `display` 가 덮어 로드 성공 후에도 오류 영역이 보인다 (b) 깨끗한 상태가 저장 사건 문장으로 보인다 | `extension/options.html`, `extension/options-shell.js/css`, `extension/_locales/*/messages.json`, `tests/options-page-source.test.js`, `tests/options-shell.test.js`, `tests/i18n.test.js`, `tools/check-locales.js` | 2 | verified | 재실행: 드라이버 기준 트리 `node --test` 374 pass · 실제 브라우저 편집기 연 상태에서 hidden인데 보이는 요소 0 (승격 전 4) | 53cf591 |
 | 3″ | 한국어 줄바꿈 | 레인 A · 셸 표시 | 한국어 문구가 음절 사이에서 줄이 바뀐다 | `extension/options.html`, `tests/options-page-source.test.js` | 3′ | verified | 재실행: 드라이버 기준 트리 `node --test` 374 pass · 실제 브라우저 편집기 연 상태에서 hidden인데 보이는 요소 0 (승격 전 4) | 8f9d5b7 |
 | 3‴ | 셸 접근성·IME 입력 | 레인 A · 셸 접근성 | (a) 마이그레이션 후보 라벨이 체크박스를 감쌌다가 heading에 다시 추가해 연결을 끊는다 (b) IME 조합 중 Escape를 셸 단축키가 가로챈다 | `extension/options-shell.js`, `tests/options-shell.test.js` | 3 | claimed | 수정 전 재현 스크립트: 마이그레이션 `labelControl=null`, `checkboxLabels=0`, 라벨 클릭 뒤 선택 불변; IME Escape `defaultPrevented=true`; `node --test tests/options-shell.test.js` → `ℹ tests 8`, `ℹ pass 6`, `ℹ fail 2`; 수정 후 `.git/smoke-accessibility.cjs` → main·override repo/branch·가져오기 파일·마이그레이션 체크박스 이름 연결, 라벨 클릭 선택 전환, IME Enter/Escape 중 확인 유지, 일반 Escape 닫힘, jsdom 오류 0; `node --test` → `ℹ tests 397`, `ℹ pass 397`, `ℹ fail 0` | |
+| 3⁗ | 셸 확인창 모달 차단 | 레인 A · 셸 확인 UI | aria-modal 확인창이 열린 동안 페이지 배경·설정·복제 화면을 조작할 수 있어 포커스와 엔진 상태가 바뀐다 | `extension/options-shell.js`, `tests/options-shell.test.js` | 2·3 | claimed | 수정 전 재현: `aria-modal=true`, `activeOutsideModal=true`, `backgroundInert=false`, `engineMain=draft-while-confirming`; 수정 전 `node --test tests/options-shell.test.js` → `ℹ tests 10`, `ℹ pass 8`, `ℹ fail 2`; 수정 후 제공 재현: `activeOutsideModal=false`, `backgroundInert=true`, `engineMain=develop`; `.git/smoke-confirmation.cjs` → 변경 취소·Reset·동기화 받아들이기 각각 배경 inert·Tab 순환·배경 편집 차단·Escape 뒤 포커스 복귀; 재실행 `node --test` → `ℹ tests 401`, `ℹ pass 401`, `ℹ fail 0` | |
 | 4 | 복제 화면 | 레인 B · 복제 화면 | (a) 목록 페이지 미리보기가 실제 pill 모양을 그리지 않는다 (`extension/options.js:393; extension/content.js:504,524`)<br>(b) 800 px에서 목록·편집 막대 문구가 세로로 접히며 900 px 이하 배치는 실측되지 않았다 (2026-10-04 사용자 관찰) | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록. 주변 값은 이 모듈의 단일 `EXAMPLE_CONTEXT` 상수에 둔다: `octo-demo/sample-repo`, PR `#42`, issue `#17`, branch `example/options`, base `main`, 제목 `Add button presets`, repo 경로 `/work/sample-repo` | 1 | verified | 레인 B 커밋 `7fc851f` · 레인 B 하네스 5/5 페이지·목록 pill 2·storage 쓰기 0 · 드라이버 실제 브라우저 800px: 다섯 페이지 카드·브랜치 옆 버튼 3개·편집기 열림 · 재실행 361 pass | 7fc851f |
 | 5 | 프리셋 서랍 | 레인 B · 프리셋 서랍 | — | `extension/options-replica.js/css`, `tests/options-replica.test.js`, B 로케일 블록 | 1·4 | verified | 레인 B 커밋 c3f8b38 · 하네스: 서랍 카드 5/1/3/1/3·자리 강조·[추가]·위치 지정 끌어 놓기·확인 뒤 교체·대화상자 0·storage 쓰기 0 · 드라이버 재실행 380 pass · 프리셋 설명 13개를 실제 명령과 대조 | c3f8b38 |
 | 5′ | 복제 화면 줄바꿈 | 레인 B · 복제 화면 | 복제 화면의 언어 공통 `word-break: keep-all` 이 일본어·중국어 문구도 줄바꿈하지 못하게 한다 | `extension/options-replica.css`, `tests/options-replica.test.js` | 4 | verified | 드라이버 재실행 384 pass · replica에서 언어 무관 keep-all 제거 확인 | 097d025 |
 | 5″ | 서랍 바꾸기 동작 | 레인 B · 프리셋 서랍 | 서랍 카드의 `[바꾸기]` 를 누른 뒤 이벤트 대상이 분리되면서 바깥 클릭 처리기가 서랍을 닫는다 | `extension/options-replica.js`, `tests/options-replica.test.js` | 5 | verified | 실제 브라우저에서 서랍 `[바꾸기]` 클릭 뒤 서랍 열림 유지 · 385 pass | 88bd567 |
 | 5‴ | 목록 버튼 편집·서랍 확인 재개 | 레인 B · 복제 화면 | (a) 목록 페이지에서 쓸 수 없는 변수를 넣은 버튼이 복제 화면에서 사라져 편집 진입점이 없다 (b) 서랍 교체 확인을 Escape로 닫고 다시 열면 `[확인]` 이 동작하지 않는다 | `extension/options-replica.js/css`, `tests/options-replica.test.js` | 4·5″ | wip | 레인 B 진행 중; 드라이버 cold 재현 스크립트에서 목록 버튼 진입점 0, 확인 뒤 revision 불변 | |
+| 5⁗ | 끌기 뒤 클릭·풍경 언어 | 레인 B · 복제 화면 | (a) 끌기 뒤 다음 클릭을 삼킨다 (b) P3 영어 풍경 문구에 document 언어가 지정되지 않는다 | `extension/options-replica.js/css`, `tests/options-replica.test.js` | 5·5‴ | wip | 드라이버 cold 재현 스크립트 확인: 끌기 직후 첫 클릭이 동작하지 않음, P3 영어 풍경에 lang 미지정 | |
 | 6 | 팝오버 편집기 | 레인 C · 팝오버 편집기 | — | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 1 | verified | 레인 C 커밋 `46f12de` · 레인 C 하네스: 열기·바깥 클릭/Escape 닫기와 포커스 복귀·재열기 값 유지·대화상자 0·storage 쓰기 0 · 드라이버 재실행 352 pass | 46f12de |
 | 7 | claude 입력과 실행 전 예시 | 레인 C · 입력·실행 예시 | — | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 1·6 | verified | 레인 C 커밋 `a2e164d` · 하네스: 입력 행 추가·삭제·↑↓·합성 DragEvent·상한·타이핑 중 노드 유지·예시 표시·storage 쓰기 0 · 드라이버 재실행 371 pass · 실제 브라우저에서 편집기 열림 | a2e164d |
 | 7′ | 편집기 표시 결함 | 레인 C · 편집기 표시 | (a) `hidden` 요소가 보임 (b) 리사이즈에 자리를 다시 잡지 않음 — 폭 0에서 열면 세로 띠로 고정 (c) 명령 칸 아래 맨 글자 예시 (d) 변수 목록 두 번 (e) 하단 동작 막대 뒤로 본문이 비침 | `extension/options-editor.js/css`, `tests/options-editor.test.js`, C 로케일 블록 | 7 | verified | 실제 브라우저에서 hidden 요소 0 · 하네스 0폭 열기·리사이즈 · 384 pass | 98de9cc |
 | 7″ | 편집기 포커스·바깥 클릭 | 레인 C · 편집기 표시 | (a) 버튼이 사라질 때 편집기 포커스 복귀가 셸 포커스와 다툰다 (b) 다시 그려 분리된 편집기 안 클릭을 바깥 클릭으로 잘못 판정한다 | `extension/options-editor.js`, `tests/options-editor.test.js` | 7′ | verified | 하네스 포커스 다툼·바깥 클릭 경로 판정 · 387 pass | 53e8c41 |
 | 7‴ | 편집기 IME·좁은 창 배치 | 레인 C · 편집기 표시 | (a) IME 조합 중 Escape가 편집기를 닫는다 (b) 좁은 창에서 아래쪽 버튼을 열면 편집기 높이가 0이다 | `extension/options-editor.js/css`, `tests/options-editor.test.js` | 7′ | wip | 레인 C 진행 중; 드라이버 cold 재현 스크립트에서 조합 중 Escape로 편집기 닫힘, 579×700 아래쪽 anchor에서 높이 0 | |
+| 7⁗ | 편집기 확인 포커스·재배치 | 레인 C · 편집기 표시 | (a) 동기화 알림 렌더가 교체 확인의 포커스를 지운다 (b) 다시 그려진 버튼의 옛 좌표에 편집기가 고정된다 | `extension/options-editor.js/css`, `tests/options-editor.test.js` | 7′·7″ | wip | 드라이버 cold 재현 스크립트 확인: 교체 확인 포커스가 분리됨, 편집기 위치가 재그린 버튼을 따르지 않음 | |
 | 8 | 통합 | 레인 A · 3단계 통합 | (a) 옛 카드·셸 DOM 및 전용 렌더·이벤트 코드가 남아 이중 상태와 경로를 유지한다 (b) 엔진 스냅샷이 오류·상태 값을 옛 DOM에서 읽는다 (c) 숨김 규칙 주석이 모든 페이지에서 버튼을 숨긴다고 과장하지만 실제 숨김은 목록 종류만이다 (`extension/defaults.js`, `extension/content.js`) | `extension/options.html`, `extension/options.js`, `extension/defaults.js`, `tests/options-page-source.test.js`, 기존 옵션 관련 테스트 | 2·3·4·5·6·7 | verified | 드라이버 실제 브라우저 실설정 왕복: 바뀐 소유 키 `buttons` 하나·`conflictButtons` 같음 · 388 pass | c9a622b |
 | 8′ | 복제 화면 첫 배치와 제목 | 레인 A · 화면 배치 | (a) 복제 화면 앞에 긴 설정·백업 도움말이 나와 복제 화면이 첫 화면 밖에 밀린다 (b) 통합 뒤 페이지에 `h1` 이 없다 | `extension/options.html`, `extension/options.js`, `extension/options-shell.js/css`, `tests/options-shell.test.js`, `tests/options-page-source.test.js` | 8 | claimed | `node .git/smoke-layout.cjs` → DOM 순서 savebar < page-card/replica < global-settings/backup, `h1=Terminal Checkout — 설정 (lang=ko)`, 첫 로드 전 설정 `inert`·컨트롤 비활성·추가 변화 없음, 로드 오류 0; `node --test` → `ℹ tests 389`, `ℹ pass 389`, `ℹ fail 0`, `exit_code=0` | |
 | 9 | README 네 언어판 | 레인 C · README 네 언어판 | 새 UI 레이블을 README가 인용할 때 카탈로그 값과 불일치하면 화면 문구를 찾을 수 없다 (`tests/readme-catalogue-labels.test.js:49`) | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh-Hant.md`, `tests/readme-catalogue-labels.test.js` | 8 | verified | README 네 언어판 · 버튼 순서 키 ←/→ 정정 · 384 pass | 08a7fd2 |
@@ -199,6 +202,14 @@
 - 차단: (1) 목록 버튼에 그 페이지에서 못 쓰는 변수를 넣으면 복제 화면에서 사라져 편집 불가 (2) 서랍 교체 확인을 Escape로 닫고 다시 열면 [확인] 무동작 (3) IME 조합 중 Escape가 편집기를 닫음 (4) 마이그레이션 체크박스 라벨 미연결 (5) 좁은 창 아래쪽 버튼에서 편집기 높이 0 — 전부 분류 B
 - 수정: 항목 5‴(레인 B: 1·2)·7‴(레인 C: 3·5)·3‴(레인 A: 4)
 - 실측: 드라이버가 검토자 재현 스크립트를 샌드박스 밖에서 실행해 5건 모두 재현
+- 판정: 이 구현에 합의하는가: no
+- 처리 결과: 1차 결함 5건 수정·승격: 08ec8f6·af07234·b62595f, 테스트 심사 91c7701
+
+#### 리뷰 cold 2 — b8d8f48..b62595f · 새 스레드 01a10838-3b38-7ec3-9748-c2aec607cb2f
+
+- 차단: (1) 분류 A: 저장 재읽기 뒤 쓰기 완료 전 원격 변경 덮어쓰기 — 기존 잔여 (2) 동기화 알림이 교체 확인 포커스를 지움 (3) 셸 확인창 aria-modal인데 배경 조작 가능 (4) 다시 그려진 버튼의 옛 좌표에 편집기 고정 (5) 끌기 뒤 다음 클릭을 삼킴 (6) P3 영어 풍경 lang 미지정 — (2)∼(6) 분류 B
+- 수정: 항목 7⁗(레인 C: 2·4)·5⁗(레인 B: 5·6)·3⁗(레인 A: 3), (1)은 기존 원장 행대로 기록만
+- 실측: 드라이버가 재현 스크립트 확인
 - 판정: 이 구현에 합의하는가: no
 
 ## 열린 질문

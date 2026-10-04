@@ -158,6 +158,44 @@ test('shell key handling leaves IME composition keys to the input method', () =>
   assert.ok(handler.indexOf('event.isComposing') < handler.indexOf("event.key === 'Escape'"));
 });
 
+test('shell confirmations isolate the whole page and reject background edits', () => {
+  const start = source.indexOf('function setConfirmationBackgroundInert(');
+  const end = source.indexOf('\n    function appendMigrationDiff(', start);
+  const isolation = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  const targetsStart = source.indexOf('const confirmationBackground = [');
+  const targetsEnd = source.indexOf('\n    let confirmationBackgroundInertState', targetsStart);
+  const targets = source.slice(targetsStart, targetsEnd);
+  assert.ok(targetsStart >= 0 && targetsEnd > targetsStart);
+  assert.match(source, /const appRoot = document\.getElementById\('app'\)/);
+  assert.match(targets, /appRoot/);
+  assert.match(targets, /settingsRoot/);
+  assert.match(targets, /saveBar/);
+  assert.match(targets, /stale, migrationBadge, migrationPanel, loadError, status/);
+  assert.match(isolation, /confirmation\.inert = false/);
+  assert.match(isolation, /\.inert = true/);
+  assert.match(isolation, /element\.setAttribute\('inert', ''\)/);
+  assert.match(isolation, /element\.removeAttribute\('inert'\)/);
+  assert.match(isolation, /element\.inert = wasInert/);
+  assert.match(source, /document\.addEventListener\('focusin', event => \{\s*if \(!confirmation\.hidden && !confirmation\.contains\(event\.target\)\) keepEditing\.focus\(\);/);
+
+  const actionStart = source.indexOf('async function runAction(action)');
+  const actionEnd = source.indexOf('\n    function appendMigrationDiff(', actionStart);
+  const runAction = source.slice(actionStart, actionEnd);
+  assert.match(runAction, /if \(!confirmation\.hidden\)/);
+});
+
+test('shell modal traps Tab and restores focus on every close path', () => {
+  const start = source.indexOf("document.addEventListener('keydown', event => {");
+  const end = source.indexOf('\n    });', start);
+  const handler = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(handler, /event\.key === 'Tab'/);
+  assert.match(handler, /event\.shiftKey/);
+  assert.match(handler, /event\.preventDefault\(\)/);
+  assert.match(source, /if \(restoreFocus && canRestoreFocus\(returnFocus\)\) returnFocus\.focus\(\)/);
+});
+
 test('a clean save bar uses a state label, not the successful-save announcement', () => {
   assert.match(source, /saved:\s*tr\('ext\.d\.shell\.saved'\)/);
 

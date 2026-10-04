@@ -98,6 +98,7 @@ window.optionsShell = Object.freeze({
     confirmation.hidden = true;
     confirmation.setAttribute('role', 'alertdialog');
     confirmation.setAttribute('aria-modal', 'true');
+    confirmation.tabIndex = -1;
     const confirmationMessage = optionsShellElement('p', 'options-shell-confirm-message');
     confirmationMessage.id = 'shell-confirm-message';
     confirmation.setAttribute('aria-labelledby', 'shell-confirm-message');
@@ -213,12 +214,51 @@ window.optionsShell = Object.freeze({
     let migrationSignature = '';
     let migrationFocusUid = null;
     let overrideSignature = null;
+    const appRoot = document.getElementById('app');
+    const confirmationBackground = [
+      appRoot, settingsRoot, saveBar, stale, migrationBadge, migrationPanel, loadError, status,
+    ].filter(Boolean);
+    let confirmationBackgroundInertState = null;
+
+    function setConfirmationBackgroundInert(inert) {
+      if (inert) {
+        if (confirmationBackgroundInertState) return;
+        confirmationBackgroundInertState = confirmationBackground.map(element => [
+          element, element.hasAttribute('inert'), element.inert,
+        ]);
+        for (const [element] of confirmationBackgroundInertState) {
+          element.inert = true;
+          element.setAttribute('inert', '');
+        }
+        confirmation.inert = false;
+        return;
+      }
+      if (!confirmationBackgroundInertState) return;
+      for (const [element, hadAttribute, wasInert] of confirmationBackgroundInertState) {
+        if (hadAttribute) element.setAttribute('inert', '');
+        else element.removeAttribute('inert');
+        element.inert = wasInert;
+      }
+      confirmationBackgroundInertState = null;
+    }
+
+    function canRestoreFocus(element) {
+      return Boolean(element?.isConnected && !element.disabled && !element.closest('[hidden], [inert]'));
+    }
+
+    function confirmationFocusableElements() {
+      return [...confirmation.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter(element => !element.closest('[hidden], [inert]') && element.tabIndex >= 0);
+    }
 
     function closeConfirmation(restoreFocus = true) {
+      const returnFocus = confirmationReturnFocus;
       pendingConfirmation = null;
       confirmation.hidden = true;
-      if (restoreFocus && confirmationReturnFocus?.isConnected) confirmationReturnFocus.focus();
+      setConfirmationBackgroundInert(false);
       confirmationReturnFocus = null;
+      if (restoreFocus && canRestoreFocus(returnFocus)) returnFocus.focus();
     }
 
     function showConfirmation(action) {
@@ -235,10 +275,12 @@ window.optionsShell = Object.freeze({
         ? tr('ext.d.shell.acceptLatest')
         : isReset ? tr('ext.button.reset') : tr('ext.d.shell.discard');
       confirmation.hidden = false;
+      setConfirmationBackgroundInert(true);
       keepEditing.focus();
     }
 
     async function runAction(action) {
+      if (!confirmation.hidden) return { ok: false, reason: 'modal-open', snapshot: engine.getSnapshot() };
       const result = await engine.dispatch(action);
       render(result.snapshot || engine.getSnapshot());
       if (!result.ok && result.reason === 'needs-confirmation') showConfirmation(action);
@@ -440,20 +482,45 @@ window.optionsShell = Object.freeze({
     keepEditing.addEventListener('click', () => closeConfirmation());
     confirmAction.addEventListener('click', async () => {
       if (!pendingConfirmation) return;
+      const returnFocus = confirmationReturnFocus;
       const action = pendingConfirmation.type === 'reset'
         ? pendingConfirmation
         : { ...pendingConfirmation, confirmed: true };
-      closeConfirmation(false);
+      closeConfirmation();
       const result = await runAction(action);
-      if (result.ok) save.focus();
-      else if (engine.getSnapshot().load.retryAvailable) retry.focus();
+      if (!canRestoreFocus(returnFocus)) {
+        if (!result.ok && engine.getSnapshot().load.retryAvailable) retry.focus();
+        else save.focus();
+      }
     });
     document.addEventListener('keydown', event => {
       if (event.isComposing || event.keyCode === 229) return;
-      if (event.key === 'Escape' && !confirmation.hidden) {
+      if (confirmation.hidden) return;
+      if (event.key === 'Escape') {
         event.preventDefault();
         closeConfirmation();
+        return;
       }
+      if (event.key === 'Tab') {
+        const focusable = confirmationFocusableElements();
+        if (!focusable.length) {
+          event.preventDefault();
+          confirmation.focus();
+          return;
+        }
+        const activeIndex = focusable.indexOf(document.activeElement);
+        const lastIndex = focusable.length - 1;
+        if (event.shiftKey && activeIndex <= 0) {
+          event.preventDefault();
+          focusable[lastIndex].focus();
+        } else if (!event.shiftKey && (activeIndex < 0 || activeIndex === lastIndex)) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
+      }
+    });
+    document.addEventListener('focusin', event => {
+      if (!confirmation.hidden && !confirmation.contains(event.target)) keepEditing.focus();
     });
     staleReload.addEventListener('click', async () => {
       const result = await runAction({ type: 'reload-latest' });
