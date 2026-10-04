@@ -439,7 +439,7 @@
     "message": "명령 바꾸기"
   },
   "ext_d_editor_cancel": {
-    "message": "계속 편집"
+    "message": "명령 유지"
   },
   "ext_d_editor_cannotUpdate": {
     "message": "버튼을 변경하지 못했습니다."
@@ -449,6 +449,84 @@
   },
   "ext_d_editor_deleteUnavailable": {
     "message": "각 GitHub 위치에는 버튼이 하나 이상 있어야 합니다."
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "입력 최대 $ARG1$개",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "예: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 입력 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "Claude 입력 $ARG1$ 삭제",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "셸 모드"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "슬래시 명령"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "입력 지시"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "메시지"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "실행 예시"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "화면에 보여 주는 예시입니다. 실제 실행 명령은 버튼을 누를 때 앱이 조립합니다."
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "명령"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "설정된 명령이 없습니다."
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude 입력"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "Claude 입력이 없습니다."
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "여기서 {cd} 는 예시로 $ARG1$ 에 들어갑니다. 실제 위치는 앱이 zoxide 와 설정한 기준 폴더로 정합니다.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "이 페이지나 예시에서 값을 쓸 수 없는 변수는 그대로 둡니다: $ARG1$.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "동작 변경"

@@ -12,6 +12,7 @@ const source = read('options-editor.js');
 function loadEditor() {
   const context = vm.createContext({ window: {}, tr: (key, ...args) => `${key}:${args.join('|')}` });
   vm.runInContext(read('defaults.js'), context);
+  vm.runInContext(read('options-replica.js'), context);
   vm.runInContext(source, context);
   const model = vm.runInContext(`({
     calculatePopoverPosition: typeof calculatePopoverPosition === 'function' ? calculatePopoverPosition : null,
@@ -19,6 +20,15 @@ function loadEditor() {
     appendFaceCharacter: typeof appendFaceCharacter === 'function' ? appendFaceCharacter : null,
     variablesForKind: typeof variablesForKind === 'function' ? variablesForKind : null,
     validationFor: typeof validationFor === 'function' ? validationFor : null,
+    classifyClaudeInput: typeof classifyClaudeInput === 'function' ? classifyClaudeInput : null,
+    exampleValuesForKind: typeof exampleValuesForKind === 'function' ? exampleValuesForKind : null,
+    expandExampleTemplate: typeof expandExampleTemplate === 'function' ? expandExampleTemplate : null,
+    splitCommandSteps: typeof splitCommandSteps === 'function' ? splitCommandSteps : null,
+    inputMoveAction: typeof inputMoveAction === 'function' ? inputMoveAction : null,
+    inputMoveTargetIndex: typeof inputMoveTargetIndex === 'function' ? inputMoveTargetIndex : null,
+    canAddClaudeInput: typeof canAddClaudeInput === 'function' ? canAddClaudeInput : null,
+    maxClaudeInputs: MAX_CLAUDE_INPUTS,
+    faceMaxLength: FACE_MAX_LENGTH,
     requiresPresetConfirmation: typeof requiresPresetConfirmation === 'function' ? requiresPresetConfirmation : null,
     buttonMoveAction: typeof buttonMoveAction === 'function' ? buttonMoveAction : null,
     presetReplaceAction: typeof presetReplaceAction === 'function' ? presetReplaceAction : null,
@@ -87,19 +97,22 @@ test('a taller editor gets an internal height bound instead of leaving the viewp
 
 test('face limit uses the same UTF-16 length unit as maxlength', () => {
   const { model } = loadEditor();
+  const limit = model.faceMaxLength;
   assert.equal(typeof model.fitsFieldLimit, 'function');
-  assert.equal(model.fitsFieldLimit('a'.repeat(24), 24), true);
-  assert.equal(model.fitsFieldLimit('a'.repeat(25), 24), false);
-  assert.equal(model.fitsFieldLimit('😀'.repeat(12), 24), true);
-  assert.equal(model.fitsFieldLimit('😀'.repeat(13), 24), false);
-  assert.equal(model.fitsFieldLimit(4, 24), false);
+  assert.equal(Number.isInteger(limit), true);
+  assert.equal(model.fitsFieldLimit('a'.repeat(limit), limit), true);
+  assert.equal(model.fitsFieldLimit('a'.repeat(limit + 1), limit), false);
+  assert.equal(model.fitsFieldLimit('😀'.repeat(limit / 2), limit), true);
+  assert.equal(model.fitsFieldLimit('😀'.repeat(limit / 2 + 1), limit), false);
+  assert.equal(model.fitsFieldLimit(4, limit), false);
 });
 
 test('emoji palette appends a whole value only when it fits the face limit', () => {
   const { model } = loadEditor();
+  const limit = model.faceMaxLength;
   assert.equal(typeof model.appendFaceCharacter, 'function');
-  assert.equal(model.appendFaceCharacter('ab', '🌳', 24), 'ab🌳');
-  assert.equal(model.appendFaceCharacter('a'.repeat(23), '🌳', 24), 'a'.repeat(23));
+  assert.equal(model.appendFaceCharacter('ab', '🌳', limit), 'ab🌳');
+  assert.equal(model.appendFaceCharacter('a'.repeat(limit - 1), '🌳', limit), 'a'.repeat(limit - 1));
 });
 
 test('variable chips come from the actual kind definition and include app variables once', () => {
@@ -123,9 +136,120 @@ test('editor validation is projected from the engine snapshot and uses existing 
     },
   };
   assert.deepEqual(Array.from(model.validationFor(snapshot, 'pr', button)), [
-    'ext.validate.face:buttons|1',
+    'ext.validate.face:buttons|0',
     'ext.field.claudeInputs.warn:',
   ]);
+});
+
+test('validation button positions match the zero-based storage key used by Save', () => {
+  const { model } = loadEditor();
+  const buttons = [{ uid: 'first' }, { uid: 'second' }];
+  const snapshot = {
+    buttons: { pr: buttons },
+    validation: { buttons: [
+      { kind: 'pr', uid: 'first', errors: ['face'] },
+      { kind: 'pr', uid: 'second', errors: ['command'] },
+    ] },
+  };
+  assert.equal(model.validationFor(snapshot, 'pr', buttons[0])[0], 'ext.validate.face:buttons|0');
+  assert.equal(model.validationFor(snapshot, 'pr', buttons[1])[0], 'ext.validate.command:buttons|1');
+});
+
+test('Claude input type is classified without changing the entered value', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.classifyClaudeInput, 'function');
+  for (const [value, kind] of [
+    ['  !gh issue view {number}', 'shell'],
+    ['/review', 'slash'],
+    ['# remember this', 'directive'],
+    ['summarize this issue', 'message'],
+    ['\t!not-trimmed-as-space', 'message'],
+  ]) {
+    const original = value;
+    assert.equal(model.classifyClaudeInput(value), kind);
+    assert.equal(value, original);
+  }
+});
+
+test('example variables come from the replica example context and the real kind definitions', () => {
+  const { model, context } = loadEditor();
+  const replica = context.window.optionsReplica;
+  assert.equal(typeof model.exampleValuesForKind, 'function');
+  const values = model.exampleValuesForKind('pr', replica.getExampleContext());
+  assert.equal(values.repo, 'sample-repo');
+  assert.equal(values.owner, 'octo-demo');
+  assert.equal(values.number, 42);
+  assert.equal(values.branch, 'example/options');
+  assert.equal(values.branch_underbar, 'example_options');
+  assert.equal(values.base, 'main');
+  assert.equal(values.main, 'main');
+  assert.equal(values.cd, '/work/sample-repo');
+  const issueList = model.exampleValuesForKind('issue-list', replica.getExampleContext());
+  assert.equal(issueList.number, 17);
+  assert.equal(Object.hasOwn(issueList, 'branch'), false);
+});
+
+test('example expansion leaves unsupported or absent variables unchanged and identifies them', () => {
+  const { model, context } = loadEditor();
+  const example = context.window.optionsReplica.getExampleContext();
+  assert.equal(typeof model.expandExampleTemplate, 'function');
+  const pr = model.expandExampleTemplate(
+    '{cd} && gh pr view {number} {branch} {missing}', 'pr', example,
+  );
+  assert.equal(pr.text, "cd /work/sample-repo && gh pr view 42 example/options {missing}");
+  assert.equal(model.splitCommandSteps(pr.text)[0], 'cd /work/sample-repo',
+    '{cd} must appear as one example command step');
+  assert.deepEqual(Array.from(pr.unsupported), ['missing']);
+  assert.deepEqual(Array.from(pr.missing), []);
+  const issue = model.expandExampleTemplate('checkout {branch}', 'issue', example);
+  assert.equal(issue.text, 'checkout {branch}');
+  assert.deepEqual(Array.from(issue.unsupported), ['branch']);
+});
+
+test('example command splitting only separates certain top-level double ampersands', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.splitCommandSteps, 'function');
+  assert.deepEqual(Array.from(model.splitCommandSteps('cd repo && git status && claude')),
+    ['cd repo', 'git status', 'claude']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('printf "a && b" && next')),
+    ['printf "a && b"', 'next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('(echo a && echo b) && next')),
+    ['(echo a && echo b)', 'next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('if a && b; then c; fi && next')),
+    ['if a && b; then c; fi && next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('[[ a && b ]] && next')),
+    ['[[ a && b ]] && next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps("echo $(printf 'a && b') && next")),
+    ["echo $(printf 'a && b')", 'next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('echo "unfinished && next')), ['echo "unfinished && next']);
+  assert.deepEqual(Array.from(model.splitCommandSteps('cat <<EOF\na && b\nEOF\nnext')),
+    ['cat <<EOF\na && b\nEOF\nnext']);
+});
+
+test('input movement actions use the engine beforeIndex convention and respect no-op edges', () => {
+  const { model } = loadEditor();
+  assert.equal(typeof model.inputMoveAction, 'function');
+  const inputs = ['first', 'second', 'third'];
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(model.inputMoveAction('pr', 'u1', inputs, 1, 0)), {
+    type: 'input-move', kind: 'pr', buttonUid: 'u1', fromIndex: 1, beforeIndex: 0,
+  });
+  assert.deepEqual(plain(model.inputMoveAction('pr', 'u1', inputs, 1, 3)), {
+    type: 'input-move', kind: 'pr', buttonUid: 'u1', fromIndex: 1, beforeIndex: 3,
+  });
+  assert.equal(model.inputMoveAction('pr', 'u1', inputs, 1, 1), null);
+  assert.equal(model.inputMoveAction('pr', 'u1', inputs, 1, 2), null);
+  assert.equal(model.inputMoveTargetIndex(1, 3), 2);
+  assert.equal(model.inputMoveTargetIndex(1, 0), 0);
+});
+
+test('input add availability follows MAX_CLAUDE_INPUTS', () => {
+  const { model, context } = loadEditor();
+  assert.equal(typeof model.canAddClaudeInput, 'function');
+  const max = model.maxClaudeInputs;
+  assert.equal(model.canAddClaudeInput(max - 1), true);
+  assert.equal(model.canAddClaudeInput(max), false);
+  assert.equal(model.canAddClaudeInput(max + 1), false);
 });
 
 test('only custom commands require the editor confirmation step for preset replacement', () => {
@@ -174,7 +298,12 @@ test('the editor locale block follows its anchor in the same order in all five c
     'ext_d_editor_variableInsert', 'ext_d_editor_moveEarlier', 'ext_d_editor_moveLater',
     'ext_d_editor_replacePreset', 'ext_d_editor_confirmReplace', 'ext_d_editor_confirm',
     'ext_d_editor_cancel', 'ext_d_editor_cannotUpdate', 'ext_d_editor_limitReached',
-    'ext_d_editor_deleteUnavailable',
+    'ext_d_editor_deleteUnavailable', 'ext_d_editor_inputLimit', 'ext_d_editor_inputExample',
+    'ext_d_editor_inputLabel', 'ext_d_editor_inputRemove',
+    'ext_d_editor_inputTypeShell', 'ext_d_editor_inputTypeSlash', 'ext_d_editor_inputTypeDirective',
+    'ext_d_editor_inputTypeMessage', 'ext_d_editor_exampleTitle', 'ext_d_editor_exampleNotice',
+    'ext_d_editor_exampleCommand', 'ext_d_editor_exampleEmptyCommand', 'ext_d_editor_exampleInputs', 'ext_d_editor_exampleNoInputs',
+    'ext_d_editor_exampleCdNote', 'ext_d_editor_exampleUnsupported',
   ];
   const catalogues = ['en', 'ko', 'ja', 'zh_CN', 'zh_TW'].map(locale => ({
     locale,
@@ -194,4 +323,7 @@ test('the editor locale block follows its anchor in the same order in all five c
       assert.deepEqual(placeholders(messages[key]), expected, `${locale}/${key} placeholder set differs`);
     }
   }
+  assert.deepEqual(catalogues.map(({ messages }) => messages.ext_d_editor_cancel.message), [
+    'Keep command', '명령 유지', 'コマンドをそのままにする', '保留当前命令', '保留目前命令',
+  ]);
 });

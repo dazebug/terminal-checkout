@@ -439,7 +439,7 @@
     "message": "替換命令"
   },
   "ext_d_editor_cancel": {
-    "message": "繼續編輯"
+    "message": "保留目前命令"
   },
   "ext_d_editor_cannotUpdate": {
     "message": "無法更新此按鈕。"
@@ -449,6 +449,84 @@
   },
   "ext_d_editor_deleteUnavailable": {
     "message": "每個 GitHub 頁面位置至少需要一個按鈕。"
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "最多 $ARG1$ 個輸入",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "範例：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 輸入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "刪除 Claude 輸入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "Shell 模式"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "斜線命令"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "輸入指令"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "訊息"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "執行範例"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "僅供顯示。實際命令會在按下按鈕時由 App 組裝。"
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "命令"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "尚未設定命令。"
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude 輸入"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "沒有 Claude 輸入。"
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "此處以 $ARG1$ 作為 {cd} 的範例位置。實際位置由 App 使用 zoxide 和已設定的基礎目錄決定。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "此頁面或範例無法提供的變數會原樣保留：$ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "行為變更"

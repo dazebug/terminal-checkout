@@ -39,21 +39,23 @@ function variablesForKind(kind) {
 }
 
 /** @returns {string[]} */
-function validationFor(snapshot, kind, button) {
+function validationFor(snapshot, kind, button, { includeWarnings = true } = {}) {
   const diagnostic = snapshot?.validation?.buttons?.find(entry => entry.kind === kind && entry.uid === button?.uid);
   if (!diagnostic) return [];
   const list = snapshot?.buttons?.[kind] || [];
   const index = list.findIndex(entry => entry.uid === button.uid);
-  const position = Math.max(1, index + 1);
+  const position = Math.max(0, index);
   const storageKey = BUTTON_KINDS[kind]?.storageKey || '';
   const messages = [];
   for (const field of diagnostic.errors || []) {
     const key = REQUIRED_FIELD_MESSAGE[field];
     if (key) messages.push(tr(key, storageKey, position));
   }
-  for (const warning of diagnostic.warnings || []) {
-    const key = WARNING_MESSAGE.get(warning);
-    if (key) messages.push(tr(key));
+  if (includeWarnings) {
+    for (const warning of diagnostic.warnings || []) {
+      const key = WARNING_MESSAGE.get(warning);
+      if (key) messages.push(tr(key));
+    }
   }
   return messages;
 }
@@ -82,6 +84,158 @@ function presetReplaceAction(kind, uid, presetId, confirmed = false) {
     type: 'preset-replace', kind, uid, presetId,
     ...(confirmed ? { confirmed: true } : {}),
   };
+}
+
+/** @returns {'shell'|'slash'|'directive'|'message'} */
+function classifyClaudeInput(value) {
+  const text = typeof value === 'string' ? value.replace(/^ +/, '') : '';
+  if (text.startsWith('!')) return 'shell';
+  if (text.startsWith('/')) return 'slash';
+  if (text.startsWith('#')) return 'directive';
+  return 'message';
+}
+
+/** @returns {Record<string, string|number>} */
+function exampleValuesForKind(kind, context) {
+  const pullRequest = context?.pullRequest || {};
+  const issue = context?.issue || {};
+  const isPullRequest = kind === 'pr' || kind === 'pr-list';
+  const branch = pullRequest.branch;
+  const candidateValues = {
+    repo: context?.repo,
+    owner: context?.owner,
+    main: pullRequest.base,
+    number: isPullRequest ? pullRequest.number : issue.number,
+    branch,
+    base: pullRequest.base,
+    branch_underbar: typeof branch === 'string' ? branch.replace(/\//g, '_') : undefined,
+    cd: context?.repoPath,
+  };
+  const values = {};
+  for (const name of variablesForKind(kind)) {
+    const value = candidateValues[name];
+    if (typeof value === 'string' || typeof value === 'number') values[name] = value;
+  }
+  return values;
+}
+
+function shellDisplayValue(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+/** @returns {{text: string, unsupported: string[], missing: string[]}} */
+function expandExampleTemplate(template, kind, context) {
+  const source = typeof template === 'string' ? template : '';
+  const values = exampleValuesForKind(kind, context);
+  const allowed = new Set(variablesForKind(kind));
+  const unsupported = new Set();
+  const missing = new Set();
+  const text = source.replace(/\{(\w+)\}/g, (token, name) => {
+    if (!allowed.has(name)) {
+      unsupported.add(name);
+      return token;
+    }
+    if (!Object.hasOwn(values, name)) {
+      missing.add(name);
+      return token;
+    }
+    if (name === 'cd') return `cd ${shellDisplayValue(values[name])}`;
+    return String(values[name]);
+  });
+  return { text, unsupported: [...unsupported], missing: [...missing] };
+}
+
+/** @returns {string[]} */
+function splitCommandSteps(command) {
+  const source = typeof command === 'string' ? command : '';
+  if (!source) return [];
+  const steps = [];
+  const stack = [];
+  const compoundWords = new Set([
+    'case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
+    'if', 'select', 'then', 'until', 'while',
+  ]);
+  let quote = '';
+  let escaped = false;
+  let comment = false;
+  let start = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (comment) {
+      if (character === '\n') comment = false;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (quote !== "'" && character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '[' && source[index + 1] === '[') return [source];
+    if (/[A-Za-z_]/.test(character) && !/[A-Za-z0-9_]/.test(source[index - 1] || '')) {
+      const word = source.slice(index).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+      if (compoundWords.has(word)) return [source];
+    }
+    if (character === '#' || (character === '<' && source[index + 1] === '<')) return [source];
+    if (character === '(' || character === '{') {
+      stack.push(character === '(' ? ')' : '}');
+      continue;
+    }
+    if (character === ')' || character === '}') {
+      if (stack.pop() !== character) return [source];
+      continue;
+    }
+    if (character === '&' && source[index + 1] === '&' && stack.length === 0) {
+      if (source[index - 1] === '&' || source[index + 2] === '&') return [source];
+      const step = source.slice(start, index).trim();
+      if (!step) return [source];
+      steps.push(step);
+      start = index + 2;
+      index += 1;
+    }
+  }
+
+  if (quote || escaped || stack.length) return [source];
+  const last = source.slice(start).trim();
+  if (!last) return [source];
+  steps.push(last);
+  return steps;
+}
+
+/** @returns {{type: 'input-move', kind: string, buttonUid: string, fromIndex: number, beforeIndex: number}|null} */
+function inputMoveAction(kind, buttonUid, inputs, fromIndex, beforeIndex) {
+  if (!Array.isArray(inputs) || typeof kind !== 'string' || typeof buttonUid !== 'string'
+    || !Number.isInteger(fromIndex) || !Number.isInteger(beforeIndex)
+    || fromIndex < 0 || fromIndex >= inputs.length || beforeIndex < 0 || beforeIndex > inputs.length
+    || beforeIndex === fromIndex || beforeIndex === fromIndex + 1) return null;
+  return { type: 'input-move', kind, buttonUid, fromIndex, beforeIndex };
+}
+
+/** @returns {number} */
+function inputMoveTargetIndex(fromIndex, beforeIndex) {
+  return beforeIndex > fromIndex ? beforeIndex - 1 : beforeIndex;
+}
+
+/** @returns {boolean} */
+function canAddClaudeInput(count) {
+  return Number.isInteger(count) && count >= 0 && count < MAX_CLAUDE_INPUTS;
 }
 
 /**
@@ -123,6 +277,30 @@ let active = null;
 let pendingPresetId = null;
 let failureMessage = '';
 let instanceCounter = 0;
+let inputDrag = null;
+let armedInputDragRow = null;
+
+function disarmInputDrag() {
+  if (armedInputDragRow) armedInputDragRow.draggable = false;
+  armedInputDragRow = null;
+  document.removeEventListener('mouseup', handleInputMouseUp);
+}
+
+function clearInputDropMarks() {
+  root?.querySelectorAll('.options-editor-input-row')
+    .forEach(row => row.classList.remove('drop-before', 'drop-after', 'dragging'));
+}
+
+function cancelInputDrag() {
+  disarmInputDrag();
+  if (inputDrag?.row) inputDrag.row.draggable = false;
+  inputDrag = null;
+  clearInputDropMarks();
+}
+
+function handleInputMouseUp() {
+  disarmInputDrag();
+}
 
 function editorMessage(name, ...args) {
   switch (name) {
@@ -139,6 +317,22 @@ function editorMessage(name, ...args) {
     case 'cannotUpdate': return tr('ext.d.editor.cannotUpdate');
     case 'limitReached': return tr('ext.d.editor.limitReached');
     case 'deleteUnavailable': return tr('ext.d.editor.deleteUnavailable');
+    case 'inputLimit': return tr('ext.d.editor.inputLimit', ...args);
+    case 'inputExample': return tr('ext.d.editor.inputExample', ...args);
+    case 'inputLabel': return tr('ext.d.editor.inputLabel', ...args);
+    case 'inputRemove': return tr('ext.d.editor.inputRemove', ...args);
+    case 'inputTypeShell': return tr('ext.d.editor.inputTypeShell');
+    case 'inputTypeSlash': return tr('ext.d.editor.inputTypeSlash');
+    case 'inputTypeDirective': return tr('ext.d.editor.inputTypeDirective');
+    case 'inputTypeMessage': return tr('ext.d.editor.inputTypeMessage');
+    case 'exampleTitle': return tr('ext.d.editor.exampleTitle');
+    case 'exampleNotice': return tr('ext.d.editor.exampleNotice');
+    case 'exampleCommand': return tr('ext.d.editor.exampleCommand');
+    case 'exampleEmptyCommand': return tr('ext.d.editor.exampleEmptyCommand');
+    case 'exampleInputs': return tr('ext.d.editor.exampleInputs');
+    case 'exampleNoInputs': return tr('ext.d.editor.exampleNoInputs');
+    case 'exampleCdNote': return tr('ext.d.editor.exampleCdNote', ...args);
+    case 'exampleUnsupported': return tr('ext.d.editor.exampleUnsupported', ...args);
     default: return '';
   }
 }
@@ -163,6 +357,87 @@ function addAccessibleLabel(element, message, ...args) {
   element.setAttribute('aria-labelledby', label.id);
   element.appendChild(label);
   return label;
+}
+
+function updateAccessibleLabel(element, message, ...args) {
+  const label = element?.querySelector('.options-editor-sr-only');
+  if (label) label.textContent = tr(message, ...args);
+}
+
+function inputTypeMessage(type) {
+  switch (type) {
+    case 'shell': return editorMessage('inputTypeShell');
+    case 'slash': return editorMessage('inputTypeSlash');
+    case 'directive': return editorMessage('inputTypeDirective');
+    default: return editorMessage('inputTypeMessage');
+  }
+}
+
+function buildClaudeInputRow() {
+  const row = makeElement('div', 'options-editor-input-row');
+  const handle = makeButton('⠿', 'options-editor-input-drag-handle', null);
+  addAccessibleLabel(handle, 'ext.claudeInput.reorder.aria', 1);
+  const number = makeElement('span', 'options-editor-input-number');
+  const type = makeElement('span', 'options-editor-input-type');
+  const input = makeElement('input', 'options-editor-input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.id = `options-editor-input-${++instanceCounter}`;
+  const inputLabel = makeElement('label', 'options-editor-sr-only', editorMessage('inputLabel', 1));
+  inputLabel.htmlFor = input.id;
+  const example = makeElement('span', 'options-editor-input-example');
+  const earlier = makeButton('↑', 'btn-secondary options-editor-input-move options-editor-input-move-earlier', 'input-move-earlier');
+  addAccessibleLabel(earlier, 'ext.d.editor.moveEarlier');
+  const later = makeButton('↓', 'btn-secondary options-editor-input-move options-editor-input-move-later', 'input-move-later');
+  addAccessibleLabel(later, 'ext.d.editor.moveLater');
+  const remove = makeButton('×', 'btn-secondary options-editor-input-remove', 'input-remove');
+  addAccessibleLabel(remove, 'ext.d.editor.inputRemove', 1);
+  const tooltip = makeElement('span', 'options-editor-reorder-tooltip', tr('ext.reorder.tooltip'));
+  tooltip.id = `options-editor-reorder-tooltip-${++instanceCounter}`;
+  tooltip.setAttribute('role', 'tooltip');
+  handle.setAttribute('aria-describedby', tooltip.id);
+  earlier.setAttribute('aria-describedby', tooltip.id);
+  later.setAttribute('aria-describedby', tooltip.id);
+  row.append(handle, number, type, inputLabel, input, example, earlier, later, remove, tooltip);
+  return row;
+}
+
+function buildClaudeInputSection() {
+  const section = makeElement('section', 'options-editor-claude-section');
+  const heading = makeElement('h3', 'options-editor-section-heading', tr('ext.field.claudeInputs'));
+  const help = makeElement('div', 'options-editor-claude-help');
+  help.innerHTML = tHTML('ext.field.claudeInputs.help');
+  const hint = makeElement('div', 'options-editor-claude-hint');
+  hint.innerHTML = tHTML('ext.field.claudeInputs.hint');
+  hint.hidden = true;
+  const warning = makeElement('p', 'options-editor-claude-warning', tr('ext.field.claudeInputs.warn'));
+  warning.hidden = true;
+  warning.setAttribute('role', 'status');
+  const rows = makeElement('div', 'options-editor-input-rows');
+  const limit = makeElement('p', 'options-editor-input-limit', editorMessage('inputLimit', MAX_CLAUDE_INPUTS));
+  limit.hidden = true;
+  const add = makeButton(tr('ext.button.addInput'), 'btn-secondary options-editor-input-add', 'input-add');
+  section.append(heading, help, hint, warning, rows, limit, add);
+  return section;
+}
+
+function buildExampleDock() {
+  const dock = makeElement('section', 'options-editor-example-dock');
+  const heading = makeElement('h3', 'options-editor-section-heading', editorMessage('exampleTitle'));
+  const notice = makeElement('p', 'options-editor-example-notice', editorMessage('exampleNotice'));
+  const cdNote = makeElement('p', 'options-editor-example-cd-note');
+  const warning = makeElement('p', 'options-editor-example-warning');
+  warning.setAttribute('role', 'status');
+  warning.hidden = true;
+  const commandHeading = makeElement('h4', 'options-editor-example-subheading', editorMessage('exampleCommand'));
+  const command = makeElement('ol', 'options-editor-example-command');
+  const inputHeading = makeElement('h4', 'options-editor-example-subheading', editorMessage('exampleInputs'));
+  const inputs = makeElement('ol', 'options-editor-example-inputs');
+  const emptyCommand = makeElement('p', 'options-editor-example-empty-command', editorMessage('exampleEmptyCommand'));
+  emptyCommand.hidden = true;
+  const emptyInputs = makeElement('p', 'options-editor-example-empty-inputs', editorMessage('exampleNoInputs'));
+  dock.append(heading, notice, cdNote, warning, commandHeading, command, emptyCommand, inputHeading, inputs, emptyInputs);
+  return dock;
 }
 
 function facePalette() {
@@ -212,6 +487,7 @@ function focusFallback(kind, uid) {
 function closePopover({ restoreFocus = true } = {}) {
   if (!active) return;
   const { kind, uid, restoreFocusTo } = active;
+  cancelInputDrag();
   active = null;
   pendingPresetId = null;
   failureMessage = '';
@@ -278,9 +554,107 @@ function renderValidation(button) {
   const list = currentPanel()?.querySelector('.options-editor-validation');
   if (!list) return;
   list.replaceChildren();
-  const messages = validationFor(snapshot, active.kind, button);
+  const messages = validationFor(snapshot, active.kind, button, { includeWarnings: false });
   list.hidden = messages.length === 0;
   for (const text of messages) list.appendChild(makeElement('p', 'options-editor-diagnostic', text));
+}
+
+function renderClaudeInputs(button) {
+  const panel = currentPanel();
+  const rows = panel?.querySelector('.options-editor-input-rows');
+  if (!rows) return;
+  cancelInputDrag();
+  const values = Array.isArray(button.claudeInputs) ? button.claudeInputs : [];
+  while (rows.children.length < values.length) rows.appendChild(buildClaudeInputRow());
+  while (rows.children.length > values.length) rows.lastElementChild.remove();
+
+  [...rows.children].forEach((row, index) => {
+    const value = typeof values[index] === 'string' ? values[index] : '';
+    row.dataset.inputIndex = String(index);
+    const handle = row.querySelector('.options-editor-input-drag-handle');
+    const number = row.querySelector('.options-editor-input-number');
+    const type = row.querySelector('.options-editor-input-type');
+    const input = row.querySelector('.options-editor-input');
+    const inputLabel = row.querySelector('.options-editor-sr-only[for]');
+    const example = row.querySelector('.options-editor-input-example');
+    const earlier = row.querySelector('[data-editor-action="input-move-earlier"]');
+    const later = row.querySelector('[data-editor-action="input-move-later"]');
+    number.textContent = `⏎${index + 1}`;
+    type.textContent = inputTypeMessage(classifyClaudeInput(value));
+    input.dataset.inputIndex = String(index);
+    inputLabel.textContent = editorMessage('inputLabel', index + 1);
+    if (document.activeElement !== input && input.value !== value) input.value = value;
+    example.textContent = editorMessage('inputExample', tr('ext.field.claudeInput.placeholder'));
+    example.hidden = value.length > 0;
+    handle.disabled = values.length < 2;
+    earlier.disabled = index <= 0;
+    later.disabled = index >= values.length - 1;
+    updateAccessibleLabel(handle, 'ext.claudeInput.reorder.aria', index + 1);
+    updateAccessibleLabel(row.querySelector('.options-editor-input-remove'), 'ext.d.editor.inputRemove', index + 1);
+  });
+
+  const normalizedValues = normalizeClaudeInputs(values);
+  const hint = panel.querySelector('.options-editor-claude-hint');
+  const warning = panel.querySelector('.options-editor-claude-warning');
+  const add = panel.querySelector('[data-editor-action="input-add"]');
+  const limit = panel.querySelector('.options-editor-input-limit');
+  hint.hidden = normalizedValues.length === 0;
+  const diagnostic = snapshot?.validation?.buttons?.find(entry => entry.kind === active.kind && entry.uid === button.uid);
+  warning.hidden = !(diagnostic?.warnings || []).includes('claude-inputs-without-claude-command');
+  add.disabled = !canAddClaudeInput(values.length);
+  limit.hidden = values.length < MAX_CLAUDE_INPUTS;
+  positionPopover();
+}
+
+function renderExampleDock(button) {
+  const panel = currentPanel();
+  const dock = panel?.querySelector('.options-editor-example-dock');
+  if (!dock) return;
+  const context = window.optionsReplica?.getExampleContext?.() || {};
+  const values = Array.isArray(button.claudeInputs) ? button.claudeInputs : [];
+  const command = expandExampleTemplate(button.command, active.kind, context);
+  const commandSteps = splitCommandSteps(command.text);
+  const commandList = dock.querySelector('.options-editor-example-command');
+  const inputList = dock.querySelector('.options-editor-example-inputs');
+  const warning = dock.querySelector('.options-editor-example-warning');
+  const emptyCommand = dock.querySelector('.options-editor-example-empty-command');
+  const emptyInputs = dock.querySelector('.options-editor-example-empty-inputs');
+  const cdNote = dock.querySelector('.options-editor-example-cd-note');
+  const samplePath = typeof context.repoPath === 'string' ? context.repoPath : '';
+  cdNote.textContent = editorMessage('exampleCdNote', samplePath);
+  cdNote.hidden = ![button.command, ...values].some(value => typeof value === 'string' && /\{cd\}/.test(value));
+  commandList.replaceChildren();
+  emptyCommand.hidden = commandSteps.length > 0;
+  for (const [index, step] of commandSteps.entries()) {
+    const item = makeElement('li', 'options-editor-example-step');
+    const code = makeElement('code', '', step);
+    item.dataset.exampleStep = String(index);
+    item.appendChild(code);
+    commandList.appendChild(item);
+  }
+  inputList.replaceChildren();
+  const projectedInputs = values.map(value => expandExampleTemplate(value, active.kind, context));
+  for (const [index, projection] of projectedInputs.entries()) {
+    const item = makeElement('li', 'options-editor-example-input');
+    const type = makeElement('span', 'options-editor-example-input-type', inputTypeMessage(classifyClaudeInput(values[index])));
+    const code = makeElement('code', 'options-editor-example-input-value', projection.text);
+    item.dataset.exampleInput = String(index);
+    item.append(type, code);
+    inputList.appendChild(item);
+  }
+  emptyInputs.hidden = values.length > 0;
+
+  const allUnresolved = new Set([
+    ...command.unsupported, ...command.missing,
+    ...projectedInputs.flatMap(input => [...input.unsupported, ...input.missing]),
+  ]);
+  const kindsAllowVariables = buttonUsesAllowedVariables(active.kind, button);
+  const shouldWarn = !kindsAllowVariables || allUnresolved.size > 0;
+  warning.hidden = !shouldWarn;
+  warning.textContent = shouldWarn
+    ? editorMessage('exampleUnsupported', [...allUnresolved].map(name => `{${name}}`).join(', '))
+    : '';
+  positionPopover();
 }
 
 function renderFailure() {
@@ -333,6 +707,8 @@ function updatePanel() {
   if (face && document.activeElement !== face && face.value !== button.face) face.value = button.face;
   if (label && document.activeElement !== label && label.value !== button.label) label.value = button.label;
   if (command && document.activeElement !== command && command.value !== button.command) command.value = button.command;
+  renderClaudeInputs(button);
+  renderExampleDock(button);
   const heading = currentPanel().querySelector('.options-editor-heading-name');
   if (heading) heading.textContent = button.label || editorMessage('title');
   updateEditorFacePreview(button);
@@ -407,7 +783,7 @@ function buildPopover(button) {
   header.append(identity, close);
 
   const fields = makeElement('div', 'options-editor-fields');
-  const face = createField({ name: 'face', labelKey: 'ext.field.face', value: button.face, maxLength: 24 });
+  const face = createField({ name: 'face', labelKey: 'ext.field.face', value: button.face, maxLength: FACE_MAX_LENGTH });
   const label = createField({ name: 'label', labelKey: 'ext.field.tooltip', value: button.label });
   fields.append(face.field, label.field);
 
@@ -449,6 +825,7 @@ function buildPopover(button) {
   validation.setAttribute('aria-atomic', 'true');
   const futureSlot = makeElement('div', 'options-editor-followup-slot');
   futureSlot.dataset.editorSlot = 'claude-inputs';
+  futureSlot.append(buildClaudeInputSection(), buildExampleDock());
 
   const actions = makeElement('div', 'options-editor-actions');
   const earlier = makeButton('↑', 'btn-secondary options-editor-order', 'move-earlier');
@@ -628,6 +1005,46 @@ async function replaceWithPreset(presetId, confirmed = false) {
   }
 }
 
+async function addClaudeInput() {
+  if (!active) return;
+  const { kind, uid } = active;
+  const button = currentButton();
+  if (!button || !canAddClaudeInput(button.claudeInputs?.length || 0)) return;
+  const result = await dispatchAction({ type: 'input-add', kind, buttonUid: uid });
+  if (!result?.ok || active?.kind !== kind || active?.uid !== uid) return;
+  const index = (currentButton()?.claudeInputs?.length || 1) - 1;
+  focusElement(currentPanel()?.querySelector(`.options-editor-input-row[data-input-index="${index}"] .options-editor-input`));
+}
+
+async function removeClaudeInput(inputIndex) {
+  if (!active || !Number.isInteger(inputIndex)) return;
+  const { kind, uid } = active;
+  const result = await dispatchAction({ type: 'input-remove', kind, buttonUid: uid, inputIndex });
+  if (!result?.ok || active?.kind !== kind || active?.uid !== uid) return;
+  const values = currentButton()?.claudeInputs || [];
+  const nextIndex = Math.min(inputIndex, values.length - 1);
+  const focusTarget = nextIndex >= 0
+    ? currentPanel()?.querySelector(`.options-editor-input-row[data-input-index="${nextIndex}"] .options-editor-input`)
+    : currentPanel()?.querySelector('[data-editor-action="input-add"]');
+  focusElement(focusTarget);
+}
+
+async function moveClaudeInput(inputIndex, beforeIndex) {
+  if (!active) return;
+  const { kind, uid } = active;
+  const button = currentButton();
+  const inputs = button?.claudeInputs || [];
+  const action = inputMoveAction(kind, uid, inputs, inputIndex, beforeIndex);
+  if (!action) return;
+  const result = await dispatchAction(action);
+  if (!result?.ok || active?.kind !== kind || active?.uid !== uid) return;
+  const targetIndex = inputMoveTargetIndex(inputIndex, beforeIndex);
+  const row = currentPanel()?.querySelector(`.options-editor-input-row[data-input-index="${targetIndex}"]`);
+  focusElement(row?.querySelector('.options-editor-input-drag-handle')
+    || row?.querySelector('[data-editor-action="input-move-earlier"]')
+    || row?.querySelector('.options-editor-input'));
+}
+
 function handleClick(event) {
   const target = event.target instanceof Element ? event.target.closest('[data-editor-action]') : null;
   if (!target || !root.contains(target) || !active) return;
@@ -639,7 +1056,7 @@ function handleClick(event) {
     case 'append-emoji': {
       const face = fieldInPanel('face');
       if (!face) break;
-      const value = appendFaceCharacter(face.value, target.dataset.emoji, 24);
+      const value = appendFaceCharacter(face.value, target.dataset.emoji, FACE_MAX_LENGTH);
       if (value !== face.value) {
         face.value = value;
         face.dispatchEvent(new Event('input', { bubbles: true }));
@@ -656,6 +1073,21 @@ function handleClick(event) {
     case 'move-later':
       void moveButton(1);
       break;
+    case 'input-add':
+      void addClaudeInput();
+      break;
+    case 'input-remove': {
+      const inputIndex = Number(target.closest('.options-editor-input-row')?.dataset.inputIndex);
+      void removeClaudeInput(inputIndex);
+      break;
+    }
+    case 'input-move-earlier':
+    case 'input-move-later': {
+      const inputIndex = Number(target.closest('.options-editor-input-row')?.dataset.inputIndex);
+      const beforeIndex = action === 'input-move-earlier' ? inputIndex - 1 : inputIndex + 2;
+      void moveClaudeInput(inputIndex, beforeIndex);
+      break;
+    }
     case 'duplicate':
       void duplicateEditorButton();
       break;
@@ -704,10 +1136,24 @@ function handleClick(event) {
 
 function handleInput(event) {
   if (!active || !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) return;
+  if (event.target.classList.contains('options-editor-input')) {
+    const inputIndex = Number(event.target.dataset.inputIndex);
+    if (!Number.isInteger(inputIndex)) return;
+    const row = event.target.closest('.options-editor-input-row');
+    const type = row?.querySelector('.options-editor-input-type');
+    const example = row?.querySelector('.options-editor-input-example');
+    if (type) type.textContent = inputTypeMessage(classifyClaudeInput(event.target.value));
+    if (example) example.hidden = event.target.value.length > 0;
+    void dispatchAction({
+      type: 'input-patch', kind: active.kind, buttonUid: active.uid,
+      inputIndex, value: event.target.value,
+    });
+    return;
+  }
   const field = event.target.dataset.editorField;
   if (!field) return;
-  if (field === 'face' && !fitsFieldLimit(event.target.value, 24)) {
-    let clipped = event.target.value.slice(0, 24);
+  if (field === 'face' && !fitsFieldLimit(event.target.value, FACE_MAX_LENGTH)) {
+    let clipped = event.target.value.slice(0, FACE_MAX_LENGTH);
     if (/^[\uD800-\uDBFF]$/.test(clipped.slice(-1))) clipped = clipped.slice(0, -1);
     event.target.value = clipped;
   }
@@ -728,10 +1174,26 @@ function handleInput(event) {
 }
 
 function handleKeydown(event) {
-  if (!active || event.key !== 'Escape') return;
+  if (!active) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closePopover();
+    return;
+  }
+  const handle = event.target instanceof Element
+    ? event.target.closest('.options-editor-input-drag-handle')
+    : null;
+  if (!handle || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+  const row = handle.closest('.options-editor-input-row');
+  const inputIndex = Number(row?.dataset.inputIndex);
+  const count = currentButton()?.claudeInputs?.length || 0;
+  const direction = event.key === 'ArrowUp' ? -1 : 1;
+  const targetIndex = inputIndex + direction;
+  if (!Number.isInteger(inputIndex) || targetIndex < 0 || targetIndex >= count) return;
   event.preventDefault();
   event.stopPropagation();
-  closePopover();
+  void moveClaudeInput(inputIndex, direction < 0 ? targetIndex : targetIndex + 1);
 }
 
 function handlePointerDown(event) {
@@ -744,16 +1206,106 @@ function handleWindowChange() {
 }
 
 function handleMouseDown(event) {
-  if (event.target instanceof Element
-    && event.target.closest('[data-editor-action="insert-variable"], [data-editor-action="append-emoji"]')) {
+  if (!(event.target instanceof Element)) return;
+  const dragHandle = event.target.closest('.options-editor-input-drag-handle');
+  if (dragHandle && !dragHandle.disabled && event.button === 0) {
+    disarmInputDrag();
+    root?.querySelectorAll('.options-editor-input-row').forEach(row => { row.draggable = false; });
+    const row = dragHandle.closest('.options-editor-input-row');
+    if (!row) return;
+    row.draggable = true;
+    armedInputDragRow = row;
+    document.addEventListener('mouseup', handleInputMouseUp, { once: true });
+    return;
+  }
+  if (event.target.closest('[data-editor-action="insert-variable"], [data-editor-action="append-emoji"]')) {
     event.preventDefault();
   }
+}
+
+function inputDropBeforeIndex(rows, clientY) {
+  const items = [...rows.querySelectorAll('.options-editor-input-row')];
+  const index = items.findIndex(row => {
+    const rect = row.getBoundingClientRect();
+    return clientY < rect.top + rect.height / 2;
+  });
+  return index < 0 ? items.length : index;
+}
+
+function inputDropZone(eventTarget) {
+  if (!(eventTarget instanceof Element)) return null;
+  const rows = eventTarget.closest('.options-editor-input-rows');
+  const panel = currentPanel();
+  return rows && panel?.contains(rows) ? rows : null;
+}
+
+function handleDragStart(event) {
+  if (!active || !(event.target instanceof Element)) return;
+  const row = event.target.closest('.options-editor-input-row');
+  if (!row || !row.draggable || !root?.contains(row)) return;
+  const button = currentButton();
+  const fromIndex = Number(row.dataset.inputIndex);
+  if (!button || !Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= (button.claudeInputs?.length || 0)) {
+    event.preventDefault();
+    row.draggable = false;
+    return;
+  }
+  inputDrag = {
+    kind: active.kind, uid: active.uid, fromIndex,
+    inputs: button.claudeInputs, row,
+  };
+  row.classList.add('dragging');
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragOver(event) {
+  if (!inputDrag || !active || active.kind !== inputDrag.kind || active.uid !== inputDrag.uid) return;
+  const rows = inputDropZone(event.target);
+  if (!rows || currentButton()?.claudeInputs !== inputDrag.inputs) {
+    clearInputDropMarks();
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  clearInputDropMarks();
+  const beforeIndex = inputDropBeforeIndex(rows, event.clientY);
+  const targetRow = rows.children[beforeIndex] || rows.lastElementChild;
+  if (!targetRow) return;
+  targetRow.classList.add(beforeIndex >= rows.children.length ? 'drop-after' : 'drop-before');
+}
+
+function handleDragLeave(event) {
+  const rows = inputDropZone(event.target);
+  if (rows && (!rows.contains(event.relatedTarget) || !event.relatedTarget)) clearInputDropMarks();
+}
+
+function handleDrop(event) {
+  if (!inputDrag || !active || active.kind !== inputDrag.kind || active.uid !== inputDrag.uid) return;
+  const rows = inputDropZone(event.target);
+  if (!rows || currentButton()?.claudeInputs !== inputDrag.inputs) {
+    cancelInputDrag();
+    return;
+  }
+  event.preventDefault();
+  const { fromIndex } = inputDrag;
+  const beforeIndex = inputDropBeforeIndex(rows, event.clientY);
+  cancelInputDrag();
+  void moveClaudeInput(fromIndex, beforeIndex);
+}
+
+function handleDragEnd() {
+  cancelInputDrag();
 }
 
 function setUpListeners() {
   root.addEventListener('click', handleClick);
   root.addEventListener('input', handleInput);
   root.addEventListener('mousedown', handleMouseDown);
+  root.addEventListener('dragstart', handleDragStart);
+  root.addEventListener('dragover', handleDragOver);
+  root.addEventListener('dragleave', handleDragLeave);
+  root.addEventListener('drop', handleDrop);
+  root.addEventListener('dragend', handleDragEnd);
   document.addEventListener('pointerdown', handlePointerDown, true);
   document.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('resize', handleWindowChange);
@@ -761,9 +1313,15 @@ function setUpListeners() {
 }
 
 function removeListeners() {
+  cancelInputDrag();
   root?.removeEventListener('click', handleClick);
   root?.removeEventListener('input', handleInput);
   root?.removeEventListener('mousedown', handleMouseDown);
+  root?.removeEventListener('dragstart', handleDragStart);
+  root?.removeEventListener('dragover', handleDragOver);
+  root?.removeEventListener('dragleave', handleDragLeave);
+  root?.removeEventListener('drop', handleDrop);
+  root?.removeEventListener('dragend', handleDragEnd);
   document.removeEventListener('pointerdown', handlePointerDown, true);
   document.removeEventListener('keydown', handleKeydown, true);
   window.removeEventListener('resize', handleWindowChange);

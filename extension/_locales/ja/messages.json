@@ -439,7 +439,7 @@
     "message": "コマンドを置き換える"
   },
   "ext_d_editor_cancel": {
-    "message": "編集を続ける"
+    "message": "コマンドをそのままにする"
   },
   "ext_d_editor_cannotUpdate": {
     "message": "ボタンを更新できませんでした。"
@@ -449,6 +449,84 @@
   },
   "ext_d_editor_deleteUnavailable": {
     "message": "各 GitHub の場所にはボタンが 1 つ以上必要です。"
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "入力は最大 $ARG1$ 件",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "例: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 入力 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "Claude 入力 $ARG1$ を削除",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "シェルモード"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "スラッシュコマンド"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "入力ディレクティブ"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "メッセージ"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "実行例"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "表示用の例です。実際のコマンドはボタンを押したときにアプリが組み立てます。"
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "コマンド"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "コマンドが設定されていません。"
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude への入力"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "Claude への入力はありません。"
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "ここでは例として {cd} が $ARG1$ に移動します。実際の場所はアプリが zoxide と設定済みのベースディレクトリを使って決めます。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "このページまたは例で使えない変数はそのまま表示します: $ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "動作の変更"

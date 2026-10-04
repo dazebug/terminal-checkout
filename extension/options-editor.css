@@ -344,7 +344,250 @@
 }
 
 .options-editor-followup-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   min-height: 1px;
+}
+
+.options-editor-claude-section,
+.options-editor-example-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.options-editor-section-heading,
+.options-editor-example-subheading {
+  margin: 0;
+  color: var(--text);
+  font: 600 12px/1.4 var(--ui);
+}
+
+.options-editor-claude-help,
+.options-editor-claude-hint,
+.options-editor-example-notice,
+.options-editor-example-cd-note,
+.options-editor-example-empty-command,
+.options-editor-example-empty-inputs,
+.options-editor-input-example {
+  margin: 0;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.options-editor-claude-hint {
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+  background: var(--chip);
+}
+
+.options-editor-claude-warning,
+.options-editor-input-limit,
+.options-editor-example-warning {
+  margin: 0;
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.options-editor-input-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.options-editor-input-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px 32px minmax(42px, auto) minmax(0, 1fr) 28px 28px 28px;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--chip);
+}
+
+.options-editor-input-row.dragging {
+  opacity: 0.55;
+}
+
+.options-editor-input-row.drop-before {
+  border-top-color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.options-editor-input-row.drop-after {
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.options-editor-input-number {
+  grid-column: 2;
+  color: var(--faint);
+  font: 10px var(--mono);
+  white-space: nowrap;
+}
+
+.options-editor-input-type {
+  grid-column: 3;
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.options-editor-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--panel);
+  font: 11px/1.4 var(--mono);
+}
+
+.options-editor-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.options-editor-input-example {
+  grid-row: 2;
+  grid-column: 4 / 8;
+  overflow-wrap: anywhere;
+  color: var(--faint);
+  font-style: italic;
+}
+
+.options-editor-input-drag-handle,
+.options-editor-input-move,
+.options-editor-input-remove {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--dim);
+  background: transparent;
+  cursor: pointer;
+}
+
+.options-editor-input-drag-handle {
+  grid-column: 1;
+}
+
+.options-editor-input {
+  grid-column: 4;
+  grid-row: 1;
+}
+
+.options-editor-input-move-earlier {
+  grid-column: 5;
+  grid-row: 1;
+}
+
+.options-editor-input-move-later {
+  grid-column: 6;
+  grid-row: 1;
+}
+
+.options-editor-input-remove {
+  grid-column: 7;
+  grid-row: 1;
+}
+
+.options-editor-input-drag-handle {
+  font-size: 14px;
+  cursor: grab;
+}
+
+.options-editor-input-drag-handle:active {
+  cursor: grabbing;
+}
+
+.options-editor-input-remove {
+  color: var(--err);
+}
+
+.options-editor-input-drag-handle:hover:not(:disabled),
+.options-editor-input-move:hover:not(:disabled),
+.options-editor-input-remove:hover,
+.options-editor-input-drag-handle:focus-visible,
+.options-editor-input-move:focus-visible,
+.options-editor-input-remove:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.options-editor-input-drag-handle:disabled,
+.options-editor-input-move:disabled,
+.options-editor-input-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.options-editor-reorder-tooltip {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  left: 4px;
+  display: none;
+  max-width: 240px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.options-editor-input-row:focus-within .options-editor-reorder-tooltip,
+.options-editor-input-row:hover .options-editor-reorder-tooltip {
+  display: block;
+}
+
+.options-editor-example-command,
+.options-editor-example-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding-left: 24px;
+  color: var(--dim);
+  font: 10px/1.5 var(--mono);
+}
+
+.options-editor-example-step code,
+.options-editor-example-input-value {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.options-editor-example-input {
+  display: grid;
+  grid-template-columns: minmax(58px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.options-editor-example-input-type {
+  color: var(--accent);
+  font: 9px/1.5 var(--ui);
+}
+
+.options-editor-example-warning {
+  padding: 6px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--chip);
 }
 
 @media (max-width: 520px) {

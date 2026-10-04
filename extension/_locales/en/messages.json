@@ -450,6 +450,84 @@
   "ext_d_editor_deleteUnavailable": {
     "message": "Each GitHub location needs at least one button."
   },
+  "ext_d_editor_inputLimit": {
+    "message": "Maximum $ARG1$ inputs",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "Example: $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude input $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "Remove Claude input $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "Shell mode"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "Slash command"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "Input directive"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "Message"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "Example preview"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "Display only. The app assembles the real command when you press the button."
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "Command"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "No command is set."
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude inputs"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "No Claude inputs."
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "Here {cd} enters $ARG1$ as an example. The app chooses the real location with zoxide and the configured base directory.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "Variables unavailable for this page or example remain as written: $ARG1$.",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
   "ext_migration_effect_behaviorChange": {
     "message": "behavior change"
   },

@@ -439,7 +439,7 @@
     "message": "替换命令"
   },
   "ext_d_editor_cancel": {
-    "message": "继续编辑"
+    "message": "保留当前命令"
   },
   "ext_d_editor_cannotUpdate": {
     "message": "无法更新此按钮。"
@@ -449,6 +449,84 @@
   },
   "ext_d_editor_deleteUnavailable": {
     "message": "每个 GitHub 页面位置至少需要一个按钮。"
+  },
+  "ext_d_editor_inputLimit": {
+    "message": "最多 $ARG1$ 条输入",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputExample": {
+    "message": "示例：$ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputLabel": {
+    "message": "Claude 输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputRemove": {
+    "message": "删除 Claude 输入 $ARG1$",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_inputTypeShell": {
+    "message": "Shell 模式"
+  },
+  "ext_d_editor_inputTypeSlash": {
+    "message": "斜杠命令"
+  },
+  "ext_d_editor_inputTypeDirective": {
+    "message": "输入指令"
+  },
+  "ext_d_editor_inputTypeMessage": {
+    "message": "消息"
+  },
+  "ext_d_editor_exampleTitle": {
+    "message": "执行示例"
+  },
+  "ext_d_editor_exampleNotice": {
+    "message": "仅供显示。实际命令由应用在按下按钮时组装。"
+  },
+  "ext_d_editor_exampleCommand": {
+    "message": "命令"
+  },
+  "ext_d_editor_exampleEmptyCommand": {
+    "message": "未设置命令。"
+  },
+  "ext_d_editor_exampleInputs": {
+    "message": "Claude 输入"
+  },
+  "ext_d_editor_exampleNoInputs": {
+    "message": "没有 Claude 输入。"
+  },
+  "ext_d_editor_exampleCdNote": {
+    "message": "此处用 $ARG1$ 作为 {cd} 的示例位置。实际位置由应用使用 zoxide 和设置的基础目录决定。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
+  },
+  "ext_d_editor_exampleUnsupported": {
+    "message": "此页面或示例无法提供的变量会原样保留：$ARG1$。",
+    "placeholders": {
+      "ARG1": {
+        "content": "$1"
+      }
+    }
   },
   "ext_migration_effect_behaviorChange": {
     "message": "行为变更"
