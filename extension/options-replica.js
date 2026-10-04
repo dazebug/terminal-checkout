@@ -389,6 +389,13 @@ function isOutsideDrawerEventPath(path) {
     || entry?.dataset?.action === 'slot-add');
 }
 
+/** An inert option surface must not react to an event dispatched on or inside it. */
+function isReplicaEventBlocked(path, surfaceIsInert = false) {
+  return Boolean(surfaceIsInert || (Array.isArray(path) && path.some(entry => entry?.inert === true
+    || entry?.hasAttribute?.('inert') === true
+    || Boolean(entry?.closest?.('[inert]')))));
+}
+
 const model = Object.freeze({
   replicaKinds,
   replicaButtonLook,
@@ -410,11 +417,23 @@ const model = Object.freeze({
   dropMoveAction,
   shouldSuppressReplicaDragClick,
   isOutsideDrawerEventPath,
+  isReplicaEventBlocked,
 });
 
 let mounted = null;
 let dragUid = null;
 let dragPreset = null;
+
+/** Ignore interactions when this view or the event target is under an inert ancestor. */
+function replicaInteractionIsBlocked(event) {
+  if (!mounted) return true;
+  const root = mounted.root;
+  const surfaceIsInert = Boolean(root?.inert || root?.closest?.('[inert]'));
+  const path = typeof event?.composedPath === 'function'
+    ? event.composedPath()
+    : event?.target ? [event.target] : [];
+  return model.isReplicaEventBlocked(path, surfaceIsInert);
+}
 
 /** @param {string} suffix */
 function replicaText(suffix, ...args) {
@@ -755,6 +774,7 @@ function focusReplicaKey(key) {
 
 /** @param {MouseEvent} event */
 function handleReplicaMouseOver(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   const target = event.target instanceof Element ? event.target : null;
   const card = target?.closest('[data-preset-kind][data-preset-id]');
   if (!card || card.contains(event.relatedTarget)) return;
@@ -764,6 +784,7 @@ function handleReplicaMouseOver(event) {
 
 /** @param {MouseEvent} event */
 function handleReplicaMouseOut(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   const target = event.target instanceof Element ? event.target : null;
   const card = target?.closest('[data-preset-kind][data-preset-id]');
   if (!card || card.contains(event.relatedTarget)) return;
@@ -773,6 +794,7 @@ function handleReplicaMouseOut(event) {
 
 /** @param {FocusEvent} event */
 function handleReplicaFocusIn(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   const preset = updatePresetPreviewFromCard(event.target instanceof Element ? event.target : null);
   if (!preset) return;
   mounted.focusedPreset = preset;
@@ -781,6 +803,7 @@ function handleReplicaFocusIn(event) {
 
 /** @param {FocusEvent} event */
 function handleReplicaFocusOut(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   const target = event.target instanceof Element ? event.target : null;
   const card = target?.closest('[data-preset-kind][data-preset-id]');
   if (!card || card.contains(event.relatedTarget)) return;
@@ -907,13 +930,40 @@ function openButtonEditor(button) {
   }
 }
 
+/** Close page-bound surfaces before changing the route so focus cannot restore the old page. */
+function selectReplicaPage(kind) {
+  if (!mounted || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
+  if (typeof mounted.editor?.isOpen === 'function'
+    && mounted.editor.isOpen()
+    && typeof mounted.editor.close === 'function') {
+    mounted.editor.close();
+  }
+  if (mounted.drawerOpen) {
+    mounted.drawerOpen = false;
+    mounted.drawerRestoreElement = null;
+    mounted.drawerRestoreFocusKey = null;
+    setDrawerVisible(false);
+  }
+  mounted.pendingReplace = null;
+  mounted.replacePicker = null;
+  mounted.pointerPreset = null;
+  mounted.focusedPreset = null;
+  mounted.previewPreset = null;
+  mounted.pageKind = kind;
+  mounted.drawerKind = kind;
+  mounted.drawerOriginPageKind = kind;
+  return true;
+}
+
 /** A fresh pointer action means any unobserved drag click did not arrive. */
-function handleReplicaPointerDown() {
+function handleReplicaPointerDown(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   if (mounted) mounted.dragClickCandidateUid = null;
 }
 
 /** @param {Event} event */
 function handleReplicaClick(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   const pendingUid = mounted?.dragClickCandidateUid || null;
   if (mounted) mounted.dragClickCandidateUid = null;
   const target = event.target instanceof Element ? event.target : null;
@@ -966,14 +1016,7 @@ function handleReplicaClick(event) {
   const pageCard = target?.closest('[data-page-kind]');
   if (pageCard) {
     event.preventDefault();
-    mounted.pointerPreset = null;
-    mounted.focusedPreset = null;
-    mounted.previewPreset = null;
-    mounted.pageKind = pageCard.dataset.pageKind;
-    if (mounted.drawerOpen) {
-      mounted.drawerKind = mounted.pageKind;
-      mounted.drawerOriginPageKind = mounted.pageKind;
-    }
+    selectReplicaPage(pageCard.dataset.pageKind);
     renderReplica();
     const selected = [...mounted.root.querySelectorAll('[data-focus-key]')]
       .find(node => node.dataset.focusKey === `page:${mounted.pageKind}`);
@@ -1001,6 +1044,7 @@ function handleReplicaClick(event) {
 /** @param {KeyboardEvent} event */
 function handleReplicaKeydown(event) {
   if (event.isComposing || event.keyCode === 229) return;
+  if (replicaInteractionIsBlocked(event)) return;
   if (mounted) mounted.dragClickCandidateUid = null;
   const target = event.target instanceof Element ? event.target.closest('[data-replica-button]') : null;
   if (!target || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
@@ -1013,6 +1057,7 @@ function handleReplicaKeydown(event) {
 
 /** @param {DragEvent} event */
 function handleReplicaDragStart(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   if (mounted) mounted.dragClickCandidateUid = null;
   const eventTarget = event.target instanceof Element ? event.target : null;
   const presetCard = eventTarget?.closest('[data-preset-kind][data-preset-id]');
@@ -1037,6 +1082,7 @@ function handleReplicaDragStart(event) {
 
 /** @param {DragEvent} event */
 function handleReplicaDragOver(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   if (!dragUid && !dragPreset) return;
   const target = event.target instanceof Element
     ? event.target.closest('[data-replica-button], [data-drop-kind]')
@@ -1051,6 +1097,7 @@ function handleReplicaDragOver(event) {
 
 /** @param {DragEvent} event */
 function handleReplicaDrop(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   if (!dragUid && !dragPreset) return;
   const source = dragPreset || dragUid;
   const isPreset = Boolean(dragPreset);
@@ -1153,6 +1200,7 @@ function closeDrawerInternal(restoreFocus) {
 
 /** @param {MouseEvent} event */
 function handleDocumentClick(event) {
+  if (replicaInteractionIsBlocked(event)) return;
   if (!mounted?.drawerOpen) return;
   if (!model.isOutsideDrawerEventPath(event.composedPath())) return;
   closeDrawerInternal(true);
@@ -1161,6 +1209,7 @@ function handleDocumentClick(event) {
 /** @param {KeyboardEvent} event */
 function handleDocumentKeydown(event) {
   if (event.isComposing || event.keyCode === 229) return;
+  if (replicaInteractionIsBlocked(event)) return;
   if (event.key !== 'Escape' || !mounted?.drawerOpen) return;
   event.preventDefault();
   closeDrawerInternal(true);
@@ -1181,6 +1230,7 @@ function mountReplica(root, engine, editor) {
     mounted.root.removeEventListener('mouseout', handleReplicaMouseOut);
     mounted.root.removeEventListener('focusin', handleReplicaFocusIn);
     mounted.root.removeEventListener('focusout', handleReplicaFocusOut);
+    mounted.root.ownerDocument.removeEventListener('pointerdown', handleReplicaPointerDown, true);
     mounted.root.ownerDocument.removeEventListener('click', handleDocumentClick);
     mounted.root.ownerDocument.removeEventListener('keydown', handleDocumentKeydown);
   }
@@ -1231,7 +1281,7 @@ function mountReplica(root, engine, editor) {
 function focusReplicaButton(kind, uid) {
   if (!mounted || !Object.hasOwn(BUTTON_KINDS, kind)) return false;
   if (kind !== 'repo' && mounted.pageKind !== kind) {
-    mounted.pageKind = kind;
+    selectReplicaPage(kind);
     renderReplica();
   }
   const button = [...mounted.root.querySelectorAll('[data-replica-button]')]

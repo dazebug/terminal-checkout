@@ -85,6 +85,76 @@ test('only the trusted drag-generated click for the moved button is suppressed',
     'a new pointer interaction clears a pending drag click when the drag made no click');
 });
 
+test('page selection closes both transient surfaces before changing page and restores focus to the selected card', () => {
+  const selectStart = source.indexOf('function selectReplicaPage(kind) {');
+  const selectEnd = source.indexOf('\nfunction ', selectStart + 1);
+  assert.ok(selectStart >= 0 && selectEnd > selectStart, 'page changes need one shared transition');
+  const selection = source.slice(selectStart, selectEnd);
+  assert.match(selection, /mounted\.editor\.isOpen\(\)[\s\S]*?mounted\.editor\.close\(\)/);
+  assert.match(selection, /mounted\.drawerOpen[\s\S]*?setDrawerVisible\(false\)/);
+  assert.ok(selection.indexOf('mounted.editor.close()') < selection.indexOf('mounted.pageKind = kind'),
+    'the editor must still have its connected old anchor when it restores focus');
+  assert.ok(selection.indexOf('setDrawerVisible(false)') < selection.indexOf('mounted.pageKind = kind'),
+    'closing the drawer must not restore its old opener over the new page');
+  const clickStart = source.indexOf('function handleReplicaClick(event) {');
+  const clickEnd = source.indexOf('\nfunction ', clickStart + 1);
+  const clickHandler = source.slice(clickStart, clickEnd);
+  assert.match(clickHandler, /selectReplicaPage\(pageCard\.dataset\.pageKind\)[\s\S]*?renderReplica\(\)[\s\S]*?selected\?\.focus\(\)/);
+  const focusStart = source.indexOf('function focusReplicaButton(kind, uid) {');
+  const focusEnd = source.indexOf('\nfunction ', focusStart + 1);
+  assert.match(source.slice(focusStart, focusEnd), /selectReplicaPage\(kind\)/,
+    'programmatic page changes must close a popover too');
+});
+
+test('replica event blocking recognizes an inert surface or inert event-path ancestor', () => {
+  assert.equal(typeof model.isReplicaEventBlocked, 'function');
+  assert.equal(model.isReplicaEventBlocked([], false), false);
+  assert.equal(model.isReplicaEventBlocked([], true), true);
+  assert.equal(model.isReplicaEventBlocked([{ inert: true }], false), true);
+  assert.equal(model.isReplicaEventBlocked([{ hasAttribute: name => name === 'inert' }], false), true);
+  assert.equal(model.isReplicaEventBlocked([{ inert: false }], false), false);
+});
+
+test('all replica document and surface interaction listeners ignore events while blocked', () => {
+  for (const [name, event] of [
+    ['handleReplicaPointerDown', 'PointerEvent'],
+    ['handleReplicaClick', 'MouseEvent'],
+    ['handleReplicaKeydown', 'KeyboardEvent'],
+    ['handleReplicaMouseOver', 'MouseEvent'],
+    ['handleReplicaMouseOut', 'MouseEvent'],
+    ['handleReplicaFocusIn', 'FocusEvent'],
+    ['handleReplicaFocusOut', 'FocusEvent'],
+    ['handleReplicaDragStart', 'DragEvent'],
+    ['handleReplicaDragOver', 'DragEvent'],
+    ['handleReplicaDrop', 'DragEvent'],
+    ['handleDocumentClick', 'MouseEvent'],
+    ['handleDocumentKeydown', 'KeyboardEvent'],
+  ]) {
+    const start = source.indexOf(`function ${name}(`);
+    const end = source.indexOf('\nfunction ', start + 1);
+    assert.ok(start >= 0 && end > start, `${name} listener is missing`);
+    const handler = source.slice(start, end);
+    assert.match(handler, new RegExp(`replicaInteractionIsBlocked\\(event\\)`), `${name} (${event})`);
+  }
+  assert.doesNotMatch(source, /window\.addEventListener\(/,
+    'the replica must not install an unguarded window listener');
+  const documentRegistrations = [...source.matchAll(/root\.ownerDocument\.addEventListener\('([^']+)',\s*(\w+)(?:,\s*(true))?\)/g)]
+    .map(([, event, handler, capture]) => [event, handler, capture === 'true']);
+  assert.deepEqual(documentRegistrations, [
+    ['pointerdown', 'handleReplicaPointerDown', true],
+    ['click', 'handleDocumentClick', false],
+    ['keydown', 'handleDocumentKeydown', false],
+  ]);
+  const mountStart = source.indexOf('function mountReplica(root, engine, editor) {');
+  const mountEnd = source.indexOf('\nfunction ', mountStart + 1);
+  const mount = source.slice(mountStart, mountEnd);
+  for (const [event, handler, capture] of documentRegistrations) {
+    const captureOption = capture ? ', true' : '';
+    assert.ok(mount.includes(`ownerDocument.removeEventListener('${event}', ${handler}${captureOption})`),
+      `${event} listener must be removed when its root is replaced`);
+  }
+});
+
 test('GitHub copy and fixed example scenery declare English without labeling user button text', () => {
   assert.equal(/function gh\(key\) \{\s*return `<span[^>]*lang="en"/.test(source), true);
   assert.equal(/function ghScenery\(value\) \{\s*return `<span[^>]*lang="en"/.test(source), true);
